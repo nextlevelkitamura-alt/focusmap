@@ -188,16 +188,6 @@ function TaskItem({
                 className="group flex items-center gap-2 p-2 hover:bg-muted/10 transition-colors"
                 style={{ paddingLeft: `calc(${depth * 1.5}rem + 0.5rem)` }}
             >
-                {/* Drag Handle */}
-                {depth === 0 && dragHandleProps && (
-                    <div
-                        {...dragHandleProps}
-                        className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors"
-                    >
-                        <GripVertical className="h-4 w-4" />
-                    </div>
-                )}
-
                 {/* Expand/Collapse for parent tasks */}
                 {hasChildren ? (
                     <Button
@@ -536,6 +526,46 @@ function TaskItem({
                     >
                         <Trash2 className="w-3 h-3" />
                     </Button>
+
+                    {/* Drag Handle - 並び替え用（depth === 0 のみ） */}
+                    {depth === 0 && dragHandleProps && (
+                        <div
+                            {...dragHandleProps}
+                            className="cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-muted-foreground transition-colors p-1 rounded hover:bg-muted/50"
+                            title="ドラッグして並び替え"
+                        >
+                            <GripVertical className="h-4 w-4" />
+                        </div>
+                    )}
+
+                    {/* Calendar Drag Handle - カレンダーにドラッグ用 */}
+                    <div
+                        draggable
+                        onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', task.id)
+                            e.dataTransfer.effectAllowed = 'copy'
+
+                            // カスタムドラッグゴーストを作成
+                            const ghost = document.createElement('div')
+                            ghost.className = 'px-3 py-2 bg-primary text-primary-foreground text-xs rounded shadow-lg border border-primary/20 flex items-center gap-2 pointer-events-none'
+                            ghost.innerHTML = `
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                                </svg>
+                                <span class="font-medium">${task.title || 'タスク'}</span>
+                            `
+                            document.body.appendChild(ghost)
+                            e.dataTransfer.setDragImage(ghost, 20, 20)
+                            setTimeout(() => ghost.remove(), 0)
+                        }}
+                        className="cursor-grab active:cursor-grabbing text-blue-500/30 hover:text-blue-500 transition-colors p-1 rounded hover:bg-blue-500/10"
+                        title="カレンダーにドラッグしてスケジュール"
+                    >
+                        <CalendarIcon className="h-4 w-4" />
+                    </div>
                     </div>
                 </div>
             </div>
@@ -583,6 +613,18 @@ export function CenterPane({
 
     // Group Collapse State
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+
+    // Onboarding tooltip state - localStorageに保存
+    const [showDragHint, setShowDragHint] = useState(() => {
+        if (typeof window === 'undefined') return true
+        const dismissed = localStorage.getItem('drag-hint-dismissed')
+        return !dismissed
+    })
+
+    const handleDismissHint = useCallback(() => {
+        setShowDragHint(false)
+        localStorage.setItem('drag-hint-dismissed', 'true')
+    }, [])
 
     const toggleGroup = (groupId: string) => {
         setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }))
@@ -715,6 +757,22 @@ export function CenterPane({
                 <div className="px-4 py-2 border-b flex justify-between items-center bg-card">
                     <h2 className="font-semibold text-sm">タスク</h2>
                 </div>
+
+                {/* オンボーディングツールチップ - 初回ユーザー向け */}
+                {showDragHint && (
+                    <div className="mx-2 mt-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg flex items-start gap-2">
+                        <CalendarIcon className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                        <div className="flex-1 text-xs text-blue-700 dark:text-blue-300">
+                            <span className="font-semibold">ヒント:</span> タスクをカレンダーにドラッグしてスケジュール設定
+                            <button
+                                onClick={handleDismissHint}
+                                className="ml-2 text-blue-500 hover:text-blue-700 underline"
+                            >
+                                閉じる
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 <DragDropContext onDragEnd={handleDragEnd}>
                     <ScrollArea className="flex-1 h-full overflow-y-auto">

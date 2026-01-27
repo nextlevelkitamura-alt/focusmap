@@ -9,15 +9,27 @@ import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { CalendarSettings } from "./calendar-settings"
 import { CalendarSelector } from "@/components/calendar/calendar-selector"
-import { CalendarWeekView } from "@/components/calendar/calendar-week-view"
+import { CalendarView } from "@/components/calendar/calendar-view"
+import { CalendarToast, useCalendarToast } from "@/components/calendar/calendar-toast"
 
 export function RightSidebar() {
     const [isAiPanelOpen, setIsAiPanelOpen] = useState(false) // デフォルト閉じる
     const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([])
+    const { toast, showToast, hideToast } = useCalendarToast()
 
     // タスクがカレンダーにドロップされた時の処理
     const handleTaskDrop = useCallback(async (taskId: string, dateTime: Date) => {
         console.log('[RightSidebar] Task dropped on calendar:', { taskId, dateTime })
+
+        // taskIdの検証
+        if (!taskId || typeof taskId !== 'string' || taskId.length < 10) {
+            showToast('error', '無効なタスクIDです。もう一度お試しください。')
+            console.error('[RightSidebar] Invalid taskId:', taskId)
+            return
+        }
+
+        // ローディング状態を表示
+        showToast('info', 'スケジュール設定中...')
 
         try {
             // カレンダーに同期
@@ -30,32 +42,52 @@ export function RightSidebar() {
                 })
             })
 
+            const errorData = await response.json().catch(() => ({ error: '不明なエラー' }))
+
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}))
-                throw new Error(errorData.error || 'Failed to sync task to calendar')
+                // HTTPステータスコードに応じたユーザーフレンドリーなエラーメッセージ
+                const errorMessages: Record<number, string> = {
+                    400: errorData.error || 'カレンダー同期が無効です。設定で有効にしてください。',
+                    401: '認証が必要です。ページを更新してください。',
+                    404: 'タスクが見つかりません。削除された可能性があります。',
+                    500: 'サーバーエラーです。後でもう一度お試しください。'
+                }
+
+                throw new Error(errorMessages[response.status] || errorData.error || 'カレンダーへの追加に失敗しました')
             }
 
             const data = await response.json()
 
             // 成功フィードバック
             const timeStr = dateTime.toLocaleString('ja-JP', {
-                month: 'short',
+                month: 'numeric',
                 day: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit'
             })
-            alert(`✅ カレンダーに追加しました\n${timeStr} に予定を追加しました`)
-
-            // ページをリロードして最新のタスク状態を反映
-            window.location.reload()
+            showToast('success', `${timeStr}にスケジュール設定しました`)
 
         } catch (error) {
             console.error('Failed to sync task:', error)
-            alert(`❌ エラー\nカレンダーへの追加に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`)
+
+            // ユーザーフレンドリーなエラーメッセージ
+            let errorMessage = 'カレンダーへの追加に失敗しました'
+            if (error instanceof Error) {
+                if (error.message.includes('sync is not enabled')) {
+                    errorMessage = 'カレンダー同期が無効です。設定で有効にしてください。'
+                } else if (error.message.includes('network') || error.message.includes('fetch')) {
+                    errorMessage = 'ネットワークエラーです。接続を確認してください。'
+                } else {
+                    errorMessage = error.message
+                }
+            }
+
+            showToast('error', errorMessage)
         }
-    }, [])
+    }, [showToast])
 
     return (
+        <>
         <div className="h-full flex flex-col bg-card border-l relative">
             {/* 1. Google Calendar Section */}
             <div className={`flex flex-col border-b transition-all duration-300 ${isAiPanelOpen ? 'h-[70%]' : 'h-full'}`}>
@@ -76,7 +108,7 @@ export function RightSidebar() {
 
                 {/* Calendar Grid - Expanded */}
                 <div className="flex-1 p-2 bg-muted/5 relative overflow-hidden">
-                    <CalendarWeekView onTaskDrop={handleTaskDrop} />
+                    <CalendarView onTaskDrop={handleTaskDrop} />
                 </div>
             </div>
 
@@ -135,5 +167,15 @@ export function RightSidebar() {
                 )}
             </div>
         </div>
+
+        {/* Toast Notification */}
+        {toast && (
+            <CalendarToast
+                type={toast.type}
+                message={toast.message}
+                onClose={hideToast}
+            />
+        )}
+    </>
     )
 }

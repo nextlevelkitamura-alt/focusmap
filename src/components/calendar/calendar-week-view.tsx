@@ -1,76 +1,123 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useRef } from "react"
 import { cn } from "@/lib/utils"
+import { startOfWeek, endOfWeek, eachDayOfInterval } from "date-fns"
+import { useDrag } from "@/contexts/DragContext"
+import { Calendar as CalendarIcon } from "lucide-react"
 
 interface CalendarWeekViewProps {
+  currentDate: Date
   onTaskDrop?: (taskId: string, dateTime: Date) => void
 }
 
-export function CalendarWeekView({ onTaskDrop }: CalendarWeekViewProps) {
+export function CalendarWeekView({ currentDate, onTaskDrop }: CalendarWeekViewProps) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const { dragState } = useDrag()
+  const isDragging = dragState.isDragging
 
-  // 今週の日付を取得（月曜始まり）
+  // 指定された週の日付を取得（月曜始まり、月〜金のみ）
   const getWeekDates = () => {
-    const today = new Date()
-    const day = today.getDay()
-    const diff = today.getDate() - day + (day === 0 ? -6 : 1) // 月曜を週の始まりに
-    const monday = new Date(today.setDate(diff))
-
-    return Array.from({ length: 5 }, (_, i) => {
-      const date = new Date(monday)
-      date.setDate(monday.getDate() + i)
-      return date
-    })
+    const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+    const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
+    const allDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
+    return allDays.slice(0, 5)
   }
 
   const weekDates = getWeekDates()
   const hours = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 
   // ドラッグオーバー処理
-  const handleDragOver = useCallback((e: React.DragEvent, cellId: string) => {
+  const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
-    setDragOverCell(cellId)
+
+    // ドロップ位置からセルを特定
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    const cellWidth = rect.width / 5
+    const cellHeight = rect.height / 10
+
+    const dayIndex = Math.floor(x / cellWidth)
+    const hourIndex = Math.floor(y / cellHeight)
+
+    if (dayIndex >= 0 && dayIndex < 5 && hourIndex >= 0 && hourIndex < 10) {
+      setDragOverCell(`${dayIndex}-${hourIndex}`)
+    }
   }, [])
 
-  const handleDragLeave = useCallback(() => {
-    setDragOverCell(null)
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // コンテナから完全に離れた場合のみクリア
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const x = e.clientX
+    const y = e.clientY
+
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+      setDragOverCell(null)
+    }
   }, [])
 
   // ドロップ処理
-  const handleDrop = useCallback((e: React.DragEvent, dateIndex: number, hour: number) => {
+  const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     setDragOverCell(null)
 
     // ドラッグされたタスクIDを取得
     const taskId = e.dataTransfer.getData('text/plain')
-    if (!taskId) return
+    console.log('[CalendarWeekView] Drop - taskId:', taskId)
 
-    // ドロップされた日時を計算
-    const targetDate = new Date(weekDates[dateIndex])
-    targetDate.setHours(hour, 0, 0, 0)
+    if (!taskId) {
+      console.log('[CalendarWeekView] No taskId found')
+      return
+    }
 
-    console.log('[CalendarWeekView] Task dropped:', { taskId, dateTime: targetDate })
+    // ドロップ位置から日時を計算
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
 
-    // コールバック実行
-    onTaskDrop?.(taskId, targetDate)
-  }, [weekDates, onTaskDrop])
+    const cellWidth = rect.width / 5
+    const cellHeight = rect.height / 10
+
+    const dayIndex = Math.floor(x / cellWidth)
+    const hourIndex = Math.floor(y / cellHeight)
+
+    if (dayIndex >= 0 && dayIndex < 5 && hourIndex >= 0 && hourIndex < 10) {
+      const hour = hours[hourIndex]
+      const targetDate = new Date(weekDates[dayIndex])
+      targetDate.setHours(hour, 0, 0, 0)
+
+      console.log('[CalendarWeekView] Task dropped:', { taskId, dateTime: targetDate })
+
+      onTaskDrop?.(taskId, targetDate)
+    }
+  }, [weekDates, hours, onTaskDrop])
 
   const formatDate = (date: Date) => {
     const days = ['日', '月', '火', '水', '木', '金', '土']
     return {
       day: days[date.getDay()],
-      date: date.getDate()
+      date: date.getDate(),
+      month: date.getMonth() + 1
     }
   }
 
   return (
-    <div className="w-full h-full grid grid-cols-5 grid-rows-[auto_1fr] bg-background border rounded overflow-hidden">
-      {/* Days Header - Improved */}
-      <div className="col-span-5 grid grid-cols-5 border-b bg-gradient-to-b from-muted/10 to-transparent">
+    <div
+      ref={containerRef}
+      className="w-full h-full grid grid-cols-5 grid-rows-[auto_1fr] bg-background"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Days Header - 月日を表示 */}
+      <div className="col-span-5 grid grid-cols-5 border-b bg-gradient-to-b from-muted/10 to-transparent pointer-events-none">
         {weekDates.map((date, i) => {
-          const { day, date: dateNum } = formatDate(date)
+          const { day, date: dateNum, month } = formatDate(date)
           const isToday = new Date().toDateString() === date.toDateString()
           return (
             <div
@@ -84,18 +131,18 @@ export function CalendarWeekView({ onTaskDrop }: CalendarWeekViewProps) {
                 {day}
               </div>
               <div className={cn(
-                "text-2xl font-bold mt-1",
+                "text-xl font-bold mt-1",
                 isToday ? "text-primary" : "text-foreground"
               )}>
-                {dateNum}
+                {month}/{dateNum}
               </div>
             </div>
           )
         })}
       </div>
 
-      {/* Time Grid - Improved */}
-      <div className="col-span-5 relative grid grid-rows-10 divide-y divide-border/30">
+      {/* Time Grid - Drop Zone */}
+      <div className="col-span-5 relative grid grid-rows-10 divide-y divide-border/30 pointer-events-none">
         {hours.map((hour, hourIndex) => (
           <div key={hour} className="relative h-full">
             {/* Time Label */}
@@ -105,7 +152,7 @@ export function CalendarWeekView({ onTaskDrop }: CalendarWeekViewProps) {
 
             {/* Drop Zones with Enhanced Feedback */}
             <div className="absolute inset-0 grid grid-cols-5 gap-px">
-              {weekDates.map((_, dayIndex) => {
+              {weekDates.map((date, dayIndex) => {
                 const cellId = `${dayIndex}-${hourIndex}`
                 const isHighlighted = dragOverCell === cellId
 
@@ -113,14 +160,26 @@ export function CalendarWeekView({ onTaskDrop }: CalendarWeekViewProps) {
                   <div
                     key={cellId}
                     className={cn(
-                      "transition-all duration-200 border-r border-border/20",
-                      "hover:bg-primary/5",
-                      isHighlighted && "bg-primary/15 shadow-inner border-primary/50"
+                      "w-full h-full transition-all duration-200 border-r border-border/20 relative",
+                      // ドラッグ中は全体的に薄くハイライト
+                      isDragging && "bg-primary/5",
+                      // ホバー中のセルは強調
+                      isHighlighted && "bg-primary/15 shadow-inner border-primary/50 scale-[1.02] z-10"
                     )}
-                    onDragOver={(e) => handleDragOver(e, cellId)}
-                    onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, dayIndex, hour)}
-                  />
+                  >
+                    {/* ドロップヒント - ホバー中に表示 */}
+                    {isHighlighted && (
+                      <div className="absolute inset-0 flex items-center justify-center animate-in zoom-in duration-200">
+                        <div className="flex flex-col items-center gap-1 bg-primary text-primary-foreground text-[10px] px-2 py-1.5 rounded-lg shadow-lg">
+                          <CalendarIcon className="w-3 h-3" />
+                          <span className="font-medium">ここにドロップ</span>
+                          <span className="text-[9px] opacity-80">
+                            {hour > 12 ? hour - 12 : hour}{hour >= 12 ? 'PM' : 'AM'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>

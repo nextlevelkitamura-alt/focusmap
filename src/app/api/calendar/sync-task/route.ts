@@ -5,7 +5,7 @@ import { syncTaskToCalendar } from '@/lib/google-calendar';
 /**
  * タスクをGoogleカレンダーに同期
  * POST /api/calendar/sync-task
- * Body: { taskId: string }
+ * Body: { taskId: string, scheduledAt: string, estimatedTime?: number }
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -18,10 +18,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { taskId } = await request.json();
+    const { taskId, scheduledAt, estimatedTime } = await request.json();
+
+    console.log('[sync-task] Request:', { taskId, scheduledAt, estimatedTime });
 
     if (!taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
+    }
+
+    if (!scheduledAt) {
+      return NextResponse.json({ error: 'scheduledAt is required' }, { status: 400 });
     }
 
     // タスクを取得
@@ -32,16 +38,44 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .single();
 
+    console.log('[sync-task] Task found:', task ? task.id : 'null', 'Error:', taskError);
+
     if (taskError || !task) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+      return NextResponse.json({
+        error: 'Task not found',
+        details: taskError?.message
+      }, { status: 404 });
     }
 
-    // scheduled_at と estimated_time が必要
-    if (!task.scheduled_at || !task.estimated_time) {
-      return NextResponse.json(
-        { error: 'Task must have scheduled_at and estimated_time' },
-        { status: 400 }
-      );
+    // カレンダーへのドロップ時は1分間のイベントを作成
+    // estimated_time が指定されていない場合、または既存のタスクに時間がない場合は1分を使用
+    const finalEstimatedTime = estimatedTime || (!task.estimated_time ? 1 : task.estimated_time);
+
+    // タスクの scheduled_at と estimated_time を更新
+    const { error: updateError } = await supabase
+      .from('tasks')
+      .update({
+        scheduled_at: scheduledAt,
+        estimated_time: finalEstimatedTime,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', taskId)
+      .eq('user_id', user.id);
+
+    if (updateError) {
+      console.error('[sync-task] Update error:', updateError);
+      return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
+    }
+
+    // 更新されたタスクを再取得
+    const { data: updatedTask } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('id', taskId)
+      .single();
+
+    if (!updatedTask) {
+      return NextResponse.json({ error: 'Failed to fetch updated task' }, { status: 500 });
     }
 
     // カレンダー連携が有効か確認

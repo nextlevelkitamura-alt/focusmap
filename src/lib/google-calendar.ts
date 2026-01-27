@@ -80,6 +80,13 @@ export function taskToCalendarEvent(task: {
       dateTime: endDate.toISOString(),
       timeZone: 'Asia/Tokyo',
     },
+    // 通知設定（15分前にポップアップ）
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: 'popup', minutes: 15 }
+      ]
+    },
   };
 }
 

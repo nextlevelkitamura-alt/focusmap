@@ -7,6 +7,7 @@ import { RightSidebar } from "@/components/dashboard/right-sidebar"
 import { Database } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
 import { TimerProvider } from "@/contexts/TimerContext"
+import { DragProvider } from "@/contexts/DragContext"
 type Goal = Database['public']['Tables']['goals']['Row']
 type Project = Database['public']['Tables']['projects']['Row']
 type TaskGroup = Database['public']['Tables']['task_groups']['Row']
@@ -167,8 +168,9 @@ export function DashboardClient({
     }, [])
 
     return (
-        <TimerProvider tasks={currentTasks} onUpdateTask={updateTask}>
-            <div className="flex h-full w-full">
+        <DragProvider>
+            <TimerProvider tasks={currentTasks} onUpdateTask={updateTask}>
+                <div className="flex h-full w-full">
                 {/* Pane 1: Left Sidebar */}
                 <div
                     className="hidden md:flex flex-none overflow-hidden h-full"
@@ -226,7 +228,8 @@ export function DashboardClient({
                     <RightSidebar />
                 </div>
             </div>
-        </TimerProvider>
+            </TimerProvider>
+        </DragProvider>
     )
 }
 
