@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react"
 import { cn } from "@/lib/utils"
-import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay } from "date-fns"
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, isToday } from "date-fns"
 import { ja } from "date-fns/locale"
 import { useDrag } from "@/contexts/DragContext"
 import { Calendar as CalendarIcon } from "lucide-react"
@@ -24,7 +24,7 @@ export function CalendarMonthView({
   const { dragState } = useDrag()
   const isDragging = dragState.isDragging
 
-  // 特定の日のイベントを取得
+  // Specific events for day
   const getEventsForDay = (date: Date) => {
     return events.filter(event => {
       const eventStart = new Date(event.start_time)
@@ -32,7 +32,7 @@ export function CalendarMonthView({
     })
   }
 
-  // 月のカレンダー日付を生成（月曜始まり）
+  // Generate month days (Mon start)
   const getMonthDays = () => {
     const monthStart = startOfMonth(currentDate)
     const monthEnd = endOfMonth(currentDate)
@@ -45,33 +45,29 @@ export function CalendarMonthView({
   const monthDays = getMonthDays()
   const weekDays = ['月', '火', '水', '木', '金', '土', '日']
 
-  // ドラッグオーバー処理
+  // Drag Handlers
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
 
-    // ドロップ位置から日付を特定
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
     const cellWidth = rect.width / 7
-    const cellHeight = rect.height / 6
+    const cellHeight = rect.height / (monthDays.length / 7) // dynamic rows
 
     const col = Math.floor(x / cellWidth)
     const row = Math.floor(y / cellHeight)
 
-    if (col >= 0 && col < 7 && row >= 0 && row < 6) {
-      const index = row * 7 + col
-      if (index < monthDays.length) {
-        const dayStr = format(monthDays[index], 'yyyy-MM-dd')
-        setDragOverDay(dayStr)
-      }
+    const index = row * 7 + col
+    if (index >= 0 && index < monthDays.length) {
+      const dayStr = format(monthDays[index], 'yyyy-MM-dd')
+      setDragOverDay(dayStr)
     }
   }, [monthDays])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // コンテナから完全に離れた場合のみクリア
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = e.clientX
     const y = e.clientY
@@ -81,133 +77,117 @@ export function CalendarMonthView({
     }
   }, [])
 
-  // ドロップ処理
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setDragOverDay(null)
 
     const taskId = e.dataTransfer.getData('text/plain')
-    console.log('[CalendarMonthView] Drop - taskId:', taskId)
+    if (!taskId) return
 
-    if (!taskId) {
-      console.log('[CalendarMonthView] No taskId found')
-      return
-    }
-
-    // ドロップ位置から日付を計算
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
     const cellWidth = rect.width / 7
-    const cellHeight = rect.height / 6
+    const cellHeight = rect.height / (monthDays.length / 7)
 
     const col = Math.floor(x / cellWidth)
     const row = Math.floor(y / cellHeight)
 
-    if (col >= 0 && col < 7 && row >= 0 && row < 6) {
-      const index = row * 7 + col
-      if (index < monthDays.length) {
-        const targetDate = new Date(monthDays[index])
-        targetDate.setHours(9, 0, 0, 0)
-
-        console.log('[CalendarMonthView] Task dropped:', { taskId, dateTime: targetDate })
-
-        onTaskDrop?.(taskId, targetDate)
-      }
+    const index = row * 7 + col
+    if (index >= 0 && index < monthDays.length) {
+      const targetDate = new Date(monthDays[index])
+      targetDate.setHours(9, 0, 0, 0)
+      onTaskDrop?.(taskId, targetDate)
     }
   }, [monthDays, onTaskDrop])
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
+    <div className="flex-1 flex flex-col bg-background h-full">
       {/* Weekday Headers */}
-      <div className="grid grid-cols-7 border-b bg-muted/30 pointer-events-none">
+      <div className="grid grid-cols-7 border-b bg-background pointer-events-none">
         {weekDays.map((day) => (
           <div
             key={day}
-            className="py-1.5 text-center text-xs font-semibold text-muted-foreground"
+            className="py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase"
           >
             {day}
           </div>
         ))}
       </div>
 
-      {/* Month Grid - Drop Zone */}
+      {/* Month Grid */}
       <div
         ref={gridRef}
-        className="flex-1 grid grid-cols-7 grid-rows-6"
+        className="flex-1 grid grid-cols-7 grid-rows-6" // Fixed 6 rows for consistency
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {monthDays.map((date) => {
+        {monthDays.map((date, index) => {
+          // If we have fewer than 6 weeks (e.g. 5), the last row(s) might be empty or next month.
+          // Since we map all days, grid-rows-6 might leave space if we only have 35 days.
+          // But usually we just fill.
+
           const dayStr = format(date, 'yyyy-MM-dd')
           const isCurrentMonth = isSameMonth(date, currentDate)
-          const isToday = isSameDay(date, new Date())
+          const isTodayDate = isToday(date)
           const isHighlighted = dragOverDay === dayStr
           const dayEvents = getEventsForDay(date)
-          const maxDisplayEvents = 3
+          const maxDisplayEvents = 4 // Increased from 3
 
           return (
             <div
               key={dayStr}
               className={cn(
-                "relative p-1 border-b border-r border-border/10 transition-all duration-200 flex flex-col min-h-[80px]",
-                !isCurrentMonth && "bg-muted/10 text-muted-foreground",
-                // ドラッグ中は全体的に薄くハイライト
-                isDragging && isCurrentMonth && "bg-primary/5",
-                // ホバー中のセルは強調
-                isHighlighted && "bg-primary/10 ring-2 ring-primary ring-inset shadow-sm z-10",
-                isToday && "bg-primary/5",
-                "pointer-events-auto"
+                "relative p-1 border-b border-r border-border/10 transition-all duration-200 flex flex-col min-h-0",
+                !isCurrentMonth && "bg-muted/5 text-muted-foreground",
+                // Highlight drop target
+                isHighlighted && "bg-primary/10 ring-2 ring-primary ring-inset z-10",
+                "pointer-events-auto hover:bg-muted/5"
               )}
             >
               {/* Day Number */}
               <div className="flex justify-center mb-1">
                 <span className={cn(
-                  "text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full",
-                  isToday ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground/80"
+                  "text-[12px] font-medium w-6 h-6 flex items-center justify-center rounded-full",
+                  isTodayDate
+                    ? "bg-primary text-primary-foreground shadow-sm font-bold"
+                    : "text-foreground/80 hover:bg-muted"
                 )}>
-                  {format(date, 'd')}
+                  {date.getDate() === 1 ? format(date, 'M月d日', { locale: ja }) : format(date, 'd')}
                 </span>
               </div>
 
-              {/* イベント表示（最大3件） */}
-              {dayEvents.length > 0 && (
-                <div className="flex flex-col gap-1 flex-1 overflow-hidden">
-                  {dayEvents.slice(0, maxDisplayEvents).map((event) => (
-                    <button
-                      key={event.id}
-                      onClick={() => onEventClick?.(event.id)}
-                      className="text-left text-[10px] px-1.5 py-0.5 rounded-sm truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent"
-                      style={{
-                        backgroundColor: event.background_color || '#E3F2FD',
-                        color: event.color || '#1976D2',
-                        borderColor: event.color ? `${event.color}30` : 'transparent'
-                      }}
-                      title={event.title}
-                    >
-                      {event.title}
-                    </button>
-                  ))}
-                  {dayEvents.length > maxDisplayEvents && (
-                    <span className="text-[9px] text-muted-foreground pl-1 font-medium">
-                      +{dayEvents.length - maxDisplayEvents} more
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Enhanced Drop indicator */}
-              {isHighlighted && (
-                <div className="absolute inset-1 flex flex-col items-center justify-center animate-in zoom-in duration-200 bg-primary/10 backdrop-blur-[1px] rounded-sm">
-                  <div className="flex flex-col items-center gap-1 bg-primary text-primary-foreground text-[10px] px-2 py-1.5 rounded-lg shadow-lg">
-                    <CalendarIcon className="w-3.5 h-3.5" />
-                    <span className="font-medium whitespace-nowrap">Schedule Here</span>
-                  </div>
-                </div>
-              )}
+              {/* Events List */}
+              <div className="flex flex-col gap-0.5 flex-1 overflow-hidden">
+                {dayEvents.slice(0, maxDisplayEvents).map((event) => (
+                  <button
+                    key={event.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEventClick?.(event.id);
+                    }}
+                    className="text-left text-[10px] px-1.5 py-0.5 rounded-[3px] truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent leading-tight font-medium"
+                    style={{
+                      // Google Calendar uses background color for the event bar
+                      backgroundColor: event.background_color || '#039BE5',
+                      color: '#fff', // Typically white text on colored bg for month view "chips"
+                      // Use simpler styling without borders for month view chips
+                    }}
+                    title={event.title}
+                  >
+                    {event.is_all_day ? '' : format(new Date(event.start_time), 'HH:mm ')}
+                    {event.title}
+                  </button>
+                ))}
+                {dayEvents.length > maxDisplayEvents && (
+                  <span className="text-[10px] text-foreground/70 pl-1 font-medium hover:underline cursor-pointer">
+                    他 {dayEvents.length - maxDisplayEvents} 件
+                  </span>
+                )}
+              </div>
             </div>
           )
         })}

@@ -6,7 +6,7 @@ import { ja } from "date-fns/locale"
 import { CalendarSelector } from "./calendar-selector"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 
-export type ViewMode = 'week' | 'month'
+export type ViewMode = 'day' | 'week' | 'month'
 
 interface CalendarHeaderProps {
   viewMode: ViewMode
@@ -27,7 +27,9 @@ export function CalendarHeader({
 }: CalendarHeaderProps) {
   // Navigation handlers
   const goToPrevious = () => {
-    if (viewMode === 'week') {
+    if (viewMode === 'day') {
+      onDateChange(new Date(currentDate.setDate(currentDate.getDate() - 1)))
+    } else if (viewMode === 'week') {
       onDateChange(subWeeks(currentDate, 1))
     } else {
       onDateChange(subMonths(currentDate, 1))
@@ -35,7 +37,9 @@ export function CalendarHeader({
   }
 
   const goToNext = () => {
-    if (viewMode === 'week') {
+    if (viewMode === 'day') {
+      onDateChange(new Date(currentDate.setDate(currentDate.getDate() + 1)))
+    } else if (viewMode === 'week') {
       onDateChange(addWeeks(currentDate, 1))
     } else {
       onDateChange(addMonths(currentDate, 1))
@@ -44,6 +48,9 @@ export function CalendarHeader({
 
   // Date range label generation
   const getDateRangeLabel = () => {
+    if (viewMode === 'day') {
+      return format(currentDate, 'yyyy年M月d日 (E)', { locale: ja })
+    }
     if (viewMode === 'week') {
       const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
       const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
@@ -79,6 +86,18 @@ export function CalendarHeader({
 
         <div className="flex items-center gap-1">
           <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border shadow-sm">
+            <button
+              onClick={() => onViewModeChange('day')}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-all",
+                viewMode === 'day'
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              日
+            </button>
+            <div className="w-px h-3 bg-border/50 mx-0.5" />
             <button
               onClick={() => onViewModeChange('week')}
               className={cn(

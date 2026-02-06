@@ -41,52 +41,60 @@ export function CalendarEventCard({
 
   return (
     <div
-      className={`relative rounded-md border-l-4 p-1 transition-all hover:shadow-md cursor-pointer ${className}`}
+      className={`relative rounded-md px-1.5 py-0.5 transition-all hover:brightness-95 cursor-pointer shadow-sm overflow-hidden flex flex-col justify-start ${className}`}
       style={{
         backgroundColor,
-        borderColor: rawTextColor,
+        color: textColor,
+        borderLeft: `3px solid ${rawTextColor}`, // Subtle indicator instead of thick border
+        fontSize: '11px',
+        lineHeight: '1.2',
         cursor: isDraggable ? 'grab' : 'pointer'
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       draggable={isDraggable}
     >
-      {/* イベントタイトルのみ表示（シンプルに） */}
-      <div className="flex items-center justify-between gap-0.5">
-        <h4 className="text-[9px] font-medium line-clamp-3 leading-tight" style={{ color: textColor }}>
+      {/* Time & Title */}
+      <div className="flex flex-wrap gap-x-1 items-baseline min-w-0">
+        {!event.is_all_day && (
+          <span className="font-medium opacity-90 text-[10px] whitespace-nowrap">
+            {format(startTime, 'HH:mm')}
+          </span>
+        )}
+        <h4 className="font-semibold truncate w-full">
           {event.title}
         </h4>
-
-        {/* ホバー時の編集・削除ボタン */}
-        {isHovered && (onEdit || onDelete) && (
-          <div className="flex gap-0.5 flex-shrink-0">
-            {onEdit && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(event.id);
-                }}
-                className="p-0.5 hover:bg-white/60 rounded transition-colors"
-                title="編集"
-              >
-                <Edit2 className="h-2.5 w-2.5" style={{ color: textColor }} />
-              </button>
-            )}
-            {onDelete && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(event.id);
-                }}
-                className="p-0.5 hover:bg-white/60 rounded transition-colors"
-                title="削除"
-              >
-                <Trash2 className="h-2.5 w-2.5" style={{ color: textColor }} />
-              </button>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* ホバー時の編集・削除ボタン */}
+      {isHovered && (onEdit || onDelete) && (
+        <div className="absolute top-0.5 right-0.5 flex gap-0.5 flex-shrink-0 bg-inherit/10 backdrop-blur-[1px] rounded">
+          {onEdit && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(event.id);
+              }}
+              className="p-1 hover:bg-black/10 rounded transition-colors"
+              title="編集"
+            >
+              <Edit2 className="h-3 w-3" style={{ color: textColor }} />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(event.id);
+              }}
+              className="p-1 hover:bg-black/10 rounded transition-colors"
+              title="削除"
+            >
+              <Trash2 className="h-3 w-3" style={{ color: textColor }} />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

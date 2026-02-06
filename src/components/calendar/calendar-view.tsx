@@ -4,6 +4,8 @@ import { useState, useCallback, useMemo } from "react"
 import { CalendarHeader, ViewMode } from "./calendar-header"
 import { CalendarWeekView } from "./calendar-week-view"
 import { CalendarMonthView } from "./calendar-month-view"
+import { CalendarDayView } from "./calendar-day-view"
+import { MiniCalendar } from "./mini-calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths } from "date-fns"
@@ -80,24 +82,45 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
         onVisibleCalendarIdsChange={onSelectionChange}
       />
 
-      {/* View Content */}
-      <div className="flex-1 overflow-hidden relative">
-        {viewMode === 'week' ? (
-          <CalendarWeekView
-            currentDate={currentDate}
-            onTaskDrop={onTaskDrop}
-            events={events}
-            onEventEdit={handleEventEdit}
-            onEventDelete={handleEventDelete}
-          />
-        ) : (
-          <CalendarMonthView
-            currentDate={currentDate}
-            onTaskDrop={onTaskDrop}
-            events={events}
-            onEventClick={handleEventClick}
-          />
-        )}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar (Mini Calendar) - Optional: could be collapsible */}
+        <div className="w-64 border-r bg-muted/5 flex flex-col hidden lg:flex">
+          <div className="p-2">
+            <MiniCalendar
+              currentDate={currentDate}
+              onDateChange={handleDateChange}
+            />
+          </div>
+          {/* Additional sidebar items (e.g. My Calendars list) could go here if moved from header */}
+        </div>
+
+        {/* Main View Content */}
+        <div className="flex-1 overflow-hidden relative">
+          {viewMode === 'day' ? (
+            <CalendarDayView
+              currentDate={currentDate}
+              onTaskDrop={onTaskDrop}
+              events={events}
+              onEventEdit={handleEventEdit}
+              onEventDelete={handleEventDelete}
+            />
+          ) : viewMode === 'week' ? (
+            <CalendarWeekView
+              currentDate={currentDate}
+              onTaskDrop={onTaskDrop}
+              events={events}
+              onEventEdit={handleEventEdit}
+              onEventDelete={handleEventDelete}
+            />
+          ) : (
+            <CalendarMonthView
+              currentDate={currentDate}
+              onTaskDrop={onTaskDrop}
+              events={events}
+              onEventClick={handleEventClick}
+            />
+          )}
+        </div>
       </div>
     </div>
   )
