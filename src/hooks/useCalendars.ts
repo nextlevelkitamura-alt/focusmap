@@ -38,13 +38,27 @@ export function useCalendars() {
     try {
       const response = await fetch(`/api/calendars${forceSync ? '?forceSync=true' : ''}`);
 
+      const contentType = response.headers.get("content-type");
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch calendars');
+        let errorMessage = 'Failed to fetch calendars';
+        try {
+          if (contentType && contentType.indexOf("application/json") !== -1) {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } else {
+            errorMessage = await response.text();
+          }
+        } catch (e) {
+          // Ignore parsing mismatch
+        }
+        throw new Error(errorMessage);
       }
 
-      const data = await response.json();
-      setCalendars(data.calendars);
+      let data = { calendars: [] };
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        data = await response.json();
+      }
+      setCalendars(data.calendars || []);
 
       // ローカルストレージにも保存
       try {

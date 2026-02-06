@@ -33,14 +33,30 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
       const response = await fetch(`/api/calendar/events/list?${params}`);
 
+      const contentType = response.headers.get("content-type");
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Failed to fetch events');
+        let errorMessage = 'Failed to fetch events';
+        try {
+          if (contentType && contentType.indexOf("application/json") !== -1) {
+            const errorData = await response.json();
+            errorMessage = errorData.error?.message || errorMessage;
+          } else {
+            errorMessage = await response.text();
+          }
+        } catch (e) {
+          // Ignore parsing errors
+        }
+        throw new Error(errorMessage);
       }
 
-      const data = await response.json();
-      setEvents(data.events || []);
-      setLastSyncedAt(new Date(data.syncedAt));
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await response.json();
+        setEvents(data.events || []);
+        setLastSyncedAt(new Date(data.syncedAt));
+      } else {
+        // Fallback or empty
+        setEvents([]);
+      }
     } catch (err) {
       setError(err as Error);
       console.error('Failed to fetch calendar events:', err);
