@@ -41,13 +41,12 @@ export function CalendarEventCard({
 
   return (
     <div
-      className={`relative rounded-md px-1.5 py-0.5 transition-all hover:brightness-95 cursor-pointer shadow-sm overflow-hidden flex flex-col justify-start ${className}`}
+      className={`relative rounded-md px-2 py-1 transition-all hover:brightness-95 cursor-pointer shadow-sm overflow-hidden flex flex-col justify-start leading-tight ${className}`}
       style={{
         backgroundColor,
         color: textColor,
-        borderLeft: `3px solid ${rawTextColor}`, // Subtle indicator instead of thick border
-        fontSize: '11px',
-        lineHeight: '1.2',
+        fontSize: '12px',
+        fontWeight: 500,
         cursor: isDraggable ? 'grab' : 'pointer'
       }}
       onMouseEnter={() => setIsHovered(true)}
@@ -55,9 +54,9 @@ export function CalendarEventCard({
       draggable={isDraggable}
     >
       {/* Time & Title */}
-      <div className="flex flex-wrap gap-x-1 items-baseline min-w-0">
+      <div className="flex flex-col min-w-0">
         {!event.is_all_day && (
-          <span className="font-medium opacity-90 text-[10px] whitespace-nowrap">
+          <span className="font-normal opacity-85 text-[10px] mb-0.5 whitespace-nowrap">
             {format(startTime, 'HH:mm')}
           </span>
         )}

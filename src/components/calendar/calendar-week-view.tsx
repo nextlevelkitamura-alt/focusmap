@@ -239,13 +239,13 @@ export function CalendarWeekView({
           >
             {/* Horizontal Grid Lines */}
             {hours.map((hour) => (
-              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/10" style={{ top: `${hour * 64}px` }} />
+              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/5" style={{ top: `${hour * 64}px` }} />
             ))}
 
             {/* Vertical Day Lines */}
             <div className="absolute inset-0 grid grid-cols-7 h-full pointer-events-none">
               {Array.from({ length: 7 }).map((_, col) => (
-                <div key={`col-${col}`} className="border-r border-border/10 h-full w-full" />
+                <div key={`col-${col}`} className="border-r border-border/5 h-full w-full" />
               ))}
             </div>
 
@@ -258,11 +258,14 @@ export function CalendarWeekView({
                     className="absolute z-30 flex items-center pointer-events-none"
                     style={{
                       top: `${getCurrentTimePosition()}%`,
-                      left: `${(index) * (100 / 7)}%`,
-                      width: `${100 / 7}%`
+                      left: 0,
+                      width: '100%'
                     }}
                   >
-                    <div className="w-3 h-3 rounded-full bg-red-500 -ml-1.5 border-2 border-background" />
+                    <div
+                      className="absolute w-2.5 h-2.5 rounded-full bg-red-500 z-40"
+                      style={{ left: '-5px' }} // Position exactly on the axis
+                    />
                     <div className="h-[2px] bg-red-500 w-full opacity-60" />
                   </div>
                 )

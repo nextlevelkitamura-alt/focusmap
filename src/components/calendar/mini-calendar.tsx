@@ -36,29 +36,29 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
                 showOutsideDays
                 classNames={{
                     months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
-                    month: "space-y-4",
-                    caption: "flex justify-between pt-1 relative items-center px-2", // Align with header
-                    caption_label: "text-sm font-medium",
+                    month: "space-y-4 w-full",
+                    caption: "flex justify-between pt-1 relative items-center px-1", // Reduced px
+                    caption_label: "text-xs font-medium",
                     nav: "space-x-1 flex items-center",
                     nav_button: cn(
-                        "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100 transition-opacity rounded-full hover:bg-muted flex items-center justify-center"
+                        "h-6 w-6 bg-transparent p-0 opacity-50 hover:opacity-100 transition-opacity rounded-full hover:bg-muted flex items-center justify-center"
                     ),
                     nav_button_previous: "",
                     nav_button_next: "",
-                    table: "w-full border-collapse space-y-1",
-                    head_row: "flex w-full mt-2",
-                    head_cell: "text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] flex justify-center", // Adjust width
-                    row: "flex w-full mt-1",
-                    cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-transparent", // Remove default accent bg
+                    table: "w-full border-collapse space-y-1 mx-auto", // Center it
+                    head_row: "flex",
+                    head_cell: "text-muted-foreground rounded-md w-8 font-normal text-[0.7rem] flex justify-center items-center", // Smaller font
+                    row: "flex w-full mt-2",
+                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-transparent",
                     day: cn(
-                        "h-7 w-7 p-0 font-normal aria-selected:opacity-100 rounded-full hover:bg-muted flex items-center justify-center transition-colors text-xs" // Circle shape
+                        "h-8 w-8 p-0 font-normal aria-selected:opacity-100 rounded-full hover:bg-muted flex items-center justify-center transition-colors text-xs" // Slightly larger hit area but small text
                     ),
                     day_range_end: "day-range-end",
                     day_selected:
-                        "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground", // Custom selected style
-                    day_today: "bg-accent text-accent-foreground",
-                    day_outside: "text-muted-foreground opacity-50",
-                    day_disabled: "text-muted-foreground opacity-50",
+                        "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
+                    day_today: "bg-transparent text-primary font-bold border border-primary", // Google style: blue text, maybe circle if selected
+                    day_outside: "text-muted-foreground opacity-30",
+                    day_disabled: "text-muted-foreground opacity-30",
                     day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
                     day_hidden: "invisible",
                 }}
