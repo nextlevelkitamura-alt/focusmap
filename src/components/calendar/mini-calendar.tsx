@@ -25,7 +25,23 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
     }, [currentDate])
 
     return (
-        <div className={cn("p-3", className)}>
+        <div className={cn("p-4", className)}>
+            <style jsx global>{`
+              .rdp {
+                margin: 0;
+              }
+              .rdp-month {
+                width: 100%;
+              }
+              .rdp-table {
+                width: 100%;
+                max-width: 100%;
+              }
+              .rdp-caption {
+                position: relative;
+                padding-bottom: 12px;
+              }
+            `}</style>
             <DayPicker
                 mode="single"
                 selected={currentDate}
@@ -34,32 +50,36 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
                 onMonthChange={setMonth}
                 locale={ja}
                 showOutsideDays
+                formatters={{
+                    formatCaption: (date, options) => {
+                        // "2026年2月" style
+                        return `${date.getFullYear()}年${date.getMonth() + 1}月`
+                    }
+                }}
                 classNames={{
-                    months: "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
+                    months: "flex flex-col space-y-4",
                     month: "space-y-4 w-full",
-                    caption: "flex justify-between pt-1 relative items-center px-1", // Reduced px
-                    caption_label: "text-xs font-medium",
-                    nav: "space-x-1 flex items-center",
+                    caption: "flex justify-center pt-1 relative items-center",
+                    caption_label: "text-sm font-bold text-foreground", // Bold year/month
+                    nav: "space-x-1 flex items-center absolute inset-x-0 justify-between px-1", // Spaced out nav
                     nav_button: cn(
-                        "h-6 w-6 bg-transparent p-0 opacity-50 hover:opacity-100 transition-opacity rounded-full hover:bg-muted flex items-center justify-center"
+                        "h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100 transition-opacity rounded-full hover:bg-muted/30 flex items-center justify-center text-foreground"
                     ),
-                    nav_button_previous: "",
-                    nav_button_next: "",
-                    table: "w-full border-collapse space-y-1 mx-auto", // Center it
-                    head_row: "flex",
-                    head_cell: "text-muted-foreground rounded-md w-8 font-normal text-[0.7rem] flex justify-center items-center", // Smaller font
-                    row: "flex w-full mt-2",
-                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-transparent",
+                    nav_button_previous: "z-10",
+                    nav_button_next: "z-10",
+                    table: "w-full border-collapse space-y-1",
+                    head_row: "grid grid-cols-7 mb-2",
+                    head_cell: "text-muted-foreground w-full font-normal text-[0.7rem] flex justify-center items-center py-1",
+                    row: "grid grid-cols-7 w-full mt-1",
+                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20",
                     day: cn(
-                        "h-8 w-8 p-0 font-normal aria-selected:opacity-100 rounded-full hover:bg-muted flex items-center justify-center transition-colors text-xs" // Slightly larger hit area but small text
+                        "h-8 w-8 mx-auto p-0 font-normal rounded-full hover:bg-muted/30 flex items-center justify-center transition-all text-xs text-foreground"
                     ),
-                    day_range_end: "day-range-end",
                     day_selected:
-                        "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-                    day_today: "bg-transparent text-primary font-bold border border-primary", // Google style: blue text, maybe circle if selected
-                    day_outside: "text-muted-foreground opacity-30",
-                    day_disabled: "text-muted-foreground opacity-30",
-                    day_range_middle: "aria-selected:bg-accent aria-selected:text-accent-foreground",
+                        "bg-[#4285F4] text-white hover:bg-[#4285F4] hover:text-white font-medium shadow-md shadow-[#4285F4]/20", // Google Blue
+                    day_today: "text-[#4285F4] font-bold after:content-[''] after:absolute after:bottom-1 after:w-1 after:h-1 after:bg-[#4285F4] after:rounded-full", // Dot indicator for today if not selected
+                    day_outside: "text-muted-foreground/30 opacity-50",
+                    day_disabled: "text-muted-foreground/30 opacity-50",
                     day_hidden: "invisible",
                 }}
             />

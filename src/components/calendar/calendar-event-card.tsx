@@ -41,12 +41,13 @@ export function CalendarEventCard({
 
   return (
     <div
-      className={`relative rounded-md px-2 py-1 transition-all hover:brightness-95 cursor-pointer shadow-sm overflow-hidden flex flex-col justify-start leading-tight ${className}`}
+      className={`relative rounded-md px-2 py-1 transition-all hover:brightness-110 cursor-pointer overflow-hidden flex flex-col justify-start leading-tight group ${className}`}
       style={{
         backgroundColor,
         color: textColor,
-        fontSize: '12px',
-        fontWeight: 500,
+        fontSize: '11px',
+        fontWeight: 600,
+        boxShadow: '0 1px 2px rgba(0,0,0,0.2)', // Adding subtle depth
         cursor: isDraggable ? 'grab' : 'pointer'
       }}
       onMouseEnter={() => setIsHovered(true)}

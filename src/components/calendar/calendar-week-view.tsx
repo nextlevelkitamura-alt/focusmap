@@ -178,7 +178,7 @@ export function CalendarWeekView({
       {/* Fixed Header */}
       <div className="flex h-14 flex-shrink-0 border-b bg-background z-20 shadow-sm relative mr-[15px]"> {/* mr to compensate scrollbar if needed, or better use sticky */}
         {/* Time Labels Header (Spacer) */}
-        <div className="flex-shrink-0 w-16 border-r bg-background" />
+        <div className="flex-shrink-0 w-12 bg-transparent" />
 
         {/* Days Header */}
         <div className="flex-1 grid grid-cols-7">
@@ -214,7 +214,7 @@ export function CalendarWeekView({
         {/* Time Labels */}
         <div
           ref={timeLabelsRef}
-          className="flex-shrink-0 w-16 border-r bg-background overflow-hidden relative" // Hidden scroll, syncs with grid
+          className="flex-shrink-0 w-12 bg-transparent overflow-hidden relative" // removed border-r, reduced width slightly
         >
           <div className="relative h-[1536px]">
             {hours.map((hour) => (
@@ -239,13 +239,13 @@ export function CalendarWeekView({
           >
             {/* Horizontal Grid Lines */}
             {hours.map((hour) => (
-              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/5" style={{ top: `${hour * 64}px` }} />
+              <div key={`grid-${hour}`} className="absolute w-full border-t border-white/[0.03]" style={{ top: `${hour * 64}px` }} />
             ))}
 
             {/* Vertical Day Lines */}
             <div className="absolute inset-0 grid grid-cols-7 h-full pointer-events-none">
               {Array.from({ length: 7 }).map((_, col) => (
-                <div key={`col-${col}`} className="border-r border-border/5 h-full w-full" />
+                <div key={`col-${col}`} className="border-r border-white/[0.03] h-full w-full" />
               ))}
             </div>
 

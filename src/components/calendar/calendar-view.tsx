@@ -72,7 +72,7 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
   }, [])
 
   return (
-    <div className="w-full h-full flex flex-col bg-background">
+    <div className="w-full h-full flex flex-col bg-[#121212] text-foreground">
       {/* Header */}
       <CalendarHeader
         viewMode={viewMode}
