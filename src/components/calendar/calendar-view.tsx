@@ -1,5 +1,6 @@
 "use client"
 
+// Force rebuild: 2026-02-07
 import { useState, useCallback, useMemo } from "react"
 import { CalendarHeader, ViewMode } from "./calendar-header"
 import { CalendarWeekView } from "./calendar-week-view"
