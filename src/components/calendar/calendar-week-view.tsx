@@ -1,56 +1,123 @@
-"use client"
-
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { startOfWeek, endOfWeek, eachDayOfInterval } from "date-fns"
+import { isSameDay, getHours, getMinutes } from "date-fns"
 import { useDrag } from "@/contexts/DragContext"
-import { Calendar as CalendarIcon } from "lucide-react"
+import { CalendarEvent } from "@/types/calendar"
+import { CalendarEventCard } from "./calendar-event-card"
 
 interface CalendarWeekViewProps {
   currentDate: Date
   onTaskDrop?: (taskId: string, dateTime: Date) => void
+  events?: CalendarEvent[]
+  onEventEdit?: (eventId: string) => void
+  onEventDelete?: (eventId: string) => void
 }
 
-export function CalendarWeekView({ currentDate, onTaskDrop }: CalendarWeekViewProps) {
+const HOUR_HEIGHT = 64 // h-16 = 64px
+
+export function CalendarWeekView({
+  currentDate,
+  onTaskDrop,
+  events = [],
+  onEventEdit,
+  onEventDelete
+}: CalendarWeekViewProps) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const [currentTime, setCurrentTime] = useState(new Date())
+  const timeLabelsRef = useRef<HTMLDivElement>(null)
+  const calendarGridRef = useRef<HTMLDivElement>(null)
+  const isSyncingRef = useRef(false)
   const { dragState } = useDrag()
   const isDragging = dragState.isDragging
 
-  // 指定された週の日付を取得（月曜始まり、月〜金のみ）
+  // 現在時刻の更新（1分毎）
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // 現在時刻のトップ位置（%）
+  const getCurrentTimePosition = () => {
+    const hours = currentTime.getHours()
+    const minutes = currentTime.getMinutes()
+    return ((hours * 60 + minutes) / (24 * 60)) * 100
+  }
+
+  // 指定された週の日付を取得（今日を中心に前後1日、合計3日）
   const getWeekDates = () => {
-    const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
-    const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
-    const allDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
-    return allDays.slice(0, 5)
+    const today = new Date(currentDate) // currentDateを使用するように変更
+    const yesterday = new Date(today)
+    yesterday.setDate(today.getDate() - 1)
+    const tomorrow = new Date(today)
+    tomorrow.setDate(today.getDate() + 1)
+    return [yesterday, today, tomorrow]
   }
 
   const weekDates = getWeekDates()
-  const hours = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+  // 00:00から23:00までの24時間配列
+  const hours = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+
+  // 初期スクロール位置を9時に設定
+  useEffect(() => {
+    if (calendarGridRef.current) {
+      const scrollPosition = 9 * HOUR_HEIGHT
+      calendarGridRef.current.scrollTop = scrollPosition
+
+      if (timeLabelsRef.current) {
+        timeLabelsRef.current.scrollTop = scrollPosition
+      }
+    }
+  }, [])
+
+  // スクロール同期: カレンダーグリッド → 時間ラベル
+  const handleCalendarGridScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (isSyncingRef.current) return
+
+    isSyncingRef.current = true
+    if (timeLabelsRef.current) {
+      timeLabelsRef.current.scrollTop = e.currentTarget.scrollTop
+    }
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false
+    })
+  }, [])
+
+  // スクロール同期: 時間ラベル → カレンダーグリッド
+  const handleTimeLabelsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (isSyncingRef.current) return
+
+    isSyncingRef.current = true
+    if (calendarGridRef.current) {
+      calendarGridRef.current.scrollTop = e.currentTarget.scrollTop
+    }
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false
+    })
+  }, [])
 
   // ドラッグオーバー処理
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'copy'
 
-    // ドロップ位置からセルを特定
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const scrollTop = calendarGridRef.current?.scrollTop || 0
+
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    const cellWidth = rect.width / 5
-    const cellHeight = rect.height / 10
+    const cellWidth = rect.width / 3
+    const cellHeight = HOUR_HEIGHT
 
     const dayIndex = Math.floor(x / cellWidth)
-    const hourIndex = Math.floor(y / cellHeight)
+    const hourIndex = Math.floor((y + scrollTop) / cellHeight)
 
-    if (dayIndex >= 0 && dayIndex < 5 && hourIndex >= 0 && hourIndex < 10) {
+    if (dayIndex >= 0 && dayIndex < 3 && hourIndex >= 0 && hourIndex < 24) {
       setDragOverCell(`${dayIndex}-${hourIndex}`)
     }
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // コンテナから完全に離れた場合のみクリア
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = e.clientX
     const y = e.clientY
@@ -66,32 +133,26 @@ export function CalendarWeekView({ currentDate, onTaskDrop }: CalendarWeekViewPr
     e.stopPropagation()
     setDragOverCell(null)
 
-    // ドラッグされたタスクIDを取得
     const taskId = e.dataTransfer.getData('text/plain')
-    console.log('[CalendarWeekView] Drop - taskId:', taskId)
 
-    if (!taskId) {
-      console.log('[CalendarWeekView] No taskId found')
-      return
-    }
+    if (!taskId) return
 
-    // ドロップ位置から日時を計算
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const scrollTop = calendarGridRef.current?.scrollTop || 0
+
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    const cellWidth = rect.width / 5
-    const cellHeight = rect.height / 10
+    const cellWidth = rect.width / 3
+    const cellHeight = HOUR_HEIGHT
 
     const dayIndex = Math.floor(x / cellWidth)
-    const hourIndex = Math.floor(y / cellHeight)
+    const hourIndex = Math.floor((y + scrollTop) / cellHeight)
 
-    if (dayIndex >= 0 && dayIndex < 5 && hourIndex >= 0 && hourIndex < 10) {
+    if (dayIndex >= 0 && dayIndex < 3 && hourIndex >= 0 && hourIndex < 24) {
       const hour = hours[hourIndex]
       const targetDate = new Date(weekDates[dayIndex])
       targetDate.setHours(hour, 0, 0, 0)
-
-      console.log('[CalendarWeekView] Task dropped:', { taskId, dateTime: targetDate })
 
       onTaskDrop?.(taskId, targetDate)
     }
@@ -106,85 +167,205 @@ export function CalendarWeekView({ currentDate, onTaskDrop }: CalendarWeekViewPr
     }
   }
 
+  // イベントを日付ごとにグループ化
+  const getEventsForDay = (date: Date) => {
+    return events.filter(event => {
+      const eventStart = new Date(event.start_time)
+      return isSameDay(eventStart, date)
+    })
+  }
+
+  // イベントの位置を計算（0時基準）
+  const getEventPosition = (event: CalendarEvent) => {
+    const startTime = new Date(event.start_time)
+    const endTime = new Date(event.end_time)
+
+    const startHour = getHours(startTime)
+    const startMinute = getMinutes(startTime)
+    const endHour = getHours(endTime)
+    const endMinute = getMinutes(endTime)
+
+    // 0時基準で計算
+    const startOffsetInMinutes = startHour * 60 + startMinute
+    const totalMinutes = 24 * 60
+
+    const startOffset = startOffsetInMinutes / totalMinutes
+    const durationInMinutes = (endHour * 60 + endMinute) - startOffsetInMinutes
+    const duration = Math.max(durationInMinutes / totalMinutes, 0.02)
+
+    return {
+      top: `${startOffset * 100}%`,
+      height: `${duration * 100}%`
+    }
+  }
+
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full grid grid-cols-5 grid-rows-[auto_1fr] bg-background"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      {/* Days Header - 月日を表示 */}
-      <div className="col-span-5 grid grid-cols-5 border-b bg-gradient-to-b from-muted/10 to-transparent pointer-events-none">
-        {weekDates.map((date, i) => {
-          const { day, date: dateNum, month } = formatDate(date)
-          const isToday = new Date().toDateString() === date.toDateString()
-          return (
-            <div
-              key={i}
-              className={cn(
-                "py-3 text-center transition-colors",
-                isToday && "bg-primary/10"
-              )}
-            >
-              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-                {day}
+    <div className="w-full h-full flex flex-col overflow-hidden bg-background">
+      {/* 固定ヘッダー */}
+      <div className="flex h-12 flex-shrink-0 border-b bg-muted/5">
+        {/* Time Labels Header (空のスペース) */}
+        <div className="flex-shrink-0 w-12 border-r bg-muted/20" />
+
+        {/* Days Header */}
+        <div className="flex-1 grid grid-cols-3 pointer-events-none">
+          {weekDates.map((date, i) => {
+            const { day, date: dateNum } = formatDate(date)
+            const isToday = isSameDay(date, currentTime)
+            return (
+              <div
+                key={i}
+                className={cn(
+                  "flex flex-col items-center justify-center transition-colors border-r last:border-r-0",
+                  isToday ? "bg-primary/5" : ""
+                )}
+              >
+                <div className={cn(
+                  "text-[10px] font-medium uppercase tracking-wide",
+                  isToday ? "text-primary" : "text-muted-foreground"
+                )}>
+                  {day}
+                </div>
+                <div className={cn(
+                  "text-sm font-bold leading-none",
+                  isToday ? "text-primary" : "text-foreground"
+                )}>
+                  {dateNum}
+                </div>
               </div>
-              <div className={cn(
-                "text-xl font-bold mt-1",
-                isToday ? "text-primary" : "text-foreground"
-              )}>
-                {month}/{dateNum}
-              </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
 
-      {/* Time Grid - Drop Zone */}
-      <div className="col-span-5 relative grid grid-rows-10 divide-y divide-border/30 pointer-events-none">
-        {hours.map((hour, hourIndex) => (
-          <div key={hour} className="relative h-full">
-            {/* Time Label */}
-            <span className="absolute -left-10 -top-2 text-[10px] text-muted-foreground/70 font-medium w-8 text-right block group-first:hidden">
-              {hour > 12 ? hour - 12 : hour} {hour >= 12 ? 'PM' : 'AM'}
-            </span>
+      {/* スクロール可能なボディエリア */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Time Labels - スクロール可能 (スクロールバー非表示) */}
+        <div
+          ref={timeLabelsRef}
+          className="flex-shrink-0 w-12 border-r bg-background overflow-y-auto no-scrollbar"
+          onScroll={handleTimeLabelsScroll}
+        >
+          <div className="relative h-[1536px]"> {/* 24 * 64px = 1536px */}
+            {hours.map((hour) => (
+              <div key={hour} className="absolute w-full flex justify-end pr-1.5" style={{ top: `${hour * 64}px` }}>
+                <span className="text-[10px] font-medium text-muted-foreground -translate-y-1/2 bg-background px-0.5">
+                  {hour > 0 && `${hour}`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
 
-            {/* Drop Zones with Enhanced Feedback */}
-            <div className="absolute inset-0 grid grid-cols-5 gap-px">
-              {weekDates.map((date, dayIndex) => {
-                const cellId = `${dayIndex}-${hourIndex}`
-                const isHighlighted = dragOverCell === cellId
+        {/* Calendar Grid - スクロール可能 (スクロールバー表示) */}
+        <div
+          ref={calendarGridRef}
+          className="flex-1 overflow-y-auto relative no-scrollbar"
+          onScroll={handleCalendarGridScroll}
+        >
+          <div
+            className="relative h-[1536px]"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Grid Lines */}
+            {hours.map((hour) => (
+              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: `${hour * 64}px` }} />
+            ))}
 
+            {/* Vertical Day Lines */}
+            <div className="absolute inset-0 grid grid-cols-3 h-full pointer-events-none">
+              {[0, 1, 2].map((col) => (
+                <div key={`col-${col}`} className="border-r border-border/20 h-full w-full" />
+              ))}
+            </div>
+
+            {/* Current Time Indicator */}
+            {weekDates.map((date, index) => {
+              if (isSameDay(date, currentTime)) {
                 return (
                   <div
-                    key={cellId}
-                    className={cn(
-                      "w-full h-full transition-all duration-200 border-r border-border/20 relative",
-                      // ドラッグ中は全体的に薄くハイライト
-                      isDragging && "bg-primary/5",
-                      // ホバー中のセルは強調
-                      isHighlighted && "bg-primary/15 shadow-inner border-primary/50 scale-[1.02] z-10"
-                    )}
+                    key="now-indicator"
+                    className="absolute z-30 w-1/3 flex items-center pointer-events-none"
+                    style={{
+                      top: `${getCurrentTimePosition()}%`,
+                      left: `${(index) * 33.333}%`
+                    }}
                   >
-                    {/* ドロップヒント - ホバー中に表示 */}
-                    {isHighlighted && (
-                      <div className="absolute inset-0 flex items-center justify-center animate-in zoom-in duration-200">
-                        <div className="flex flex-col items-center gap-1 bg-primary text-primary-foreground text-[10px] px-2 py-1.5 rounded-lg shadow-lg">
-                          <CalendarIcon className="w-3 h-3" />
-                          <span className="font-medium">ここにドロップ</span>
-                          <span className="text-[9px] opacity-80">
-                            {hour > 12 ? hour - 12 : hour}{hour >= 12 ? 'PM' : 'AM'}
-                          </span>
+                    <div className="w-2 h-2 rounded-full bg-red-500 -ml-1 border border-background shadow-sm" />
+                    <div className="h-px bg-red-500 w-full" />
+                  </div>
+                )
+              }
+              return null
+            })}
+
+            {/* Drop Zones (Invisible but interactive) */}
+            <div className="absolute inset-0 grid grid-cols-3 h-full">
+              {hours.map((hour, hourIndex) => (
+                weekDates.map((date, dayIndex) => {
+                  const cellId = `${dayIndex}-${hourIndex}`
+                  const isHighlighted = dragOverCell === cellId
+                  return (
+                    <div
+                      key={cellId}
+                      className={cn(
+                        "absolute w-1/3 h-16",
+                        isDragging && "z-10",
+                        isHighlighted && "bg-primary/20 transition-colors z-20"
+                      )}
+                      style={{
+                        top: hourIndex * 64,
+                        left: `${dayIndex * 33.333}%`
+                      }}
+                    >
+                      {isHighlighted && (
+                        <div className="w-full h-full flex items-center justify-center p-2">
+                          <div className="bg-primary/90 text-primary-foreground text-xs px-2 py-1 rounded shadow-sm">
+                            {String(hour).padStart(2, '0')}:00
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  )
+                })
+              ))}
+            </div>
+
+            {/* Events Layer */}
+            <div className="absolute inset-0 grid grid-cols-3 pointer-events-none">
+              {weekDates.map((date, dayIndex) => {
+                const dayEvents = getEventsForDay(date)
+                return (
+                  <div key={`events-${dayIndex}`} className="relative h-full">
+                    {dayEvents.map((event) => {
+                      const position = getEventPosition(event)
+                      return (
+                        <div
+                          key={event.id}
+                          className="absolute left-0 right-0 px-0.5 pointer-events-auto"
+                          style={{
+                            top: position.top,
+                            height: position.height,
+                            zIndex: 20
+                          }}
+                        >
+                          <CalendarEventCard
+                            event={event}
+                            onEdit={onEventEdit}
+                            onDelete={onEventDelete}
+                            isDraggable={false}
+                            className="h-full shadow-sm"
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
             </div>
           </div>
-        ))}
+        </div>
       </div>
     </div>
   )

@@ -3,6 +3,8 @@
 import { cn } from "@/lib/utils"
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, startOfMonth, endOfMonth, addMonths, subMonths, isSameWeek } from "date-fns"
 import { ja } from "date-fns/locale"
+import { CalendarSelector } from "./calendar-selector"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 
 export type ViewMode = 'week' | 'month'
 
@@ -12,6 +14,7 @@ interface CalendarHeaderProps {
   onViewModeChange: (mode: ViewMode) => void
   onDateChange: (date: Date) => void
   onToday: () => void
+  onVisibleCalendarIdsChange?: (ids: string[]) => void
 }
 
 export function CalendarHeader({
@@ -19,9 +22,10 @@ export function CalendarHeader({
   currentDate,
   onViewModeChange,
   onDateChange,
-  onToday
+  onToday,
+  onVisibleCalendarIdsChange
 }: CalendarHeaderProps) {
-  // 前へ移動
+  // Navigation handlers
   const goToPrevious = () => {
     if (viewMode === 'week') {
       onDateChange(subWeeks(currentDate, 1))
@@ -30,7 +34,6 @@ export function CalendarHeader({
     }
   }
 
-  // 次へ移動
   const goToNext = () => {
     if (viewMode === 'week') {
       onDateChange(addWeeks(currentDate, 1))
@@ -39,101 +42,104 @@ export function CalendarHeader({
     }
   }
 
-  // 日付範囲のラベルを生成
+  // Date range label generation
   const getDateRangeLabel = () => {
     if (viewMode === 'week') {
       const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
       const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
       const startMonth = format(weekStart, 'M月', { locale: ja })
       const endMonth = format(weekEnd, 'M月', { locale: ja })
+      const startYear = format(weekStart, 'yyyy年', { locale: ja })
+      const endYear = format(weekEnd, 'yyyy年', { locale: ja })
 
-      if (startMonth === endMonth) {
-        // 同じ月の場合: 「2024年1月」
-        return format(weekStart, 'yyyy年M月', { locale: ja })
+      if (startYear === endYear) {
+        if (startMonth === endMonth) {
+          return format(weekStart, 'yyyy年M月', { locale: ja })
+        } else {
+          return `${startYear}${startMonth}〜${endMonth}`
+        }
       } else {
-        // 月をまたぐ場合: 「1月〜2月」
-        return `${format(weekStart, 'M月', { locale: ja })}〜${format(weekEnd, 'M月', { locale: ja })}`
+        return `${startYear}${startMonth}〜${endYear}${endMonth}`
       }
     } else {
-      // 月表示: 「2024年1月」
       return format(currentDate, 'yyyy年M月', { locale: ja })
     }
   }
 
-  // 週表示の場合、日付範囲も表示
-  const getWeekDayRange = () => {
-    if (viewMode !== 'week') return null
-    const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
-    const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
-    return `${format(weekStart, 'M/d')}〜${format(weekEnd, 'M/d')}`
-  }
-
   return (
-    <div className="flex items-center justify-between px-3 py-2 border-b bg-gradient-to-r from-muted/20 to-muted/10">
-      {/* Left: Navigation */}
-      <div className="flex items-center gap-1">
-        <button
-          onClick={goToPrevious}
-          className="p-1.5 hover:bg-muted rounded transition-colors"
-          aria-label={viewMode === 'week' ? '前週' : '前月'}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <button
-          onClick={onToday}
-          className="px-2 py-1 text-xs font-medium hover:bg-muted rounded transition-colors"
-        >
-          今日
-        </button>
-        <button
-          onClick={goToNext}
-          className="p-1.5 hover:bg-muted rounded transition-colors"
-          aria-label={viewMode === 'week' ? '次週' : '次月'}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
+    <div className="flex flex-col border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      {/* Upper Toolbar: Title & Main Actions */}
+      <div className="flex items-center justify-between px-4 py-2">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
+            <img src="https://www.gstatic.com/calendar/images/dynamiclogo_2020q4/daily_30.ico" alt="Calendar" className="w-5 h-5" />
+          </div>
+          <h2 className="font-semibold text-base tracking-tight">カレンダー</h2>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border shadow-sm">
+            <button
+              onClick={() => onViewModeChange('week')}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-all",
+                viewMode === 'week'
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              週
+            </button>
+            <div className="w-px h-3 bg-border/50 mx-0.5" />
+            <button
+              onClick={() => onViewModeChange('month')}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-all",
+                viewMode === 'month'
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
+            >
+              月
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Center: Date Display */}
-      <div className="text-center">
-        <h2 className="text-sm font-bold text-foreground leading-tight">
-          {getDateRangeLabel()}
-        </h2>
-        {viewMode === 'week' && (
-          <p className="text-xs text-muted-foreground leading-tight mt-0.5">
-            {getWeekDayRange()}
-          </p>
-        )}
-      </div>
+      {/* Lower Toolbar: Navigation & Date Context */}
+      <div className="flex items-center justify-between px-3 pb-2">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onToday}
+            className="px-2 py-1 text-xs font-medium bg-muted/50 hover:bg-muted border rounded-md transition-colors"
+          >
+            今日
+          </button>
+          <div className="flex items-center rounded-md border bg-muted/30">
+            <button
+              onClick={goToPrevious}
+              className="p-1 px-1.5 hover:bg-muted rounded-l-md transition-colors border-r"
+              aria-label="Previous"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={goToNext}
+              className="p-1 px-1.5 hover:bg-muted rounded-r-md transition-colors"
+              aria-label="Next"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <span className="ml-2 text-sm font-bold text-foreground tabular-nums">
+            {getDateRangeLabel()}
+          </span>
+        </div>
 
-      {/* Right: View Mode Toggle */}
-      <div className="flex items-center gap-0.5 bg-muted/30 rounded p-0.5">
-        <button
-          onClick={() => onViewModeChange('week')}
-          className={cn(
-            "px-2.5 py-1 text-xs font-medium rounded transition-all",
-            viewMode === 'week'
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          週
-        </button>
-        <button
-          onClick={() => onViewModeChange('month')}
-          className={cn(
-            "px-2.5 py-1 text-xs font-medium rounded transition-all",
-            viewMode === 'month'
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          月
-        </button>
+        <div className="flex items-center gap-1">
+          <CalendarSelector compact onVisibleCalendarIdsChange={onVisibleCalendarIdsChange} />
+          {/* Note: CalendarSettings is now integrated via CalendarSelector or can be added here if needed separate */}
+        </div>
       </div>
     </div>
   )

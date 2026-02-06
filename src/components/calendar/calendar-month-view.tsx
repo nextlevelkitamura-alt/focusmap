@@ -1,22 +1,36 @@
-"use client"
-
 import { useState, useCallback, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay } from "date-fns"
 import { ja } from "date-fns/locale"
 import { useDrag } from "@/contexts/DragContext"
 import { Calendar as CalendarIcon } from "lucide-react"
+import { CalendarEvent } from "@/types/calendar"
 
 interface CalendarMonthViewProps {
   currentDate: Date
   onTaskDrop?: (taskId: string, dateTime: Date) => void
+  events?: CalendarEvent[]
+  onEventClick?: (eventId: string) => void
 }
 
-export function CalendarMonthView({ currentDate, onTaskDrop }: CalendarMonthViewProps) {
+export function CalendarMonthView({
+  currentDate,
+  onTaskDrop,
+  events = [],
+  onEventClick
+}: CalendarMonthViewProps) {
   const [dragOverDay, setDragOverDay] = useState<string | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const { dragState } = useDrag()
   const isDragging = dragState.isDragging
+
+  // 特定の日のイベントを取得
+  const getEventsForDay = (date: Date) => {
+    return events.filter(event => {
+      const eventStart = new Date(event.start_time)
+      return isSameDay(eventStart, date)
+    })
+  }
 
   // 月のカレンダー日付を生成（月曜始まり）
   const getMonthDays = () => {
@@ -112,7 +126,7 @@ export function CalendarMonthView({ currentDate, onTaskDrop }: CalendarMonthView
         {weekDays.map((day) => (
           <div
             key={day}
-            className="py-1.5 text-center text-xs font-semibold"
+            className="py-1.5 text-center text-xs font-semibold text-muted-foreground"
           >
             {day}
           </div>
@@ -132,36 +146,65 @@ export function CalendarMonthView({ currentDate, onTaskDrop }: CalendarMonthView
           const isCurrentMonth = isSameMonth(date, currentDate)
           const isToday = isSameDay(date, new Date())
           const isHighlighted = dragOverDay === dayStr
+          const dayEvents = getEventsForDay(date)
+          const maxDisplayEvents = 3
 
           return (
             <div
               key={dayStr}
               className={cn(
-                "relative p-1 border-b border-r border-border/30 transition-all duration-200",
-                !isCurrentMonth && "bg-muted/20",
+                "relative p-1 border-b border-r border-border/10 transition-all duration-200 flex flex-col min-h-[80px]",
+                !isCurrentMonth && "bg-muted/10 text-muted-foreground",
                 // ドラッグ中は全体的に薄くハイライト
                 isDragging && isCurrentMonth && "bg-primary/5",
                 // ホバー中のセルは強調
-                isHighlighted && "bg-primary/15 ring-2 ring-primary ring-inset shadow-sm scale-[1.02] z-10",
+                isHighlighted && "bg-primary/10 ring-2 ring-primary ring-inset shadow-sm z-10",
                 isToday && "bg-primary/5",
-                "pointer-events-none"
+                "pointer-events-auto"
               )}
             >
               {/* Day Number */}
-              <span className={cn(
-                "inline-flex items-center justify-center w-6 h-6 text-xs font-medium rounded-full",
-                !isCurrentMonth && "text-muted-foreground",
-                isToday && "bg-primary text-primary-foreground"
-              )}>
-                {format(date, 'd')}
-              </span>
+              <div className="flex justify-center mb-1">
+                <span className={cn(
+                  "text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full",
+                  isToday ? "bg-primary text-primary-foreground shadow-sm" : "text-foreground/80"
+                )}>
+                  {format(date, 'd')}
+                </span>
+              </div>
+
+              {/* イベント表示（最大3件） */}
+              {dayEvents.length > 0 && (
+                <div className="flex flex-col gap-1 flex-1 overflow-hidden">
+                  {dayEvents.slice(0, maxDisplayEvents).map((event) => (
+                    <button
+                      key={event.id}
+                      onClick={() => onEventClick?.(event.id)}
+                      className="text-left text-[10px] px-1.5 py-0.5 rounded-sm truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent"
+                      style={{
+                        backgroundColor: event.background_color || '#E3F2FD',
+                        color: event.color || '#1976D2',
+                        borderColor: event.color ? `${event.color}30` : 'transparent'
+                      }}
+                      title={event.title}
+                    >
+                      {event.title}
+                    </button>
+                  ))}
+                  {dayEvents.length > maxDisplayEvents && (
+                    <span className="text-[9px] text-muted-foreground pl-1 font-medium">
+                      +{dayEvents.length - maxDisplayEvents} more
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Enhanced Drop indicator */}
               {isHighlighted && (
-                <div className="absolute inset-1 flex flex-col items-center justify-center animate-in zoom-in duration-200">
+                <div className="absolute inset-1 flex flex-col items-center justify-center animate-in zoom-in duration-200 bg-primary/10 backdrop-blur-[1px] rounded-sm">
                   <div className="flex flex-col items-center gap-1 bg-primary text-primary-foreground text-[10px] px-2 py-1.5 rounded-lg shadow-lg">
-                    <CalendarIcon className="w-3 h-3" />
-                    <span className="font-medium">{format(date, 'M/d')}</span>
+                    <CalendarIcon className="w-3.5 h-3.5" />
+                    <span className="font-medium whitespace-nowrap">Schedule Here</span>
                   </div>
                 </div>
               )}

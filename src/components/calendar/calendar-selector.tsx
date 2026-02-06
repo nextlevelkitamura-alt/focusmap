@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { RefreshCw, Settings, ChevronDown } from "lucide-react"
+import { RefreshCw, Settings, ChevronDown, CheckSquare, Square, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,84 +10,44 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-
-export interface Calendar {
-  id: string
-  name: string
-  description?: string | null
-  color: string
-  accessRole: string
-  primary: boolean
-  selected: boolean
-  timeZone: string
-}
+import { useCalendars, type UserCalendar } from "@/hooks/useCalendars"
 
 interface CalendarSelectorProps {
-  onSelectionChange?: (selectedIds: string[]) => void
+  onVisibleCalendarIdsChange?: (ids: string[]) => void
   compact?: boolean
 }
 
-export function CalendarSelector({ onSelectionChange, compact = false }: CalendarSelectorProps) {
-  const [calendars, setCalendars] = useState<Calendar[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }: CalendarSelectorProps) {
+  const { calendars, isLoading, error, fetchCalendars, toggleCalendar, toggleAll } = useCalendars()
 
-  // カレンダーリストを取得
-  const fetchCalendars = async () => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await fetch('/api/calendar/list')
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch calendars')
-      }
-
-      const data = await response.json()
-      setCalendars(data.calendars || [])
-    } catch (err: any) {
-      console.error('Failed to fetch calendars:', err)
-      setError(err.message || 'カレンダーリストの取得に失敗しました')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
+  // 表示中のカレンダーIDのリストを親に通知
   useEffect(() => {
-    fetchCalendars()
-  }, [])
+    const visibleIds = calendars.filter(c => c.selected).map(c => c.google_calendar_id)
+    onVisibleCalendarIdsChange?.(visibleIds)
+  }, [calendars, onVisibleCalendarIdsChange])
 
-  // カレンダーの選択状態をトグル
-  const toggleCalendar = (id: string) => {
-    const updated = calendars.map(cal =>
-      cal.id === id ? { ...cal, selected: !cal.selected } : cal
-    )
-    setCalendars(updated)
-
-    // 選択されたカレンダーIDを親に通知
-    const selectedIds = updated.filter(cal => cal.selected).map(cal => cal.id)
-    onSelectionChange?.(selectedIds)
-  }
+  // 全選択チェック
+  const allSelected = calendars.length > 0 && calendars.every(c => c.selected)
+  const someSelected = calendars.some(c => c.selected) && !allSelected
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center p-4">
-        <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-xs text-muted-foreground">読み込み中...</span>
+      <div className="flex items-center justify-center p-2">
+        <RefreshCw className="w-3 h-3 animate-spin text-muted-foreground" />
+        <span className="ml-1 text-[10px] text-muted-foreground">読み込み中...</span>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="p-2 space-y-2">
-        <p className="text-xs text-red-500">{error}</p>
+      <div className="p-2 space-y-1">
+        <p className="text-[10px] text-red-500">{error.message}</p>
         <Button
-          onClick={fetchCalendars}
+          onClick={() => fetchCalendars()}
           size="sm"
           variant="outline"
-          className="w-full h-7 text-xs"
+          className="w-full h-6 text-[10px]"
         >
           <RefreshCw className="w-3 h-3 mr-1" />
           再試行
@@ -98,7 +58,7 @@ export function CalendarSelector({ onSelectionChange, compact = false }: Calenda
 
   if (calendars.length === 0) {
     return compact ? null : (
-      <div className="p-2 text-xs text-muted-foreground text-center">
+      <div className="p-2 text-[10px] text-muted-foreground text-center">
         カレンダーが見つかりません
       </div>
     )
@@ -111,86 +71,98 @@ export function CalendarSelector({ onSelectionChange, compact = false }: Calenda
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-            {selectedCount}個
+          <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 px-2">
+            <span>カレンダー</span>
+            <span className="text-muted-foreground">({selectedCount})</span>
             <ChevronDown className="w-3 h-3" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end" className="w-48 max-h-64 overflow-y-auto">
           {calendars.map((calendar) => (
             <DropdownMenuCheckboxItem
               key={calendar.id}
               checked={calendar.selected}
-              onCheckedChange={() => toggleCalendar(calendar.id)}
-              className="flex items-center gap-2"
+              onCheckedChange={() => toggleCalendar(calendar.id, !calendar.selected)}
+              className="flex items-center gap-2 py-1.5"
             >
               <div
-                className="w-3 h-3 rounded-full shrink-0"
-                style={{ backgroundColor: calendar.color }}
+                className="w-2.5 h-2.5 rounded-full shrink-0 border"
+                style={{ backgroundColor: calendar.background_color || '#ccc' }}
               />
-              <span className="flex-1 truncate">
+              <span className="flex-1 truncate text-[10px]">
                 {calendar.name}
-                {calendar.primary && (
-                  <span className="ml-1 text-[10px] text-muted-foreground">(メイン)</span>
-                )}
               </span>
             </DropdownMenuCheckboxItem>
           ))}
           <DropdownMenuSeparator />
-          <Button
-            onClick={fetchCalendars}
-            size="sm"
-            variant="ghost"
-            className="w-full h-7 text-xs justify-start"
-          >
-            <RefreshCw className="w-3 h-3 mr-2" />
-            更新
-          </Button>
+          <div className="flex items-center justify-between px-2 py-1">
+            <span className="text-[10px] text-muted-foreground">
+              {allSelected ? '全解除' : '全選択'}
+            </span>
+            <button
+              onClick={() => toggleAll(!allSelected)}
+              className="p-0.5 hover:bg-accent rounded"
+            >
+              {allSelected ? (
+                <X className="w-3 h-3 text-muted-foreground" />
+              ) : (
+                <CheckSquare className="w-3 h-3" />
+              )}
+            </button>
+          </div>
         </DropdownMenuContent>
       </DropdownMenu>
     )
   }
 
-  // Full mode (original)
+  // Full mode
   return (
-    <div className="p-2 space-y-2">
-      {/* カレンダーリスト */}
-      <div className="space-y-1">
+    <div className="space-y-2">
+      {/* Header */}
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[10px] font-medium">マイカレンダー</span>
+        <div className="flex gap-0.5">
+          <Button
+            onClick={() => fetchCalendars()}
+            size="icon"
+            variant="ghost"
+            className="h-5 w-5 p-0"
+            disabled={isLoading}
+            title="更新"
+          >
+            <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+      </div>
+
+      {/* Calendar List */}
+      <div className="space-y-0.5 max-h-48 overflow-y-auto">
         {calendars.map((calendar) => (
           <label
             key={calendar.id}
-            className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer transition-colors"
+            className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 cursor-pointer transition-colors"
           >
             <input
               type="checkbox"
               checked={calendar.selected}
-              onChange={() => toggleCalendar(calendar.id)}
-              className="w-3 h-3 rounded border-gray-300"
+              onChange={() => toggleCalendar(calendar.id, !calendar.selected)}
+              className="w-3 h-3 rounded"
             />
             <div
-              className="w-3 h-3 rounded-full shrink-0"
-              style={{ backgroundColor: calendar.color }}
+              className="w-2.5 h-2.5 rounded-full shrink-0 border"
+              style={{ backgroundColor: calendar.background_color || '#ccc' }}
             />
-            <span className="text-xs flex-1 truncate">
+            <span className="text-[10px] flex-1 truncate" title={calendar.name}>
               {calendar.name}
-              {calendar.primary && (
-                <span className="ml-1 text-[10px] text-muted-foreground">(メイン)</span>
-              )}
             </span>
+            {calendar.primary && (
+              <span className="text-[8px] px-1 py-0 rounded bg-primary/10 text-primary">
+                メイン
+              </span>
+            )}
           </label>
         ))}
       </div>
-
-      {/* 更新ボタン */}
-      <Button
-        onClick={fetchCalendars}
-        size="sm"
-        variant="ghost"
-        className="w-full h-7 text-xs"
-      >
-        <RefreshCw className="w-3 h-3 mr-1" />
-        更新
-      </Button>
     </div>
   )
 }

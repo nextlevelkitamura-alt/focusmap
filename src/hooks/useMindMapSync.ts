@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Database } from '@/types/database'
+import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
 
 type TaskGroup = Database['public']['Tables']['task_groups']['Row']
 type Task = Database['public']['Tables']['tasks']['Row']
@@ -39,6 +40,7 @@ export function useMindMapSync({
     initialTasks = []
 }: UseMindMapSyncProps): UseMindMapSyncReturn {
     const supabase = createClient()
+    const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
     const [groups, setGroups] = useState<TaskGroup[]>(initialGroups)
     const [tasks, setTasks] = useState<Task[]>(initialTasks)
     const [isLoading, setIsLoading] = useState(false)
@@ -191,6 +193,15 @@ export function useMindMapSync({
                 const task = tasks.find(t => t.id === taskId);
                 const updatedTask = { ...task, ...updates };
 
+                // Cancel existing notifications for this task
+                if (updatedTask?.scheduled_at) {
+                    try {
+                        await cancelNotifications('task', taskId);
+                    } catch (error) {
+                        console.error('[Notification] Failed to cancel notifications:', error);
+                    }
+                }
+
                 // Only sync if both scheduled_at and estimated_time are present
                 if (updatedTask.scheduled_at && updatedTask.estimated_time) {
                     try {
@@ -202,6 +213,27 @@ export function useMindMapSync({
                     } catch (error) {
                         console.error('[Calendar Sync] Failed to sync task:', error);
                         // Don't block the task update if calendar sync fails
+                    }
+
+                    // Schedule notification for task start
+                    try {
+                        const scheduledTime = new Date(updatedTask.scheduled_at);
+                        const notificationTime = new Date(scheduledTime.getTime() - 15 * 60 * 1000); // 15 minutes before
+
+                        if (notificationTime > new Date()) {
+                            await scheduleNotification({
+                                targetType: 'task',
+                                targetId: taskId,
+                                notificationType: 'task_start',
+                                scheduledAt: notificationTime,
+                                title: 'タスク開始',
+                                body: updatedTask.title || 'タスクがまもなく開始されます',
+                                actionUrl: `/dashboard?task=${taskId}`,
+                            });
+                        }
+                    } catch (error) {
+                        console.error('[Notification] Failed to schedule notification:', error);
+                        // Don't block the task update if notification fails
                     }
                 }
             }
@@ -251,12 +283,21 @@ export function useMindMapSync({
 
     const deleteTask = useCallback(async (taskId: string) => {
         setTasks(prev => prev.filter(t => t.id !== taskId))
+
+        // Cancel notifications for this task
+        try {
+            await cancelNotifications('task', taskId);
+        } catch (error) {
+            console.error('[Notification] Failed to cancel notifications:', error);
+            // Don't block the task deletion if notification cancellation fails
+        }
+
         try {
             await supabase.from('tasks').delete().eq('id', taskId)
         } catch (e) {
             console.error('[Sync] deleteTask failed:', e)
         }
-    }, [supabase])
+    }, [supabase, cancelNotifications])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, group_id: newGroupId } : t))

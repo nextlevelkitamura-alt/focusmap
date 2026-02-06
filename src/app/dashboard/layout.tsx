@@ -2,11 +2,15 @@
 
 import { BottomNav } from "@/components/mobile/bottom-nav"
 import { Header } from "@/components/layout/header"
+import { NotificationPermissionBanner } from "@/components/notifications"
 
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     return (
         <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
+            {/* Notification Permission Banner */}
+            <NotificationPermissionBanner />
+
             {/* Global Header */}
             <Header />
 

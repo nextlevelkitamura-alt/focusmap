@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Calendar, LayoutDashboard, PlusCircle, Zap, BarChart2 } from "lucide-react" // Icons equivalent to: Today, Overview, +, Focus, Analyze
+import { Calendar, LayoutDashboard, PlusCircle, Zap, Settings } from "lucide-react" // Icons equivalent to: Today, Overview, +, Focus, Settings
 import { cn } from "@/lib/utils"
 
 export function BottomNav() {
@@ -13,7 +13,7 @@ export function BottomNav() {
         { href: "/dashboard/overview", icon: LayoutDashboard, label: "俯瞰" }, // Overview (MindMap)
         { href: "/dashboard/new", icon: PlusCircle, label: "追加" }, // +
         { href: "/dashboard/focus", icon: Zap, label: "集中" }, // Focus
-        { href: "/dashboard/analyze", icon: BarChart2, label: "分析" }, // Analyze
+        { href: "/dashboard/settings", icon: Settings, label: "設定" }, // Settings
     ]
 
     return (

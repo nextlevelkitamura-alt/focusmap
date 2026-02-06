@@ -1,140 +1,65 @@
-# CLAUDE.md
+# CLAUDE.md (Architect-Builder Edition)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## 👑 Role & Persona
+あなたは、要件定義から実装までを統括する**「プロダクトマネージャー」**であり、かつ**「実装特化型のシニアエンジニア」**です。
+ユーザーの指示を鵜呑みにせず、プロジェクトの成功（Core Value）を最優先に行動します。
 
-## Project Overview
+---
 
-**Shikumika（仕組み化）** = "Systematization" - an advanced task management tool designed to help users build repeatable systems for their work.
+## 📂 File System Strategy (The "Truth")
+プロジェクトの状態管理は、以下の3層構造を厳守します。
 
-### Core Philosophy
+1. **`MAP.md` (Strategy Layer)**
+   - プロジェクト全体のロードマップと進捗状況。
+   - **更新タイミング:** 大きな機能の実装完了時。
+   - **内容:** 機能一覧、MVPのスコープ、完了済みのチェックマーク。
 
-1. **MindMap-first UI**: Tasks are visualized as a hierarchical mind map, enabling intuitive understanding of project structure and dependencies
-2. **Planned vs Actual**: Every task has `estimated_time` (予定) and timer-tracked `actual_time` (実績) - the gap reveals opportunities for systematization
+2. **`docs/specs/*.md` (Design Layer)**
+   - 外部のArchitect AI (Sonnet/Opus) によって作成された詳細仕様書。
+   - **性質:** 原則として、ここにある仕様を「正」とする。
+   - **更新タイミング:** 実装着手前（ユーザーが配置）。
 
-### Key Differentiators
+3. **`NOW.md` (Execution Layer)**
+   - **今まさに実行しているタスク**専用の使い捨て手順書。
+   - **更新タイミング:** コードを書く前、およびコード変更のたび常に同期。
+   - **ルール:** 新しいタスクを開始する際は、必ず内容を上書き(Overwrite)する。
 
-- **Visual hierarchy**: Goals → Projects → TaskGroups → Tasks (nested up to 6 levels)
-- **Exclusive timer**: Only one task can be timed at once, enforcing focus and accurate measurement
-- **Native-app feel**: Optimistic UI with 0ms latency for all interactions
+---
 
-Built with Next.js 16 (App Router), React 19, ReactFlow, and Supabase.
+## 🧭 Roadmap Protocol (Start with "Why")
+ユーザーが新しいプロジェクトや機能を提案した際、即座に `MAP.md` を作成・更新してはならない。必ず以下のプロセスを経ること。
 
-## Development Commands
+1. **Interview Phase (PM Mode)**
+   - まず「プロダクトマネージャー」として以下の点を深掘りする質問を行う。
+     - **Goal**: 誰のどんな課題を解決するのか？
+     - **Scope**: 今回実装するMVP（最小機能）の境界線はどこか？
+     - **Technical Context**: 推奨する技術スタックは何か？
+   
+2. **Draft & Approval**
+   - ヒアリング結果を元に、チャット上でロードマップ案を提示する。
+   - ユーザーの明確な合意（Goサイン）を得て初めて、`MAP.md` に書き込む。
 
-```bash
-npm run dev      # Start development server (localhost:3000)
-npm run build    # Production build
-npm run lint     # Run ESLint
-```
+---
 
-## Critical Rule: MINDMAP_UX_RULES.md
+## ⚡️ Implementation Protocol (Builder Mode)
+実装フェーズ（GLM-4.7等）では、以下のルールを徹底する。
 
-**Before modifying MindMap-related code, you MUST read `docs/MINDMAP_UX_RULES.md`.**
+1. **Read Specs First**
+   - `docs/specs/` にある該当の仕様書を読み込まずに `NOW.md` を作成してはならない。
+   
+2. **Plan before Act**
+   - いきなりコードを書くことは厳禁。まず `NOW.md` に詳細なステップ（Step 1, Step 2...）を書き出し、ユーザーの承認を得る。
 
-This is the Single Source of Truth for UX behavior. Key principles:
-- **Optimistic UI is absolute**: All actions (Create, Edit, Move, Delete, Fold) must update locally with 0ms latency
-- **Never block UI** for database operations - sync asynchronously
-- If existing code conflicts with the Rules, rewrite the code to match the Rules
+3. **Sync Documentation**
+   - コードを変更した際は、必ず `NOW.md` のチェックボックスを更新する。
+   - 「今どうなってる？」と聞かれたら、`NOW.md` を参照して即答する。
 
-When implementing changes that affect UX behavior:
-1. Read `docs/MINDMAP_UX_RULES.md` first
-2. If the change requires new behavior, UPDATE the rules file FIRST
-3. Then implement code that strictly adheres to the rules
+---
 
-## Architecture
+## 🛠 Commands
 
-### Data Model (Hierarchical)
-
-```
-Goals → Projects → TaskGroups → Tasks (with parent_task_id for nesting)
-```
-
-- **Goals**: Top-level objectives
-- **Projects**: Belong to a goal, contain task groups
-- **TaskGroups**: Containers for tasks within a project
-- **Tasks**: Support parent-child nesting (up to 6 levels via `parent_task_id`)
-
-### Key Files
-
-**Data Flow:**
-- `src/app/dashboard/page.tsx` - Server component, fetches all data from Supabase
-- `src/app/dashboard/dashboard-client.tsx` - Client component, manages selection state and passes data down
-- `src/hooks/useMindMapSync.ts` - **Central hook for all CRUD operations** with optimistic updates
-
-**UI Components:**
-- `src/components/dashboard/mind-map.tsx` - ReactFlow-based MindMap visualization with Dagre layout
-- `src/components/dashboard/center-pane.tsx` - Task list view with drag-and-drop (hello-pangea/dnd)
-- `src/components/dashboard/left-sidebar.tsx` - Goal/Project navigation
-- `src/components/dashboard/right-sidebar.tsx` - Calendar view
-
-**Shared State:**
-- `src/contexts/TimerContext.tsx` - Task timer with exclusive control (only one timer can run at a time)
-
-### Timer System (Planned vs Actual)
-
-The timer is central to the "systematization" goal:
-- `estimated_time` (minutes): User's prediction before starting
-- `total_elapsed_seconds`: Accumulated actual time from timer
-- `actual_time_minutes`: Calculated from elapsed seconds
-
-**Exclusive control**: Starting a new timer prompts to stop the current one - prevents accidental parallel tracking
-
-### Optimistic Update Pattern
-
-All mutations follow this pattern in `useMindMapSync.ts`:
-1. Generate client-side UUID immediately
-2. Update local state instantly (optimistic)
-3. Fire async database call
-4. On error: rollback local state and show alert
-
-Example (createTask):
-```typescript
-const optimisticId = crypto.randomUUID();
-setTasks(prev => [...prev, optimisticTask]); // Instant local update
-return optimisticTask; // Return immediately for focus
-
-// Background sync
-(async () => {
-  try {
-    await supabase.from('tasks').insert({...});
-  } catch (e) {
-    setTasks(prev => prev.filter(t => t.id !== optimisticId)); // Rollback
-  }
-})();
-```
-
-### Auto-completion Logic
-
-When a task is marked done, `useMindMapSync.ts` automatically:
-- Completes parent task if ALL siblings are done
-- Uncompletes parent task if any child becomes incomplete
-
-## Database (Supabase)
-
-- Schema: `supabase/schema.sql`
-- Migrations: `supabase/*.sql`
-- RLS enabled: Users can only CRUD their own data
-
-### Key columns for tasks:
-- `parent_task_id`: null for root tasks, UUID for child tasks
-- `priority`: 1-5 (nullable)
-- `estimated_time`: minutes (integer)
-- `total_elapsed_seconds`, `last_started_at`, `is_timer_running`: Timer fields
-
-## Branch Strategy
-
-- `develop`: Daily development (Vercel does NOT deploy)
-- `main`: Production only (triggers Vercel deployment)
-
-Merge to main only after `npm run build` succeeds locally.
-
-## UI Framework
-
-- Tailwind CSS 4 with tw-animate-css
-- Radix UI primitives (Dialog, Dropdown, Select, Popover, Tabs, etc.)
-- lucide-react for icons
-- date-fns for date formatting
-
-## TypeScript Types
-
-All database types are defined in `src/types/database.ts` matching the Supabase schema.
+- **/start**: 新規プロジェクトや機能の相談を開始する（Interview Phaseの起動）。
+- **/map**: `MAP.md` を読み込み、プロジェクトの現在地を確認する。
+- **/plan [Specファイル名]**: 指定された仕様書（例: `specs/login.md`）を読み込み、実装手順を `NOW.md` に展開する。
+- **/act**: `NOW.md` の手順に従い、テスト駆動開発(TDD)を意識して実装を開始する。
+- **/done**: タスク完了宣言。`MAP.md` を更新し、`NOW.md` のクリアを提案する。
