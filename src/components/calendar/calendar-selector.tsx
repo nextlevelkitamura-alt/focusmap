@@ -155,7 +155,7 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
             <span className="text-[10px] flex-1 truncate" title={calendar.name}>
               {calendar.name}
             </span>
-            {calendar.primary && (
+            {calendar.is_primary && (
               <span className="text-[8px] px-1 py-0 rounded bg-primary/10 text-primary">
                 メイン
               </span>

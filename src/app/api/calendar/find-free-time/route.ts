@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       .from('tasks')
       .select('scheduled_at, estimated_time')
       .eq('user_id', user.id)
-      .not('scheduled_at', 'is null')
+      .not('scheduled_at', 'is', null)
       .gte('scheduled_at', dayStart.toISOString())
       .lte('scheduled_at', dayEnd.toISOString());
 

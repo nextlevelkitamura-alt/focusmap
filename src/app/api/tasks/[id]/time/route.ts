@@ -11,7 +11,7 @@ import { createClient } from '@/utils/supabase/server';
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createClient();
 
@@ -23,7 +23,7 @@ export async function PATCH(
   }
 
   try {
-    const taskId = params.id;
+    const { id: taskId } = await context.params;
     const body = await request.json();
     const { estimatedDuration } = body;
 

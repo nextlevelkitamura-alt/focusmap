@@ -262,8 +262,8 @@ export async function fetchCalendarEvents(
         google_event_id: event.id!,
         calendar_id: calendarId,
         title: event.summary || '(No title)',
-        description: event.description || null,
-        location: event.location || null,
+        description: event.description || undefined,
+        location: event.location || undefined,
         start_time: isAllDay
           ? new Date(event.start!.date!).toISOString()
           : new Date(event.start!.dateTime!).toISOString(),
@@ -272,12 +272,13 @@ export async function fetchCalendarEvents(
           : new Date(event.end!.dateTime!).toISOString(),
         is_all_day: isAllDay,
         timezone: event.start?.timeZone || 'Asia/Tokyo',
-        recurrence: event.recurrence || null,
-        recurring_event_id: event.recurringEventId || null,
-        color: event.colorId || null,
-        background_color: event.backgroundColor || null,
-        google_created_at: event.created || null,
-        google_updated_at: event.updated || null,
+        recurrence: event.recurrence || undefined,
+        recurring_event_id: event.recurringEventId || undefined,
+        color: event.colorId || undefined,
+        // background_color is not available on Event directly
+        background_color: undefined,
+        google_created_at: event.created || undefined,
+        google_updated_at: event.updated || undefined,
       };
     });
   } catch (error: any) {
@@ -340,8 +341,8 @@ export async function fetchUserCalendars(
         backgroundColor: cal.backgroundColor || undefined,
         accessLevel,
         primary: cal.primary || false,
-        googleCreatedAt: cal.created || undefined,
-        googleUpdatedAt: cal.updated || undefined
+        googleCreatedAt: undefined,
+        googleUpdatedAt: undefined
       };
     });
   } catch (error: any) {

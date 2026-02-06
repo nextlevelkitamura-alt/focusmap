@@ -14,7 +14,7 @@ import { syncTaskToCalendar, deleteTaskFromCalendar } from '@/lib/google-calenda
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createClient();
 
@@ -26,7 +26,7 @@ export async function POST(
   }
 
   try {
-    const taskId = params.id;
+    const { id: taskId } = await context.params;
     const body = await request.json();
     const { scheduledAt, calendarId, createCalendarEvent = true } = body;
 
@@ -165,7 +165,7 @@ export async function POST(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createClient();
 
@@ -177,7 +177,7 @@ export async function DELETE(
   }
 
   try {
-    const taskId = params.id;
+    const { id: taskId } = await context.params;
     const body = await request.json();
     const { deleteCalendarEvent = true } = body;
 

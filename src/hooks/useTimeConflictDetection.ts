@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
-import { Task } from '@/types/database';
+import { Database } from '@/types/database';
+
+type Task = Database['public']['Tables']['tasks']['Row'];
 import { CalendarEvent } from '@/types/calendar';
 import { isSameDay } from 'date-fns';
 import { isOverlapping } from '@/lib/time-utils';

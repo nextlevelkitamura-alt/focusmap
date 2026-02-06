@@ -18,7 +18,7 @@ import { createClient } from '@/utils/supabase/server';
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createClient();
 
@@ -30,7 +30,7 @@ export async function PATCH(
   }
 
   try {
-    const calendarId = params.id;
+    const { id: calendarId } = await context.params;
     const body = await request.json();
     const { selected } = body;
 

@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const requestBody = await request.json();
     const {
       targetType,
       targetId,
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
       title,
       body,
       actionUrl,
-    } = body;
+    } = requestBody;
 
     // バリデーション
     if (!targetType || !targetId || !notificationType || !scheduledAt || !title || !body) {

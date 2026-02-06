@@ -135,6 +135,7 @@ export function useMindMapSync({
             estimated_time: 0,
             actual_time_minutes: 0,
             google_event_id: null,
+            calendar_event_id: null,
             // Timer fields
             total_elapsed_seconds: 0,
             last_started_at: null,
