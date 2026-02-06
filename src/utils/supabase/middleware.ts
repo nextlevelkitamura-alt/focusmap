@@ -1,6 +1,20 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+// Timeout for auth operations in middleware (5 seconds max)
+const AUTH_TIMEOUT = 5000
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+    const timeout = new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), timeoutMs)
+    )
+    try {
+        return await Promise.race([promise, timeout]) as T
+    } catch {
+        return null
+    }
+}
+
 export async function updateSession(request: NextRequest) {
     let supabaseResponse = NextResponse.next({
         request,
@@ -35,9 +49,13 @@ export async function updateSession(request: NextRequest) {
         }
     )
 
-    const {
-        data: { user },
-    } = await supabase.auth.getUser()
+    // Use timeout to prevent hanging
+    const result = await withTimeout(
+        supabase.auth.getUser(),
+        AUTH_TIMEOUT
+    )
+
+    const user = result?.data?.user ?? null
 
     // Redirect unauthenticated users to login (except auth routes)
     if (
