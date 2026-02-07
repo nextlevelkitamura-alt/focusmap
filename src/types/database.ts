@@ -419,3 +419,16 @@ export interface Database {
         }
     }
 }
+
+// Convenience type aliases for commonly used table rows
+export type Task = Database['public']['Tables']['tasks']['Row']
+export type TaskInsert = Database['public']['Tables']['tasks']['Insert']
+export type TaskUpdate = Database['public']['Tables']['tasks']['Update']
+
+export type TaskGroup = Database['public']['Tables']['task_groups']['Row']
+export type TaskGroupInsert = Database['public']['Tables']['task_groups']['Insert']
+export type TaskGroupUpdate = Database['public']['Tables']['task_groups']['Update']
+
+export type Project = Database['public']['Tables']['projects']['Row']
+export type ProjectInsert = Database['public']['Tables']['projects']['Insert']
+export type ProjectUpdate = Database['public']['Tables']['projects']['Update']

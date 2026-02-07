@@ -4,14 +4,12 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { LeftSidebar } from "@/components/dashboard/left-sidebar"
 import { CenterPane } from "@/components/dashboard/center-pane"
 import { RightSidebar } from "@/components/dashboard/right-sidebar"
-import { Database } from "@/types/database"
+import { Database, Task, TaskGroup, Project } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
+
 type Goal = Database['public']['Tables']['goals']['Row']
-type Project = Database['public']['Tables']['projects']['Row']
-type TaskGroup = Database['public']['Tables']['task_groups']['Row']
-type Task = Database['public']['Tables']['tasks']['Row']
 
 interface DashboardClientProps {
     initialGoals: Goal[]

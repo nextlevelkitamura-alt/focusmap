@@ -1,8 +1,6 @@
 'use client';
 
-import { Database } from '@/types/database';
-
-type Task = Database['public']['Tables']['tasks']['Row'];
+import { Task } from '@/types/database';
 import { format } from 'date-fns';
 import { Target, Clock, Edit2, Trash2, Calendar } from 'lucide-react';
 import { useState } from 'react';

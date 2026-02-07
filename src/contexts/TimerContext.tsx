@@ -2,9 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { createClient } from '@/utils/supabase/client';
-import { Database } from '@/types/database';
-
-type Task = Database['public']['Tables']['tasks']['Row'];
+import { Task } from '@/types/database';
 
 interface TimerContextType {
     // Current running task

@@ -60,24 +60,25 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
                     months: "flex flex-col space-y-4",
                     month: "space-y-4 w-full",
                     caption: "flex justify-center pt-1 relative items-center",
-                    caption_label: "text-sm font-bold text-foreground", // Bold year/month
-                    nav: "space-x-1 flex items-center absolute inset-x-0 justify-between px-1", // Spaced out nav
+                    caption_label: "text-sm font-bold text-foreground",
+                    nav: "space-x-1 flex items-center absolute inset-x-0 justify-between px-1",
                     nav_button: cn(
                         "h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100 transition-opacity rounded-full hover:bg-muted/30 flex items-center justify-center text-foreground"
                     ),
                     nav_button_previous: "z-10",
                     nav_button_next: "z-10",
-                    table: "w-full border-collapse space-y-1",
-                    head_row: "grid grid-cols-7 mb-2",
-                    head_cell: "text-muted-foreground w-full font-normal text-[0.7rem] flex justify-center items-center py-1",
-                    row: "grid grid-cols-7 w-full mt-1",
-                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20",
+                    table: "w-full border-collapse space-y-1 block", // Block to allow flex rows
+                    tbody: "w-full block", // Ensure proper stacking of rows
+                    head_row: "flex w-full mb-2",
+                    head_cell: "text-muted-foreground w-1/7 flex-1 font-normal text-[0.7rem] flex justify-center items-center py-1",
+                    row: "flex w-full mt-1",
+                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20 flex-1", // flex-1 to distribute width
                     day: cn(
                         "h-8 w-8 mx-auto p-0 font-normal rounded-full hover:bg-muted/30 flex items-center justify-center transition-all text-xs text-foreground"
                     ),
                     day_selected:
-                        "bg-[#4285F4] text-white hover:bg-[#4285F4] hover:text-white font-medium shadow-md shadow-[#4285F4]/20", // Google Blue
-                    day_today: "text-[#4285F4] font-bold after:content-[''] after:absolute after:bottom-1 after:w-1 after:h-1 after:bg-[#4285F4] after:rounded-full", // Dot indicator for today if not selected
+                        "bg-[#4285F4] text-white hover:bg-[#4285F4] hover:text-white font-medium shadow-md shadow-[#4285F4]/20",
+                    day_today: "text-[#4285F4] font-bold after:content-[''] after:absolute after:bottom-1 after:w-1 after:h-1 after:bg-[#4285F4] after:rounded-full",
                     day_outside: "text-muted-foreground/30 opacity-50",
                     day_disabled: "text-muted-foreground/30 opacity-50",
                     day_hidden: "invisible",

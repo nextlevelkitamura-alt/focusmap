@@ -2,14 +2,13 @@
 
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Database } from "@/types/database"
+import { Database, Project } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { MoreHorizontal, Plus, GripVertical } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type Goal = Database['public']['Tables']['goals']['Row']
-type Project = Database['public']['Tables']['projects']['Row']
 
 interface LeftSidebarProps {
     goals: Goal[]

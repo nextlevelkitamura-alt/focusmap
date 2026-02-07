@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useLayoutEffect, useCallback, useRef, Component, ErrorInfo, ReactNode } from 'react';
-import dynamic from 'next/dynamic';
 import ReactFlow, {
     Node,
     Edge,
@@ -18,7 +17,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import dagre from 'dagre';
-import { Database } from "@/types/database";
+import { Task, TaskGroup, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, X, Target, Clock, Check, GripVertical, MoreHorizontal } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
@@ -26,19 +25,7 @@ import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { useDrag } from "@/contexts/DragContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-
-// DateTimePicker を dynamic import（SSR を完全に無効化）
-const DateTimePicker = dynamic(
-    () => import("@/components/ui/date-time-picker").then((mod) => ({ default: mod.DateTimePicker })),
-    {
-        ssr: false,
-        loading: () => <div className="w-6 h-6 animate-spin border-2 border-zinc-600 border-t-transparent rounded-full" />,
-    }
-);
-
-type TaskGroup = Database['public']['Tables']['task_groups']['Row']
-type Project = Database['public']['Tables']['projects']['Row']
-type Task = Database['public']['Tables']['tasks']['Row']
+import { DateTimePicker } from "@/lib/dynamic-imports";
 
 // --- Dagre Layout Function ---
 const dagreGraph = new dagre.graphlib.Graph();

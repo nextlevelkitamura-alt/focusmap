@@ -1,8 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import dynamic from "next/dynamic"
-import { Database } from "@/types/database"
+import { Task, TaskGroup, Project } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { MoreHorizontal, Play, Check, ChevronRight, ChevronDown, Plus, Trash2, Pause, Timer, GripVertical, Calendar as CalendarIcon, X, Target, Clock } from "lucide-react"
@@ -13,19 +12,7 @@ import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
-
-// DateTimePicker を dynamic import（SSR を完全に無効化）
-const DateTimePicker = dynamic(
-    () => import("@/components/ui/date-time-picker").then((mod) => ({ default: mod.DateTimePicker })),
-    {
-        ssr: false,
-        loading: () => <div className="w-6 h-6 animate-spin border-2 border-zinc-600 border-t-transparent rounded-full" />,
-    }
-)
-
-type Project = Database['public']['Tables']['projects']['Row']
-type TaskGroup = Database['public']['Tables']['task_groups']['Row']
-type Task = Database['public']['Tables']['tasks']['Row']
+import { DateTimePicker } from "@/lib/dynamic-imports"
 
 type TaskIndex = {
     byId: Map<string, Task>

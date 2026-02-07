@@ -2,11 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { Database } from '@/types/database'
+import { Task, TaskGroup } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
-
-type TaskGroup = Database['public']['Tables']['task_groups']['Row']
-type Task = Database['public']['Tables']['tasks']['Row']
 
 interface UseMindMapSyncProps {
     projectId: string | null

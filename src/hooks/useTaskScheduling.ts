@@ -1,7 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Database } from '@/types/database';
-
-type Task = Database['public']['Tables']['tasks']['Row'];
+import { Task } from '@/types/database';
 
 /**
  * タスクのスケジュール管理用フック
