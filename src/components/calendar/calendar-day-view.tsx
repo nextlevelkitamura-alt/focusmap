@@ -1,7 +1,9 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react"
+import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { cn } from "@/lib/utils"
-// Use the new layout algorithm logic here
 import { calculateEventLayout } from "@/lib/calendar-layout"
+import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WIDTH_DAY } from "@/lib/calendar-constants"
+import { useCalendarDragDropDay } from "@/hooks/useCalendarDragDrop"
+import { useScrollSync } from "@/hooks/useScrollSync"
 import { useDrag } from "@/contexts/DragContext"
 import { CalendarEvent } from "@/types/calendar"
 import { CalendarEventCard } from "./calendar-event-card"
@@ -15,8 +17,6 @@ interface CalendarDayViewProps {
     onEventDelete?: (eventId: string) => void
 }
 
-const HOUR_HEIGHT = 64 // 64px per hour
-
 export function CalendarDayView({
     currentDate,
     onTaskDrop,
@@ -27,101 +27,52 @@ export function CalendarDayView({
     const [currentTime, setCurrentTime] = useState(new Date())
     const calendarGridRef = useRef<HTMLDivElement>(null)
     const timeLabelsRef = useRef<HTMLDivElement>(null)
-    const isSyncingRef = useRef(false)
-    const { dragState } = useDrag()
-    const isDragging = dragState.isDragging
-    const [dragOverHour, setDragOverHour] = useState<number | null>(null)
 
-    // Update current time
+    const { handleScrollA: handleGridScroll } = useScrollSync(calendarGridRef, timeLabelsRef)
+    const { dragOverHour, handleDragOver, handleDragLeave, handleDrop } = useCalendarDragDropDay({
+        gridRef: calendarGridRef,
+        onTaskDrop
+    })
+
+    // Update current time (every minute)
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date()), 60000)
         return () => clearInterval(timer)
     }, [])
 
-    // Initial scroll to 9:00
+    // Initial scroll to default hour
     useEffect(() => {
         if (calendarGridRef.current) {
-            calendarGridRef.current.scrollTop = 9 * HOUR_HEIGHT
+            calendarGridRef.current.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+            if (timeLabelsRef.current) {
+                timeLabelsRef.current.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+            }
         }
-    }, [])
-
-    // Scroll sync
-    const handleCalendarGridScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-        if (isSyncingRef.current) return
-        isSyncingRef.current = true
-        if (timeLabelsRef.current) {
-            timeLabelsRef.current.scrollTop = e.currentTarget.scrollTop
-        }
-        requestAnimationFrame(() => isSyncingRef.current = false)
     }, [])
 
     // Filter events for this day
     const dayEvents = useMemo(() => {
-        return events.filter(event => {
-            const eventStart = new Date(event.start_time);
-            return isSameDay(eventStart, currentDate);
-        });
-    }, [events, currentDate]);
+        return events.filter(event => isSameDay(new Date(event.start_time), currentDate))
+    }, [events, currentDate])
 
-    // Calculate Layout
-    const eventLayouts = useMemo(() => calculateEventLayout(dayEvents), [dayEvents]);
+    const eventLayouts = useMemo(() => calculateEventLayout(dayEvents), [dayEvents])
 
-    const hours = Array.from({ length: 24 }, (_, i) => i)
-
-    // Drag & Drop Handlers
-    const handleDragOver = useCallback((e: React.DragEvent) => {
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'copy'
-
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-        const scrollTop = calendarGridRef.current?.scrollTop || 0
-        const y = e.clientY - rect.top
-        const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
-
-        if (hourIndex >= 0 && hourIndex < 24) {
-            setDragOverHour(hourIndex)
-        }
-    }, [])
-
-    const handleDragLeave = useCallback(() => {
-        setDragOverHour(null)
-    }, [])
-
-    const handleDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault()
-        setDragOverHour(null)
-        const taskId = e.dataTransfer.getData('text/plain')
-        if (!taskId) return
-
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-        const scrollTop = calendarGridRef.current?.scrollTop || 0
-        const y = e.clientY - rect.top
-        const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
-
-        if (hourIndex >= 0 && hourIndex < 24) {
-            const targetDate = new Date(currentDate)
-            targetDate.setHours(hourIndex, 0, 0, 0)
-            onTaskDrop?.(taskId, targetDate)
-        }
-    }, [currentDate, onTaskDrop])
-
-    // Current time position
-    const getCurrentTimePosition = () => {
-        const now = new Date()
-        return ((now.getHours() * 60 + now.getMinutes()) / (24 * 60)) * 100
-    }
     const isToday = isSameDay(currentDate, new Date())
+    const currentTimePosition = ((currentTime.getHours() * 60 + currentTime.getMinutes()) / (24 * 60)) * 100
+
+    const onDragOver = useCallback((e: React.DragEvent) => handleDragOver(e, { currentDate }), [handleDragOver, currentDate])
+    const onDrop = useCallback((e: React.DragEvent) => handleDrop(e, { currentDate }), [handleDrop, currentDate])
 
     return (
         <div className="flex flex-1 h-full overflow-hidden bg-background">
             {/* Time Labels */}
             <div
                 ref={timeLabelsRef}
-                className="w-16 flex-shrink-0 border-r bg-background overflow-hidden relative"
+                className="w-12 flex-shrink-0 bg-background border-r border-border/10 overflow-hidden relative"
             >
-                <div className="relative h-[1536px]">
-                    {hours.map((hour) => (
-                        <div key={hour} className="absolute w-full flex justify-end pr-2 text-xs text-muted-foreground" style={{ top: `${hour * 64 - 10}px` }}> // -10px to center label on line
+                <div className="relative" style={{ height: DAY_TOTAL_HEIGHT }}>
+                    {HOURS.map((hour) => (
+                        <div key={hour} className="absolute w-full flex justify-end pr-2 text-[10px] font-medium text-muted-foreground" style={{ top: hour * HOUR_HEIGHT - 6 }}>
                             {hour !== 0 && `${hour}:00`}
                         </div>
                     ))}
@@ -131,27 +82,28 @@ export function CalendarDayView({
             {/* Main Grid */}
             <div
                 ref={calendarGridRef}
-                className="flex-1 overflow-y-auto relative no-scrollbar"
-                onScroll={handleCalendarGridScroll}
+                className="flex-1 overflow-y-auto relative"
+                onScroll={handleGridScroll}
             >
                 <div
-                    className="relative h-[1536px] min-w-[300px]"
-                    onDragOver={handleDragOver}
+                    className="relative"
+                    style={{ height: DAY_TOTAL_HEIGHT, minWidth: MIN_GRID_WIDTH_DAY }}
+                    onDragOver={onDragOver}
                     onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
+                    onDrop={onDrop}
                 >
                     {/* Grid Lines */}
-                    {hours.map((hour) => (
-                        <div key={`grid-${hour}`} className="absolute w-full border-t border-border/10" style={{ top: `${hour * 64}px` }} />
+                    {HOURS.map((hour) => (
+                        <div key={`grid-${hour}`} className="absolute w-full border-t border-border/10" style={{ top: hour * HOUR_HEIGHT }} />
                     ))}
 
                     {/* Current Time Indicator */}
                     {isToday && (
                         <div
                             className="absolute z-30 w-full flex items-center pointer-events-none"
-                            style={{ top: `${getCurrentTimePosition()}%` }}
+                            style={{ top: `${currentTimePosition}%` }}
                         >
-                            <div className="w-3 h-3 rounded-full bg-red-500 -ml-1.5 border-2 border-background" />
+                            <div className="absolute w-2 h-2 rounded-full bg-red-500 z-40 ring-2 ring-background left-[-5px]" />
                             <div className="h-[2px] bg-red-500 w-full opacity-60" />
                         </div>
                     )}
@@ -160,10 +112,7 @@ export function CalendarDayView({
                     {dragOverHour !== null && (
                         <div
                             className="absolute w-full bg-primary/10 z-10 pointer-events-none transition-all"
-                            style={{
-                                top: dragOverHour * HOUR_HEIGHT,
-                                height: HOUR_HEIGHT
-                            }}
+                            style={{ top: dragOverHour * HOUR_HEIGHT, height: HOUR_HEIGHT }}
                         >
                             <div className="bg-primary text-primary-foreground text-xs px-2 py-1 inline-block m-1 rounded shadow-sm">
                                 {dragOverHour}:00
@@ -173,8 +122,8 @@ export function CalendarDayView({
 
                     {/* Events */}
                     {dayEvents.map(event => {
-                        const layout = eventLayouts[event.id];
-                        if (!layout) return null;
+                        const layout = eventLayouts[event.id]
+                        if (!layout) return null
 
                         return (
                             <div

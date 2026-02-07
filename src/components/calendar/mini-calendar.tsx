@@ -5,19 +5,18 @@ import { DayPicker } from "react-day-picker"
 import "react-day-picker/style.css"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
-import { ChevronLeft, ChevronRight } from "lucide-react"
 
 export type MiniCalendarProps = {
     currentDate: Date
     onDateChange: (date: Date) => void
-    events?: { date: Date }[] // Optional: to show indicators
+    events?: { date: Date }[]
     className?: string
 }
 
 export function MiniCalendar({ currentDate, onDateChange, events, className }: MiniCalendarProps) {
     const [month, setMonth] = useState<Date>(currentDate)
 
-    // Sync internal month state when currentDate changes significantly (external navigation)
+    // Sync internal month state when currentDate changes significantly
     useEffect(() => {
         if (currentDate.getMonth() !== month.getMonth() || currentDate.getFullYear() !== month.getFullYear()) {
             setMonth(currentDate)
@@ -25,23 +24,7 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
     }, [currentDate])
 
     return (
-        <div className={cn("p-4", className)}>
-            <style jsx global>{`
-              .rdp {
-                margin: 0;
-              }
-              .rdp-month {
-                width: 100%;
-              }
-              .rdp-table {
-                width: 100%;
-                max-width: 100%;
-              }
-              .rdp-caption {
-                position: relative;
-                padding-bottom: 12px;
-              }
-            `}</style>
+        <div className={cn("p-4 [&_.rdp]:m-0 [&_.rdp-month]:w-full [&_.rdp-table]:w-full [&_.rdp-table]:max-w-full [&_.rdp-caption]:relative [&_.rdp-caption]:pb-3", className)}>
             <DayPicker
                 mode="single"
                 selected={currentDate}
@@ -51,8 +34,7 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
                 locale={ja}
                 showOutsideDays
                 formatters={{
-                    formatCaption: (date, options) => {
-                        // "2026年2月" style
+                    formatCaption: (date) => {
                         return `${date.getFullYear()}年${date.getMonth() + 1}月`
                     }
                 }}
@@ -67,12 +49,12 @@ export function MiniCalendar({ currentDate, onDateChange, events, className }: M
                     ),
                     nav_button_previous: "z-10",
                     nav_button_next: "z-10",
-                    table: "w-full border-collapse space-y-1 block", // Block to allow flex rows
-                    tbody: "w-full block", // Ensure proper stacking of rows
+                    table: "w-full border-collapse space-y-1 block",
+                    tbody: "w-full block",
                     head_row: "flex w-full mb-2",
                     head_cell: "text-muted-foreground w-1/7 flex-1 font-normal text-[0.7rem] flex justify-center items-center py-1",
                     row: "flex w-full mt-1",
-                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20 flex-1", // flex-1 to distribute width
+                    cell: "relative p-0 text-center text-xs focus-within:relative focus-within:z-20 flex-1",
                     day: cn(
                         "h-8 w-8 mx-auto p-0 font-normal rounded-full hover:bg-muted/30 flex items-center justify-center transition-all text-xs text-foreground"
                     ),

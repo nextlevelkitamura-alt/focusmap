@@ -23,76 +23,87 @@ export function CalendarEventCard({
   const [isHovered, setIsHovered] = useState(false);
 
   const startTime = new Date(event.start_time);
-  const endTime = new Date(event.end_time);
 
   // 背景色と文字色のコントラストを確保
-  const backgroundColor = event.background_color || '#E3F2FD';
-  const rawTextColor = event.color || '#1976D2';
+  const backgroundColor = event.background_color || '#039BE5'; // Default to a Google Calendar blue if missing
 
-  // 背景色が明るい場合は暗い文字、暗い場合は明るい文字を使用
-  const getContrastColor = (bgColor: string, defaultColor: string) => {
-    // 背景色が白に近い場合はダークテキストを返す
-    const lightColors = ['#ffffff', '#fff', '#f5f5f5', '#fafafa', '#E3F2FD'];
-    const isLightBg = lightColors.some(c => bgColor.toLowerCase().includes(c.toLowerCase()) || bgColor === c);
-    return isLightBg ? '#1a1a1a' : defaultColor;
+  // 相対輝度を計算して適当な文字色（白または黒）を返す
+  const getContrastTextColor = (hexColor: string) => {
+    // HEXをRGBに変換
+    const r = parseInt(hexColor.substr(1, 2), 16);
+    const g = parseInt(hexColor.substr(3, 2), 16);
+    const b = parseInt(hexColor.substr(5, 2), 16);
+
+    // 相対輝度計算 (sRGB)
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    
+    // 閾値（128）より明るければ黒、暗ければ白を返す
+    return yiq >= 128 ? '#1f1f1f' : '#ffffff';
   };
 
-  const textColor = getContrastColor(backgroundColor, rawTextColor);
+  const textColor = getContrastTextColor(backgroundColor);
 
   return (
     <div
-      className={`relative rounded-md px-2 py-1 transition-all hover:brightness-110 cursor-pointer overflow-hidden flex flex-col justify-start leading-tight group ${className}`}
+      className={`relative rounded-[4px] px-1.5 py-0.5 transition-all hover:brightness-95 cursor-pointer overflow-hidden flex flex-col justify-start leading-tight group border border-transparent hover:shadow-sm ${className}`}
       style={{
         backgroundColor,
         color: textColor,
-        fontSize: '11px',
-        fontWeight: 600,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.2)', // Adding subtle depth
-        cursor: isDraggable ? 'grab' : 'pointer'
+        boxShadow: '0 1px 1px rgba(0,0,0,0.1)',
+        cursor: isDraggable ? 'grab' : 'pointer',
+        borderLeft: `3px solid ${event.color || 'transparent'}` // Optional: keep the original accent color as a border
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       draggable={isDraggable}
+      onClick={(e) => {
+          e.stopPropagation();
+          onEdit?.(event.id);
+      }}
     >
       {/* Time & Title */}
-      <div className="flex flex-col min-w-0">
-        {!event.is_all_day && (
-          <span className="font-normal opacity-85 text-[10px] mb-0.5 whitespace-nowrap">
-            {format(startTime, 'HH:mm')}
+      <div className="flex flex-col min-w-0 h-full">
+         <div className="flex items-baseline gap-1 min-w-0">
+          {!event.is_all_day && (
+            <span className="font-medium text-[10px] whitespace-nowrap opacity-90 flex-shrink-0">
+              {format(startTime, 'HH:mm')}
+            </span>
+          )}
+          <span className="font-semibold text-[11px] truncate select-none">
+            {event.title}
           </span>
-        )}
-        <h4 className="font-semibold truncate w-full">
-          {event.title}
-        </h4>
+         </div>
       </div>
 
       {/* ホバー時の編集・削除ボタン */}
       {isHovered && (onEdit || onDelete) && (
-        <div className="absolute top-0.5 right-0.5 flex gap-0.5 flex-shrink-0 bg-inherit/10 backdrop-blur-[1px] rounded">
-          {onEdit && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(event.id);
-              }}
-              className="p-1 hover:bg-black/10 rounded transition-colors"
-              title="編集"
-            >
-              <Edit2 className="h-3 w-3" style={{ color: textColor }} />
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(event.id);
-              }}
-              className="p-1 hover:bg-black/10 rounded transition-colors"
-              title="削除"
-            >
-              <Trash2 className="h-3 w-3" style={{ color: textColor }} />
-            </button>
-          )}
+        <div className="absolute top-0 right-0 bottom-0 flex items-center pr-1 pl-4 bg-gradient-to-l from-black/20 via-black/10 to-transparent">
+             <div className="flex gap-0.5 animate-in fade-in duration-200">
+               {onEdit && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(event.id);
+                  }}
+                  className="p-1 hover:bg-white/20 rounded-full transition-colors"
+                  title="編集"
+                >
+                  <Edit2 className="h-3 w-3" style={{ color: textColor }} />
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(event.id);
+                  }}
+                  className="p-1 hover:bg-white/20 rounded-full transition-colors"
+                  title="削除"
+                >
+                  <Trash2 className="h-3 w-3" style={{ color: textColor }} />
+                </button>
+              )}
+             </div>
         </div>
       )}
     </div>

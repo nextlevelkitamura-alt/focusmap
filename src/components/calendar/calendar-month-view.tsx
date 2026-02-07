@@ -1,9 +1,8 @@
-import { useState, useCallback, useRef } from "react"
+import { useCallback, useRef, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, isToday } from "date-fns"
 import { ja } from "date-fns/locale"
-import { useDrag } from "@/contexts/DragContext"
-import { Calendar as CalendarIcon } from "lucide-react"
+import { useCalendarDragDropMonth } from "@/hooks/useCalendarDragDrop"
 import { CalendarEvent } from "@/types/calendar"
 
 interface CalendarMonthViewProps {
@@ -13,104 +12,45 @@ interface CalendarMonthViewProps {
   onEventClick?: (eventId: string) => void
 }
 
+const WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
+const MAX_DISPLAY_EVENTS = 5
+
 export function CalendarMonthView({
   currentDate,
   onTaskDrop,
   events = [],
   onEventClick
 }: CalendarMonthViewProps) {
-  const [dragOverDay, setDragOverDay] = useState<string | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  const { dragState } = useDrag()
-  const isDragging = dragState.isDragging
-
-  // Specific events for day
-  const getEventsForDay = (date: Date) => {
-    return events.filter(event => {
-      const eventStart = new Date(event.start_time)
-      return isSameDay(eventStart, date)
-    })
-  }
+  const { dragOverDay, handleDragOver, handleDragLeave, handleDrop } = useCalendarDragDropMonth({ onTaskDrop })
 
   // Generate month days (Mon start)
-  const getMonthDays = () => {
+  const monthDays = useMemo(() => {
     const monthStart = startOfMonth(currentDate)
     const monthEnd = endOfMonth(currentDate)
     const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 })
     const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 })
-
     return eachDayOfInterval({ start: calendarStart, end: calendarEnd })
-  }
+  }, [currentDate])
 
-  const monthDays = getMonthDays()
-  const weekDays = ['月', '火', '水', '木', '金', '土', '日']
+  // Get events for a specific day
+  const getEventsForDay = useCallback((date: Date) => {
+    return events
+      .filter(event => isSameDay(new Date(event.start_time), date))
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+  }, [events])
 
-  // Drag Handlers
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
-
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-
-    const cellWidth = rect.width / 7
-    const cellHeight = rect.height / (monthDays.length / 7) // dynamic rows
-
-    const col = Math.floor(x / cellWidth)
-    const row = Math.floor(y / cellHeight)
-
-    const index = row * 7 + col
-    if (index >= 0 && index < monthDays.length) {
-      const dayStr = format(monthDays[index], 'yyyy-MM-dd')
-      setDragOverDay(dayStr)
-    }
-  }, [monthDays])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const x = e.clientX
-    const y = e.clientY
-
-    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-      setDragOverDay(null)
-    }
-  }, [])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOverDay(null)
-
-    const taskId = e.dataTransfer.getData('text/plain')
-    if (!taskId) return
-
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-
-    const cellWidth = rect.width / 7
-    const cellHeight = rect.height / (monthDays.length / 7)
-
-    const col = Math.floor(x / cellWidth)
-    const row = Math.floor(y / cellHeight)
-
-    const index = row * 7 + col
-    if (index >= 0 && index < monthDays.length) {
-      const targetDate = new Date(monthDays[index])
-      targetDate.setHours(9, 0, 0, 0)
-      onTaskDrop?.(taskId, targetDate)
-    }
-  }, [monthDays, onTaskDrop])
+  const onDragOver = useCallback((e: React.DragEvent) => handleDragOver(e, monthDays), [handleDragOver, monthDays])
+  const onDrop = useCallback((e: React.DragEvent) => handleDrop(e, monthDays), [handleDrop, monthDays])
 
   return (
     <div className="flex-1 flex flex-col bg-background h-full">
       {/* Weekday Headers */}
-      <div className="grid grid-cols-7 border-b bg-background pointer-events-none">
-        {weekDays.map((day) => (
+      <div className="grid grid-cols-7 border-b border-border/10 bg-background pointer-events-none">
+        {WEEKDAYS.map((day) => (
           <div
             key={day}
-            className="py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase"
+            className="py-1.5 text-center text-[11px] font-semibold text-muted-foreground uppercase opacity-80"
           >
             {day}
           </div>
@@ -120,41 +60,41 @@ export function CalendarMonthView({
       {/* Month Grid */}
       <div
         ref={gridRef}
-        className="flex-1 grid grid-cols-7 grid-rows-6" // Fixed 6 rows for consistency
-        onDragOver={handleDragOver}
+        className="flex-1 grid grid-cols-7 grid-rows-6 bg-background"
+        onDragOver={onDragOver}
         onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDrop={onDrop}
       >
         {monthDays.map((date, index) => {
-          // If we have fewer than 6 weeks (e.g. 5), the last row(s) might be empty or next month.
-          // Since we map all days, grid-rows-6 might leave space if we only have 35 days.
-          // But usually we just fill.
-
-          const dayStr = format(date, 'yyyy-MM-dd')
+          const dayStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
           const isCurrentMonth = isSameMonth(date, currentDate)
           const isTodayDate = isToday(date)
           const isHighlighted = dragOverDay === dayStr
           const dayEvents = getEventsForDay(date)
-          const maxDisplayEvents = 4 // Increased from 3
+
+          // Determine row index to remove bottom border for last row
+          const rowIndex = Math.floor(index / 7)
+          const isLastRow = rowIndex === 5
 
           return (
             <div
               key={dayStr}
               className={cn(
-                "relative p-1 border-b border-r border-border/10 transition-all duration-200 flex flex-col min-h-0",
+                "relative p-1 border-r border-border/10 transition-all duration-200 flex flex-col min-h-0",
+                !isLastRow && "border-b border-border/10",
+                (index + 1) % 7 === 0 && "border-r-0", // Remove right border for last column each row? No, actually grid borders are tricky. Let's keep right border except fast one.
                 !isCurrentMonth && "bg-muted/5 text-muted-foreground",
-                // Highlight drop target
                 isHighlighted && "bg-primary/10 ring-2 ring-primary ring-inset z-10",
                 "pointer-events-auto hover:bg-muted/5"
               )}
             >
               {/* Day Number */}
-              <div className="flex justify-center mb-1">
+              <div className="flex justify-center mb-1 py-0.5">
                 <span className={cn(
-                  "text-[12px] font-medium w-6 h-6 flex items-center justify-center rounded-full",
+                  "text-[12px] w-6 h-6 flex items-center justify-center rounded-full transition-colors",
                   isTodayDate
                     ? "bg-primary text-primary-foreground shadow-sm font-bold"
-                    : "text-foreground/80 hover:bg-muted"
+                    : "text-foreground/90 font-medium hover:bg-muted/50 opacity-80"
                 )}>
                   {date.getDate() === 1 ? format(date, 'M月d日', { locale: ja }) : format(date, 'd')}
                 </span>
@@ -162,29 +102,30 @@ export function CalendarMonthView({
 
               {/* Events List */}
               <div className="flex flex-col gap-0.5 flex-1 overflow-hidden">
-                {dayEvents.slice(0, maxDisplayEvents).map((event) => (
+                {dayEvents.slice(0, MAX_DISPLAY_EVENTS).map((event) => (
                   <button
                     key={event.id}
                     onClick={(e) => {
-                      e.stopPropagation();
-                      onEventClick?.(event.id);
+                      e.stopPropagation()
+                      onEventClick?.(event.id)
                     }}
                     className="text-left text-[10px] px-1.5 py-0.5 rounded-[3px] truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent leading-tight font-medium"
                     style={{
-                      // Google Calendar uses background color for the event bar
                       backgroundColor: event.background_color || '#039BE5',
-                      color: '#fff', // Typically white text on colored bg for month view "chips"
-                      // Use simpler styling without borders for month view chips
+                      color: '#ffffff', // Always white for better visibility on colored chips in month view usually
+                      boxShadow: '0 1px 1px rgba(0,0,0,0.05)'
                     }}
                     title={event.title}
                   >
-                    {event.is_all_day ? '' : format(new Date(event.start_time), 'HH:mm ')}
-                    {event.title}
+                    <span className="opacity-90 mr-1 font-normal text-[9px]">
+                      {event.is_all_day ? '' : format(new Date(event.start_time), 'HH:mm')}
+                    </span>
+                    <span className="font-semibold">{event.title}</span>
                   </button>
                 ))}
-                {dayEvents.length > maxDisplayEvents && (
-                  <span className="text-[10px] text-foreground/70 pl-1 font-medium hover:underline cursor-pointer">
-                    他 {dayEvents.length - maxDisplayEvents} 件
+                {dayEvents.length > MAX_DISPLAY_EVENTS && (
+                  <span className="text-[10px] text-foreground/70 pl-1 font-medium hover:underline cursor-pointer block mt-0.5">
+                    他 {dayEvents.length - MAX_DISPLAY_EVENTS} 件
                   </span>
                 )}
               </div>

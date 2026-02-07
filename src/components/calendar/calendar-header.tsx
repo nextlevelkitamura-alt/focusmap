@@ -1,10 +1,10 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, startOfMonth, endOfMonth, addMonths, subMonths, isSameWeek } from "date-fns"
+import { format, startOfWeek, endOfWeek, subWeeks, subMonths, addWeeks, addMonths } from "date-fns"
 import { ja } from "date-fns/locale"
 import { CalendarSelector } from "./calendar-selector"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react"
 
 export type ViewMode = 'day' | 'week' | 'month'
 
@@ -74,91 +74,74 @@ export function CalendarHeader({
   }
 
   return (
-    <div className="flex flex-col border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      {/* Upper Toolbar: Title & Main Actions */}
-      <div className="flex items-center justify-between px-4 py-2">
+    <div className="flex items-center justify-between px-4 h-[60px] border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shrink-0 z-30">
+
+      {/* Left Section: Logo & Today & Navigation & Title */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 text-foreground/90">
+          <div className="p-1.5 bg-primary/10 rounded-md">
+            <CalendarIcon className="w-5 h-5 text-primary" />
+          </div>
+          <h1 className="text-lg font-medium tracking-tight hidden md:block">カレンダー</h1>
+        </div>
+
+        <div className="h-6 w-px bg-border/40 mx-1 hidden md:block" />
+
         <div className="flex items-center gap-2">
-          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10">
-            <img src="https://www.gstatic.com/calendar/images/dynamiclogo_2020q4/daily_30.ico" alt="Calendar" className="w-5 h-5" />
-          </div>
-          <h2 className="font-semibold text-base tracking-tight">カレンダー</h2>
-        </div>
-
-        <div className="flex items-center gap-1">
-          <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border shadow-sm">
-            <button
-              onClick={() => onViewModeChange('day')}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-all",
-                viewMode === 'day'
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              )}
-            >
-              日
-            </button>
-            <div className="w-px h-3 bg-border/50 mx-0.5" />
-            <button
-              onClick={() => onViewModeChange('week')}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-all",
-                viewMode === 'week'
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              )}
-            >
-              週
-            </button>
-            <div className="w-px h-3 bg-border/50 mx-0.5" />
-            <button
-              onClick={() => onViewModeChange('month')}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-all",
-                viewMode === 'month'
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              )}
-            >
-              月
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Lower Toolbar: Navigation & Date Context */}
-      <div className="flex items-center justify-between px-3 pb-2">
-        <div className="flex items-center gap-1">
           <button
             onClick={onToday}
-            className="px-2 py-1 text-xs font-medium bg-muted/50 hover:bg-muted border rounded-md transition-colors"
+            className="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted/50 transition-colors"
           >
             今日
           </button>
-          <div className="flex items-center rounded-md border bg-muted/30">
+
+          <div className="flex items-center gap-0.5">
             <button
               onClick={goToPrevious}
-              className="p-1 px-1.5 hover:bg-muted rounded-l-md transition-colors border-r"
+              className="p-1.5 rounded-full hover:bg-muted/50 transition-colors"
               aria-label="Previous"
             >
-              <ChevronLeft className="w-3.5 h-3.5" />
+              <ChevronLeft className="w-4 h-4 text-foreground/70" />
             </button>
             <button
               onClick={goToNext}
-              className="p-1 px-1.5 hover:bg-muted rounded-r-md transition-colors"
+              className="p-1.5 rounded-full hover:bg-muted/50 transition-colors"
               aria-label="Next"
             >
-              <ChevronRight className="w-3.5 h-3.5" />
+              <ChevronRight className="w-4 h-4 text-foreground/70" />
             </button>
           </div>
-          <span className="ml-2 text-sm font-bold text-foreground tabular-nums">
+
+          <span className="ml-2 text-base font-medium text-foreground tabular-nums">
             {getDateRangeLabel()}
           </span>
         </div>
+      </div>
 
-        <div className="flex items-center gap-1">
-          <CalendarSelector compact onVisibleCalendarIdsChange={onVisibleCalendarIdsChange} />
-          {/* Note: CalendarSettings is now integrated via CalendarSelector or can be added here if needed separate */}
+      {/* Right Section: View Switcher & Calendar Selector */}
+      <div className="flex items-center gap-3">
+        <div className="hidden md:flex items-center bg-muted/30 rounded-lg p-1 border">
+          {(['day', 'week', 'month'] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => onViewModeChange(mode)}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-all duration-200",
+                viewMode === mode
+                  ? "bg-background text-foreground shadow-sm ring-1 ring-border/5"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              {mode === 'day' && '日'}
+              {mode === 'week' && '週'}
+              {mode === 'month' && '月'}
+            </button>
+          ))}
         </div>
+
+        <div className="h-4 w-px bg-border/40 hidden md:block" />
+
+        <CalendarSelector compact onVisibleCalendarIdsChange={onVisibleCalendarIdsChange} />
       </div>
     </div>
   )
