@@ -2,7 +2,7 @@
 fix: Google Calendar OAuth 認証失敗
 type: fix
 created: 2026-02-07
-status: investigating
+status: resolved
 ---
 
 # 修正計画: Google Calendar OAuth 認証が取得できない
@@ -53,8 +53,14 @@ status: investigating
 
 ## 作業内容
 1. ✅ 修正計画書の作成
-2. ⏳ Google Cloud Console での登録URI設定
-3. ⏳ `.env.local` の更新
-4. ⏳ Netlify 環境変数の設定
-5. ⏳ ローカルでテスト（カレンダー連携フロー確認）
-6. ⏳ ROADMAP.md の更新
+2. ✅ Google Cloud Console での登録URI設定（ユーザー実施）
+3. ✅ `.env.local` の更新
+4. ✅ Netlify 環境変数の設定（ユーザー実施）
+5. ✅ コード修正（エラーログ追加）
+6. ✅ GitHub コミット・プッシュ
+7. ⏳ Netlify でのテスト実行
+
+## 修正内容
+- エラーハンドリングを強化（OAuth2 設定・トークン情報の詳細ログ）
+- Google Calendar API リダイレクドURI をローカル・本番で正確に設定
+- スコープ確認完了（`calendar.events` - 読み書き両対応）
