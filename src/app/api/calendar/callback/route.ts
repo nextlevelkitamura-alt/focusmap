@@ -30,6 +30,12 @@ export async function GET(request: NextRequest) {
 
   try {
     // OAuth2クライアントを作成
+    console.log('[Calendar Callback] OAuth2 config:', {
+      client_id: process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Missing',
+      client_secret: process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'Missing',
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI
+    });
+
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
@@ -37,9 +43,19 @@ export async function GET(request: NextRequest) {
     );
 
     // 認証コードをトークンに交換
+    console.log('[Calendar Callback] Exchanging code for tokens. Code length:', code?.length);
     const { tokens } = await oauth2Client.getToken(code);
 
+    console.log('[Calendar Callback] Tokens received:', {
+      access_token: tokens.access_token ? 'Present' : 'Missing',
+      refresh_token: tokens.refresh_token ? 'Present' : 'Missing',
+      expiry_date: tokens.expiry_date,
+      token_type: tokens.token_type,
+      scope: tokens.scope
+    });
+
     if (!tokens.access_token || !tokens.refresh_token) {
+      console.error('[Calendar Callback] Missing tokens:', tokens);
       throw new Error('Failed to get tokens');
     }
 

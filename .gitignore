@@ -44,3 +44,6 @@ next-env.d.ts
 docs/status.md
 .env*.local
 docs/env.md
+
+# Local Netlify folder
+.netlify
