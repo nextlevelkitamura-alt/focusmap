@@ -70,6 +70,18 @@ export function useCalendarDragDropDay({ gridRef, onTaskDrop }: UseCalendarDragD
 
 /** Shared drag state for week view */
 export function useCalendarDragDropWeek({ gridRef, onTaskDrop }: UseCalendarDragDropOptions) {
+  return useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount: 7 })
+}
+
+interface DragDropMultiDayConfig {
+  /** Array of dates for the view */
+  dates: Date[]
+  /** Array of hour numbers */
+  hours: number[]
+}
+
+/** Shared drag state for multi-day view (3-day, week etc) */
+export function useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount }: UseCalendarDragDropOptions & { daysCount: number }) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -82,14 +94,14 @@ export function useCalendarDragDropWeek({ gridRef, onTaskDrop }: UseCalendarDrag
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    const cellWidth = rect.width / 7
+    const cellWidth = rect.width / daysCount
     const dayIndex = Math.floor(x / cellWidth)
     const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
 
-    if (dayIndex >= 0 && dayIndex < 7 && hourIndex >= 0 && hourIndex < 24) {
+    if (dayIndex >= 0 && dayIndex < daysCount && hourIndex >= 0 && hourIndex < 24) {
       setDragOverCell(`${dayIndex}-${hourIndex}`)
     }
-  }, [gridRef])
+  }, [gridRef, daysCount])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -100,7 +112,7 @@ export function useCalendarDragDropWeek({ gridRef, onTaskDrop }: UseCalendarDrag
     }
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent, config: DragDropWeekConfig) => {
+  const handleDrop = useCallback((e: React.DragEvent, config: DragDropMultiDayConfig) => {
     e.preventDefault()
     e.stopPropagation()
     setDragOverCell(null)
@@ -114,17 +126,16 @@ export function useCalendarDragDropWeek({ gridRef, onTaskDrop }: UseCalendarDrag
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
 
-    const cellWidth = rect.width / 7
+    const cellWidth = rect.width / daysCount
     const dayIndex = Math.floor(x / cellWidth)
     const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
 
-    if (dayIndex >= 0 && dayIndex < 7 && hourIndex >= 0 && hourIndex < 24) {
-      const hour = config.hours[hourIndex]
-      const targetDate = new Date(config.weekDates[dayIndex])
-      targetDate.setHours(hour, 0, 0, 0)
+    if (dayIndex >= 0 && dayIndex < daysCount && hourIndex >= 0 && hourIndex < 24) {
+      const targetDate = new Date(config.dates[dayIndex])
+      targetDate.setHours(hourIndex, 0, 0, 0)
       onTaskDrop?.(taskId, targetDate)
     }
-  }, [gridRef, onTaskDrop])
+  }, [gridRef, onTaskDrop, daysCount])
 
   return { dragOverCell, handleDragOver, handleDragLeave, handleDrop }
 }

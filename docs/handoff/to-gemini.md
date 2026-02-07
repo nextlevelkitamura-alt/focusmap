@@ -1,116 +1,244 @@
-# Claude → Gemini 引き継ぎ
+# Claude → Gemini 3.0 Pro 引き継ぎ
 
-> この内容を Gemini 3.0 Pro にコピペストしてください
-
-## 更新日時
-2026-02-06
-
-## プロジェクト
-**しかみか (Shikumika)**: マインドマップとタスク管理を統合し、Google カレンダーと連携した統合的なプロダクティビティアプリ
-
-## Gemini にやってもらいたいこと
-**本格的カレンダーUI（Googleカレンダー風）** を実装してください
-
-## 画面イメージ
-
-### レイアウト
-- **縦スクロールで時間が見えるタイムライン形式**（Googleカレンダー週ビューと同じ）
-- 週ビュー: 7日間（または5営業日）の縦方向タイムライン
-- 月ビュー: 既存の実装をベースにGoogleカレンダー風に
-- 日ビュー: 新規追加（1日分の詳細タイムライン）
-
-### 配色
-- **Googleカレンダーとほぼ同じ**
-- カレンダーごとの色分け（background_color, colorフィールドを活用）
-- ライトモード・ダークモード両対応
-
-### 雰囲気
-- **Googleカレンダーそのまま**
-- クリーンでミニマル
-- ダークモード対応（theme/stateを確認して実装）
-
-### 配置
-- **ヘッダー固定**: カレンダーアイコン、タイトル、ビュー切り替え、ナビゲーション
-- **ミニカレンダー**: 配置は検討（上部／右サイド／カラムで選択可能）
-- **時間ラベル**: 左側固定
-- **メインエリア**: スクロール可能なタイムライン
-
-### その他
-- **ドラッグ&ドロップ**: イベントの移動・時間変更
-- **リアルタイム同期**: Googleアカウントと即時同期（既存のuseCalendarEvents, useCalendarsを活用）
-- **複数カレンダー**: カレンダーの切り替え表示・色分け
-- **現在時刻ライン**: 赤いラインで現在時刻を表示（既存実装あり）
-- **イベントカード**: 重なり対応、色分け表示
-
-## 技術情報
-
-- **フレームワーク**: Next.js 16.1.3 (App Router), React 19
-- **スタイリング**: Tailwind CSS 4
-- **UIライブラリ**: Radix UI, Lucide Icons
-- **カレンダーライブラリ**: react-day-picker, date-fns
-- **バックエンド**: Supabase (PostgreSQL), Google Calendar API
-- **状態管理**: React hooks（useCalendarEvents, useCalendars）
-- **ダークモード**: next-themes（既存導入済み）
-
-## 作成・修正してほしいファイル
-
-### 新規作成
-- `src/components/calendar/calendar-day-view.tsx` - 日ビューコンポーネント
-- `src/components/calendar/mini-calendar.tsx` - ミニカレンダー（予定ある日を強調）
-
-### 修正・改善
-- `src/components/calendar/calendar-week-view.tsx` - Googleカレンダー風の週ビューに全面リデザイン
-  - 現在は3日のみ → 7日（または5営業日）
-  - イベントの重なり対応
-  - ドラッグ&ドロップでイベント移動
-- `src/components/calendar/calendar-month-view.tsx` - Googleカレンダー風の月ビューに改善
-- `src/components/calendar/calendar-header.tsx` - ミニカレンダー追加、配置調整
-- `src/components/calendar/calendar-view.tsx` - 日ビュー追加、ビュー切り替え改善
-- `src/components/calendar/calendar-event-card.tsx` - 色分け、重なり対応改善
-
-### 確認のみ（既存実装）
-- `src/hooks/useCalendarEvents.ts` - イベント取得・同期
-- `src/hooks/useCalendars.ts` - カレンダー管理
-- `src/types/calendar.ts` - 型定義（color, background_colorフィールドあり）
-
-## 既存コンポーネント
-
-### 再用可能なもの
-- `CalendarSelector` - カレンダー選択UI（複数カレンダー対応済み）
-- `useCalendarEvents` - イベント取得フック（autoSync, syncInterval対応）
-- `useCalendars` - カレンダー管理フック（selectedCalendarIds管理）
-- 型定義: `CalendarEvent`, `UserCalendar`（色情報フィールドあり）
-
-### 既存の実装詳細
-- 週ビュー: 現在3日間のみ表示（`getWeekDates()`で昨日・今日・明日）
-- 時間ラベル: 0-23時、64px/時間
-- ドラッグ&ドロップ: タスクからのドロップには対応済み
-- 現在時刻ライン: 赤いドット+ライン（既存実装あり）
-- イベント位置計算: `getEventPosition()`（%ベース）
-
-## 参考資料（Gemini にも見てほしい）
-
-- **docs/ROADMAP.md** — 全体像
-- **src/types/calendar.ts** — 型定義（色情報フィールドを確認）
-- **src/hooks/useCalendarEvents.ts** — 同期処理の仕組み
-- **src/hooks/useCalendars.ts** — カレンダー管理
-- **src/components/calendar/calendar-selector.tsx** — カレンダー選択UI
-
-## 実装のポイント
-
-1. **7日間の週ビュー**: `getWeekDates()`を修正して月曜日〜日曜日（または設定で5営業日）
-2. **イベントの重なり対応**: 同時間のイベントを横に並べる
-3. **ドラッグ&ドロップ**: イベント自体をドラッグして移動・時間変更
-4. **色分け**: `event.background_color`, `event.color` を活用
-5. **ダークモード**: `next-themes` の `useTheme()` で判定
-6. **リアルタイム同期**: 既存の `autoSync: true, syncInterval: 300000` を活用
-
-## 完了したら
-完了したら **`/gemini-done`** を実行してください。
-**`docs/handoff/from-gemini.md`** に結果を記入してください。
+> このドキュメント全体を **Gemini 3.0 Pro にコピペスト** してください。
 
 ---
 
-## 補足: ユーザーの要望
+## 📋 引き継ぎ内容
 
-> レイアウトは縦スクロールで時間を見ることができます。本当にGoogle CalendarみたいなUIです。ほぼGoogle Calendarと同じです。もちろんダークモードに対応しています。現在ダークモードで設定しているかどうか、ヘッダーなどを固定して、ミニカレンダーなどをどこに配置するのがいいんですかね。上でもいいし、右の方でもいいし、カラムで出したりでもいいと思います。あとは、正直カレンダーが分かれていると思うので、それに応じて色分けしてほしいです。そのあたりの情報も、正直同期しているかと思うので、そこのあたりもしっかり確認してもらいながら、同期の対応がしっかりできるように考えています。
+**日時**: 2026-02-07
+**プロジェクト**: Shikumika App — タスク管理とスケジュール管理を統合したプロダクティビティプラットフォーム
+
+---
+
+## 🎯 Gemini にやってもらいたいこと
+
+### **カレンダー UI の複数ビュー対応 + デザイン強化**
+
+現在のカレンダーは、Google Calendar との連携は実装されていますが、UI/UX がまだ基本的です。
+
+以下の 2 つの機能を実装してください：
+
+#### **1️⃣ 左側（タスク管理パネル）：カレンダー種別選択**
+- 現在のタスク編集フォームに「カレンダー種別」ドロップダウンを追加
+- Google Calendar から取得した情報を表示してカレンダーを選択可能にする
+- オプション：「登録なし」「Personal」「Work」「その他」など
+- アイコンクリック → カレンダー一覧を表示 → 種別を選択する流れ
+
+#### **2️⃣ 右側（カレンダー UI）：複数ビュー対応 + Google Calendar 風デザイン**
+- **複数ビューの実装**：
+  - 📅 **月ビュー**（カレンダーグリッド型）
+  - 📆 **週ビュー**（7日間の時間帯表示）
+  - 📊 **3日ビュー**（3日間の詳細ビュー）
+  - 📋 **日ビュー**（1日の詳細タイムライン）
+
+- **UI 特性**：
+  - Google Calendar のようなシンプルで洗練された見た目
+  - 予定ごとに色分け（カレンダー種別の色を反映）
+  - ビュー切替ボタンで簡単に切り替え可能
+  - レスポンシブ対応（右サイドバー環境 300-500px に対応）
+
+---
+
+## 🎨 デザインイメージ
+
+### **色分け・配色**
+- **Google Calendar 風**：各カレンダー種別に異なる色を割り当て
+- **背景**: ダークモード対応（既存の `bg-background`, `text-foreground` CSS変数を使用）
+- **アクセント色**: 既存のカレンダーイベントカード色を踏襲
+
+### **レイアウト**
+- **ヘッダー**: ビュー切替ボタン（月/週/3日/日）を横に並べる
+- **本体**: 選択されたビューに応じて、各ビューを表示
+- **サイドバー対応**: 300-500px の幅で見やすく表示されること
+
+### **雰囲気**
+- シンプルで直感的
+- Google Calendar のような定番の UI
+- アニメーション：ビュー切替時にスムーズに遷移
+
+---
+
+## 🛠️ 技術情報
+
+### **フレームワーク & ライブラリ**
+- **フレームワーク**: Next.js 16 (App Router) + React 19
+- **UI ライブラリ**: Radix UI + Tailwind CSS 4
+- **State Management**: React Context + Custom Hooks
+- **Date Handling**: date-fns
+- **Google Calendar API**: googleapis (Node.js)
+
+### **既存コンポーネント**
+以下のコンポーネントは既に実装済みです。参考にしてください：
+
+```
+src/components/calendar/
+├── calendar-month-view.tsx      ← 月ビュー（既存、改善可）
+├── calendar-week-view.tsx       ← 週ビュー（既存、改善可）
+├── calendar-day-view.tsx        ← 日ビュー（既存、改善可）
+├── calendar-event-card.tsx      ← イベントカードコンポーネント
+├── calendar-header.tsx          ← ヘッダー（既存、改善可）
+└── index.ts
+```
+
+### **タスク管理パネル**
+```
+src/components/tasks/
+├── task-panel.tsx               ← タスク管理パネル（左側）
+├── task-form.tsx                ← タスク編集フォーム
+└── index.ts
+```
+
+**`task-form.tsx` に「カレンダー種別」ドロップダウンを追加してください**
+
+---
+
+## 📁 作成・修正してほしいファイル
+
+### **優先度 HIGH**
+
+1. **`src/components/calendar/calendar-header.tsx`**
+   - ビュー切替ボタンを追加（月/週/3日/日）
+   - CSS または Tailwind で見た目を整える
+
+2. **`src/components/calendar/calendar-month-view.tsx`**
+   - Google Calendar 風のシンプルなグリッドレイアウト
+   - 色分けされたイベントカード
+
+3. **`src/components/calendar/calendar-week-view.tsx`**
+   - 7日間の時間帯表示
+   - 時間軸を左に、予定を右に配置
+
+4. **`src/components/calendar/calendar-day-view.tsx`**
+   - 1日のタイムライン表示
+   - 時間軸と予定の詳細表示
+
+5. **`src/components/tasks/task-form.tsx`（新規追加部分）**
+   - 「カレンダー種別」ドロップダウンセクション
+   - Google Calendar から取得した情報を表示
+
+### **優先度 MEDIUM**
+
+6. **新コンポーネント: `src/components/calendar/calendar-3day-view.tsx`**
+   - 3日間のビュー（週ビューと日ビューの中間）
+
+7. **`src/components/calendar/calendar-event-card.tsx`**
+   - 色分けを正しく反映
+   - ホバー時のインタラクション改善
+
+---
+
+## 📚 参考資料
+
+以下のファイルをお読みください（Gemini に見てもらいたい資料）：
+
+- **`docs/MAP.md`** ← プロジェクト全体像・Phase 説明
+- **`src/types/database.ts`** ← database schema（tasks, calendar_events, user_calendars など）
+- **`src/lib/calendar-constants.ts`** ← カレンダーの定数（曜日、時間帯など）
+- **`src/hooks/useCalendarEvents.ts`** ← イベント取得ロジック（参考）
+
+---
+
+## 🔗 既存データ構造
+
+### **tasks テーブル**
+```typescript
+{
+  id: string
+  user_id: string
+  title: string
+  scheduled_at: string | null        // 実行予定日時
+  estimated_time: number              // 所要時間（分単位）
+  parent_task_id: string | null       // 親タスク
+  calendar_type: string | null        // カレンダー種別 ← 新規追加
+  // ... その他カラム
+}
+```
+
+### **calendar_events テーブル**
+```typescript
+{
+  id: string
+  google_event_id: string
+  calendar_id: string
+  title: string
+  start_time: string                  // 開始日時
+  end_time: string                    // 終了日時
+  color: string | null                // イベント色
+  // ... その他カラム
+}
+```
+
+### **user_calendars テーブル**
+```typescript
+{
+  id: string
+  google_calendar_id: string
+  name: string
+  color: string | null                // カレンダー色
+  background_color: string | null
+  selected: boolean
+  // ... その他カラム
+}
+```
+
+---
+
+## ✅ 実装時のチェックリスト
+
+- [ ] 月/週/3日/日の 4 つのビューが実装されている
+- [ ] ビュー切替ボタンが正常に動作している
+- [ ] 予定が色分けされて表示されている
+- [ ] Google Calendar 風のシンプルで洗練された UI
+- [ ] 右サイドバー環境（300-500px）で見やすく表示される
+- [ ] レスポンシブ対応（モバイルでも崩れない）
+- [ ] タスク編集フォームに「カレンダー種別」ドロップダウンが追加されている
+- [ ] TypeScript 型エラーが出ていない
+- [ ] npm run build で正常にビルドできる
+
+---
+
+## 🎬 完了フロー
+
+1. **実装完了後**：
+   - コミットして、`docs/handoff/from-gemini.md` に実装内容を記入してください
+
+2. **Claude に戻す**：
+   - Claude 側で `/gemini-done` を実行して、実装内容を ROADMAP に反映します
+
+3. **残りのロジック実装**：
+   - Backend ロジック（DB スキーマ拡張、API 実装）は Claude が担当します
+
+---
+
+## 💡 重要：カレンダー反映ロジック
+
+### **カレンダー種別が選ばれたタスク = 全部カレンダーに反映**
+
+**ロジック**：
+```
+タスクがカレンダーに表示される条件:
+1. ✅ カレンダー種別が「登録なし」以外で指定されている
+2. ✅ 所要時間が 5 時間未満（300分未満）
+3. ✅ 実行予定日が設定されている
+
+親タスク・子タスク関係なく、上記 3 つを満たせば表示される
+```
+
+### **なぜこの仕様？**
+- 完了したタスクが増えると、リーフタスク（最下層タスク）の位置がずれる
+- その結果、カレンダー表示がおかしくなる（汚染される）
+- **解決策**：「カレンダー種別を指定したタスク = カレンダーに表示」
+- これにより、ユーザーが意図的に表示/非表示を制御できる
+
+---
+
+## 💡 補足
+
+- **ドラッグ&ドロップ廃止**: 以前の仕様から変更され、タスク編集フォームでの設定のみになりました
+- **「登録なし」オプション**: カレンダー種別を選ばないことで、カレンダーに表示させないことができる
+- **5時間の上限**: 所要時間が 5 時間以上のタスクはカレンダーに表示されません
+
+---
+
+**質問・不明な点があれば、Gemini 内でお尋ねください。頑張ってください！** 🚀

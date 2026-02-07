@@ -123,6 +123,7 @@ export interface Database {
                     actual_time_minutes: number
                     google_event_id: string | null
                     calendar_event_id: string | null
+                    calendar_id: string | null // Added for calendar selection
                     // Timer columns
                     total_elapsed_seconds: number
                     last_started_at: string | null
@@ -143,6 +144,7 @@ export interface Database {
                     actual_time_minutes?: number
                     google_event_id?: string | null
                     calendar_event_id?: string | null
+                    calendar_id?: string | null
                     // Timer columns
                     total_elapsed_seconds?: number
                     last_started_at?: string | null
@@ -163,6 +165,7 @@ export interface Database {
                     actual_time_minutes?: number
                     google_event_id?: string | null
                     calendar_event_id?: string | null
+                    calendar_id?: string | null
                     // Timer columns
                     total_elapsed_seconds?: number
                     last_started_at?: string | null

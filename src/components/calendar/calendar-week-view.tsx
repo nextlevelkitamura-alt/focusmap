@@ -5,8 +5,6 @@ import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WID
 import { useCalendarDragDropWeek } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
 import { startOfWeek, addDays, isSameDay, format, isToday } from "date-fns"
-import { ja } from "date-fns/locale"
-import { useDrag } from "@/contexts/DragContext"
 import { CalendarEvent } from "@/types/calendar"
 import { CalendarEventCard } from "./calendar-event-card"
 
@@ -63,7 +61,7 @@ export function CalendarWeekView({
 
   // Drop handler with config
   const onDrop = useCallback((e: React.DragEvent) => {
-    handleDrop(e, { weekDates, hours: HOURS })
+    handleDrop(e, { dates: weekDates, hours: HOURS })
   }, [handleDrop, weekDates])
 
   // Group events by day and calculate layout
@@ -87,17 +85,17 @@ export function CalendarWeekView({
       {/* Fixed Header */}
       <div className="flex h-12 flex-shrink-0 border-b bg-background z-20 shadow-sm relative mr-[15px]">
         {/* Time Labels Header (Spacer) */}
-        <div className="flex-shrink-0 w-12 bg-transparent border-r border-border/10" />
+        <div className="flex-shrink-0 w-12 bg-transparent border-r border-border/20" />
 
         {/* Days Header */}
         <div className="flex-1 grid grid-cols-7">
-          {weekDates.map((date, i) => {
+          {weekDates.map((date) => {
             const isTodayDate = isToday(date)
             return (
               <div
-                key={i}
+                key={date.getTime()}
                 className={cn(
-                  "flex flex-col items-center justify-center border-r border-border/10 last:border-r-0 pb-1 pt-1",
+                  "flex flex-col items-center justify-center border-r border-border/20 last:border-r-0 pb-1 pt-1",
                   isTodayDate ? "bg-primary/5" : ""
                 )}
               >
@@ -105,7 +103,7 @@ export function CalendarWeekView({
                   "text-[10px] font-medium uppercase tracking-wide opacity-80",
                   isTodayDate ? "text-primary font-bold" : "text-muted-foreground"
                 )}>
-                  {format(date, 'E', { locale: ja })}
+                  {format(date, 'EEEE').charAt(0)}
                 </div>
                 <div className={cn(
                   "flex items-center justify-center w-7 h-7 text-sm rounded-full mt-0.5",
@@ -124,7 +122,7 @@ export function CalendarWeekView({
         {/* Time Labels */}
         <div
           ref={timeLabelsRef}
-          className="flex-shrink-0 w-12 bg-background border-r border-border/10 overflow-hidden relative"
+          className="flex-shrink-0 w-12 bg-background border-r border-border/20 overflow-hidden relative"
         >
           <div className="relative" style={{ height: DAY_TOTAL_HEIGHT }}>
             {HOURS.map((hour) => (
@@ -150,13 +148,13 @@ export function CalendarWeekView({
           >
             {/* Horizontal Grid Lines */}
             {HOURS.map((hour) => (
-              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/10" style={{ top: hour * HOUR_HEIGHT }} />
+              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * HOUR_HEIGHT }} />
             ))}
 
             {/* Vertical Day Lines */}
             <div className="absolute inset-0 grid grid-cols-7 h-full pointer-events-none">
               {Array.from({ length: 7 }).map((_, col) => (
-                <div key={`col-${col}`} className="border-r border-border/10 h-full w-full" />
+                <div key={`col-${col}`} className="border-r border-border/20 h-full w-full" />
               ))}
             </div>
 
@@ -207,7 +205,7 @@ export function CalendarWeekView({
 
             {/* Events Layer */}
             <div className="absolute inset-0 grid grid-cols-7 pointer-events-none">
-              {weekDates.map((date, dayIndex) => {
+              {weekDates.map((_, dayIndex) => {
                 const dayItems = dayEventLayouts[dayIndex] || []
 
                 return (

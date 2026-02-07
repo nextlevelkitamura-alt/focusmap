@@ -1,7 +1,6 @@
 import { useCallback, useRef, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, isToday } from "date-fns"
-import { ja } from "date-fns/locale"
 import { useCalendarDragDropMonth } from "@/hooks/useCalendarDragDrop"
 import { CalendarEvent } from "@/types/calendar"
 
@@ -44,13 +43,13 @@ export function CalendarMonthView({
   const onDrop = useCallback((e: React.DragEvent) => handleDrop(e, monthDays), [handleDrop, monthDays])
 
   return (
-    <div className="flex-1 flex flex-col bg-background h-full">
+    <div className="flex-1 flex flex-col bg-background h-full overflow-hidden">
       {/* Weekday Headers */}
-      <div className="grid grid-cols-7 border-b border-border/10 bg-background pointer-events-none">
+      <div className="grid grid-cols-7 border-b border-border/20 bg-background pointer-events-none shrink-0">
         {WEEKDAYS.map((day) => (
           <div
             key={day}
-            className="py-1.5 text-center text-[11px] font-semibold text-muted-foreground uppercase opacity-80"
+            className="py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase opacity-80"
           >
             {day}
           </div>
@@ -60,48 +59,42 @@ export function CalendarMonthView({
       {/* Month Grid */}
       <div
         ref={gridRef}
-        className="flex-1 grid grid-cols-7 grid-rows-6 bg-background"
+        className="flex-1 grid grid-cols-7 grid-rows-6 bg-background gap-0 overflow-hidden"
         onDragOver={onDragOver}
         onDragLeave={handleDragLeave}
         onDrop={onDrop}
       >
-        {monthDays.map((date, index) => {
+        {monthDays.map((date) => {
           const dayStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
           const isCurrentMonth = isSameMonth(date, currentDate)
           const isTodayDate = isToday(date)
           const isHighlighted = dragOverDay === dayStr
           const dayEvents = getEventsForDay(date)
 
-          // Determine row index to remove bottom border for last row
-          const rowIndex = Math.floor(index / 7)
-          const isLastRow = rowIndex === 5
-
           return (
             <div
               key={dayStr}
               className={cn(
-                "relative p-1 border-r border-border/10 transition-all duration-200 flex flex-col min-h-0",
-                !isLastRow && "border-b border-border/10",
-                (index + 1) % 7 === 0 && "border-r-0", // Remove right border for last column each row? No, actually grid borders are tricky. Let's keep right border except fast one.
-                !isCurrentMonth && "bg-muted/5 text-muted-foreground",
+                "relative p-1.5 border border-border/20 transition-all duration-200 flex flex-col min-h-0 overflow-hidden",
+                !isCurrentMonth && "bg-muted/5 text-muted-foreground/60",
                 isHighlighted && "bg-primary/10 ring-2 ring-primary ring-inset z-10",
                 "pointer-events-auto hover:bg-muted/5"
               )}
             >
               {/* Day Number */}
-              <div className="flex justify-center mb-1 py-0.5">
+              <div className="flex justify-start mb-1">
                 <span className={cn(
-                  "text-[12px] w-6 h-6 flex items-center justify-center rounded-full transition-colors",
+                  "text-[11px] w-6 h-6 flex items-center justify-center rounded-full transition-colors flex-shrink-0",
                   isTodayDate
                     ? "bg-primary text-primary-foreground shadow-sm font-bold"
-                    : "text-foreground/90 font-medium hover:bg-muted/50 opacity-80"
+                    : "text-foreground/90 font-medium opacity-80"
                 )}>
-                  {date.getDate() === 1 ? format(date, 'M月d日', { locale: ja }) : format(date, 'd')}
+                  {date.getDate() === 1 ? format(date, 'M/d') : date.getDate()}
                 </span>
               </div>
 
               {/* Events List */}
-              <div className="flex flex-col gap-0.5 flex-1 overflow-hidden">
+              <div className="flex flex-col gap-0.5 flex-1 overflow-hidden min-h-0">
                 {dayEvents.slice(0, MAX_DISPLAY_EVENTS).map((event) => (
                   <button
                     key={event.id}
@@ -109,23 +102,25 @@ export function CalendarMonthView({
                       e.stopPropagation()
                       onEventClick?.(event.id)
                     }}
-                    className="text-left text-[10px] px-1.5 py-0.5 rounded-[3px] truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent leading-tight font-medium"
+                    className="text-left text-[9px] px-1 py-0.5 rounded-[2px] truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent leading-tight font-medium whitespace-nowrap"
                     style={{
                       backgroundColor: event.background_color || '#039BE5',
-                      color: '#ffffff', // Always white for better visibility on colored chips in month view usually
+                      color: '#ffffff',
                       boxShadow: '0 1px 1px rgba(0,0,0,0.05)'
                     }}
                     title={event.title}
                   >
-                    <span className="opacity-90 mr-1 font-normal text-[9px]">
-                      {event.is_all_day ? '' : format(new Date(event.start_time), 'HH:mm')}
-                    </span>
-                    <span className="font-semibold">{event.title}</span>
+                    {!event.is_all_day && (
+                      <span className="opacity-90 font-normal text-[8px]">
+                        {format(new Date(event.start_time), 'HH:mm')}
+                      </span>
+                    )}
+                    <span className="font-semibold truncate">{event.title}</span>
                   </button>
                 ))}
                 {dayEvents.length > MAX_DISPLAY_EVENTS && (
-                  <span className="text-[10px] text-foreground/70 pl-1 font-medium hover:underline cursor-pointer block mt-0.5">
-                    他 {dayEvents.length - MAX_DISPLAY_EVENTS} 件
+                  <span className="text-[8px] text-foreground/70 pl-1 font-medium cursor-pointer block truncate">
+                    +{dayEvents.length - MAX_DISPLAY_EVENTS}
                   </span>
                 )}
               </div>

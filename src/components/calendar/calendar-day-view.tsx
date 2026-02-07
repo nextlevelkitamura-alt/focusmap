@@ -1,10 +1,8 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
-import { cn } from "@/lib/utils"
 import { calculateEventLayout } from "@/lib/calendar-layout"
 import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WIDTH_DAY } from "@/lib/calendar-constants"
 import { useCalendarDragDropDay } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
-import { useDrag } from "@/contexts/DragContext"
 import { CalendarEvent } from "@/types/calendar"
 import { CalendarEventCard } from "./calendar-event-card"
 import { isSameDay } from "date-fns"
@@ -68,7 +66,7 @@ export function CalendarDayView({
             {/* Time Labels */}
             <div
                 ref={timeLabelsRef}
-                className="w-12 flex-shrink-0 bg-background border-r border-border/10 overflow-hidden relative"
+                className="w-12 flex-shrink-0 bg-background border-r border-border/20 overflow-hidden relative"
             >
                 <div className="relative" style={{ height: DAY_TOTAL_HEIGHT }}>
                     {HOURS.map((hour) => (
@@ -94,7 +92,7 @@ export function CalendarDayView({
                 >
                     {/* Grid Lines */}
                     {HOURS.map((hour) => (
-                        <div key={`grid-${hour}`} className="absolute w-full border-t border-border/10" style={{ top: hour * HOUR_HEIGHT }} />
+                        <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * HOUR_HEIGHT }} />
                     ))}
 
                     {/* Current Time Indicator */}

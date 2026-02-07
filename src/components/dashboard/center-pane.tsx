@@ -12,6 +12,7 @@ import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
+import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
 import { DateTimePicker } from "@/lib/dynamic-imports"
 
 type TaskIndex = {
@@ -241,10 +242,10 @@ function TaskItem({
                                     <Timer className="inline w-3 h-3 mr-0.5" />
                                     {formatTime(taskElapsedSeconds)}
                                 </span>
-                                
+
                                 {/* 区切り線 */}
                                 <div className="h-3 w-px bg-primary/20 mx-0.5" />
-                                
+
                                 {/* 一時停止ボタン */}
                                 <Button
                                     variant="ghost"
@@ -256,7 +257,7 @@ function TaskItem({
                                 >
                                     <Pause className="w-3 h-3" />
                                 </Button>
-                                
+
                                 {/* 完了ボタン */}
                                 <Button
                                     variant="ghost"
@@ -284,11 +285,11 @@ function TaskItem({
                                         >
                                             <Timer className="w-3 h-3" />
                                             <span className="tabular-nums">{formatTime(taskElapsedSeconds)}</span>
-                                            
+
                                             {/* 再開アイコン（ホバー時のみ表示） */}
                                             <Play className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5" />
                                         </button>
-                                        
+
                                         {/* 削除ボタン（ホバー時のみ表示） */}
                                         <Button
                                             variant="ghost"
@@ -407,7 +408,7 @@ function TaskItem({
                                         </span>
                                     }
                                 />
-                                
+
                                 {/* Clear Button - ホバー時のみ表示 */}
                                 <Button
                                     variant="ghost"
@@ -455,7 +456,7 @@ function TaskItem({
                                         </span>
                                     }
                                 />
-                                
+
                                 {/* Clear Button - ホバー時のみ表示 */}
                                 <Button
                                     variant="ghost"
@@ -489,53 +490,62 @@ function TaskItem({
                         )}
                     </div>
 
+                    {/* Group 3.5: Calendar Selection */}
+                    <div className="flex items-center gap-1">
+                        <TaskCalendarSelect
+                            value={task.calendar_id}
+                            onChange={(calendarId) => onUpdateTask?.(task.id, { calendar_id: calendarId })}
+                            className={task.calendar_id ? "" : "opacity-0 group-hover:opacity-100"}
+                        />
+                    </div>
+
                     {/* Group 4: Other Actions (Hover) */}
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {canAddChildren && (
+                        {canAddChildren && (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:text-primary"
+                                onClick={handleAddChildTask}
+                                title="サブタスク追加"
+                            >
+                                <Plus className="w-3 h-3" />
+                            </Button>
+                        )}
+
+                        {/* Direct Delete Button */}
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-muted-foreground hover:text-primary"
-                            onClick={handleAddChildTask}
-                            title="サブタスク追加"
+                            className="h-6 w-6 text-destructive hover:bg-destructive/10"
+                            onClick={() => onDeleteTask?.(task.id)}
+                            title="削除"
                         >
-                            <Plus className="w-3 h-3" />
+                            <Trash2 className="w-3 h-3" />
                         </Button>
-                    )}
 
-                    {/* Direct Delete Button */}
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-destructive hover:bg-destructive/10"
-                        onClick={() => onDeleteTask?.(task.id)}
-                        title="削除"
-                    >
-                        <Trash2 className="w-3 h-3" />
-                    </Button>
+                        {/* Drag Handle - 並び替え用（depth === 0 のみ） */}
+                        {depth === 0 && dragHandleProps && (
+                            <div
+                                {...dragHandleProps}
+                                className="cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-muted-foreground transition-colors p-1 rounded hover:bg-muted/50"
+                                title="ドラッグして並び替え"
+                            >
+                                <GripVertical className="h-4 w-4" />
+                            </div>
+                        )}
 
-                    {/* Drag Handle - 並び替え用（depth === 0 のみ） */}
-                    {depth === 0 && dragHandleProps && (
+                        {/* Calendar Drag Handle - カレンダーにドラッグ用 */}
                         <div
-                            {...dragHandleProps}
-                            className="cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-muted-foreground transition-colors p-1 rounded hover:bg-muted/50"
-                            title="ドラッグして並び替え"
-                        >
-                            <GripVertical className="h-4 w-4" />
-                        </div>
-                    )}
+                            draggable
+                            onDragStart={(e) => {
+                                e.dataTransfer.setData('text/plain', task.id)
+                                e.dataTransfer.effectAllowed = 'copy'
 
-                    {/* Calendar Drag Handle - カレンダーにドラッグ用 */}
-                    <div
-                        draggable
-                        onDragStart={(e) => {
-                            e.dataTransfer.setData('text/plain', task.id)
-                            e.dataTransfer.effectAllowed = 'copy'
-
-                            // カスタムドラッグゴーストを作成
-                            const ghost = document.createElement('div')
-                            ghost.className = 'px-3 py-2 bg-primary text-primary-foreground text-xs rounded shadow-lg border border-primary/20 flex items-center gap-2 pointer-events-none'
-                            ghost.innerHTML = `
+                                // カスタムドラッグゴーストを作成
+                                const ghost = document.createElement('div')
+                                ghost.className = 'px-3 py-2 bg-primary text-primary-foreground text-xs rounded shadow-lg border border-primary/20 flex items-center gap-2 pointer-events-none'
+                                ghost.innerHTML = `
                                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                                     <line x1="16" y1="2" x2="16" y2="6"></line>
@@ -544,15 +554,15 @@ function TaskItem({
                                 </svg>
                                 <span class="font-medium">${task.title || 'タスク'}</span>
                             `
-                            document.body.appendChild(ghost)
-                            e.dataTransfer.setDragImage(ghost, 20, 20)
-                            setTimeout(() => ghost.remove(), 0)
-                        }}
-                        className="cursor-grab active:cursor-grabbing text-blue-500/30 hover:text-blue-500 transition-colors p-1 rounded hover:bg-blue-500/10"
-                        title="カレンダーにドラッグしてスケジュール"
-                    >
-                        <CalendarIcon className="h-4 w-4" />
-                    </div>
+                                document.body.appendChild(ghost)
+                                e.dataTransfer.setDragImage(ghost, 20, 20)
+                                setTimeout(() => ghost.remove(), 0)
+                            }}
+                            className="cursor-grab active:cursor-grabbing text-blue-500/30 hover:text-blue-500 transition-colors p-1 rounded hover:bg-blue-500/10"
+                            title="カレンダーにドラッグしてスケジュール"
+                        >
+                            <CalendarIcon className="h-4 w-4" />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -781,7 +791,7 @@ export function CenterPane({
 
                                 // Auto-complete logic: Check if all tasks are completed
                                 const isGroupCompleted = allGroupTasks.length > 0 && allGroupTasks.every(t => t.status === 'done')
-                                
+
                                 // Calculate total elapsed time for all tasks in group
                                 const totalElapsedSeconds = allGroupTasks.reduce((acc, t) => acc + (t.total_elapsed_seconds ?? 0), 0)
 
@@ -811,32 +821,32 @@ export function CenterPane({
                                             </button>
 
                                             {/* Collapse/Expand Button */}
-                                            <Button 
-                                                variant="ghost" 
-                                                size="icon" 
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
                                                 className="h-5 w-5 shrink-0 text-muted-foreground"
-                                            onClick={() => toggleGroup(group.id)}
-                                        >
+                                                onClick={() => toggleGroup(group.id)}
+                                            >
                                                 {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                                             </Button>
 
                                             {/* Group Title */}
-                                                    <input
+                                            <input
                                                 className="font-medium text-sm bg-transparent border-none focus:outline-none focus:ring-0 px-1 min-w-0 flex-1"
-                                                        defaultValue={group.title}
-                                                        onBlur={(e) => {
-                                                            if (e.target.value !== group.title) {
-                                                                onUpdateGroupTitle?.(group.id, e.target.value)
-                                                            }
-                                                        }}
-                                                        onKeyDown={(e) => {
-                                                            if (e.nativeEvent.isComposing) return;
-                                                            if (e.key === 'Enter') {
-                                                                e.preventDefault();
-                                                                e.currentTarget.blur();
-                                                            }
-                                                        }}
-                                                    />
+                                                defaultValue={group.title}
+                                                onBlur={(e) => {
+                                                    if (e.target.value !== group.title) {
+                                                        onUpdateGroupTitle?.(group.id, e.target.value)
+                                                    }
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.nativeEvent.isComposing) return;
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        e.currentTarget.blur();
+                                                    }
+                                                }}
+                                            />
 
                                             {/* Total Elapsed Time */}
                                             {totalElapsedSeconds > 0 && (
@@ -847,7 +857,7 @@ export function CenterPane({
                                             )}
 
                                             {/* Progress */}
-                                                        <MiniProgress value={completedCount} total={allGroupTasks.length} />
+                                            <MiniProgress value={completedCount} total={allGroupTasks.length} />
 
                                             {/* Group Controls */}
                                             <div className="flex items-center gap-3">

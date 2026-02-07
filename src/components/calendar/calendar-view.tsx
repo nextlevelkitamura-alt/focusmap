@@ -4,6 +4,7 @@
 import { useState, useCallback, useMemo } from "react"
 import { CalendarHeader, ViewMode } from "./calendar-header"
 import { CalendarWeekView } from "./calendar-week-view"
+import { Calendar3DayView } from "./calendar-3day-view"
 import { CalendarMonthView } from "./calendar-month-view"
 import { CalendarDayView } from "./calendar-day-view"
 import { MiniCalendar } from "./mini-calendar"
@@ -17,7 +18,7 @@ interface CalendarViewProps {
 }
 
 export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('week')
+  const [viewMode, setViewMode] = useState<ViewMode>('3day') // Default to 3day for narrow sidebars? Or keep 'week'? Let's keep 'week' as default or change if requested. detailed spec said "4 views". Default wasn't specified but 'week' is standard.
   const [currentDate, setCurrentDate] = useState(new Date())
 
   // マルチカレンダー対応
@@ -99,6 +100,14 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
         <div className="flex-1 overflow-hidden relative">
           {viewMode === 'day' ? (
             <CalendarDayView
+              currentDate={currentDate}
+              onTaskDrop={onTaskDrop}
+              events={events}
+              onEventEdit={handleEventEdit}
+              onEventDelete={handleEventDelete}
+            />
+          ) : viewMode === '3day' ? (
+            <Calendar3DayView
               currentDate={currentDate}
               onTaskDrop={onTaskDrop}
               events={events}

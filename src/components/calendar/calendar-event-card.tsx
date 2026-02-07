@@ -2,7 +2,7 @@
 
 import { CalendarEvent } from '@/types/calendar';
 import { format } from 'date-fns';
-import { MapPin, Clock, Edit2, Trash2 } from 'lucide-react';
+import { Edit2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 interface CalendarEventCardProps {
@@ -30,9 +30,9 @@ export function CalendarEventCard({
   // 相対輝度を計算して適当な文字色（白または黒）を返す
   const getContrastTextColor = (hexColor: string) => {
     // HEXをRGBに変換
-    const r = parseInt(hexColor.substr(1, 2), 16);
-    const g = parseInt(hexColor.substr(3, 2), 16);
-    const b = parseInt(hexColor.substr(5, 2), 16);
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
 
     // 相対輝度計算 (sRGB)
     const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
@@ -77,7 +77,7 @@ export function CalendarEventCard({
 
       {/* ホバー時の編集・削除ボタン */}
       {isHovered && (onEdit || onDelete) && (
-        <div className="absolute top-0 right-0 bottom-0 flex items-center pr-1 pl-4 bg-gradient-to-l from-black/20 via-black/10 to-transparent">
+        <div className="absolute top-0 right-0 bottom-0 flex items-center pr-1 pl-2 bg-gradient-to-l from-black/40 via-black/20 to-transparent">
              <div className="flex gap-0.5 animate-in fade-in duration-200">
                {onEdit && (
                 <button
@@ -85,7 +85,7 @@ export function CalendarEventCard({
                     e.stopPropagation();
                     onEdit(event.id);
                   }}
-                  className="p-1 hover:bg-white/20 rounded-full transition-colors"
+                  className="p-1 rounded-full transition-colors hover:brightness-125"
                   title="編集"
                 >
                   <Edit2 className="h-3 w-3" style={{ color: textColor }} />
@@ -97,7 +97,7 @@ export function CalendarEventCard({
                     e.stopPropagation();
                     onDelete(event.id);
                   }}
-                  className="p-1 hover:bg-white/20 rounded-full transition-colors"
+                  className="p-1 rounded-full transition-colors hover:brightness-125"
                   title="削除"
                 >
                   <Trash2 className="h-3 w-3" style={{ color: textColor }} />

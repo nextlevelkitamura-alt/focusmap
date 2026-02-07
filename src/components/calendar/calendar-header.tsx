@@ -6,7 +6,7 @@ import { ja } from "date-fns/locale"
 import { CalendarSelector } from "./calendar-selector"
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react"
 
-export type ViewMode = 'day' | 'week' | 'month'
+export type ViewMode = 'day' | '3day' | 'week' | 'month'
 
 interface CalendarHeaderProps {
   viewMode: ViewMode
@@ -29,6 +29,8 @@ export function CalendarHeader({
   const goToPrevious = () => {
     if (viewMode === 'day') {
       onDateChange(new Date(currentDate.setDate(currentDate.getDate() - 1)))
+    } else if (viewMode === '3day') {
+      onDateChange(new Date(currentDate.setDate(currentDate.getDate() - 3)))
     } else if (viewMode === 'week') {
       onDateChange(subWeeks(currentDate, 1))
     } else {
@@ -39,6 +41,8 @@ export function CalendarHeader({
   const goToNext = () => {
     if (viewMode === 'day') {
       onDateChange(new Date(currentDate.setDate(currentDate.getDate() + 1)))
+    } else if (viewMode === '3day') {
+      onDateChange(new Date(currentDate.setDate(currentDate.getDate() + 3)))
     } else if (viewMode === 'week') {
       onDateChange(addWeeks(currentDate, 1))
     } else {
@@ -50,6 +54,12 @@ export function CalendarHeader({
   const getDateRangeLabel = () => {
     if (viewMode === 'day') {
       return format(currentDate, 'yyyy年M月d日 (E)', { locale: ja })
+    }
+    if (viewMode === '3day') {
+      const start = currentDate
+      const end = new Date(currentDate)
+      end.setDate(end.getDate() + 2)
+      return `${format(start, 'M月d日', { locale: ja })} - ${format(end, 'M月d日', { locale: ja })}`
     }
     if (viewMode === 'week') {
       const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
@@ -121,7 +131,7 @@ export function CalendarHeader({
       {/* Right Section: View Switcher & Calendar Selector */}
       <div className="flex items-center gap-3">
         <div className="hidden md:flex items-center bg-muted/30 rounded-lg p-1 border">
-          {(['day', 'week', 'month'] as const).map((mode) => (
+          {(['month', 'week', '3day', 'day'] as const).map((mode) => (
             <button
               key={mode}
               onClick={() => onViewModeChange(mode)}
@@ -133,6 +143,7 @@ export function CalendarHeader({
               )}
             >
               {mode === 'day' && '日'}
+              {mode === '3day' && '3日'}
               {mode === 'week' && '週'}
               {mode === 'month' && '月'}
             </button>
