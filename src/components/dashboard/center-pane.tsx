@@ -493,9 +493,9 @@ function TaskItem({
                     {/* Group 3.5: Calendar Selection */}
                     <div className="flex items-center gap-1">
                         <TaskCalendarSelect
-                            value={task.calendar_type}
+                            value={(task as any).calendar_type}
                             onChange={(calendarType) => handleCalendarUpdate?.(task.id, { calendar_type: calendarType })}
-                            className={task.calendar_type ? "" : "opacity-0 group-hover:opacity-100"}
+                            className={(task as any).calendar_type ? "" : "opacity-0 group-hover:opacity-100"}
                         />
                     </div>
 
