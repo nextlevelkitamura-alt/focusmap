@@ -1,13 +1,3 @@
-# カレンダーUI刷新 — Gemini Pro 引き継ぎ仕様書
-
-> このドキュメントは Gemini 3.0 Pro がカレンダーUIの刷新を行うための仕様書です。
-> リファクタリング済みのクリーンなコードベースに対して、**UIデザインの改善のみ**を行ってください。
-
----
-
-## 1. プロジェクト概要
-
-**アプリ名:** しかみか (Shikumika)
 **技術スタック:** Next.js 16 (App Router), React 19, Tailwind CSS 4, Radix UI
 **テーマ:** ダークモード（CSS変数ベース: `bg-background`, `text-foreground` 等）
 
