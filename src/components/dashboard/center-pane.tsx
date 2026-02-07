@@ -12,7 +12,7 @@ import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
-import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
+import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select-fixed"
 import { DateTimePicker } from "@/lib/dynamic-imports"
 
 type TaskIndex = {
@@ -493,9 +493,9 @@ function TaskItem({
                     {/* Group 3.5: Calendar Selection */}
                     <div className="flex items-center gap-1">
                         <TaskCalendarSelect
-                            value={task.calendar_id}
-                            onChange={(calendarId) => onUpdateTask?.(task.id, { calendar_id: calendarId })}
-                            className={task.calendar_id ? "" : "opacity-0 group-hover:opacity-100"}
+                            value={task.calendar_type}
+                            onChange={(calendarType) => handleCalendarUpdate?.(task.id, { calendar_type: calendarType })}
+                            className={task.calendar_type ? "" : "opacity-0 group-hover:opacity-100"}
                         />
                     </div>
 

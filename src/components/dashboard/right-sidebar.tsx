@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { CalendarView } from "@/components/calendar/calendar-view"
+import { SidebarCalendar } from "@/components/dashboard/sidebar-calendar"
 import { CalendarToast, useCalendarToast } from "@/components/calendar/calendar-toast"
 
 export function RightSidebar() {
@@ -65,26 +65,26 @@ export function RightSidebar() {
 
     return (
         <>
-        <div className="h-full flex flex-col bg-card border-l relative">
-            {/* Google Calendar Section */}
-            <div className="flex flex-col h-full">
-                <div className="flex-1 bg-background relative overflow-hidden">
-                    <CalendarView
-                        onTaskDrop={handleTaskDrop}
-                        onSelectionChange={setSelectedCalendarIds}
-                    />
+            <div className="h-full flex flex-col bg-card border-l relative">
+                {/* Google Calendar Section */}
+                <div className="flex flex-col h-full">
+                    <div className="flex-1 bg-background relative overflow-hidden">
+                        <SidebarCalendar
+                            onTaskDrop={handleTaskDrop}
+                            onSelectionChange={setSelectedCalendarIds}
+                        />
+                    </div>
                 </div>
             </div>
-        </div>
 
-        {/* Toast Notification */}
-        {toast && (
-            <CalendarToast
-                type={toast.type}
-                message={toast.message}
-                onClose={hideToast}
-            />
-        )}
-    </>
+            {/* Toast Notification */}
+            {toast && (
+                <CalendarToast
+                    type={toast.type}
+                    message={toast.message}
+                    onClose={hideToast}
+                />
+            )}
+        </>
     )
 }

@@ -15,6 +15,17 @@
 
 ---
 
+## 2026-02-07: カレンダー UI 複数ビュー（Gemini 3.0 Pro） - 部分完了
+
+- ✅ 月/週/3日/日ビューの実装
+- ✅ カレンダー種別選択 UI の追加（`task-calendar-select.tsx`）
+- ✅ ビュースイッチャーの実装（`calendar-header.tsx`）
+- ❌ **残課題**: Google Calendar API との連携
+- ❌ **残課題**: DB スキーマ拡張（`calendar_type`, `scheduled_start_time`）
+- ❌ **残課題**: 自動連携 API ロジック
+
+---
+
 ## 2026-02-06: プロジェクトリフレッシュ (/refresh)
 
 - プロジェクト全体の調査と整理

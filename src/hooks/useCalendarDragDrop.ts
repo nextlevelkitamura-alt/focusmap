@@ -6,6 +6,8 @@ interface UseCalendarDragDropOptions {
   gridRef: RefObject<HTMLDivElement | null>
   /** Callback when a task is dropped */
   onTaskDrop?: (taskId: string, dateTime: Date) => void
+  /** Dynamic hour height for zooming */
+  hourHeight?: number
 }
 
 interface DragDropDayConfig {
@@ -26,7 +28,7 @@ interface DragDropMonthConfig {
 }
 
 /** Shared drag state for day view */
-export function useCalendarDragDropDay({ gridRef, onTaskDrop }: UseCalendarDragDropOptions) {
+export function useCalendarDragDropDay({ gridRef, onTaskDrop, hourHeight = HOUR_HEIGHT }: UseCalendarDragDropOptions) {
   const [dragOverHour, setDragOverHour] = useState<number | null>(null)
 
   const handleDragOver = useCallback((e: React.DragEvent, _config: DragDropDayConfig) => {
@@ -36,12 +38,12 @@ export function useCalendarDragDropDay({ gridRef, onTaskDrop }: UseCalendarDragD
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const scrollTop = gridRef.current?.scrollTop || 0
     const y = e.clientY - rect.top
-    const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
+    const hourIndex = Math.floor((y + scrollTop) / hourHeight)
 
     if (hourIndex >= 0 && hourIndex < 24) {
       setDragOverHour(hourIndex)
     }
-  }, [gridRef])
+  }, [gridRef, hourHeight])
 
   const handleDragLeave = useCallback(() => {
     setDragOverHour(null)
@@ -56,21 +58,21 @@ export function useCalendarDragDropDay({ gridRef, onTaskDrop }: UseCalendarDragD
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const scrollTop = gridRef.current?.scrollTop || 0
     const y = e.clientY - rect.top
-    const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
+    const hourIndex = Math.floor((y + scrollTop) / hourHeight)
 
     if (hourIndex >= 0 && hourIndex < 24) {
       const targetDate = new Date(config.currentDate)
       targetDate.setHours(hourIndex, 0, 0, 0)
       onTaskDrop?.(taskId, targetDate)
     }
-  }, [gridRef, onTaskDrop])
+  }, [gridRef, onTaskDrop, hourHeight])
 
   return { dragOverHour, handleDragOver, handleDragLeave, handleDrop }
 }
 
 /** Shared drag state for week view */
-export function useCalendarDragDropWeek({ gridRef, onTaskDrop }: UseCalendarDragDropOptions) {
-  return useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount: 7 })
+export function useCalendarDragDropWeek({ gridRef, onTaskDrop, hourHeight }: UseCalendarDragDropOptions) {
+  return useCalendarDragDropMultiDay({ gridRef, onTaskDrop, hourHeight, daysCount: 7 })
 }
 
 interface DragDropMultiDayConfig {
@@ -81,7 +83,7 @@ interface DragDropMultiDayConfig {
 }
 
 /** Shared drag state for multi-day view (3-day, week etc) */
-export function useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount }: UseCalendarDragDropOptions & { daysCount: number }) {
+export function useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount, hourHeight = HOUR_HEIGHT }: UseCalendarDragDropOptions & { daysCount: number }) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -96,12 +98,12 @@ export function useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount }: 
 
     const cellWidth = rect.width / daysCount
     const dayIndex = Math.floor(x / cellWidth)
-    const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
+    const hourIndex = Math.floor((y + scrollTop) / hourHeight)
 
     if (dayIndex >= 0 && dayIndex < daysCount && hourIndex >= 0 && hourIndex < 24) {
       setDragOverCell(`${dayIndex}-${hourIndex}`)
     }
-  }, [gridRef, daysCount])
+  }, [gridRef, daysCount, hourHeight])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -128,14 +130,14 @@ export function useCalendarDragDropMultiDay({ gridRef, onTaskDrop, daysCount }: 
 
     const cellWidth = rect.width / daysCount
     const dayIndex = Math.floor(x / cellWidth)
-    const hourIndex = Math.floor((y + scrollTop) / HOUR_HEIGHT)
+    const hourIndex = Math.floor((y + scrollTop) / hourHeight)
 
     if (dayIndex >= 0 && dayIndex < daysCount && hourIndex >= 0 && hourIndex < 24) {
       const targetDate = new Date(config.dates[dayIndex])
       targetDate.setHours(hourIndex, 0, 0, 0)
       onTaskDrop?.(taskId, targetDate)
     }
-  }, [gridRef, onTaskDrop, daysCount])
+  }, [gridRef, onTaskDrop, daysCount, hourHeight])
 
   return { dragOverCell, handleDragOver, handleDragLeave, handleDrop }
 }

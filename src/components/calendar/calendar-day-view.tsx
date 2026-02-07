@@ -20,8 +20,9 @@ export function CalendarDayView({
     onTaskDrop,
     events = [],
     onEventEdit,
-    onEventDelete
-}: CalendarDayViewProps) {
+    onEventDelete,
+    hourHeight = HOUR_HEIGHT // Accept prop with default
+}: CalendarDayViewProps & { hourHeight?: number }) { // Add prop type
     const [currentTime, setCurrentTime] = useState(new Date())
     const calendarGridRef = useRef<HTMLDivElement>(null)
     const timeLabelsRef = useRef<HTMLDivElement>(null)
@@ -29,7 +30,8 @@ export function CalendarDayView({
     const { handleScrollA: handleGridScroll } = useScrollSync(calendarGridRef, timeLabelsRef)
     const { dragOverHour, handleDragOver, handleDragLeave, handleDrop } = useCalendarDragDropDay({
         gridRef: calendarGridRef,
-        onTaskDrop
+        onTaskDrop,
+        hourHeight // Pass to hook
     })
 
     // Update current time (every minute)
@@ -38,15 +40,15 @@ export function CalendarDayView({
         return () => clearInterval(timer)
     }, [])
 
-    // Initial scroll to default hour
+    // Initial scroll to default hour - use updated hourHeight
     useEffect(() => {
         if (calendarGridRef.current) {
-            calendarGridRef.current.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+            calendarGridRef.current.scrollTop = DEFAULT_SCROLL_HOUR * hourHeight
             if (timeLabelsRef.current) {
-                timeLabelsRef.current.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+                timeLabelsRef.current.scrollTop = DEFAULT_SCROLL_HOUR * hourHeight
             }
         }
-    }, [])
+    }, [hourHeight]) // Re-run if height changes
 
     // Filter events for this day
     const dayEvents = useMemo(() => {
@@ -61,6 +63,8 @@ export function CalendarDayView({
     const onDragOver = useCallback((e: React.DragEvent) => handleDragOver(e, { currentDate }), [handleDragOver, currentDate])
     const onDrop = useCallback((e: React.DragEvent) => handleDrop(e, { currentDate }), [handleDrop, currentDate])
 
+    const totalHeight = hourHeight * 24
+
     return (
         <div className="flex flex-1 h-full overflow-hidden bg-background">
             {/* Time Labels */}
@@ -68,9 +72,9 @@ export function CalendarDayView({
                 ref={timeLabelsRef}
                 className="w-12 flex-shrink-0 bg-background border-r border-border/20 overflow-hidden relative"
             >
-                <div className="relative" style={{ height: DAY_TOTAL_HEIGHT }}>
+                <div className="relative" style={{ height: totalHeight }}>
                     {HOURS.map((hour) => (
-                        <div key={hour} className="absolute w-full flex justify-end pr-2 text-[10px] font-medium text-muted-foreground" style={{ top: hour * HOUR_HEIGHT - 6 }}>
+                        <div key={hour} className="absolute w-full flex justify-end pr-2 text-[10px] font-medium text-muted-foreground" style={{ top: hour * hourHeight - 6 }}>
                             {hour !== 0 && `${hour}:00`}
                         </div>
                     ))}
@@ -85,14 +89,14 @@ export function CalendarDayView({
             >
                 <div
                     className="relative"
-                    style={{ height: DAY_TOTAL_HEIGHT, minWidth: MIN_GRID_WIDTH_DAY }}
+                    style={{ height: totalHeight, minWidth: MIN_GRID_WIDTH_DAY }}
                     onDragOver={onDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={onDrop}
                 >
                     {/* Grid Lines */}
                     {HOURS.map((hour) => (
-                        <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * HOUR_HEIGHT }} />
+                        <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * hourHeight }} />
                     ))}
 
                     {/* Current Time Indicator */}
@@ -110,7 +114,7 @@ export function CalendarDayView({
                     {dragOverHour !== null && (
                         <div
                             className="absolute w-full bg-primary/10 z-10 pointer-events-none transition-all"
-                            style={{ top: dragOverHour * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                            style={{ top: dragOverHour * hourHeight, height: hourHeight }}
                         >
                             <div className="bg-primary text-primary-foreground text-xs px-2 py-1 inline-block m-1 rounded shadow-sm">
                                 {dragOverHour}:00

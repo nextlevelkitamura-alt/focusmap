@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 
 interface TaskCalendarSelectProps {
     value?: string | null
-    onChange: (calendarId: string | null) => void
+    onChange: (calendarType: string | null) => void
     disabled?: boolean
     className?: string
 }

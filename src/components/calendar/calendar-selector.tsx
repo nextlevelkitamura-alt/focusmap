@@ -39,19 +39,40 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
     )
   }
 
+  const handleDisconnect = async () => {
+    if (!confirm('連携を解除しますか？')) return
+    try {
+      await fetch('/api/calendar/disconnect', { method: 'POST' })
+      alert('連携を解除しました')
+      window.location.reload()
+    } catch (e) {
+      alert('解除に失敗しました')
+    }
+  }
+
   if (error) {
     return (
       <div className="p-2 space-y-1">
         <p className="text-[10px] text-red-500">{error.message}</p>
-        <Button
-          onClick={() => fetchCalendars()}
-          size="sm"
-          variant="outline"
-          className="w-full h-6 text-[10px]"
-        >
-          <RefreshCw className="w-3 h-3 mr-1" />
-          再試行
-        </Button>
+        <div className="flex gap-1">
+          <Button
+            onClick={() => fetchCalendars()}
+            size="sm"
+            variant="outline"
+            className="flex-1 h-6 text-[10px]"
+          >
+            <RefreshCw className="w-3 h-3 mr-1" />
+            再試行
+          </Button>
+          <Button
+            onClick={handleDisconnect}
+            size="sm"
+            variant="destructive"
+            className="flex-1 h-6 text-[10px]"
+          >
+            解除
+          </Button>
+        </div>
       </div>
     )
   }

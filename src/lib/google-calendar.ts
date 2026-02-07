@@ -16,10 +16,19 @@ export async function getCalendarClient(userId: string) {
     .single();
 
   if (error || !settings) {
+    console.error('[getCalendarClient] Settings not found for user:', userId, error);
     throw new Error('Calendar settings not found');
   }
 
+  // Debug logging
+  console.log('[getCalendarClient] Loading tokens for user:', userId, {
+    access_token_exists: !!settings.google_access_token,
+    refresh_token_exists: !!settings.google_refresh_token,
+    expires_at: settings.google_token_expires_at
+  });
+
   if (!settings.google_access_token || !settings.google_refresh_token) {
+    console.error('[getCalendarClient] Missing tokens for user:', userId);
     throw new Error('Google OAuth tokens not found');
   }
 

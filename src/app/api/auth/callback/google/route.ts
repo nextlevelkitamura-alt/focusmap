@@ -39,8 +39,15 @@ export async function GET(request: NextRequest) {
     // 認証コードをトークンに交換
     const { tokens } = await oauth2Client.getToken(code);
 
-    if (!tokens.access_token || !tokens.refresh_token) {
-      throw new Error('Failed to get tokens');
+    console.log('[Google Auth Callback] Tokens received:', {
+      access_token: tokens.access_token ? 'Present' : 'Missing',
+      refresh_token: tokens.refresh_token ? 'Present' : 'Missing',
+      expiry_date: tokens.expiry_date
+    });
+
+    if (!tokens.access_token) {
+      console.error('[Google Auth Callback] Missing access_token:', tokens);
+      throw new Error('Failed to get access token');
     }
 
     // トークンの有効期限を計算
@@ -48,18 +55,27 @@ export async function GET(request: NextRequest) {
       ? new Date(tokens.expiry_date)
       : new Date(Date.now() + 3600 * 1000); // デフォルト1時間
 
+    // 更新データを作成
+    const upsertData: any = {
+      user_id: user.id,
+      google_access_token: tokens.access_token,
+      google_token_expires_at: expiresAt.toISOString(),
+      is_sync_enabled: true,
+      sync_status: 'idle',
+    };
+
+    // refresh_tokenがあれば更新（なければ既存を維持したいが、prompt: consentなら必ずあるはず）
+    if (tokens.refresh_token) {
+      upsertData.google_refresh_token = tokens.refresh_token;
+    } else {
+      console.warn('[Google Auth Callback] No refresh_token received. User might not have been prompted for consent.');
+    }
+
     // Supabaseにトークンを保存
     const { error: upsertError } = await supabase
       .from('user_calendar_settings')
       .upsert(
-        {
-          user_id: user.id,
-          google_access_token: tokens.access_token,
-          google_refresh_token: tokens.refresh_token,
-          google_token_expires_at: expiresAt.toISOString(),
-          is_sync_enabled: true,
-          sync_status: 'idle',
-        },
+        upsertData,
         {
           onConflict: 'user_id',
         }

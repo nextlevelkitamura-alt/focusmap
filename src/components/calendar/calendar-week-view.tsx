@@ -21,8 +21,9 @@ export function CalendarWeekView({
   onTaskDrop,
   events = [],
   onEventEdit,
-  onEventDelete
-}: CalendarWeekViewProps) {
+  onEventDelete,
+  hourHeight = HOUR_HEIGHT
+}: CalendarWeekViewProps & { hourHeight?: number }) {
   const [currentTime, setCurrentTime] = useState(new Date())
   const timeLabelsRef = useRef<HTMLDivElement>(null)
   const calendarGridRef = useRef<HTMLDivElement>(null)
@@ -30,7 +31,8 @@ export function CalendarWeekView({
   const { handleScrollA: handleGridScroll } = useScrollSync(calendarGridRef, timeLabelsRef)
   const { dragOverCell, handleDragOver, handleDragLeave, handleDrop } = useCalendarDragDropWeek({
     gridRef: calendarGridRef,
-    onTaskDrop
+    onTaskDrop,
+    hourHeight
   })
 
   // Update current time (every minute)
@@ -48,13 +50,13 @@ export function CalendarWeekView({
   // Initial scroll to default hour
   useEffect(() => {
     if (calendarGridRef.current) {
-      const scrollPosition = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+      const scrollPosition = DEFAULT_SCROLL_HOUR * hourHeight
       calendarGridRef.current.scrollTop = scrollPosition
       if (timeLabelsRef.current) {
         timeLabelsRef.current.scrollTop = scrollPosition
       }
     }
-  }, [])
+  }, [hourHeight])
 
   // Current time position
   const currentTimePosition = ((currentTime.getHours() * 60 + currentTime.getMinutes()) / (24 * 60)) * 100
@@ -79,6 +81,8 @@ export function CalendarWeekView({
     })
     return layouts
   }, [events, weekDates])
+
+  const totalHeight = hourHeight * 24
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-background">
@@ -124,9 +128,9 @@ export function CalendarWeekView({
           ref={timeLabelsRef}
           className="flex-shrink-0 w-12 bg-background border-r border-border/20 overflow-hidden relative"
         >
-          <div className="relative" style={{ height: DAY_TOTAL_HEIGHT }}>
+          <div className="relative" style={{ height: totalHeight }}>
             {HOURS.map((hour) => (
-              <div key={hour} className="absolute w-full flex justify-end pr-2 text-[10px] font-medium text-muted-foreground" style={{ top: hour * HOUR_HEIGHT - 6 }}>
+              <div key={hour} className="absolute w-full flex justify-end pr-2 text-[10px] font-medium text-muted-foreground" style={{ top: hour * hourHeight - 6 }}>
                 {hour !== 0 && `${hour}:00`}
               </div>
             ))}
@@ -141,14 +145,14 @@ export function CalendarWeekView({
         >
           <div
             className="relative"
-            style={{ height: DAY_TOTAL_HEIGHT, minWidth: MIN_GRID_WIDTH_WEEK }}
+            style={{ height: totalHeight, minWidth: MIN_GRID_WIDTH_WEEK }}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={onDrop}
           >
             {/* Horizontal Grid Lines */}
             {HOURS.map((hour) => (
-              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * HOUR_HEIGHT }} />
+              <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * hourHeight }} />
             ))}
 
             {/* Vertical Day Lines */}
@@ -189,10 +193,10 @@ export function CalendarWeekView({
                   <div
                     className="absolute bg-primary/10 z-10 pointer-events-none"
                     style={{
-                      top: hIndex * HOUR_HEIGHT,
+                      top: hIndex * hourHeight,
                       left: `${dIndex * (100 / 7)}%`,
                       width: `${100 / 7}%`,
-                      height: HOUR_HEIGHT
+                      height: hourHeight
                     }}
                   >
                     <div className="bg-primary text-primary-foreground text-xs px-2 py-1 inline-block m-1 rounded shadow-sm">

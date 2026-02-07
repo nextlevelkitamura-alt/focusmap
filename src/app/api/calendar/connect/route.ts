@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/server';
  * GET /api/calendar/connect
  */
 export async function GET(request: NextRequest) {
+  console.log('[Calendar Connect] Route hit. Starting OAuth flow...');
   const supabase = await createClient();
 
   // ログインユーザーを確認
@@ -26,11 +27,14 @@ export async function GET(request: NextRequest) {
   // 認証URLを生成
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline', // refresh_tokenを取得
+    prompt: 'consent', // 強制的に同意画面を表示してrefresh_tokenを再取得
     scope: [
       'https://www.googleapis.com/auth/calendar', // カレンダーリスト取得とイベント操作
     ],
     state: user.id, // ユーザーIDをstateに含める（セキュリティ）
   });
+
+  console.log('[Calendar Connect] Generated Auth URL:', authUrl);
 
   // Google認証ページにリダイレクト
   return NextResponse.redirect(authUrl);

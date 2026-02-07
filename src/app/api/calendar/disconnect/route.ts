@@ -25,6 +25,8 @@ export async function POST() {
         google_access_token: null,
         google_refresh_token: null,
         google_token_expires_at: null,
+        is_sync_enabled: false,
+        sync_status: 'disconnected',
         updated_at: new Date().toISOString()
       })
       .eq('user_id', user.id);
