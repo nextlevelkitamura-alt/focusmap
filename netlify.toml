@@ -1,0 +1,18 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NEXT_PUBLIC_SUPABASE_URL = "https://whsjsscgmkkkzgcwxjko.supabase.co"
+  NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA"
+  NEXTAUTH_URL = "https://shikumika-app.netlify.app"
+  NEXTAUTH_SECRET = "netlify_deployment_secret_2026"
+  GOOGLE_CLIENT_ID = "466617344999-5nd3rrfrtrieb840f7rc1425m8d0kvev.apps.googleusercontent.com"
+  GOOGLE_CLIENT_SECRET = "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"
+  GOOGLE_REDIRECT_URI = "https://shikumika-app.netlify.app/api/calendar/callback"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[functions]
+  node_bundler = "esbuild"
