@@ -14,7 +14,10 @@ export async function GET(request: NextRequest) {
   const { data: { user }, error } = await supabase.auth.getUser();
 
   if (error || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    console.error('[Calendar Connect] User not authenticated:', error?.message);
+    return NextResponse.redirect(
+      new URL('/login?redirect=/dashboard&calendar_error=not_authenticated', request.url)
+    );
   }
 
   // OAuth2クライアントを作成

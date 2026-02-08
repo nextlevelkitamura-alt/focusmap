@@ -43,13 +43,13 @@ export function CalendarMonthView({
   const onDrop = useCallback((e: React.DragEvent) => handleDrop(e, monthDays), [handleDrop, monthDays])
 
   return (
-    <div className="flex-1 flex flex-col bg-background h-full overflow-hidden">
+    <div className="flex-1 flex flex-col bg-background/50 h-full overflow-hidden">
       {/* Weekday Headers */}
-      <div className="grid grid-cols-7 border-b border-border/20 bg-background pointer-events-none shrink-0">
+      <div className="grid grid-cols-7 border-b border-border/30 bg-background/95 backdrop-blur-sm pointer-events-none shrink-0">
         {WEEKDAYS.map((day) => (
           <div
             key={day}
-            className="py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase opacity-80"
+            className="py-2.5 text-center text-[11px] font-semibold text-muted-foreground uppercase opacity-70 tracking-wider"
           >
             {day}
           </div>
@@ -59,7 +59,7 @@ export function CalendarMonthView({
       {/* Month Grid */}
       <div
         ref={gridRef}
-        className="flex-1 grid grid-cols-7 grid-rows-6 bg-background gap-0 overflow-hidden"
+        className="flex-1 grid grid-cols-7 grid-rows-6 bg-background/50 gap-0 overflow-hidden"
         onDragOver={onDragOver}
         onDragLeave={handleDragLeave}
         onDrop={onDrop}
@@ -75,26 +75,26 @@ export function CalendarMonthView({
             <div
               key={dayStr}
               className={cn(
-                "relative p-1.5 border border-border/20 transition-all duration-200 flex flex-col min-h-0 overflow-hidden",
-                !isCurrentMonth && "bg-muted/5 text-muted-foreground/60",
-                isHighlighted && "bg-primary/10 ring-2 ring-primary ring-inset z-10",
-                "pointer-events-auto hover:bg-muted/5"
+                "relative p-2 border border-border/10 transition-all duration-200 flex flex-col min-h-0 overflow-hidden",
+                !isCurrentMonth && "bg-muted/3 text-muted-foreground/50",
+                isHighlighted && "bg-primary/5 ring-2 ring-primary/30 ring-inset z-10",
+                "pointer-events-auto hover:bg-muted/10"
               )}
             >
               {/* Day Number */}
-              <div className="flex justify-start mb-1">
+              <div className="flex justify-start mb-1.5">
                 <span className={cn(
-                  "text-[11px] w-6 h-6 flex items-center justify-center rounded-full transition-colors flex-shrink-0",
+                  "text-xs w-7 h-7 flex items-center justify-center rounded-full transition-colors flex-shrink-0",
                   isTodayDate
-                    ? "bg-primary text-primary-foreground shadow-sm font-bold"
-                    : "text-foreground/90 font-medium opacity-80"
+                    ? "bg-primary text-primary-foreground shadow-md font-semibold"
+                    : "text-foreground/80 font-medium"
                 )}>
                   {date.getDate() === 1 ? format(date, 'M/d') : date.getDate()}
                 </span>
               </div>
 
               {/* Events List */}
-              <div className="flex flex-col gap-0.5 flex-1 overflow-hidden min-h-0">
+              <div className="flex flex-col gap-1 flex-1 overflow-hidden min-h-0">
                 {dayEvents.slice(0, MAX_DISPLAY_EVENTS).map((event) => (
                   <button
                     key={event.id}
@@ -102,16 +102,16 @@ export function CalendarMonthView({
                       e.stopPropagation()
                       onEventClick?.(event.id)
                     }}
-                    className="text-left text-[9px] px-1 py-0.5 rounded-[2px] truncate transition-opacity hover:opacity-80 shadow-sm border border-transparent leading-tight font-medium whitespace-nowrap"
+                    className="text-left text-[9px] px-1.5 py-0.5 rounded-md truncate transition-all hover:opacity-80 hover:scale-[1.02] shadow-sm border border-transparent leading-tight font-medium whitespace-nowrap"
                     style={{
                       backgroundColor: event.background_color || '#039BE5',
                       color: '#ffffff',
-                      boxShadow: '0 1px 1px rgba(0,0,0,0.05)'
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.08)'
                     }}
                     title={event.title}
                   >
                     {!event.is_all_day && (
-                      <span className="opacity-90 font-normal text-[8px]">
+                      <span className="opacity-80 font-normal text-[8px] mr-0.5">
                         {format(new Date(event.start_time), 'HH:mm')}
                       </span>
                     )}
@@ -119,7 +119,7 @@ export function CalendarMonthView({
                   </button>
                 ))}
                 {dayEvents.length > MAX_DISPLAY_EVENTS && (
-                  <span className="text-[8px] text-foreground/70 pl-1 font-medium cursor-pointer block truncate">
+                  <span className="text-[9px] text-foreground/60 pl-1 font-medium cursor-pointer block truncate">
                     +{dayEvents.length - MAX_DISPLAY_EVENTS}
                   </span>
                 )}

@@ -1,12 +1,17 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { SidebarCalendar } from "@/components/dashboard/sidebar-calendar"
+import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from "react"
+import { SidebarCalendar, SidebarCalendarRef } from "@/components/dashboard/sidebar-calendar"
 import { CalendarToast, useCalendarToast } from "@/components/calendar/calendar-toast"
 
-export function RightSidebar() {
+export interface RightSidebarRef {
+    refreshCalendar: () => Promise<void>
+}
+
+export const RightSidebar = forwardRef<RightSidebarRef>(function RightSidebar(_, ref) {
     const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([])
     const { toast, showToast, hideToast } = useCalendarToast()
+    const calendarRef = useRef<SidebarCalendarRef>(null)
 
     // タスクがカレンダーにドロップされた時の処理
     const handleTaskDrop = useCallback(async (taskId: string, dateTime: Date) => {
@@ -19,12 +24,24 @@ export function RightSidebar() {
         showToast('info', 'スケジュール設定中...')
 
         try {
+            // まずタスクの情報を取得して、既存のgoogle_event_idがあるか確認
+            const taskResponse = await fetch(`/api/tasks/${taskId}`)
+            if (!taskResponse.ok) {
+                throw new Error('タスクの取得に失敗しました')
+            }
+            const taskData = await taskResponse.json()
+            const task = taskData.task
+
+            // 既存のgoogle_event_idがある場合はPATCH（更新）、ない場合はPOST（新規作成）
+            const method = task.google_event_id ? 'PATCH' : 'POST'
             const response = await fetch('/api/calendar/sync-task', {
-                method: 'POST',
+                method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     taskId,
-                    scheduledAt: dateTime.toISOString()
+                    scheduled_at: dateTime.toISOString(),
+                    estimated_time: task.estimated_time || 60, // デフォルト60分
+                    calendar_id: task.calendar_id || selectedCalendarIds[0] || 'primary'
                 })
             })
 
@@ -46,7 +63,11 @@ export function RightSidebar() {
                 hour: '2-digit',
                 minute: '2-digit'
             })
-            showToast('success', `${timeStr}にスケジュール設定しました`)
+            const action = task.google_event_id ? '更新' : '設定'
+            showToast('success', `${timeStr}にスケジュール${action}しました`)
+
+            // カレンダーイベントを再取得
+            await calendarRef.current?.refetch()
 
         } catch (error) {
             let errorMessage = 'カレンダーへの追加に失敗しました'
@@ -61,15 +82,23 @@ export function RightSidebar() {
             }
             showToast('error', errorMessage)
         }
-    }, [showToast])
+    }, [showToast, selectedCalendarIds])
+
+    // 親コンポーネントから refreshCalendar を呼び出せるようにする
+    useImperativeHandle(ref, () => ({
+        refreshCalendar: async () => {
+            await calendarRef.current?.refetch()
+        }
+    }), [])
 
     return (
         <>
-            <div className="h-full flex flex-col bg-card border-l relative">
+            <div className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative">
                 {/* Google Calendar Section */}
                 <div className="flex flex-col h-full">
-                    <div className="flex-1 bg-background relative overflow-hidden">
+                    <div className="flex-1 bg-background/50 relative overflow-hidden">
                         <SidebarCalendar
+                            ref={calendarRef}
                             onTaskDrop={handleTaskDrop}
                             onSelectionChange={setSelectedCalendarIds}
                         />
@@ -87,4 +116,4 @@ export function RightSidebar() {
             )}
         </>
     )
-}
+})

@@ -101,12 +101,12 @@ export function LeftSidebar({
     )
 
     return (
-        <div className="flex flex-col h-full bg-muted/10 border-r">
+        <div className="flex flex-col h-full w-full bg-muted/10 overflow-hidden">
             <div className="p-4 border-b">
                 <h2 className="font-semibold text-sm">プロジェクト管理</h2>
             </div>
 
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 h-full" hideScrollbar={true}>
                 <div className="p-4 space-y-6">
                     <Section title="実行 (Active)" items={activeProjects} />
                     <Section title="構想 (Concept)" items={conceptProjects} />

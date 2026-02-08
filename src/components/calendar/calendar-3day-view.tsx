@@ -1,10 +1,11 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react"
+import { useState, useCallback, useRef, useEffect, useMemo, RefObject } from "react"
 import { cn } from "@/lib/utils"
 // Reuse layout calculation from existing lib
 import { calculateEventLayout } from "@/lib/calendar-layout"
 import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS } from "@/lib/calendar-constants"
 import { useCalendarDragDropMultiDay } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
+import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { addDays, isSameDay, format, isToday } from "date-fns"
 import { CalendarEvent } from "@/types/calendar"
 import { CalendarEventCard } from "./calendar-event-card"
@@ -15,22 +16,38 @@ const MIN_GRID_WIDTH_3DAY = 300
 interface Calendar3DayViewProps {
     currentDate: Date
     onTaskDrop?: (taskId: string, dateTime: Date) => void
+    onEventTimeChange?: (eventId: string, newStartTime: Date, newEndTime: Date) => void
     events?: CalendarEvent[]
     onEventEdit?: (eventId: string) => void
     onEventDelete?: (eventId: string) => void
+    onDateChange?: (date: Date) => void
+    hourHeight?: number // ズーム機能用
+    gridRef?: RefObject<HTMLDivElement | null> // ズーム機能用
 }
 
 export function Calendar3DayView({
     currentDate,
     onTaskDrop,
+    onEventTimeChange,
     events = [],
     onEventEdit,
     onEventDelete,
-    hourHeight = HOUR_HEIGHT
-}: Calendar3DayViewProps & { hourHeight?: number }) {
+    onDateChange,
+    hourHeight = HOUR_HEIGHT,
+    gridRef
+}: Calendar3DayViewProps) {
     const [currentTime, setCurrentTime] = useState(new Date())
     const timeLabelsRef = useRef<HTMLDivElement>(null)
-    const calendarGridRef = useRef<HTMLDivElement>(null)
+    const calendarGridRef = gridRef || useRef<HTMLDivElement>(null)
+    const containerRef = useRef<HTMLDivElement>(null)
+
+    // スワイプナビゲーション
+    const { swipeDirection } = useSwipeNavigation({
+        containerRef,
+        onSwipeLeft: () => onDateChange?.(addDays(currentDate, 3)), // 3日進む
+        onSwipeRight: () => onDateChange?.(addDays(currentDate, -3)), // 3日戻る
+        threshold: 50
+    })
 
     const { handleScrollA: handleGridScroll } = useScrollSync(calendarGridRef, timeLabelsRef)
 
@@ -93,11 +110,18 @@ export function Calendar3DayView({
     const totalHeight = hourHeight * 24
 
     return (
-        <div className="w-full h-full flex flex-col overflow-hidden bg-background">
+        <div
+            ref={containerRef}
+            className={cn(
+                "w-full h-full flex flex-col overflow-hidden bg-background/50 transition-transform duration-200",
+                swipeDirection === 'left' && "translate-x-[-4px]",
+                swipeDirection === 'right' && "translate-x-[4px]"
+            )}
+        >
             {/* Fixed Header */}
-            <div className="flex h-12 flex-shrink-0 border-b bg-background z-20 shadow-sm relative mr-[15px]">
+            <div className="flex h-14 flex-shrink-0 border-b border-border/30 bg-background/95 backdrop-blur-sm z-20 relative mr-[15px]">
                 {/* Time Labels Header (Spacer) */}
-                <div className="flex-shrink-0 w-12 bg-transparent border-r border-border/20" />
+                <div className="flex-shrink-0 w-14 bg-transparent border-r border-border/10" />
 
                 {/* Days Header */}
                 <div className="flex-1 grid grid-cols-3">
@@ -107,19 +131,19 @@ export function Calendar3DayView({
                             <div
                                 key={date.getTime()}
                                 className={cn(
-                                    "flex flex-col items-center justify-center border-r border-border/20 last:border-r-0 pb-1 pt-1",
+                                    "flex flex-col items-center justify-center border-r border-border/10 last:border-r-0 pb-1 pt-2",
                                     isTodayDate ? "bg-primary/5" : ""
                                 )}
                             >
                                 <div className={cn(
-                                    "text-[10px] font-medium uppercase tracking-wide opacity-80",
-                                    isTodayDate ? "text-primary font-bold" : "text-muted-foreground"
+                                    "text-[11px] font-medium uppercase tracking-wide opacity-70",
+                                    isTodayDate ? "text-primary font-semibold" : "text-muted-foreground"
                                 )}>
                                     {format(date, 'EEEE').charAt(0)}
                                 </div>
                                 <div className={cn(
-                                    "flex items-center justify-center w-7 h-7 text-sm rounded-full mt-0.5",
-                                    isTodayDate ? "bg-primary text-primary-foreground font-bold" : "text-foreground font-medium"
+                                    "flex items-center justify-center w-8 h-8 text-sm rounded-full mt-1",
+                                    isTodayDate ? "bg-primary text-primary-foreground font-semibold shadow-sm" : "text-foreground font-medium"
                                 )}>
                                     {date.getDate()}
                                 </div>
@@ -134,11 +158,11 @@ export function Calendar3DayView({
                 {/* Time Labels */}
                 <div
                     ref={timeLabelsRef}
-                    className="flex-shrink-0 w-12 bg-background border-r border-border/20 overflow-hidden relative"
+                    className="flex-shrink-0 w-14 bg-background/80 border-r border-border/10 overflow-hidden relative"
                 >
                     <div className="relative" style={{ height: totalHeight }}>
                         {HOURS.map((hour) => (
-                            <div key={hour} className="absolute w-full flex justify-end pr-2 text-[10px] font-medium text-muted-foreground" style={{ top: hour * hourHeight - 6 }}>
+                            <div key={hour} className="absolute w-full flex justify-end pr-3 text-[11px] font-medium text-muted-foreground/80" style={{ top: hour * hourHeight - 8 }}>
                                 {hour !== 0 && `${hour}:00`}
                             </div>
                         ))}
@@ -160,13 +184,13 @@ export function Calendar3DayView({
                     >
                         {/* Horizontal Grid Lines */}
                         {HOURS.map((hour) => (
-                            <div key={`grid-${hour}`} className="absolute w-full border-t border-border/20" style={{ top: hour * hourHeight }} />
+                            <div key={`grid-${hour}`} className="absolute w-full border-t border-border/8" style={{ top: hour * hourHeight }} />
                         ))}
 
                         {/* Vertical Day Lines */}
                         <div className="absolute inset-0 grid grid-cols-3 h-full pointer-events-none">
                             {Array.from({ length: daysCount }).map((_, col) => (
-                                <div key={`col-${col}`} className="border-r border-border/20 h-full w-full" />
+                                <div key={`col-${col}`} className="border-r border-border/10 h-full w-full" />
                             ))}
                         </div>
 
@@ -184,9 +208,9 @@ export function Calendar3DayView({
                                         }}
                                     >
                                         <div
-                                            className="absolute w-2 h-2 rounded-full bg-red-500 z-40 ring-2 ring-background left-[-5px]"
+                                            className="absolute w-2.5 h-2.5 rounded-full bg-red-500 z-40 ring-2 ring-red-500/20 left-[-6px] shadow-lg shadow-red-500/30"
                                         />
-                                        <div className="h-[2px] bg-red-500 w-full opacity-60" />
+                                        <div className="h-[1.5px] bg-red-500 w-full opacity-70 shadow-sm" />
                                     </div>
                                 )
                             }
@@ -199,7 +223,7 @@ export function Calendar3DayView({
                                 const [dIndex, hIndex] = dragOverCell.split('-').map(Number)
                                 return (
                                     <div
-                                        className="absolute bg-primary/10 z-10 pointer-events-none"
+                                        className="absolute bg-primary/5 z-10 pointer-events-none border-l-2 border-primary/30"
                                         style={{
                                             top: hIndex * hourHeight,
                                             left: `${dIndex * (100 / daysCount)}%`,
@@ -207,7 +231,7 @@ export function Calendar3DayView({
                                             height: hourHeight
                                         }}
                                     >
-                                        <div className="bg-primary text-primary-foreground text-xs px-2 py-1 inline-block m-1 rounded shadow-sm">
+                                        <div className="bg-primary text-primary-foreground text-xs px-2.5 py-1 inline-block m-2 rounded-md shadow-md font-medium">
                                             {String(HOURS[hIndex]).padStart(2, '0')}:00
                                         </div>
                                     </div>
@@ -222,27 +246,33 @@ export function Calendar3DayView({
 
                                 return (
                                     <div key={`events-${dayIndex}`} className="relative h-full w-full">
-                                        {dayItems.map(({ event, position }) => (
-                                            <div
-                                                key={event.id}
-                                                className="absolute px-0.5 transition-all duration-300 pointer-events-auto"
-                                                style={{
-                                                    top: `${position.top}%`,
-                                                    height: `${position.height}%`,
-                                                    left: `${position.left}%`,
-                                                    width: `${position.width}%`,
-                                                    zIndex: 20
-                                                }}
-                                            >
-                                                <CalendarEventCard
-                                                    event={event}
-                                                    onEdit={onEventEdit}
-                                                    onDelete={onEventDelete}
-                                                    isDraggable={false}
-                                                    className="h-full shadow-sm text-xs"
-                                                />
-                                            </div>
-                                        ))}
+                                        {dayItems.map(({ event, position }) => {
+                                            // eventHeightをpx単位で計算
+                                            const eventHeightPx = (position.height / 100) * totalHeight
+
+                                            return (
+                                                <div
+                                                    key={event.id}
+                                                    className="absolute px-0.5 transition-all duration-300 pointer-events-auto"
+                                                    style={{
+                                                        top: `${position.top}%`,
+                                                        height: `${position.height}%`,
+                                                        left: `${position.left}%`,
+                                                        width: `${position.width}%`,
+                                                        zIndex: 20
+                                                    }}
+                                                >
+                                                    <CalendarEventCard
+                                                        event={event}
+                                                        onEdit={onEventEdit}
+                                                        onDelete={onEventDelete}
+                                                        isDraggable={false}
+                                                        className="h-full shadow-sm text-xs"
+                                                        eventHeight={eventHeightPx}
+                                                    />
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 )
                             })}

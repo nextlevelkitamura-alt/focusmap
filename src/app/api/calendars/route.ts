@@ -33,7 +33,12 @@ export async function GET(request: NextRequest) {
     // Google Calendar APIからカレンダーを取得
     let googleCalendars;
     try {
+      console.log('[calendars] Fetching calendars from Google API for user:', user.id);
       googleCalendars = await fetchUserCalendars(user.id);
+      console.log('[calendars] Fetched calendars from Google API:', {
+        count: googleCalendars.length,
+        calendars: googleCalendars.map(c => ({ name: c.name, id: c.googleCalendarId, primary: c.primary }))
+      });
     } catch (error: any) {
       console.error('[calendars] Failed to fetch from Google API:', error);
 
@@ -56,6 +61,7 @@ export async function GET(request: NextRequest) {
     }
 
     // データベースと同期
+    console.log('[calendars] Syncing calendars to database...');
     const syncedCalendars = [];
 
     for (const googleCal of googleCalendars) {
@@ -68,6 +74,7 @@ export async function GET(request: NextRequest) {
 
       if (error && error.code === 'PGRST116') {
         // 新規カレンダーを作成
+        console.log('[calendars] Inserting new calendar:', googleCal.name);
         const { data: newCal, error: insertError } = await supabase
           .from('user_calendars')
           .insert({
@@ -88,10 +95,14 @@ export async function GET(request: NextRequest) {
           .select()
           .single();
 
-        if (insertError) throw insertError;
+        if (insertError) {
+          console.error('[calendars] Insert error:', insertError);
+          throw insertError;
+        }
         syncedCalendars.push(newCal);
       } else if (existing) {
         // 既存カレンダーを更新
+        console.log('[calendars] Updating existing calendar:', googleCal.name);
         const { data: updatedCal, error: updateError } = await supabase
           .from('user_calendars')
           .update({
@@ -111,18 +122,36 @@ export async function GET(request: NextRequest) {
           .select()
           .single();
 
-        if (updateError) throw updateError;
+        if (updateError) {
+          console.error('[calendars] Update error:', updateError);
+          throw updateError;
+        }
         syncedCalendars.push(updatedCal);
+      } else if (error) {
+        // その他のエラー
+        console.error('[calendars] Database query error:', error);
+        throw error;
       }
     }
+    console.log('[calendars] Synced', syncedCalendars.length, 'calendars to database');
 
     // 選択状態を維持して返す（既存の設定を尊重）
-    const { data: allCalendars } = await supabase
+    const { data: allCalendars, error: selectError } = await supabase
       .from('user_calendars')
       .select('*')
       .eq('user_id', user.id)
       .order('is_primary', { ascending: false })
       .order('name');
+
+    if (selectError) {
+      console.error('[calendars] Failed to select from database:', selectError);
+      throw new Error(`Failed to fetch calendars from database: ${selectError.message}`);
+    }
+
+    console.log('[calendars] Returning calendars:', {
+      count: allCalendars?.length || 0,
+      calendars: allCalendars?.map(c => ({ name: c.name, id: c.google_calendar_id, selected: c.selected, primary: c.is_primary }))
+    });
 
     return NextResponse.json({
       success: true,

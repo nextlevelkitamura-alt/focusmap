@@ -20,6 +20,16 @@ interface CalendarSelectorProps {
 export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }: CalendarSelectorProps) {
   const { calendars, isLoading, error, fetchCalendars, toggleCalendar, toggleAll } = useCalendars()
 
+  // デバッグログ
+  useEffect(() => {
+    console.log('[CalendarSelector] State:', {
+      isLoading,
+      error: error?.message,
+      calendarsCount: calendars.length,
+      calendars: calendars.map(c => ({ name: c.name, id: c.google_calendar_id, selected: c.selected }))
+    })
+  }, [isLoading, error, calendars])
+
   // 表示中のカレンダーIDのリストを親に通知
   useEffect(() => {
     const visibleIds = calendars.filter(c => c.selected).map(c => c.google_calendar_id)
@@ -31,6 +41,14 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
   const someSelected = calendars.some(c => c.selected) && !allSelected
 
   if (isLoading) {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-1 px-2">
+          <RefreshCw className="w-3 h-3 animate-spin text-muted-foreground" />
+          <span className="text-[10px] text-muted-foreground">読込中</span>
+        </div>
+      )
+    }
     return (
       <div className="flex items-center justify-center p-2">
         <RefreshCw className="w-3 h-3 animate-spin text-muted-foreground" />
@@ -50,35 +68,86 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
     }
   }
 
+  // エラー表示の改善
   if (error) {
+    const isTokenError = error.message.includes('OAuth') || error.message.includes('token') || error.message.includes('Calendar not connected');
+
+    // Compact モード用のエラー表示
+    if (compact) {
+      return (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-[10px] gap-1 px-2 text-red-600"
+          onClick={() => window.location.href = '/api/calendar/connect'}
+          title={error.message}
+        >
+          カレンダーエラー
+        </Button>
+      )
+    }
+
     return (
-      <div className="p-2 space-y-1">
-        <p className="text-[10px] text-red-500">{error.message}</p>
-        <div className="flex gap-1">
-          <Button
-            onClick={() => fetchCalendars()}
-            size="sm"
-            variant="outline"
-            className="flex-1 h-6 text-[10px]"
-          >
-            <RefreshCw className="w-3 h-3 mr-1" />
-            再試行
-          </Button>
-          <Button
-            onClick={handleDisconnect}
-            size="sm"
-            variant="destructive"
-            className="flex-1 h-6 text-[10px]"
-          >
-            解除
-          </Button>
+      <div className="p-2 space-y-2">
+        <div className="space-y-1">
+          <p className="text-[10px] font-semibold text-red-600">接続エラー</p>
+          <p className="text-[9px] text-muted-foreground">{error.message}</p>
         </div>
+
+        {isTokenError ? (
+          <div className="space-y-1">
+            <Button
+              onClick={() => window.location.href = '/api/calendar/connect'}
+              size="sm"
+              variant="default"
+              className="w-full h-7 text-[10px]"
+            >
+              Google カレンダーに接続
+            </Button>
+            <p className="text-[9px] text-muted-foreground text-center">
+              初回接続または再認証が必要です
+            </p>
+          </div>
+        ) : (
+          <div className="flex gap-1">
+            <Button
+              onClick={() => fetchCalendars()}
+              size="sm"
+              variant="outline"
+              className="flex-1 h-6 text-[10px]"
+            >
+              <RefreshCw className="w-3 h-3 mr-1" />
+              再試行
+            </Button>
+            <Button
+              onClick={handleDisconnect}
+              size="sm"
+              variant="destructive"
+              className="flex-1 h-6 text-[10px]"
+            >
+              解除
+            </Button>
+          </div>
+        )}
       </div>
     )
   }
 
   if (calendars.length === 0) {
-    return compact ? null : (
+    // Compact モードでもエラー状態を表示
+    if (compact) {
+      return (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-[10px] gap-1 px-2 text-muted-foreground"
+          onClick={() => window.location.href = '/api/calendar/connect'}
+        >
+          カレンダー接続
+        </Button>
+      )
+    }
+    return (
       <div className="p-2 text-[10px] text-muted-foreground text-center">
         カレンダーが見つかりません
       </div>

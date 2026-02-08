@@ -12,7 +12,9 @@ import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
-import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select-fixed"
+import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
+import { TaskCalendarSyncStatus } from "@/components/tasks/task-calendar-sync-status"
+import { useTaskCalendarSync } from "@/hooks/useTaskCalendarSync"
 import { DateTimePicker } from "@/lib/dynamic-imports"
 
 type TaskIndex = {
@@ -90,6 +92,7 @@ interface CenterPaneProps {
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onMoveTask?: (taskId: string, newGroupId: string) => Promise<void>
+    onRefreshCalendar?: () => Promise<void>
 }
 
 // Progress Bar Component
@@ -115,7 +118,10 @@ function TaskItem({
     onDeleteTask,
     onCreateTask,
     groupId,
-    dragHandleProps
+    dragHandleProps,
+    newlyCreatedTaskId,
+    onClearNewlyCreated,
+    onRefreshCalendar
 }: {
     task: Task
     allTasks: Task[]
@@ -126,8 +132,24 @@ function TaskItem({
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     groupId: string
     dragHandleProps?: any
+    newlyCreatedTaskId?: string | null
+    onClearNewlyCreated?: () => void
+    onRefreshCalendar?: () => Promise<void>
 }) {
     const [isExpanded, setIsExpanded] = useState(true)
+    const inputRef = useRef<HTMLInputElement>(null)
+
+    // Auto-focus for newly created tasks
+    useEffect(() => {
+        if (task.id === newlyCreatedTaskId && inputRef.current) {
+            setTimeout(() => {
+                inputRef.current?.focus()
+                inputRef.current?.select()
+                // Clear the flag after focusing
+                onClearNewlyCreated?.()
+            }, 50)
+        }
+    }, [task.id, newlyCreatedTaskId, onClearNewlyCreated])
 
     // Max depth limit (6 levels)
     const MAX_DEPTH = 6;
@@ -156,13 +178,29 @@ function TaskItem({
 
     const handleAddChildTask = async () => {
         if (onCreateTask) {
-            await onCreateTask(groupId, "New Subtask", task.id)
+            const newTask = await onCreateTask(groupId, "New Subtask", task.id)
+            if (newTask?.id && onClearNewlyCreated) {
+                // This will be handled by parent CenterPane
+            }
         }
     }
 
     // Timer hook
     const { runningTaskId, currentElapsedSeconds, startTimer, pauseTimer, completeTimer, interruptTimer, isLoading } = useTimer();
     const isTimerRunning = runningTaskId === task.id;
+
+    // Calendar sync hook
+    const { status: syncStatus, error: syncError, retry: syncRetry } = useTaskCalendarSync({
+        taskId: task.id,
+        scheduled_at: task.scheduled_at,
+        estimated_time: task.estimated_time,
+        calendar_id: task.calendar_id,
+        google_event_id: task.google_event_id,
+        onSyncSuccess: async () => {
+            // カレンダーを更新
+            await onRefreshCalendar?.()
+        }
+    });
 
     // Calculate elapsed time for this task
     const taskElapsedSeconds = isTimerRunning
@@ -203,6 +241,7 @@ function TaskItem({
 
                 {/* Title */}
                 <input
+                    ref={inputRef}
                     className={cn(
                         "flex-1 bg-transparent border-none text-sm focus:outline-none focus:ring-0 px-1 min-w-0",
                         task.status === 'done' && "text-muted-foreground line-through"
@@ -490,12 +529,17 @@ function TaskItem({
                         )}
                     </div>
 
-                    {/* Group 3.5: Calendar Selection */}
+                    {/* Group 3.5: Calendar Selection + Sync Status */}
                     <div className="flex items-center gap-1">
                         <TaskCalendarSelect
-                            value={(task as any).calendar_type}
-                            onChange={(calendarType) => handleCalendarUpdate?.(task.id, { calendar_type: calendarType })}
-                            className={(task as any).calendar_type ? "" : "opacity-0 group-hover:opacity-100"}
+                            value={task.calendar_id}
+                            onChange={(calendarId) => onUpdateTask?.(task.id, { calendar_id: calendarId })}
+                            className={task.calendar_id ? "" : "opacity-0 group-hover:opacity-100"}
+                        />
+                        <TaskCalendarSyncStatus
+                            status={syncStatus}
+                            error={syncError}
+                            onRetry={syncRetry}
                         />
                     </div>
 
@@ -581,6 +625,9 @@ function TaskItem({
                             onDeleteTask={onDeleteTask}
                             onCreateTask={onCreateTask}
                             groupId={groupId}
+                            newlyCreatedTaskId={newlyCreatedTaskId}
+                            onClearNewlyCreated={onClearNewlyCreated}
+                            onRefreshCalendar={onRefreshCalendar}
                         />
                     ))}
                 </div>
@@ -601,7 +648,8 @@ export function CenterPane({
     onCreateTask,
     onUpdateTask,
     onDeleteTask,
-    onMoveTask
+    onMoveTask,
+    onRefreshCalendar
 }: CenterPaneProps) {
     // Splitter State
     const [topHeight, setTopHeight] = useState(50)
@@ -610,6 +658,9 @@ export function CenterPane({
 
     // Group Collapse State
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+
+    // Newly created task tracking for auto-focus
+    const [newlyCreatedTaskId, setNewlyCreatedTaskId] = useState<string | null>(null)
 
     // Onboarding tooltip state - localStorageに保存
     const [showDragHint, setShowDragHint] = useState(() => {
@@ -638,7 +689,12 @@ export function CenterPane({
     }, [groups, tasks])
 
     const handleAddTask = async (groupId: string) => {
-        if (onCreateTask) await onCreateTask(groupId, "New Task", null)
+        if (onCreateTask) {
+            const newTask = await onCreateTask(groupId, "New Task", null)
+            if (newTask?.id) {
+                setNewlyCreatedTaskId(newTask.id)
+            }
+        }
     }
 
     // Drag & Drop handler
@@ -1058,6 +1114,9 @@ export function CenterPane({
                                                                             onCreateTask={onCreateTask}
                                                                             groupId={group.id}
                                                                             dragHandleProps={provided.dragHandleProps}
+                                                                            newlyCreatedTaskId={newlyCreatedTaskId}
+                                                                            onClearNewlyCreated={() => setNewlyCreatedTaskId(null)}
+                                                                            onRefreshCalendar={onRefreshCalendar}
                                                                         />
                                                                     </div>
                                                                 )}

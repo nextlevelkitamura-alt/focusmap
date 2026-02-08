@@ -32,11 +32,13 @@ export function useCalendars() {
 
   // カレンダーリストを取得
   const fetchCalendars = useCallback(async (forceSync = false) => {
+    console.log('[useCalendars] Fetching calendars, forceSync:', forceSync);
     setIsLoading(true);
     setError(null);
 
     try {
       const response = await fetch(`/api/calendars${forceSync ? '?forceSync=true' : ''}`);
+      console.log('[useCalendars] Response status:', response.status);
 
       const contentType = response.headers.get("content-type");
       if (!response.ok) {
@@ -51,6 +53,7 @@ export function useCalendars() {
         } catch (e) {
           // Ignore parsing mismatch
         }
+        console.error('[useCalendars] Error:', errorMessage);
         throw new Error(errorMessage);
       }
 
@@ -58,6 +61,10 @@ export function useCalendars() {
       if (contentType && contentType.indexOf("application/json") !== -1) {
         data = await response.json();
       }
+      console.log('[useCalendars] Received calendars:', {
+        count: data.calendars?.length || 0,
+        calendars: data.calendars?.map((c: UserCalendar) => ({ name: c.name, id: c.google_calendar_id, selected: c.selected }))
+      });
       setCalendars(data.calendars || []);
 
       // ローカルストレージにも保存
@@ -74,6 +81,7 @@ export function useCalendars() {
       }
     } catch (err) {
       const error = err as Error;
+      console.error('[useCalendars] Fetch failed:', error.message);
       setError(error);
       throw error;
     } finally {

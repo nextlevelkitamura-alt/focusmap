@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils"
 import { format, startOfWeek, endOfWeek, subWeeks, subMonths, addWeeks, addMonths } from "date-fns"
 import { ja } from "date-fns/locale"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react"
 import { ViewMode } from "@/components/calendar/calendar-header"
 import { CalendarSelector } from "@/components/calendar/calendar-selector"
 
@@ -13,6 +13,8 @@ interface SidebarCalendarHeaderProps {
     onViewModeChange: (mode: ViewMode) => void
     onDateChange: (date: Date) => void
     onToday: () => void
+    onRefresh?: () => void
+    isRefreshing?: boolean
     onVisibleCalendarIdsChange?: (ids: string[]) => void
 }
 
@@ -22,6 +24,8 @@ export function SidebarCalendarHeader({
     onViewModeChange,
     onDateChange,
     onToday,
+    onRefresh,
+    isRefreshing,
     onVisibleCalendarIdsChange
 }: SidebarCalendarHeaderProps) {
     // Navigation handlers
@@ -70,50 +74,66 @@ export function SidebarCalendarHeader({
     }
 
     return (
-        <div className="flex flex-col gap-2 p-2 border-b bg-background z-30 shrink-0">
+        <div className="flex flex-col gap-4 p-4 border-b border-border/30 bg-background/95 backdrop-blur-sm z-30 shrink-0">
 
-            {/* Top Row: Navigation & Today */}
+            {/* Top Row: Date Display (Prominent) */}
             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1">
+                <span className="text-base font-semibold tabular-nums tracking-tight">
+                    {getDateRangeLabel()}
+                </span>
+
+                <div className="flex items-center gap-1.5">
+                    <button
+                        onClick={goToPrevious}
+                        className="p-1.5 rounded-lg hover:bg-muted/60 transition-all duration-200 text-muted-foreground hover:text-foreground"
+                        aria-label="前へ"
+                    >
+                        <ChevronLeft className="w-4 h-4" />
+                    </button>
                     <button
                         onClick={onToday}
-                        className="px-2 py-1 text-xs font-medium border rounded hover:bg-muted/50 transition-colors"
+                        className="px-3 py-1 text-xs font-medium rounded-lg hover:bg-muted/60 transition-all duration-200 text-muted-foreground hover:text-foreground"
                     >
                         今日
                     </button>
-                    <div className="flex items-center">
+                    <button
+                        onClick={goToNext}
+                        className="p-1.5 rounded-lg hover:bg-muted/60 transition-all duration-200 text-muted-foreground hover:text-foreground"
+                        aria-label="次へ"
+                    >
+                        <ChevronRight className="w-4 h-4" />
+                    </button>
+                    {onRefresh && (
                         <button
-                            onClick={goToPrevious}
-                            className="p-1 rounded-full hover:bg-muted/50 transition-colors"
+                            onClick={onRefresh}
+                            disabled={isRefreshing}
+                            className={cn(
+                                "p-1.5 rounded-lg hover:bg-muted/60 transition-all duration-200",
+                                isRefreshing
+                                    ? "text-primary cursor-not-allowed"
+                                    : "text-muted-foreground hover:text-foreground"
+                            )}
+                            aria-label="更新"
+                            title={isRefreshing ? "更新中..." : "カレンダーを更新"}
                         >
-                            <ChevronLeft className="w-3 h-3" />
+                            <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
                         </button>
-                        <button
-                            onClick={goToNext}
-                            className="p-1 rounded-full hover:bg-muted/50 transition-colors"
-                        >
-                            <ChevronRight className="w-3 h-3" />
-                        </button>
-                    </div>
+                    )}
                 </div>
-
-                <span className="text-sm font-semibold tabular-nums ml-1">
-                    {getDateRangeLabel()}
-                </span>
             </div>
 
             {/* Bottom Row: View Mode & Calendar Selector */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center bg-muted/30 rounded p-0.5 border">
+            <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center bg-muted/20 rounded-lg p-1 border border-border/30">
                     {(['day', '3day', 'week', 'month'] as const).map((mode) => (
                         <button
                             key={mode}
                             onClick={() => onViewModeChange(mode)}
                             className={cn(
-                                "px-2 py-0.5 text-[10px] font-medium rounded transition-all",
+                                "px-3 py-1 text-xs font-medium rounded-md transition-all duration-200",
                                 viewMode === mode
-                                    ? "bg-background text-foreground shadow-sm ring-1 ring-border/10"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                    ? "bg-background text-foreground shadow-sm"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-background/50"
                             )}
                         >
                             {mode === 'day' && '日'}

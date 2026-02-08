@@ -89,7 +89,7 @@ export async function POST(
             scheduled_at: scheduledAt,
             estimated_time: task.estimated_time,
             google_event_id: task.google_event_id,
-            target_calendar_id: calendarId || settings?.default_calendar_id
+            calendar_id: calendarId || settings?.default_calendar_id
           });
 
           // calendar_events テーブルにも作成

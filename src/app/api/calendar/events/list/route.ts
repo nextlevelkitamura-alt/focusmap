@@ -9,17 +9,21 @@ import { fetchCalendarEvents, fetchMultipleCalendarEvents } from '@/lib/google-c
  * calendarId: カンマ区切りで複数のカレンダーIDを指定可能
  */
 export async function GET(request: NextRequest) {
+  console.log('[events/list] API called');
   const supabase = await createClient();
 
   // 認証チェック
   const { data: { user }, error: authError } = await supabase.auth.getUser();
 
   if (authError || !user) {
+    console.log('[events/list] Unauthorized');
     return NextResponse.json(
       { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } },
       { status: 401 }
     );
   }
+
+  console.log('[events/list] User authenticated:', user.id);
 
   // クエリパラメータの取得
   const searchParams = request.nextUrl.searchParams;
@@ -64,36 +68,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // forceSync=false の場合、キャッシュをチェック
-    if (!forceSync) {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-
-      const { data: cachedEvents, error: cacheError } = await supabase
-        .from('calendar_events')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('start_time', timeMin.toISOString())
-        .lte('end_time', timeMax.toISOString())
-        .gte('synced_at', fiveMinutesAgo.toISOString());
-
-      // キャッシュが新しい場合はそれを返す
-      if (!cacheError && cachedEvents && cachedEvents.length > 0) {
-        // 最新のsynced_atを取得
-        const latestSyncedAt = cachedEvents.reduce((latest, event) => {
-          const eventSyncedAt = new Date(event.synced_at);
-          return eventSyncedAt > latest ? eventSyncedAt : latest;
-        }, new Date(0));
-
-        return NextResponse.json({
-          success: true,
-          events: cachedEvents,
-          syncedAt: latestSyncedAt.toISOString(),
-          fromCache: true
-        });
-      }
-    }
-
-    // Google Calendar APIからイベントを取得
+    // 常に Google Calendar API から最新のイベントを取得（キャッシュチェックを削除）
+    // Google カレンダーを正確性のソースとして扱う
     let googleEvents;
     if (calendarIds && calendarIds.length > 0) {
       // 複数カレンダーから並列取得
@@ -110,44 +86,125 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // DBにupsert（google_event_idで重複チェック）
-    const now = new Date().toISOString();
-    const eventsWithSyncTime = googleEvents.map(event => ({
+    // カレンダーの色情報を取得
+    const { data: userCalendars } = await supabase
+      .from('user_calendars')
+      .select('google_calendar_id, background_color')
+      .eq('user_id', user.id);
+
+    // カレンダーIDから色へのマップを作成
+    const calendarColorMap = new Map<string, string>();
+    userCalendars?.forEach(cal => {
+      if (cal.background_color) {
+        calendarColorMap.set(cal.google_calendar_id, cal.background_color);
+      }
+    });
+
+    console.log('[events/list] Calendar color map:', Object.fromEntries(calendarColorMap));
+    console.log('[events/list] Google Calendar API events:', googleEvents.length);
+
+    // Google Calendar API のイベントに id を付与（google_event_id を id として使用）
+    const googleEventsWithId = googleEvents.map(event => ({
       ...event,
-      synced_at: now
+      id: event.google_event_id // google_event_id を id として使用
     }));
 
-    if (eventsWithSyncTime.length > 0) {
-      const { error: upsertError } = await supabase
-        .from('calendar_events')
-        .upsert(eventsWithSyncTime, {
-          onConflict: 'user_id,google_event_id',
-          ignoreDuplicates: false
-        });
-
-      if (upsertError) {
-        console.error('Failed to upsert calendar events:', upsertError);
-        throw new Error(`Failed to save events to database: ${upsertError.message}`);
+    // Google Calendar API のイベントを Set に格納（重複チェック用）
+    const googleEventIds = new Set<string>();
+    googleEventsWithId.forEach(event => {
+      if (event.google_event_id) {
+        googleEventIds.add(event.google_event_id);
       }
-    }
+    });
 
-    // DBから最新データを取得
-    const { data: events, error: fetchError } = await supabase
+    // DB からすべてのイベントを取得（google_event_id の有無に関わらず）
+    let allDbEventsQuery = supabase
       .from('calendar_events')
       .select('*')
       .eq('user_id', user.id)
       .gte('start_time', timeMin.toISOString())
-      .lte('end_time', timeMax.toISOString())
-      .order('start_time', { ascending: true });
+      .lte('end_time', timeMax.toISOString());
 
-    if (fetchError) {
-      console.error('Failed to fetch events from database:', fetchError);
-      throw new Error(`Failed to fetch events from database: ${fetchError.message}`);
+    // カレンダーIDでフィルタ（指定がある場合）
+    if (calendarIds && calendarIds.length > 0) {
+      allDbEventsQuery = allDbEventsQuery.in('calendar_id', calendarIds);
+    }
+
+    const { data: allDbEvents } = await allDbEventsQuery;
+
+    console.log('[events/list] All DB events:', allDbEvents?.length || 0);
+
+    // Google Calendar API に存在しない DB のイベントのみを追加
+    const localOnlyEvents = (allDbEvents || []).filter(event => {
+      // google_event_id がないものはすべてローカルのみ
+      if (!event.google_event_id) {
+        return true;
+      }
+      // google_event_id があるが、Google Calendar API に存在しないもの
+      return !googleEventIds.has(event.google_event_id);
+    });
+
+    console.log('[events/list] Local-only events (not in Google Calendar):', localOnlyEvents.length);
+
+    // Google Calendar API のイベントとローカルのみのイベントをマージ
+    const allEvents = [...googleEventsWithId, ...localOnlyEvents];
+
+    // 色マッピングを追加
+    const eventsWithColor = allEvents.map(event => {
+      const mappedColor = calendarColorMap.get(event.calendar_id);
+      const finalColor = mappedColor || event.background_color || '#039BE5';
+
+      // 色マッピングが見つからないイベントをログ
+      if (!mappedColor && !event.background_color) {
+        console.log('[events/list] No color found for event:', {
+          eventId: event.google_event_id,
+          calendarId: event.calendar_id,
+          title: event.title
+        });
+      }
+
+      return {
+        ...event,
+        background_color: finalColor
+      };
+    });
+
+    console.log('[events/list] Events with color:', {
+      total: eventsWithColor.length,
+      fromGoogle: googleEvents.length,
+      fromLocal: localOnlyEvents.length,
+      withMappedColor: eventsWithColor.filter(e => calendarColorMap.has(e.calendar_id)).length,
+      withOwnColor: eventsWithColor.filter(e => e.background_color && e.background_color !== '#039BE5').length,
+      withDefaultColor: eventsWithColor.filter(e => e.background_color === '#039BE5').length
+    });
+
+    // DBに非同期で保存（エラーがあっても返却をブロックしない）
+    const now = new Date().toISOString();
+    const eventsWithSyncTime = googleEventsWithId.map(event => ({
+      ...event,
+      synced_at: now
+    }));
+
+    // 非同期でDBに保存（エラーがあってもログだけ出して続行）
+    if (eventsWithSyncTime.length > 0) {
+      supabase
+        .from('calendar_events')
+        .upsert(eventsWithSyncTime, {
+          onConflict: 'user_id,google_event_id',
+          ignoreDuplicates: false
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.error('[events/list] Failed to upsert calendar events (non-blocking):', error);
+          } else {
+            console.log('[events/list] Successfully upserted', eventsWithSyncTime.length, 'events to database');
+          }
+        });
     }
 
     return NextResponse.json({
       success: true,
-      events: events || [],
+      events: eventsWithColor,
       syncedAt: now,
       fromCache: false
     });

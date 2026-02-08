@@ -1,7 +1,7 @@
 "use client"
 
 // Force rebuild: 2026-02-07
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useRef } from "react"
 import { CalendarHeader, ViewMode } from "./calendar-header"
 import { CalendarWeekView } from "./calendar-week-view"
 import { Calendar3DayView } from "./calendar-3day-view"
@@ -10,6 +10,7 @@ import { CalendarDayView } from "./calendar-day-view"
 import { MiniCalendar } from "./mini-calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
+import { useCalendarZoom } from "@/hooks/useCalendarZoom"
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths } from "date-fns"
 
 interface CalendarViewProps {
@@ -20,6 +21,10 @@ interface CalendarViewProps {
 export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('3day') // Default to 3day for narrow sidebars? Or keep 'week'? Let's keep 'week' as default or change if requested. detailed spec said "4 views". Default wasn't specified but 'week' is standard.
   const [currentDate, setCurrentDate] = useState(new Date())
+
+  // ズーム機能用のgridRef
+  const zoomGridRef = useRef<HTMLDivElement>(null)
+  const { hourHeight, zoomLevel } = useCalendarZoom({ gridRef: zoomGridRef })
 
   // マルチカレンダー対応
   const { selectedCalendarIds } = useCalendars()
@@ -105,6 +110,8 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
               events={events}
               onEventEdit={handleEventEdit}
               onEventDelete={handleEventDelete}
+              hourHeight={hourHeight}
+              gridRef={zoomGridRef}
             />
           ) : viewMode === '3day' ? (
             <Calendar3DayView
@@ -113,6 +120,8 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
               events={events}
               onEventEdit={handleEventEdit}
               onEventDelete={handleEventDelete}
+              hourHeight={hourHeight}
+              gridRef={zoomGridRef}
             />
           ) : viewMode === 'week' ? (
             <CalendarWeekView
@@ -121,6 +130,8 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
               events={events}
               onEventEdit={handleEventEdit}
               onEventDelete={handleEventDelete}
+              hourHeight={hourHeight}
+              gridRef={zoomGridRef}
             />
           ) : (
             <CalendarMonthView

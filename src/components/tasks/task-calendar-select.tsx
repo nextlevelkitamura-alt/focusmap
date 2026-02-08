@@ -23,15 +23,14 @@ export function TaskCalendarSelect({
     const [open, setOpen] = useState(false)
     const { calendars, isLoading } = useCalendars()
 
-    // Find selected calendar
+    // Find selected calendar by google_calendar_id
     const selectedCalendar = useMemo(() => {
         if (!value) return null
-        // Try to find by our ID first, then by google_calendar_id just in case
-        return calendars.find(c => c.id === value || c.google_calendar_id === value)
+        return calendars.find(c => c.google_calendar_id === value)
     }, [calendars, value])
 
-    const handleSelect = (calendarId: string) => {
-        onChange(calendarId)
+    const handleSelect = (googleCalendarId: string) => {
+        onChange(googleCalendarId)
         setOpen(false)
     }
 
@@ -93,11 +92,11 @@ export function TaskCalendarSelect({
                     ) : (
                         <div className="space-y-0.5">
                             {selectableCalendars.map((calendar) => {
-                                const isSelected = value === calendar.id || value === calendar.google_calendar_id
+                                const isSelected = value === calendar.google_calendar_id
                                 return (
                                     <button
                                         key={calendar.id}
-                                        onClick={() => handleSelect(calendar.id)}
+                                        onClick={() => handleSelect(calendar.google_calendar_id)}
                                         className={cn(
                                             "w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left",
                                             isSelected && "bg-accent/50"

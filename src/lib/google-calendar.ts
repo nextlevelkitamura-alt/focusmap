@@ -8,6 +8,8 @@ import { CalendarEvent, GoogleCalendarEvent } from '@/types/calendar';
 export async function getCalendarClient(userId: string) {
   const supabase = await createClient();
 
+  console.log('[getCalendarClient] Fetching settings for user:', userId);
+
   // ユーザーのカレンダー設定を取得
   const { data: settings, error } = await supabase
     .from('user_calendar_settings')
@@ -15,21 +17,43 @@ export async function getCalendarClient(userId: string) {
     .eq('user_id', userId)
     .single();
 
-  if (error || !settings) {
-    console.error('[getCalendarClient] Settings not found for user:', userId, error);
-    throw new Error('Calendar settings not found');
+  if (error) {
+    console.error('[getCalendarClient] Error fetching settings:', {
+      userId,
+      errorCode: error.code,
+      errorMessage: error.message,
+      errorDetails: error.details
+    });
+
+    if (error.code === 'PGRST116') {
+      throw new Error('Calendar not connected. Please connect your Google Calendar first.');
+    }
+    throw new Error(`Failed to fetch calendar settings: ${error.message}`);
   }
 
-  // Debug logging
-  console.log('[getCalendarClient] Loading tokens for user:', userId, {
+  if (!settings) {
+    console.error('[getCalendarClient] No settings found for user:', userId);
+    throw new Error('Calendar settings not found. Please connect your Google Calendar.');
+  }
+
+  // Debug logging - トークンの長さも表示
+  console.log('[getCalendarClient] Settings found for user:', userId, {
     access_token_exists: !!settings.google_access_token,
+    access_token_length: settings.google_access_token?.length || 0,
     refresh_token_exists: !!settings.google_refresh_token,
-    expires_at: settings.google_token_expires_at
+    refresh_token_length: settings.google_refresh_token?.length || 0,
+    expires_at: settings.google_token_expires_at,
+    is_sync_enabled: settings.is_sync_enabled
   });
 
   if (!settings.google_access_token || !settings.google_refresh_token) {
-    console.error('[getCalendarClient] Missing tokens for user:', userId);
-    throw new Error('Google OAuth tokens not found');
+    console.error('[getCalendarClient] Missing tokens for user:', userId, {
+      hasAccessToken: !!settings.google_access_token,
+      hasRefreshToken: !!settings.google_refresh_token,
+      accessTokenValue: settings.google_access_token ? '[EXISTS]' : '[NULL]',
+      refreshTokenValue: settings.google_refresh_token ? '[EXISTS]' : '[NULL]'
+    });
+    throw new Error('Google OAuth tokens not found. Please reconnect your Google Calendar.');
   }
 
   // OAuth2クライアントを作成
@@ -48,12 +72,17 @@ export async function getCalendarClient(userId: string) {
   // トークン更新時のハンドラー
   oauth2Client.on('tokens', async (tokens) => {
     if (tokens.access_token) {
+      // expiry_date は Unix タイムスタンプ (ms) なので直接 Date に変換
+      const expiresAt = tokens.expiry_date
+        ? new Date(tokens.expiry_date).toISOString()
+        : new Date(Date.now() + 3600 * 1000).toISOString();
+
       // 新しいアクセストークンをDBに保存
       await supabase
         .from('user_calendar_settings')
         .update({
           google_access_token: tokens.access_token,
-          google_token_expires_at: new Date(Date.now() + (tokens.expiry_date || 3600) * 1000).toISOString(),
+          google_token_expires_at: expiresAt,
         })
         .eq('user_id', userId);
     }
@@ -68,11 +97,14 @@ export async function getCalendarClient(userId: string) {
 /**
  * タスクをGoogleカレンダーイベントに変換
  */
-export function taskToCalendarEvent(task: {
-  title: string;
-  scheduled_at: string | null;
-  estimated_time: number;
-}) {
+export function taskToCalendarEvent(
+  task: {
+    title: string;
+    scheduled_at: string | null;
+    estimated_time: number;
+  },
+  taskId?: string
+) {
   if (!task.scheduled_at) {
     throw new Error('Task must have scheduled_at');
   }
@@ -80,7 +112,7 @@ export function taskToCalendarEvent(task: {
   const startDate = new Date(task.scheduled_at);
   const endDate = new Date(startDate.getTime() + task.estimated_time * 60 * 1000);
 
-  return {
+  const event: any = {
     summary: task.title,
     start: {
       dateTime: startDate.toISOString(),
@@ -90,14 +122,25 @@ export function taskToCalendarEvent(task: {
       dateTime: endDate.toISOString(),
       timeZone: 'Asia/Tokyo',
     },
-    // 通知設定（15分前にポップアップ）
+    // 通知設定（開始時刻ちょうど = 0分前）
     reminders: {
       useDefault: false,
       overrides: [
-        { method: 'popup', minutes: 15 }
+        { method: 'popup', minutes: 0 }
       ]
     },
   };
+
+  // taskId が指定されている場合は Extended Properties に保存
+  if (taskId) {
+    event.extendedProperties = {
+      private: {
+        taskId: taskId
+      }
+    };
+  }
+
+  return event;
 }
 
 /**
@@ -111,7 +154,7 @@ export async function syncTaskToCalendar(
     scheduled_at: string | null;
     estimated_time: number;
     google_event_id?: string | null;
-    target_calendar_id?: string | null;
+    calendar_id?: string | null;
   }
 ) {
   const supabase = await createClient();
@@ -123,11 +166,12 @@ export async function syncTaskToCalendar(
     .eq('user_id', userId)
     .single();
 
-  // target_calendar_id が設定されていればそれを使用、なければデフォルト
-  const calendarId = task.target_calendar_id || settings?.default_calendar_id || 'primary';
+  // calendar_id が設定されていればそれを使用、なければデフォルト
+  const calendarId = task.calendar_id || settings?.default_calendar_id || 'primary';
 
   try {
-    const event = taskToCalendarEvent(task);
+    // taskId を Extended Properties に含める
+    const event = taskToCalendarEvent(task, taskId);
 
     let googleEventId: string;
 
@@ -188,22 +232,26 @@ export async function syncTaskToCalendar(
 export async function deleteTaskFromCalendar(
   userId: string,
   taskId: string,
-  googleEventId: string
+  googleEventId: string,
+  calendarId?: string
 ) {
   const supabase = await createClient();
   const { calendar } = await getCalendarClient(userId);
 
-  const { data: settings } = await supabase
-    .from('user_calendar_settings')
-    .select('default_calendar_id')
-    .eq('user_id', userId)
-    .single();
-
-  const calendarId = settings?.default_calendar_id || 'primary';
+  // calendarId が指定されていない場合はデフォルトを取得
+  let targetCalendarId = calendarId;
+  if (!targetCalendarId) {
+    const { data: settings } = await supabase
+      .from('user_calendar_settings')
+      .select('default_calendar_id')
+      .eq('user_id', userId)
+      .single();
+    targetCalendarId = settings?.default_calendar_id || 'primary';
+  }
 
   try {
     await calendar.events.delete({
-      calendarId,
+      calendarId: targetCalendarId,
       eventId: googleEventId,
     });
 

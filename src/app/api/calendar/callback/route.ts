@@ -23,8 +23,16 @@ export async function GET(request: NextRequest) {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
 
   if (authError || !user || user.id !== state) {
+    console.error('[Calendar Callback] Auth failed:', {
+      authError: authError?.message || null,
+      hasUser: !!user,
+      userId: user?.id || 'none',
+      stateParam: state,
+      match: user?.id === state,
+    });
+    const reason = authError ? 'auth_error' : !user ? 'no_session' : 'user_mismatch';
     return NextResponse.redirect(
-      new URL('/dashboard?calendar_error=unauthorized', request.url)
+      new URL(`/dashboard?calendar_error=unauthorized&reason=${reason}`, request.url)
     );
   }
 
@@ -65,7 +73,8 @@ export async function GET(request: NextRequest) {
       : new Date(Date.now() + 3600 * 1000); // デフォルト1時間
 
     // Supabaseにトークンを保存
-    const { error: upsertError } = await supabase
+    console.log('[Calendar Callback] Saving tokens to database for user:', user.id);
+    const { data: upsertData, error: upsertError } = await supabase
       .from('user_calendar_settings')
       .upsert(
         {
@@ -79,12 +88,33 @@ export async function GET(request: NextRequest) {
         {
           onConflict: 'user_id',
         }
-      );
+      )
+      .select();
 
     if (upsertError) {
-      console.error('Failed to save tokens:', upsertError);
+      console.error('[Calendar Callback] Failed to save tokens:', upsertError);
       throw upsertError;
     }
+
+    console.log('[Calendar Callback] Tokens saved successfully:', {
+      userId: user.id,
+      dataReturned: !!upsertData,
+      recordCount: upsertData?.length || 0
+    });
+
+    // 保存されたデータを確認
+    const { data: verifyData, error: verifyError } = await supabase
+      .from('user_calendar_settings')
+      .select('google_access_token, google_refresh_token, google_token_expires_at')
+      .eq('user_id', user.id)
+      .single();
+
+    console.log('[Calendar Callback] Verification check:', {
+      verifyError: verifyError?.message || null,
+      hasAccessToken: !!verifyData?.google_access_token,
+      hasRefreshToken: !!verifyData?.google_refresh_token,
+      expiresAt: verifyData?.google_token_expires_at
+    });
 
     // ダッシュボードにリダイレクト（成功）
     return NextResponse.redirect(
