@@ -118,25 +118,28 @@ yarn-error.log*
 | **Instance Type** | `Free` | 無料プランで開始 |
 
 #### 環境変数設定
-Renderのダッシュボードで以下を設定：
+**重要**: 環境変数の設定方法は `docs/.env.schema` で詳しく説明しています。
 
-```bash
-# Supabase設定
-NEXT_PUBLIC_SUPABASE_URL=https://whsjsscgmkkkzgcwxjko.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...（現行の値）
+**簡単な設定方法**:
+1. プロジェクトルートの `.env.render` ファイルを開く
+2. ファイル内の環境変数をコピー
+3. Renderダッシュボードの「Environment」タブに貼り付け
+4. 「Save Changes」をクリック
 
-# Google Calendar API
-# Google Calendar API
-# GOOGLE_CLIENT_ID=your-google-client-id
-# GOOGLE_CLIENT_SECRET=your-google-client-secret
+**設定手順（詳細）**:
+1. Renderダッシュボードで「Environment」タブをクリック
+2. 「Add Environment Variable」をクリック
+3. 以下の変数を `.env.render` から1つずつ追加:
+   - NEXT_PUBLIC_SUPABASE_URL
+   - NEXT_PUBLIC_SUPABASE_ANON_KEY
+   - GOOGLE_CLIENT_ID
+   - GOOGLE_CLIENT_SECRET
+   - NEXTAUTH_URL
+   - GOOGLE_REDIRECT_URI
+   - NEXTAUTH_SECRET
+4. 全て追加したら「Save Changes」をクリック
 
-# 本番環境用URL
-NEXTAUTH_URL=https://shikumika-app.onrender.com
-GOOGLE_REDIRECT_URI=https://shikumika-app.onrender.com/api/calendar/callback
-
-# NextAuthシークレット（新規生成）
-NEXTAUTH_SECRET=xxxxxxxx
-```
+**参考**: 詳しい設定方法は [`docs/.env.schema`](../.env.schema) を参照してください。
 
 ### ✅ 3.4 デプロイ実行
 1. 「Create Web Service」をクリック
