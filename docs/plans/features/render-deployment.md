@@ -126,8 +126,9 @@ NEXT_PUBLIC_SUPABASE_URL=https://whsjsscgmkkkzgcwxjko.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...（現行の値）
 
 # Google Calendar API
-GOOGLE_CLIENT_ID=466617344999-5nd3rrfrtrieb840f7rc1425m8d0kvev.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=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
+# Google Calendar API
+# GOOGLE_CLIENT_ID=your-google-client-id
+# GOOGLE_CLIENT_SECRET=your-google-client-secret
 
 # 本番環境用URL
 NEXTAUTH_URL=https://shikumika-app.onrender.com
