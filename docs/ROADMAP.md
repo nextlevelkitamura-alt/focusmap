@@ -59,11 +59,10 @@
 ### 未実装
 
 #### インフラ・デプロイ
-- ○ **Renderへのデプロイ対応** → [計画書](plans/features/render-deployment.md)
-  - Web Service設定
-  - 環境変数設定（NEXTAUTH_URL, NEXTAUTH_SECRET等）
-  - Google OAuth リダイレクトURI更新
-  - デプロイ手順書作成
+- ❌ **Renderへのデプロイ対応** → キャンセル（Vercel継続使用）
+  - 理由: 無料プランのスリープ制限（15分）とビルド問題
+  - 決定: Vercelの無料プランを継続使用
+  - 参考: [計画書](plans/features/render-deployment.md)
 
 #### 機能拡張
 - ○ **タスク削除時にGoogleカレンダー予定も自動削除** → [計画書](plans/features/task-delete-sync.md)
@@ -74,6 +73,11 @@
 ---
 
 ## 完了履歴
+- 2026-02-09: **Render.comデプロイ調査と環境変数整理**
+  - Render.comへのデプロイ調査実施
+  - 環境変数ファイルの整理（.env.example、.env.render）
+  - ドキュメント更新（docs/.env.schema）
+  - 結論: Vercel継続使用（無料プランのスリープ制限とビルド問題のため）
 - 2026-02-08: **カレンダー同期機能の包括的な改善** 完了
   - 時間変更時の二重登録問題を修正（prevRef更新タイミングの改善）
   - カレンダー変更時のprevRef更新を追加
