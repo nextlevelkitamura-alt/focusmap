@@ -1,23 +1,11 @@
+# ==========================================
+# Multi-stage Dockerfile for Cloud Run
+# ==========================================
+
 # ビルドステージ
 FROM node:20-alpine AS builder
 
 WORKDIR /app
-
-# ビルド時の環境変数（ARG で受け取り、ENV に設定）
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG GOOGLE_CLIENT_ID
-ARG GOOGLE_CLIENT_SECRET
-ARG NEXTAUTH_URL
-ARG NEXTAUTH_SECRET
-
-ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-ENV GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-ENV GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-ENV NEXTAUTH_URL=${NEXTAUTH_URL}
-ENV NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-ENV NODE_ENV=production
 
 # 依存関係のインストール
 COPY package*.json ./
@@ -27,6 +15,15 @@ RUN npm ci
 COPY . .
 
 # Next.js のビルド（standalone モード）
+# 環境変数はランタイムに設定するため、ビルド時にはダミー値を設定
+ENV NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder
+ENV GOOGLE_CLIENT_ID=placeholder
+ENV GOOGLE_CLIENT_SECRET=placeholder
+ENV NEXTAUTH_URL=http://placeholder
+ENV NEXTAUTH_SECRET=placeholder
+ENV NODE_ENV=production
+
 RUN npm run build
 
 # 本番ステージ
