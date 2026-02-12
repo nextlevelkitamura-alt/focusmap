@@ -50,3 +50,4 @@ docs/env.md
 
 # Local Netlify folder
 .netlify
+.github/secrets/
