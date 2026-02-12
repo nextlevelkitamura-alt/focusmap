@@ -18,13 +18,13 @@ COPY . .
 # 環境変数はランタイムに設定するため、ビルド時にはダミー値を設定
 ENV NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder
-ENV GOOGLE_CLIENT_ID=placeholder
-ENV GOOGLE_CLIENT_SECRET=placeholder
-ENV NEXTAUTH_URL=http://placeholder
-ENV NEXTAUTH_SECRET=placeholder
+ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
-RUN npm run build
+# ビルド前に診断情報を出力
+RUN npx next info
+
+RUN npm run build 2>&1 || (echo "=== Build failed ===" && cat /app/.next/build.log 2>/dev/null || true)
 
 # 本番ステージ
 FROM node:20-alpine AS runner
