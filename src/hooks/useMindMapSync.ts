@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Task, TaskGroup } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
@@ -46,6 +46,20 @@ export function useMindMapSync({
     // (These inputs are stable in DashboardClient via useMemo, so this won't loop.)
     useEffect(() => { setGroups(initialGroups) }, [initialGroups])
     useEffect(() => { setTasks(initialTasks) }, [initialTasks])
+
+    // カレンダー同期のデバウンス用 ref
+    // updateTask が連続で呼ばれても、同期は最後の1回だけ実行される
+    const syncTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+    const tasksRef = useRef(tasks)
+    tasksRef.current = tasks
+
+    // クリーンアップ: コンポーネントアンマウント時にタイマーをキャンセル
+    useEffect(() => {
+        return () => {
+            syncTimers.current.forEach(timer => clearTimeout(timer))
+            syncTimers.current.clear()
+        }
+    }, [])
 
     // TEMPORARILY DISABLED REALTIME TO PREVENT CRASH
     // TODO: Re-enable with proper error handling once the root cause is identified
@@ -187,38 +201,67 @@ export function useMindMapSync({
         try {
             await supabase.from('tasks').update(updates).eq('id', taskId)
 
-            // GOOGLE CALENDAR SYNC: If scheduled_at or estimated_time is updated
-            if (updates.scheduled_at !== undefined || updates.estimated_time !== undefined) {
-                const task = tasks.find(t => t.id === taskId);
-                const updatedTask = { ...task, ...updates };
-
-                // Cancel existing notifications for this task
-                if (updatedTask?.scheduled_at) {
-                    try {
-                        await cancelNotifications('task', taskId);
-                    } catch (error) {
-                        console.error('[Notification] Failed to cancel notifications:', error);
-                    }
+            // GOOGLE CALENDAR SYNC: デバウンスで1回だけ実行
+            // updateTask が連続で呼ばれても（scheduled_at, estimated_time, title 等）、
+            // 500ms 待って最新の state で1回だけ sync する
+            const shouldSyncCalendar = updates.scheduled_at !== undefined
+                || updates.estimated_time !== undefined
+                || updates.title !== undefined
+            if (shouldSyncCalendar) {
+                // 既存のタイマーをキャンセル
+                if (syncTimers.current.has(taskId)) {
+                    clearTimeout(syncTimers.current.get(taskId))
                 }
 
-                // Only sync if both scheduled_at and estimated_time are present
-                if (updatedTask.scheduled_at && updatedTask.estimated_time) {
+                syncTimers.current.set(taskId, setTimeout(async () => {
+                    syncTimers.current.delete(taskId)
+
+                    // 最新の state から task を読む（クロージャの stale state を回避）
+                    const latestTask = tasksRef.current.find(t => t.id === taskId)
+                    if (!latestTask?.scheduled_at) return
+
+                    // Cancel existing notifications
                     try {
-                        await fetch('/api/calendar/sync-task', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ taskId })
-                        });
+                        await cancelNotifications('task', taskId)
                     } catch (error) {
-                        console.error('[Calendar Sync] Failed to sync task:', error);
-                        // Don't block the task update if calendar sync fails
+                        console.error('[Notification] Failed to cancel notifications:', error)
+                    }
+
+                    const syncEstimatedTime = latestTask.estimated_time || 60
+
+                    try {
+                        // google_event_id がある場合はPATCH、ない場合はPOST
+                        // サーバー側でもDB上のgoogle_event_idを確認するため、二重防止
+                        const method = latestTask.google_event_id ? 'PATCH' : 'POST'
+                        const syncResponse = await fetch('/api/calendar/sync-task', {
+                            method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                taskId,
+                                scheduled_at: latestTask.scheduled_at,
+                                estimated_time: syncEstimatedTime,
+                                calendar_id: latestTask.calendar_id || 'primary'
+                            })
+                        })
+                        // sync成功時、ローカル state に google_event_id を反映
+                        if (syncResponse.ok) {
+                            const syncData = await syncResponse.json()
+                            if (syncData.googleEventId) {
+                                setTasks(prev => prev.map(t =>
+                                    t.id === taskId
+                                        ? { ...t, google_event_id: syncData.googleEventId }
+                                        : t
+                                ))
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[Calendar Sync] Failed to sync task:', error)
                     }
 
                     // Schedule notification for task start
                     try {
-                        const scheduledTime = new Date(updatedTask.scheduled_at);
-                        const notificationTime = new Date(scheduledTime.getTime() - 15 * 60 * 1000); // 15 minutes before
-
+                        const scheduledTime = new Date(latestTask.scheduled_at)
+                        const notificationTime = new Date(scheduledTime.getTime() - 15 * 60 * 1000)
                         if (notificationTime > new Date()) {
                             await scheduleNotification({
                                 targetType: 'task',
@@ -226,15 +269,14 @@ export function useMindMapSync({
                                 notificationType: 'task_start',
                                 scheduledAt: notificationTime,
                                 title: 'タスク開始',
-                                body: updatedTask.title || 'タスクがまもなく開始されます',
+                                body: latestTask.title || 'タスクがまもなく開始されます',
                                 actionUrl: `/dashboard?task=${taskId}`,
-                            });
+                            })
                         }
                     } catch (error) {
-                        console.error('[Notification] Failed to schedule notification:', error);
-                        // Don't block the task update if notification fails
+                        console.error('[Notification] Failed to schedule notification:', error)
                     }
-                }
+                }, 500)) // 500ms デバウンス
             }
 
             // AUTO-COMPLETE PARENT: If status changed to 'done', check if all siblings are also done
@@ -281,6 +323,7 @@ export function useMindMapSync({
     }, [supabase, tasks])
 
     const deleteTask = useCallback(async (taskId: string) => {
+        // Optimistic UI update
         setTasks(prev => prev.filter(t => t.id !== taskId))
 
         // Cancel notifications for this task
@@ -291,12 +334,26 @@ export function useMindMapSync({
             // Don't block the task deletion if notification cancellation fails
         }
 
+        // Call API endpoint which handles both calendar event and task deletion
         try {
-            await supabase.from('tasks').delete().eq('id', taskId)
+            const response = await fetch(`/api/tasks/${taskId}`, {
+                method: 'DELETE',
+            })
+
+            if (!response.ok) {
+                const error = await response.json()
+                console.error('[Sync] deleteTask API failed:', error)
+                throw new Error(error.error?.message || 'Failed to delete task')
+            }
+
+            console.log('[Sync] Task and calendar event deleted successfully')
         } catch (e) {
             console.error('[Sync] deleteTask failed:', e)
+            // Revert optimistic update on failure
+            // Note: We'd need to fetch the task again to restore it properly
+            // For now, just log the error - the task is already removed from UI
         }
-    }, [supabase, cancelNotifications])
+    }, [cancelNotifications])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, group_id: newGroupId } : t))

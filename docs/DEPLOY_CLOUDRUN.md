@@ -1,186 +1,89 @@
-# Cloud Run デプロイ手順
+# Cloud Run デプロイ情報
 
-## 前提条件
+## 本番環境
 
-1. **Google Cloud SDK** がインストールされていること
-   ```bash
-   gcloud --version
-   ```
-   未インストールの場合: https://cloud.google.com/sdk/docs/install
+| 項目 | 値 |
+|---|---|
+| **Service URL** | https://shikumika-app-466617344999.asia-northeast1.run.app |
+| **GCP プロジェクト** | `shikumika-app` (466617344999) |
+| **リージョン** | `asia-northeast1` (東京) |
+| **Node.js** | 22 (Alpine) |
+| **メモリ / CPU** | 512Mi / 1 vCPU |
+| **インスタンス** | 0〜10 (min 0 で無料枠最大活用) |
 
-2. **Docker** がインストールされていること
-   ```bash
-   docker --version
-   ```
+## 外部サービス設定
 
-3. **GCP プロジェクト** (`shikumika-app`) へのアクセス権限
+### Supabase (Authentication → URL Configuration)
+- **Site URL**: `https://shikumika-app-466617344999.asia-northeast1.run.app`
+- **Redirect URLs**: `https://shikumika-app-466617344999.asia-northeast1.run.app/**`
 
-## 初回セットアップ
+### Google Cloud Console (OAuth 2.0 クライアント)
+- **承認済みの JavaScript 生成元**: `https://shikumika-app-466617344999.asia-northeast1.run.app`
+- **承認済みのリダイレクト URI**:
+  - `http://localhost:3001/api/calendar/callback` (ローカル開発用)
+  - `https://whsjsscgmkkkzgcwxjko.supabase.co/auth/v1/callback` (Supabase Auth用)
 
-### 1. gcloud の認証
+---
+
+## デプロイ手順
+
+### 前提条件
+- Google Cloud SDK (`gcloud`) インストール済み
+- Docker は不要 (Cloud Build がクラウド上でビルド)
+
+### ワンコマンドデプロイ
 
 ```bash
-gcloud auth login
-gcloud config set project shikumika-app
+# 1. ビルド (Cloud Build)
+cd /path/to/shikumika-app
+
+SUPABASE_URL=$(grep 'NEXT_PUBLIC_SUPABASE_URL=' .env.local | cut -d'"' -f2)
+SUPABASE_KEY=$(grep 'NEXT_PUBLIC_SUPABASE_ANON_KEY=' .env.local | cut -d'"' -f2)
+
+gcloud builds submit \
+  --config=cloudbuild.yaml \
+  --region=asia-northeast1 \
+  --project=shikumika-app \
+  --substitutions="_NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL,_NEXT_PUBLIC_SUPABASE_ANON_KEY=$SUPABASE_KEY"
+
+# 2. デプロイ (Cloud Run)
+SERVICE_URL="https://shikumika-app-466617344999.asia-northeast1.run.app"
+ENV_VARS=$(grep -v '^#' .env.local | grep -v '^$' | grep '=' | \
+  sed "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=$SERVICE_URL/api/calendar/callback|" | \
+  sed "s|NEXTAUTH_URL=.*|NEXTAUTH_URL=$SERVICE_URL|" | \
+  while IFS='=' read -r key value; do echo -n "$key=$value,"; done | sed 's/,$//')
+
+gcloud run deploy shikumika-app \
+  --image asia-northeast1-docker.pkg.dev/shikumika-app/cloud-run-source-deploy/shikumika-app:latest \
+  --region asia-northeast1 \
+  --platform managed \
+  --allow-unauthenticated \
+  --memory 512Mi --cpu 1 \
+  --min-instances 0 --max-instances 10 \
+  --timeout 300s --port 3000 \
+  --set-env-vars "$ENV_VARS"
 ```
 
-### 2. 必要な API を有効化
+### 重要: NEXT_PUBLIC_* 変数について
+`NEXT_PUBLIC_*` 環境変数は Next.js がビルド時に JS へ埋め込むため、**ランタイムでは上書きできない**。
+必ず `cloudbuild.yaml` の `--substitutions` でビルド引数として渡すこと。
+
+---
+
+## 運用コマンド
 
 ```bash
-# Cloud Run API
-gcloud services enable run.googleapis.com
-
-# Container Registry API
-gcloud services enable containerregistry.googleapis.com
-
-# Cloud Build API（オプション）
-gcloud services enable cloudbuild.googleapis.com
-```
-
-### 3. Docker の認証
-
-```bash
-gcloud auth configure-docker
-```
-
-### 4. 環境変数の設定
-
-デプロイ後、以下のコマンドで環境変数を設定します:
-
-```bash
-# Supabase
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# Google Calendar API
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars GOOGLE_CLIENT_ID=your_client_id
-
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars GOOGLE_CLIENT_SECRET=your_client_secret
-
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars GOOGLE_REDIRECT_URI=https://your-service-url.run.app/api/calendar/callback
-
-# NextAuth
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars NEXTAUTH_URL=https://your-service-url.run.app
-
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars NEXTAUTH_SECRET=your_nextauth_secret
-```
-
-または、一括設定:
-
-```bash
-gcloud run services update shikumika-app \
-  --region asia-northeast1 \
-  --update-env-vars \
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url,\
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key,\
-GOOGLE_CLIENT_ID=your_client_id,\
-GOOGLE_CLIENT_SECRET=your_client_secret,\
-GOOGLE_REDIRECT_URI=https://your-service-url.run.app/api/calendar/callback,\
-NEXTAUTH_URL=https://your-service-url.run.app,\
-NEXTAUTH_SECRET=your_nextauth_secret
-```
-
-## デプロイ
-
-### 方法1: npm スクリプト（推奨）
-
-```bash
-npm run deploy:cloudrun
-```
-
-### 方法2: 直接スクリプト実行
-
-```bash
-./deploy-cloudrun.sh
-```
-
-## デプロイ後の確認
-
-### サービス URL の取得
-
-```bash
-gcloud run services describe shikumika-app \
-  --region asia-northeast1 \
-  --format 'value(status.url)'
-```
-
-### ログの確認
-
-```bash
+# ログ確認
 gcloud run logs read shikumika-app --region asia-northeast1
-```
 
-### サービスの詳細確認
-
-```bash
+# サービス詳細
 gcloud run services describe shikumika-app --region asia-northeast1
-```
 
-## Google OAuth リダイレクト URI の更新
-
-1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
-2. `shikumika-app` プロジェクトを選択
-3. **API とサービス** → **認証情報** に移動
-4. 該当の OAuth 2.0 クライアント ID を選択
-5. **承認済みのリダイレクト URI** に以下を追加:
-   ```
-   https://your-service-url.run.app/api/calendar/callback
-   ```
-
-## トラブルシューティング
-
-### ビルドエラー
-
-```bash
-# ローカルでビルドテスト
-npm run build
-```
-
-### Docker イメージのテスト
-
-```bash
-# ローカルでイメージをビルド
-docker build -t shikumika-app .
-
-# ローカルで実行
-docker run -p 3000:3000 shikumika-app
-```
-
-### 環境変数の確認
-
-```bash
+# 環境変数確認
 gcloud run services describe shikumika-app \
   --region asia-northeast1 \
   --format 'value(spec.template.spec.containers[0].env)'
 ```
 
-## コスト最適化
-
-- **最小インスタンス数**: 0（無料枠を最大活用）
-- **最大インスタンス数**: 10（必要に応じて調整）
-- **メモリ**: 512Mi（必要に応じて増減）
-- **CPU**: 1（必要に応じて増減）
-- **タイムアウト**: 300秒
-
-無料枠: 月 200 万リクエスト、360,000 vCPU 秒、180,000 GiB 秒
-
-## 参考リンク
-
-- [Cloud Run ドキュメント](https://cloud.google.com/run/docs)
-- [Next.js Standalone モード](https://nextjs.org/docs/advanced-features/output-file-tracing)
-- [Cloud Run 料金](https://cloud.google.com/run/pricing)
+## コスト
+無料枠: 月200万リクエスト、360,000 vCPU秒、180,000 GiB秒

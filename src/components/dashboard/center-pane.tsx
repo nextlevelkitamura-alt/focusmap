@@ -151,6 +151,14 @@ function TaskItem({
         }
     }, [task.id, newlyCreatedTaskId, onClearNewlyCreated])
 
+    // 外部からのタイトル変更を同期（カレンダー編集モーダルからの更新など）
+    // input が未フォーカス時のみ更新（ユーザーの入力中は上書きしない）
+    useEffect(() => {
+        if (inputRef.current && inputRef.current !== document.activeElement) {
+            inputRef.current.value = task.title
+        }
+    }, [task.title])
+
     // Max depth limit (6 levels)
     const MAX_DEPTH = 6;
     const canAddChildren = depth < MAX_DEPTH - 1;

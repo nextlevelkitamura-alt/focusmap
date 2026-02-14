@@ -178,7 +178,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { title, start_time, end_time, description, location, googleEventId, calendarId = 'primary' } = body;
+    const { title, start_time, end_time, description, location, googleEventId, calendarId = 'primary', estimated_time, priority } = body;
 
     if (!googleEventId) {
       return NextResponse.json(
@@ -247,29 +247,46 @@ export async function PATCH(
       .eq('user_id', user.id)
       .eq('google_event_id', googleEventId);
 
-    if (relatedTasks && relatedTasks.length > 0) {
-      console.log('[events/update] Found related tasks:', relatedTasks.length);
+    let linkedTaskId: string | null = null;
 
-      // タスクの予定時刻を更新
+    if (relatedTasks && relatedTasks.length > 0) {
+      linkedTaskId = relatedTasks[0].id;
+      console.log('[events/update] Found related tasks:', relatedTasks.length, 'taskId:', linkedTaskId);
+
+      // priority 文字列→数値変換
+      const priorityMap: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+      // タスクの全フィールドを更新（タイトル、予定時刻、所要時間、優先度、カレンダーID）
+      const taskUpdates: Record<string, any> = {
+        title,
+        scheduled_at: start_time,
+        calendar_id: calendarId,
+        updated_at: new Date().toISOString()
+      };
+      if (estimated_time !== undefined && estimated_time !== null) {
+        taskUpdates.estimated_time = estimated_time;
+      }
+      if (priority && priorityMap[priority] !== undefined) {
+        taskUpdates.priority = priorityMap[priority];
+      }
+
       const { error: taskUpdateError } = await supabase
         .from('tasks')
-        .update({
-          scheduled_at: start_time,
-          updated_at: new Date().toISOString()
-        })
+        .update(taskUpdates)
         .eq('user_id', user.id)
         .eq('google_event_id', googleEventId);
 
       if (taskUpdateError) {
         console.error('[events/update] Failed to update tasks:', taskUpdateError);
       } else {
-        console.log('[events/update] Updated related tasks');
+        console.log('[events/update] Updated related tasks with:', Object.keys(taskUpdates));
       }
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Event updated successfully'
+      message: 'Event updated successfully',
+      task_id: linkedTaskId,
     });
 
   } catch (error: any) {

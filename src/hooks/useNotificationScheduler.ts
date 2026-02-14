@@ -17,41 +17,53 @@ interface UseNotificationSchedulerReturn {
 
 export function useNotificationScheduler(): UseNotificationSchedulerReturn {
   const scheduleNotification = useCallback(async (input: ScheduleNotificationInput) => {
-    const response = await fetch('/api/notifications/schedule', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...input,
-        scheduledAt: input.scheduledAt.toISOString()
-      })
-    });
+    try {
+      const response = await fetch('/api/notifications/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...input,
+          scheduledAt: input.scheduledAt.toISOString()
+        })
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Failed to schedule notification');
+      if (!response.ok) {
+        // notification_queueテーブル未作成等のエラーは警告のみでスキップ
+        console.warn('[Notification] Schedule failed:', response.status);
+        return null;
+      }
+
+      const data = await response.json();
+      return data.notificationId;
+    } catch (error) {
+      console.warn('[Notification] Schedule error (non-blocking):', error);
+      return null;
     }
-
-    const data = await response.json();
-    return data.notificationId;
   }, []);
 
   const cancelNotifications = useCallback(async (
     targetType: 'task' | 'event',
     targetId: string
   ) => {
-    const response = await fetch('/api/notifications/cancel', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetType, targetId })
-    });
+    try {
+      const response = await fetch('/api/notifications/cancel', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetType, targetId })
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Failed to cancel notifications');
+      if (!response.ok) {
+        // notification_queueテーブル未作成等のエラーは警告のみでスキップ
+        console.warn('[Notification] Cancel failed:', response.status);
+        return 0;
+      }
+
+      const data = await response.json();
+      return data.canceledCount;
+    } catch (error) {
+      console.warn('[Notification] Cancel error (non-blocking):', error);
+      return 0;
     }
-
-    const data = await response.json();
-    return data.canceledCount;
   }, []);
 
   return {

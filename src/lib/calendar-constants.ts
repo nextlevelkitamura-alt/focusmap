@@ -21,10 +21,10 @@ export const MIN_GRID_WIDTH_DAY = 300
 
 /** Dynamic font sizes based on event duration (in minutes) */
 export const EVENT_FONT_SIZES = {
-  VERY_SHORT: { duration: 30, timeSize: 8, titleSize: 9 },    // < 30分
-  SHORT: { duration: 60, timeSize: 9, titleSize: 10 },        // 30-60分
-  MEDIUM: { duration: 120, timeSize: 10, titleSize: 11 },     // 60-120分
-  NORMAL: { duration: Infinity, timeSize: 10, titleSize: 12 } // 120分以上
+  VERY_SHORT: { duration: 30, timeSize: 10, titleSize: 11 },   // < 30分
+  SHORT: { duration: 60, timeSize: 11, titleSize: 12 },        // 30-60分
+  MEDIUM: { duration: 120, timeSize: 11, titleSize: 13 },      // 60-120分
+  NORMAL: { duration: Infinity, timeSize: 12, titleSize: 14 }  // 120分以上
 } as const
 
 /** Zoom configuration */

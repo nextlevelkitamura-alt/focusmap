@@ -101,6 +101,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
   return {
     events,
+    setEvents,
     isLoading,
     error,
     lastSyncedAt,

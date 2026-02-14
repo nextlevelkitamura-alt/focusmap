@@ -103,19 +103,24 @@ export async function GET(request: NextRequest) {
     console.log('[events/list] Calendar color map:', Object.fromEntries(calendarColorMap));
     console.log('[events/list] Google Calendar API events:', googleEvents.length);
 
-    // Google Calendar API のイベントに id を付与（google_event_id を id として使用）
-    const googleEventsWithId = googleEvents.map(event => ({
-      ...event,
-      id: event.google_event_id // google_event_id を id として使用
-    }));
+    // Google Calendar API のイベントに id を付与し、重複を排除
+    // 複数カレンダーから同じイベント（同じ google_event_id）が返される場合があるため
+    const seenGoogleEventIds = new Set<string>();
+    const googleEventsWithId = googleEvents
+      .map(event => ({
+        ...event,
+        id: event.google_event_id // google_event_id を id として使用
+      }))
+      .filter(event => {
+        if (seenGoogleEventIds.has(event.google_event_id)) {
+          return false; // 重複を排除
+        }
+        seenGoogleEventIds.add(event.google_event_id);
+        return true;
+      });
 
     // Google Calendar API のイベントを Set に格納（重複チェック用）
-    const googleEventIds = new Set<string>();
-    googleEventsWithId.forEach(event => {
-      if (event.google_event_id) {
-        googleEventIds.add(event.google_event_id);
-      }
-    });
+    const googleEventIds = seenGoogleEventIds;
 
     // DB からすべてのイベントを取得（google_event_id の有無に関わらず）
     let allDbEventsQuery = supabase
@@ -146,8 +151,63 @@ export async function GET(request: NextRequest) {
 
     console.log('[events/list] Local-only events (not in Google Calendar):', localOnlyEvents.length);
 
-    // Google Calendar API のイベントとローカルのみのイベントをマージ
-    const allEvents = [...googleEventsWithId, ...localOnlyEvents];
+    // タスクテーブルから google_event_id に対応するタスクIDを取得
+    const eventIdsToCheck = [
+      ...googleEventsWithId.map(e => e.google_event_id),
+      ...localOnlyEvents.map(e => e.google_event_id).filter(Boolean)
+    ];
+
+    // priority 数値→文字列変換ヘルパー
+    function numericPriorityToString(p: number | null | undefined): 'high' | 'medium' | 'low' | undefined {
+      if (p === null || p === undefined) return undefined;
+      if (p >= 3) return 'high';
+      if (p >= 2) return 'medium';
+      return 'low';
+    }
+
+    let taskMap = new Map<string, { id: string; priority: number | null; estimated_time: number | null }>();
+    if (eventIdsToCheck.length > 0) {
+      const { data: tasksWithEvents } = await supabase
+        .from('tasks')
+        .select('id, google_event_id, priority, estimated_time')
+        .in('google_event_id', eventIdsToCheck)
+        .not('google_event_id', 'is', null);
+
+      if (tasksWithEvents) {
+        tasksWithEvents.forEach(task => {
+          if (task.google_event_id) {
+            taskMap.set(task.google_event_id, {
+              id: task.id,
+              priority: task.priority,
+              estimated_time: task.estimated_time
+            });
+          }
+        });
+      }
+      console.log('[events/list] Task map size:', taskMap.size);
+    }
+
+    // Google Calendar API のイベントとローカルのみのイベントをマージ（task_id, priority, estimated_time を追加）
+    const allEvents = [
+      ...googleEventsWithId.map(event => {
+        const taskInfo = taskMap.get(event.google_event_id);
+        return {
+          ...event,
+          task_id: taskInfo?.id,
+          priority: numericPriorityToString(taskInfo?.priority),
+          estimated_time: taskInfo?.estimated_time ?? undefined,
+        };
+      }),
+      ...localOnlyEvents.map(event => {
+        const taskInfo = event.google_event_id ? taskMap.get(event.google_event_id) : undefined;
+        return {
+          ...event,
+          task_id: taskInfo?.id,
+          priority: numericPriorityToString(taskInfo?.priority),
+          estimated_time: taskInfo?.estimated_time ?? undefined,
+        };
+      })
+    ];
 
     // 色マッピングを追加
     const eventsWithColor = allEvents.map(event => {

@@ -17,6 +17,7 @@ interface DragState {
     startY: number
     startTop: number
     isNew: boolean // true: 新規ドラッグ, false: 既存イベントの移動
+    originalHeightPercent: number // 元のレイアウト高さ（%）を保持
 }
 
 interface CalendarDayViewProps {
@@ -54,6 +55,21 @@ export function CalendarDayView({
         newStartTime: Date
         newEndTime: Date
     } | null>(null)
+
+    // 楽観的UI更新用のステート
+    const [optimisticMoves, setOptimisticMoves] = useState<Record<string, {
+        topPercent: number
+        heightPercent: number
+        startTime: Date
+        endTime: Date
+    }>>({})
+    const [savingEventIds, setSavingEventIds] = useState<Set<string>>(new Set())
+
+    // events が更新されたら楽観的UIをクリア（refetch完了 = 保存完了）
+    useEffect(() => {
+        setSavingEventIds(prev => prev.size > 0 ? new Set() : prev)
+        setOptimisticMoves(prev => Object.keys(prev).length > 0 ? {} : prev)
+    }, [events])
 
     // スワイプナビゲーション
     const { swipeDirection } = useSwipeNavigation({
@@ -117,9 +133,10 @@ export function CalendarDayView({
         e.stopPropagation()
         e.preventDefault()
 
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+        const gridRect = calendarGridRef.current?.getBoundingClientRect()
+        if (!gridRect) return
         const scrollTop = calendarGridRef.current?.scrollTop || 0
-        const y = e.clientY - rect.top + scrollTop
+        const y = e.clientY - gridRect.top + scrollTop
 
         const duration = new Date(event.end_time).getTime() - new Date(event.start_time).getTime()
 
@@ -128,66 +145,104 @@ export function CalendarDayView({
         const startMinutes = startTime.getHours() * 60 + startTime.getMinutes()
         const currentTop = (startMinutes / (24 * 60)) * totalHeight
 
-        setDragState({
+        // 元のレイアウト高さを取得（最小高さ込みの正しい値）
+        const layout = eventLayouts[event.id]
+        const originalHeightPercent = layout?.height ?? Math.max((duration / (1000 * 60) / (24 * 60)) * 100, 1.5)
+
+        // ローカル変数にドラッグ情報を保持（クロージャーで使用）
+        const localDragState = {
             eventId: event.id,
             event,
             duration,
             startY: y,
             startTop: currentTop,
-            isNew: false
-        })
+            isNew: false,
+            originalHeightPercent
+        }
+
+        setDragState(localDragState)
+
+        // 最新のpreviewPositionを保持するローカル変数
+        let latestPreview: { top: number; newStartTime: Date; newEndTime: Date } | null = null
 
         // グローバルマウスイベントを設定
         const handleMouseMove = (moveEvent: MouseEvent) => {
-            if (!calendarGridRef.current || !dragState) return
+            if (!calendarGridRef.current) return
 
             const gridRect = calendarGridRef.current.getBoundingClientRect()
             const currentScrollTop = calendarGridRef.current.scrollTop
             const mouseY = moveEvent.clientY - gridRect.top + currentScrollTop
 
             // 移動量を計算
-            const deltaY = mouseY - dragState.startY
-            const newTop = dragState.startTop + deltaY
+            const deltaY = mouseY - localDragState.startY
+            const newTop = localDragState.startTop + deltaY
 
             // 新しい時間を計算
             const totalMinutes = (newTop / totalHeight) * 24 * 60
-            const snappedMinutes = snapTo15Min(totalMinutes)
+            const snappedMinutes = snapTo15Min(Math.max(0, Math.min(totalMinutes, 24 * 60 - 1)))
             const snappedHour = Math.floor(snappedMinutes / 60)
             const snappedMin = snappedMinutes % 60
 
             // 新しい開始・終了時刻
             const newStartTime = new Date(currentDate)
             newStartTime.setHours(snappedHour, snappedMin, 0, 0)
-            const newEndTime = new Date(newStartTime.getTime() + dragState.duration)
+            const newEndTime = new Date(newStartTime.getTime() + localDragState.duration)
 
             // プレビュー位置を更新（スナップ後）
             const snappedTop = (snappedMinutes / (24 * 60)) * totalHeight
 
-            setPreviewPosition({
-                top: snappedTop,
-                newStartTime,
-                newEndTime
-            })
+            latestPreview = { top: snappedTop, newStartTime, newEndTime }
+            setPreviewPosition(latestPreview)
         }
 
-        const handleMouseUp = async (upEvent: MouseEvent) => {
+        const handleMouseUp = () => {
             // イベントリスナーを削除
             document.removeEventListener('mousemove', handleMouseMove)
             document.removeEventListener('mouseup', handleMouseUp)
 
-            if (previewPosition && onEventTimeChange) {
-                // 時間変更を適用
-                await onEventTimeChange(dragState!.eventId, previewPosition.newStartTime, previewPosition.newEndTime)
+            const didDrag = latestPreview !== null
+
+            if (didDrag && onEventTimeChange) {
+                // 楽観的UI更新: すぐに新しい位置に表示（高さは元のレイアウトを保持）
+                const newTopPercent = (latestPreview.top / totalHeight) * 100
+
+                setOptimisticMoves(prev => ({
+                    ...prev,
+                    [localDragState.eventId]: {
+                        topPercent: newTopPercent,
+                        heightPercent: localDragState.originalHeightPercent,
+                        startTime: latestPreview.newStartTime,
+                        endTime: latestPreview.newEndTime
+                    }
+                }))
+                setSavingEventIds(prev => new Set(prev).add(localDragState.eventId))
+
+                // 時間変更をAPI経由で適用（awaitしない = UIをブロックしない）
+                onEventTimeChange(localDragState.eventId, latestPreview.newStartTime, latestPreview.newEndTime)
             }
 
             // ドラッグ状態をクリア
             setDragState(null)
             setPreviewPosition(null)
+
+            // ドラッグ有無に関わらずCalendarEventCardのonClickと二重発火を防ぐ
+            const suppressClick = (e: MouseEvent) => {
+                e.stopImmediatePropagation()
+                e.preventDefault()
+            }
+            window.addEventListener('click', suppressClick, { capture: true, once: true })
+
+            if (didDrag) {
+                // ドラッグ完了 → 時間変更のみ（onEventTimeChangeで処理済み）
+            } else {
+                // ドラッグなし = クリック → イベント編集を開く
+                onEventEdit?.(localDragState.eventId)
+            }
         }
 
         document.addEventListener('mousemove', handleMouseMove)
         document.addEventListener('mouseup', handleMouseUp)
-    }, [currentDate, totalHeight, hourHeight, onEventTimeChange])
+    }, [currentDate, totalHeight, hourHeight, onEventTimeChange, onEventEdit, eventLayouts])
 
     // HTML5ドラッグ&ドロップ（タスク用）はそのまま維持
     const onDragOver = useCallback((e: React.DragEvent) => {
@@ -206,9 +261,43 @@ export function CalendarDayView({
 
     const onDrop = useCallback((e: React.DragEvent) => {
         if (!dragState) {
-            handleDrop(e, { currentDate })
+            // Check if it's an event drag or task drag
+            const eventDataStr = e.dataTransfer.getData('application/json')
+            const taskId = e.dataTransfer.getData('text/plain')
+
+            if (eventDataStr) {
+                // Event drag - calculate new time
+                try {
+                    const eventData = JSON.parse(eventDataStr)
+                    if (eventData.type === 'calendar-event') {
+                        e.preventDefault()
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                        const scrollTop = calendarGridRef.current?.scrollTop || 0
+                        const y = e.clientY - rect.top
+
+                        const hourIndex = Math.floor((y + scrollTop) / hourHeight)
+                        const minuteIndex = Math.round(((y + scrollTop) % hourHeight) / hourHeight * 4) // 0, 1, 2, 3
+                        const minutes = minuteIndex * 15
+
+                        if (hourIndex >= 0 && hourIndex < 24) {
+                            const newStartTime = new Date(currentDate)
+                            newStartTime.setHours(hourIndex, minutes, 0, 0)
+
+                            const duration = eventData.duration || 3600000
+                            const newEndTime = new Date(newStartTime.getTime() + duration)
+
+                            onEventTimeChange?.(eventData.eventId, newStartTime, newEndTime)
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to parse event data:', error)
+                }
+            } else if (taskId) {
+                // Task drag - use existing logic
+                handleDrop(e, { currentDate })
+            }
         }
-    }, [handleDrop, currentDate, dragState])
+    }, [handleDrop, currentDate, dragState, hourHeight, onEventTimeChange, calendarGridRef])
 
     return (
         <div
@@ -241,7 +330,7 @@ export function CalendarDayView({
             >
                 <div
                     className="relative"
-                    style={{ height: totalHeight, minWidth: MIN_GRID_WIDTH_DAY }}
+                    style={{ height: totalHeight }}
                     onDragOver={onDragOver}
                     onDragLeave={onDragLeave}
                     onDrop={onDrop}
@@ -275,60 +364,67 @@ export function CalendarDayView({
                     )}
 
                     {/* ドラッグプレビュー */}
-                    {dragState && previewPosition && (
-                        <>
-                            {/* 15分グリッド線 */}
-                            {HOURS.map((hour) => (
-                                QUARTER_HOURS.filter(min => min !== 0).map((min) => (
-                                    <div
-                                        key={`15min-${hour}-${min}`}
-                                        className="absolute w-full border-t border-primary/30 pointer-events-none"
-                                        style={{
-                                            top: (hour * hourHeight) + (min / 60) * hourHeight
-                                        }}
-                                    />
-                                ))
-                            ))}
+                    {dragState && previewPosition && (() => {
+                        // 元のレイアウト高さを使用（最小高さ込み）
+                        const previewHeightPx = (dragState.originalHeightPercent / 100) * totalHeight
 
-                            {/* スナップ位置ハイライト */}
-                            <div
-                                className="absolute w-full bg-primary/10 z-25 pointer-events-none border-l-4 border-primary/50"
-                                style={{
-                                    top: previewPosition.top,
-                                    height: getEventHeight(dragState.duration),
-                                    left: 0,
-                                    right: 0
-                                }}
-                            >
-                                {/* 時間ラベル */}
-                                <div className="absolute top-0 right-2 bg-primary text-primary-foreground text-xs px-2 py-1 rounded-md shadow-md font-medium -translate-y-1/2">
-                                    {format(previewPosition.newStartTime, 'HH:mm')}
-                                    {' - '}
-                                    {format(previewPosition.newEndTime, 'HH:mm')}
+                        return (
+                            <>
+                                {/* 15分グリッド線 */}
+                                {HOURS.map((hour) => (
+                                    QUARTER_HOURS.filter(min => min !== 0).map((min) => (
+                                        <div
+                                            key={`15min-${hour}-${min}`}
+                                            className="absolute w-full border-t border-primary/30 pointer-events-none"
+                                            style={{
+                                                top: (hour * hourHeight) + (min / 60) * hourHeight
+                                            }}
+                                        />
+                                    ))
+                                ))}
+
+                                {/* スナップ位置ハイライト */}
+                                <div
+                                    className="absolute w-full bg-primary/10 z-25 pointer-events-none border-l-4 border-primary/50"
+                                    style={{
+                                        top: previewPosition.top,
+                                        height: previewHeightPx,
+                                        left: 0,
+                                        right: 0
+                                    }}
+                                >
+                                    {/* 時間ラベル（左上） */}
+                                    <div className="absolute top-1 left-2 text-primary text-[11px] font-semibold opacity-80">
+                                        {format(previewPosition.newStartTime, 'HH:mm')}
+                                    </div>
                                 </div>
-                            </div>
 
-                            {/* イベントプレビュー */}
-                            <div
-                                className="absolute pointer-events-none shadow-lg"
-                                style={{
-                                    top: previewPosition.top,
-                                    height: getEventHeight(dragState.duration),
-                                    left: '4px',
-                                    right: '4px',
-                                    zIndex: 30,
-                                    padding: '1px 1px 1px 2px'
-                                }}
-                            >
-                                <CalendarEventCard
-                                    event={dragState.event}
-                                    isDraggable={false}
-                                    className="h-full text-xs"
-                                    eventHeight={getEventHeight(dragState.duration)}
-                                />
-                            </div>
-                        </>
-                    )}
+                                {/* イベントプレビュー（新しい時間を反映） */}
+                                <div
+                                    className="absolute pointer-events-none shadow-lg"
+                                    style={{
+                                        top: previewPosition.top,
+                                        height: previewHeightPx,
+                                        left: '4px',
+                                        right: '4px',
+                                        zIndex: 30,
+                                        padding: '1px 1px 1px 2px'
+                                    }}
+                                >
+                                    <CalendarEventCard
+                                        event={{
+                                            ...dragState.event,
+                                            start_time: previewPosition.newStartTime.toISOString(),
+                                            end_time: previewPosition.newEndTime.toISOString()
+                                        }}
+                                        isDraggable={false}
+                                        className="h-full shadow-sm"
+                                        eventHeight={previewHeightPx}
+                                    />
+                                </div>
+                            </>
+                        )
+                    })()}
 
                     {/* Events */}
                     {dayEvents.map(event => {
@@ -337,18 +433,31 @@ export function CalendarDayView({
 
                         // ドラッグ中のイベントは半透明に
                         const isDragging = dragState?.eventId === event.id
-                        const eventHeightPx = (layout.height / 100) * totalHeight
+                        const isSaving = savingEventIds.has(event.id)
+                        const optimistic = optimisticMoves[event.id]
+
+                        // 楽観的位置があればそれを使用、なければレイアウト通り
+                        const topPercent = optimistic ? optimistic.topPercent : layout.top
+                        const heightPercent = optimistic ? optimistic.heightPercent : layout.height
+                        const eventHeightPx = (heightPercent / 100) * totalHeight
+
+                        // 楽観的に更新された時間を反映したイベント
+                        const displayEvent = optimistic ? {
+                            ...event,
+                            start_time: optimistic.startTime.toISOString(),
+                            end_time: optimistic.endTime.toISOString()
+                        } : event
 
                         return (
                             <div
                                 key={event.id}
                                 className={cn(
                                     "absolute pointer-events-auto",
-                                    isDragging ? "opacity-30" : "transition-all duration-300"
+                                    isDragging ? "opacity-30" : "transition-all duration-200"
                                 )}
                                 style={{
-                                    top: `${layout.top}%`,
-                                    height: `${layout.height}%`,
+                                    top: `${topPercent}%`,
+                                    height: `${heightPercent}%`,
                                     left: `${layout.left}%`,
                                     width: `${layout.width}%`,
                                     zIndex: 20,
@@ -357,12 +466,13 @@ export function CalendarDayView({
                                 onMouseDown={(e) => handleMouseDown(e, event)}
                             >
                                 <CalendarEventCard
-                                    event={event}
+                                    event={displayEvent}
                                     onEdit={onEventEdit}
                                     onDelete={onEventDelete}
                                     isDraggable={false} // マウスイベントを使用
                                     className={cn("h-full shadow-sm text-xs", isDragging && "cursor-grabbing")}
                                     eventHeight={eventHeightPx}
+                                    isSaving={isSaving}
                                 />
                             </div>
                         )

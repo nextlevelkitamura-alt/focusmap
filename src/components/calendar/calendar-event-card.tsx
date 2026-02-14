@@ -2,8 +2,8 @@
 
 import { CalendarEvent } from '@/types/calendar';
 import { format } from 'date-fns';
-import { Edit2, Trash2 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { Loader2, X } from 'lucide-react';
+import { useMemo } from 'react';
 import { EVENT_FONT_SIZES } from '@/lib/calendar-constants';
 import { cn } from '@/lib/utils';
 
@@ -15,6 +15,7 @@ interface CalendarEventCardProps {
   isDraggable?: boolean;
   className?: string;
   eventHeight?: number; // イベントの高さ（px）- 親から渡される
+  isSaving?: boolean; // 保存中かどうか
 }
 
 export function CalendarEventCard({
@@ -24,10 +25,9 @@ export function CalendarEventCard({
   onDragStart,
   isDraggable = false,
   className = '',
-  eventHeight
+  eventHeight,
+  isSaving = false
 }: CalendarEventCardProps) {
-  const [isHovered, setIsHovered] = useState(false);
-
   const startTime = new Date(event.start_time);
 
   // イベントの時間長（分）を計算
@@ -61,7 +61,7 @@ export function CalendarEventCard({
 
     // 相対輝度計算 (sRGB)
     const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-    
+
     // 閾値（128）より明るければ黒、暗ければ白を返す
     return yiq >= 128 ? '#1f1f1f' : '#ffffff';
   };
@@ -70,6 +70,7 @@ export function CalendarEventCard({
 
   return (
     <div
+      data-event-id={event.id}
       className={`relative rounded-lg px-2 py-1.5 transition-all hover:brightness-95 hover:scale-[1.02] cursor-pointer overflow-hidden flex flex-col justify-start leading-tight group border border-black/5 hover:shadow-md ${className}`}
       style={{
         backgroundColor,
@@ -77,11 +78,9 @@ export function CalendarEventCard({
         boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
         cursor: isDraggable ? 'grab' : 'pointer',
       }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
       draggable={isDraggable}
       onDragStart={(e) => {
-        if (isDraggable && onDragStart) {
+        if (isDraggable) {
           e.dataTransfer.setData('application/json', JSON.stringify({
             type: 'calendar-event',
             eventId: event.id,
@@ -92,7 +91,7 @@ export function CalendarEventCard({
             end_time: event.end_time,
             duration: new Date(event.end_time).getTime() - new Date(event.start_time).getTime()
           }))
-          onDragStart(event)
+          onDragStart?.(event)
         }
       }}
       onClick={(e) => {
@@ -132,35 +131,26 @@ export function CalendarEventCard({
          </div>
       </div>
 
-      {/* ホバー時の編集・削除ボタン */}
-      {isHovered && (onEdit || onDelete) && (
-        <div className="absolute top-0 right-0 bottom-0 flex items-center pr-1.5 pl-3 bg-gradient-to-l from-black/50 via-black/25 to-transparent rounded-r-lg">
-             <div className="flex gap-1 animate-in fade-in duration-200">
-               {onEdit && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(event.id);
-                  }}
-                  className="p-1.5 rounded-md transition-all hover:bg-white/20 backdrop-blur-sm"
-                  title="編集"
-                >
-                  <Edit2 className="h-3 w-3" style={{ color: textColor }} />
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(event.id);
-                  }}
-                  className="p-1.5 rounded-md transition-all hover:bg-white/20 backdrop-blur-sm"
-                  title="削除"
-                >
-                  <Trash2 className="h-3 w-3" style={{ color: textColor }} />
-                </button>
-              )}
-             </div>
+      {/* 保存中スピナー or ホバー時削除ボタン */}
+      {isSaving ? (
+        <div className="absolute top-1 right-1.5 z-10">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: textColor, opacity: 0.6 }} />
+        </div>
+      ) : onDelete && (
+        <div
+          role="button"
+          tabIndex={0}
+          className="absolute top-0 right-0 z-20 w-6 h-6 flex items-center justify-center rounded-bl-lg opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          style={{ backgroundColor: `${textColor}30`, color: textColor }}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onDelete(event.id);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <X className="h-3.5 w-3.5" strokeWidth={2.5} />
         </div>
       )}
     </div>

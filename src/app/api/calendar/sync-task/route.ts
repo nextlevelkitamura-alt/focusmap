@@ -93,11 +93,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Googleカレンダーに同期
+    // DB上で既に google_event_id がある場合は更新として扱う（重複防止）
     const result = await syncTaskToCalendar(user.id, taskId, {
       title: task.title,
       scheduled_at,
       estimated_time,
+      google_event_id: task.google_event_id || undefined,
       calendar_id
     });
 

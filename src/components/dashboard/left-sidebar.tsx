@@ -101,7 +101,7 @@ export function LeftSidebar({
     )
 
     return (
-        <div className="flex flex-col h-full w-full bg-muted/10 overflow-hidden">
+        <div className="flex flex-col h-full w-full bg-muted/10 overflow-hidden border-r border-border/30">
             <div className="p-4 border-b">
                 <h2 className="font-semibold text-sm">プロジェクト管理</h2>
             </div>

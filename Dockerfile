@@ -3,31 +3,29 @@
 # ==========================================
 
 # ビルドステージ
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# 依存関係のインストール
+# 依存関係のインストール（devDependencies含む）
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # アプリケーションのコピー
 COPY . .
 
 # Next.js のビルド（standalone モード）
-# 環境変数はランタイムに設定するため、ビルド時にはダミー値を設定
-ENV NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder
+# NEXT_PUBLIC_* はビルド時にJSへ埋め込まれるため、ビルド引数で渡す
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
 
-# ビルド前に診断情報を出力
-RUN npx next info
-
-RUN npm run build 2>&1 || (echo "=== Build failed ===" && cat /app/.next/build.log 2>/dev/null || true)
+RUN node --version && ./node_modules/.bin/next build
 
 # 本番ステージ
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 

@@ -5,9 +5,8 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // Cloud Run デプロイ用の設定
+  output: 'standalone',
 };
 
 export default nextConfig;

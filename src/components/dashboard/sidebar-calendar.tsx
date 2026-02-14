@@ -7,9 +7,13 @@ import { CalendarWeekView } from "@/components/calendar/calendar-week-view"
 import { Calendar3DayView } from "@/components/calendar/calendar-3day-view"
 import { CalendarMonthView } from "@/components/calendar/calendar-month-view"
 import { CalendarDayView } from "@/components/calendar/calendar-day-view"
+import { CalendarEventEditModal, EventUpdatePayload } from "@/components/calendar/calendar-event-edit-modal"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
+import { useCalendars } from "@/hooks/useCalendars"
 import { startOfMonth, endOfMonth, addMonths } from "date-fns"
 import { HOUR_HEIGHT } from "@/lib/calendar-constants"
+import { Task } from "@/types/database"
+import { CalendarEvent } from "@/types/calendar"
 
 export interface SidebarCalendarRef {
     refetch: () => Promise<void>
@@ -18,18 +22,26 @@ export interface SidebarCalendarRef {
 interface SidebarCalendarProps {
     onTaskDrop?: (taskId: string, dateTime: Date) => void
     onSelectionChange?: (calendarIds: string[]) => void
+    onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
 }
 
 export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarProps>(
-    ({ onTaskDrop, onSelectionChange }, ref) => {
+    ({ onTaskDrop, onSelectionChange, onUpdateTask }, ref) => {
     // Default to 'day' view for sidebar as it's most useful for scheduling
     const [viewMode, setViewMode] = useState<ViewMode>('day')
     const [currentDate, setCurrentDate] = useState(new Date())
     const [hourHeight, setHourHeight] = useState(HOUR_HEIGHT) // Zoom state
     const [isRefreshing, setIsRefreshing] = useState(false) // 更新ボタン用のローディング状態
 
+    // カレンダーリスト（編集モーダル用）
+    const { calendars } = useCalendars()
+
     // CalendarSelector から選択状態を受け取るローカルステート
     const [visibleCalendarIds, setVisibleCalendarIds] = useState<string[]>([])
+
+    // 編集モーダルの状態
+    const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
     // CalendarSelector の選択変更を受け取るハンドラー
     const handleVisibleCalendarIdsChange = useCallback((ids: string[]) => {
@@ -50,7 +62,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
     }, [currentDate])
 
     // Fetch events — visibleCalendarIds が変わるとイベントを再取得
-    const { events, refetch, isLoading } = useCalendarEvents({
+    const { events, setEvents, refetch, isLoading } = useCalendarEvents({
         timeMin,
         timeMax,
         calendarIds: visibleCalendarIds.length > 0 ? visibleCalendarIds : undefined,
@@ -81,45 +93,60 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         setCurrentDate(date)
     }, [])
 
-    const handleEventEdit = useCallback((eventId: string) => {
-        console.log('Edit event:', eventId)
+    // イベントカードクリック → 直接編集モーダルを開く
+    const handleEventClick = useCallback((eventId: string) => {
         const event = events.find(e => e.id === eventId)
-        if (event) {
-            // TODO: 編集モーダルを表示
-            // とりあえず簡易的なプロンプトで実装
-            const newTitle = prompt('新しいタイトルを入力してください:', event.title)
-            if (newTitle && newTitle !== event.title) {
-                // APIを呼び出して更新
-                fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: newTitle,
-                        start_time: event.start_time,
-                        end_time: event.end_time,
-                        description: event.description,
-                        location: event.location,
-                        googleEventId: event.google_event_id,
-                        calendarId: event.calendar_id
-                    })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) {
-                        console.log('Event updated successfully')
-                        refetch()
-                    } else {
-                        console.error('Failed to update event:', data.error)
-                        alert('更新に失敗しました: ' + (data.error?.message || '不明なエラー'))
-                    }
-                })
-                .catch(err => {
-                    console.error('Failed to update event:', err)
-                    alert('更新に失敗しました: ' + err.message)
-                })
-            }
+        if (!event) return
+
+        setEditingEvent(event)
+        setIsEditModalOpen(true)
+    }, [events])
+
+    const handleEventSave = useCallback(async (eventId: string, updates: EventUpdatePayload) => {
+        const event = events.find(e => e.id === eventId)
+        if (!event) {
+            throw new Error('Event not found')
         }
-    }, [events, refetch])
+
+        // Google Calendar API + DB + タスクを一括更新（サーバー側で完結）
+        const response = await fetch(`/api/calendar/events/${eventId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: updates.title,
+                start_time: updates.start_time,
+                end_time: updates.end_time,
+                description: event.description,
+                location: event.location,
+                googleEventId: event.google_event_id,
+                calendarId: updates.calendar_id || event.calendar_id,
+                estimated_time: updates.estimated_time,
+                priority: updates.priority,
+            })
+        })
+
+        const data = await response.json()
+
+        if (!data.success) {
+            throw new Error(data.error?.message || '更新に失敗しました')
+        }
+
+        // サーバーがタスクIDを返した場合 → クライアント側の楽観的更新でUI即時反映
+        const taskId = data.task_id || event.task_id
+        if (taskId && onUpdateTask) {
+            console.log('[handleEventSave] Optimistic update for task:', taskId)
+            const priorityMap: Record<string, number> = { high: 3, medium: 2, low: 1 }
+            await onUpdateTask(taskId, {
+                title: updates.title,
+                scheduled_at: updates.start_time,
+                estimated_time: updates.estimated_time,
+                ...(updates.priority ? { priority: priorityMap[updates.priority] } : {}),
+                ...(updates.calendar_id ? { calendar_id: updates.calendar_id } : {}),
+            })
+        }
+
+        await refetch()
+    }, [events, refetch, onUpdateTask])
 
     const handleEventTimeChange = useCallback(async (eventId: string, newStartTime: Date, newEndTime: Date) => {
         console.log('Event time change:', eventId, newStartTime, newEndTime)
@@ -127,68 +154,93 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         if (!event) return
 
         try {
-            const response = await fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    title: event.title,
-                    start_time: newStartTime.toISOString(),
-                    end_time: newEndTime.toISOString(),
-                    description: event.description,
-                    location: event.location,
-                    googleEventId: event.google_event_id,
-                    calendarId: event.calendar_id
+            // タスクに紐付いている場合は、タスクを更新（useTaskCalendarSyncが自動でGoogleカレンダーも同期）
+            if (event.task_id && onUpdateTask) {
+                console.log('Updating task:', event.task_id)
+
+                // 所要時間を計算
+                const durationMinutes = Math.round((newEndTime.getTime() - newStartTime.getTime()) / (1000 * 60))
+
+                await onUpdateTask(event.task_id, {
+                    scheduled_at: newStartTime.toISOString(),
+                    estimated_time: durationMinutes
                 })
-            })
 
-            const data = await response.json()
-
-            if (data.success) {
-                console.log('Event time updated successfully')
-                refetch()
+                console.log('Task updated successfully, refreshing calendar')
+                // カレンダーを再取得して変更を反映
+                await refetch()
             } else {
-                console.error('Failed to update event time:', data.error)
-                alert('時間の更新に失敗しました: ' + (data.error?.message || '不明なエラー'))
+                // タスクに紐付いていない場合は、Google Calendar APIを直接更新
+                console.log('Updating calendar event directly (not linked to task)')
+                const response = await fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: event.title,
+                        start_time: newStartTime.toISOString(),
+                        end_time: newEndTime.toISOString(),
+                        description: event.description,
+                        location: event.location,
+                        googleEventId: event.google_event_id,
+                        calendarId: event.calendar_id
+                    })
+                })
+
+                const data = await response.json()
+
+                if (data.success) {
+                    console.log('Event time updated successfully')
+                    refetch()
+                } else {
+                    console.error('Failed to update event time:', data.error)
+                    alert('時間の更新に失敗しました: ' + (data.error?.message || '不明なエラー'))
+                }
             }
         } catch (err) {
             console.error('Failed to update event time:', err)
             alert('時間の更新に失敗しました: ' + (err instanceof Error ? err.message : '不明なエラー'))
         }
-    }, [events, refetch])
+    }, [events, refetch, onUpdateTask])
 
-    const handleEventDelete = useCallback(async (eventId: string) => {
-        console.log('Delete event:', eventId)
+    // イベント削除のコア処理（確認ダイアログなし・楽観的UI）
+    // 即座にUIから削除し、バックグラウンドでAPI削除。失敗時は復元+エラー通知
+    const deleteCalendarEvent = useCallback(async (eventId: string) => {
         const event = events.find(e => e.id === eventId)
-        if (!event) return
+        if (!event) throw new Error('Event not found')
 
-        // 確認ダイアログ
-        if (!confirm(`「${event.title}」を削除しますか？\n\nこの操作は取り消せません。`)) {
-            return
-        }
+        // 楽観的削除: 即座にUIから削除
+        setEvents(prev => prev.filter(e => e.id !== eventId))
 
         try {
             const response = await fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`, {
                 method: 'DELETE'
             })
-
             const data = await response.json()
-
-            if (data.success) {
-                console.log('Event deleted successfully')
-                refetch()
-            } else {
-                console.error('Failed to delete event:', data.error)
-                alert('削除に失敗しました: ' + (data.error?.message || '不明なエラー'))
+            if (!data.success) {
+                throw new Error(data.error?.message || '削除に失敗しました')
             }
+        } catch (err) {
+            // 失敗時: イベントを復元
+            setEvents(prev => [...prev, event].sort((a, b) =>
+                new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+            ))
+            throw err // 呼び出し元でエラー表示
+        }
+    }, [events, setEvents])
+
+    // イベントカードからの削除（確認ダイアログ付き・楽観的UI）
+    const handleEventDelete = useCallback(async (eventId: string) => {
+        const event = events.find(e => e.id === eventId)
+        if (!event) return
+        if (!confirm(`「${event.title}」を削除しますか？\n\nこの操作は取り消せません。`)) return
+
+        try {
+            await deleteCalendarEvent(eventId)
         } catch (err) {
             console.error('Failed to delete event:', err)
             alert('削除に失敗しました: ' + (err instanceof Error ? err.message : '不明なエラー'))
         }
-    }, [events, refetch])
-
-    const handleEventClick = useCallback((eventId: string) => {
-        console.log('Event clicked:', eventId)
-    }, [])
+    }, [events, deleteCalendarEvent])
 
     // Zoom Handler (Pinch-in/out)
     // We need to use a native event listener with { passive: false } to prevent the default browser zoom
@@ -244,7 +296,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         onTaskDrop={onTaskDrop}
                         onEventTimeChange={handleEventTimeChange}
                         events={events}
-                        onEventEdit={handleEventEdit}
+                        onEventEdit={handleEventClick}
                         onEventDelete={handleEventDelete}
                         hourHeight={hourHeight} // Pass dynamic height
                     />
@@ -254,7 +306,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         onTaskDrop={onTaskDrop}
                         onEventTimeChange={handleEventTimeChange}
                         events={events}
-                        onEventEdit={handleEventEdit}
+                        onEventEdit={handleEventClick}
                         onEventDelete={handleEventDelete}
                         hourHeight={hourHeight} // Pass dynamic height
                     />
@@ -264,7 +316,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         onTaskDrop={onTaskDrop}
                         onEventTimeChange={handleEventTimeChange}
                         events={events}
-                        onEventEdit={handleEventEdit}
+                        onEventEdit={handleEventClick}
                         onEventDelete={handleEventDelete}
                         hourHeight={hourHeight} // Pass dynamic height
                     />
@@ -273,10 +325,26 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         currentDate={currentDate}
                         onTaskDrop={onTaskDrop}
                         events={events}
-                        onEventClick={handleEventClick}
+                        onEventClick={handleEventClick as (eventId: string) => void}
                     />
                 )}
             </div>
+
+            {/* 編集モーダル */}
+            <CalendarEventEditModal
+                event={editingEvent}
+                isOpen={isEditModalOpen}
+                onClose={() => {
+                    setIsEditModalOpen(false)
+                    setEditingEvent(null)
+                }}
+                onSave={handleEventSave}
+                onDelete={deleteCalendarEvent}
+                availableCalendars={calendars
+                    .filter(c => c.access_level === 'owner' || c.access_level === 'writer')
+                    .map(c => ({ id: c.google_calendar_id, name: c.name, background_color: c.background_color || undefined }))
+                }
+            />
         </div>
     )
 })

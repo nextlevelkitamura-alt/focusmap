@@ -59,13 +59,18 @@
 ### 未実装
 
 #### インフラ・デプロイ
+- ✅ **Cloud Run デプロイ対応**（Vercel と並行運用） → [手順書](DEPLOY_CLOUDRUN.md)
+  - Dockerfile、デプロイスクリプト作成
+  - standalone モード設定
+  - 環境変数テンプレート整備
 - ❌ **Renderへのデプロイ対応** → キャンセル（Vercel継続使用）
   - 理由: 無料プランのスリープ制限（15分）とビルド問題
   - 決定: Vercelの無料プランを継続使用
   - 参考: [計画書](plans/features/render-deployment.md)
 
 #### 機能拡張
-- ○ **タスク削除時にGoogleカレンダー予定も自動削除** → [計画書](plans/features/task-delete-sync.md)
+- 🔧 **カレンダーイベント編集UI**（タップ→モダンな編集モーダル） → [計画](plans/features/calendar-event-edit-modal.md)
+- ○ **プロジェクト管理CRUD**（左サイドバー: プロジェクト作成・切替・削除）
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -73,6 +78,19 @@
 ---
 
 ## 完了履歴
+- 2026-02-13: **タスク削除時にGoogleカレンダー予定も自動削除** 完了
+- 2026-02-13: **Cloud Run 本番デプロイ** 完了（https://shikumika-app-466617344999.asia-northeast1.run.app）
+- 2026-02-12: **Cloud Run デプロイ対応** 完了
+  - Dockerfile 作成（マルチステージビルド、standalone モード）
+  - デプロイ自動化スクリプト（deploy-cloudrun.sh）
+  - 環境変数テンプレート整備（.env.cloudrun）
+  - デプロイ手順書作成（docs/DEPLOY_CLOUDRUN.md）
+  - Vercel と並行運用可能な構成
+- 2026-02-12: **カレンダードラッグ&ドロップ時間変更** 完了
+  - イベント移動（開始時刻変更、15分スナップ）
+  - 楽観的UI更新（ドロップ即反映 + 保存中スピナー）
+  - ドラッグプレビュー改善（時刻リアルタイム表示、サイズ保持）
+  - フォントサイズ最適化
 - 2026-02-09: **Render.comデプロイ調査と環境変数整理**
   - Render.comへのデプロイ調査実施
   - 環境変数ファイルの整理（.env.example、.env.render）

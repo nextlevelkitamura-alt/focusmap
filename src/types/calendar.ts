@@ -27,6 +27,9 @@ export interface CalendarEvent {
   synced_at: string;
   created_at: string;
   updated_at: string;
+  task_id?: string; // タスクに紐付いているカレンダーイベントの場合のタスクID
+  priority?: 'high' | 'medium' | 'low'; // タスクの優先度（タスク紐付き時のみ）
+  estimated_time?: number; // 所要時間（分）（タスク紐付き時のみ）
 }
 
 // ============================================================

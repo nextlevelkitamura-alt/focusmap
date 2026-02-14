@@ -120,9 +120,15 @@ export function DashboardClient({
         await deleteGroup(groupId)
     }, [deleteGroup])
 
+    const handleDeleteTask = useCallback(async (taskId: string) => {
+        await deleteTask(taskId)
+        // Refresh calendar to reflect the deletion
+        await rightSidebarRef.current?.refreshCalendar()
+    }, [deleteTask])
+
     // Sidebar State
     const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
-    const [rightSidebarWidth, setRightSidebarWidth] = useState(300)
+    const [rightSidebarWidth, setRightSidebarWidth] = useState(360)
     const isDraggingRightRef = useRef(false)
     const dragStartXRef = useRef(0)
     const dragStartWidthRightRef = useRef(0)
@@ -247,7 +253,7 @@ export function DashboardClient({
                         onDeleteGroup={handleDeleteGroup}
                         onCreateTask={createTask}
                         onUpdateTask={updateTask}
-                        onDeleteTask={deleteTask}
+                        onDeleteTask={handleDeleteTask}
                         onMoveTask={moveTask}
                         onRefreshCalendar={handleRefreshCalendar}
                     />
@@ -267,7 +273,7 @@ export function DashboardClient({
                     className="hidden lg:block flex-none overflow-hidden h-full"
                     style={{ width: rightSidebarWidth }}
                 >
-                    <RightSidebar ref={rightSidebarRef} />
+                    <RightSidebar ref={rightSidebarRef} onUpdateTask={updateTask} />
                 </div>
             </div>
             </TimerProvider>
