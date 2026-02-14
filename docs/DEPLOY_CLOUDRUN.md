@@ -4,7 +4,7 @@
 
 | 項目 | 値 |
 |---|---|
-| **Service URL** | https://shikumika-app-466617344999.asia-northeast1.run.app |
+| **Service URL** | https://shikumika-app-364jgme3ja-an.a.run.app |
 | **GCP プロジェクト** | `shikumika-app` (466617344999) |
 | **リージョン** | `asia-northeast1` (東京) |
 | **Node.js** | 22 (Alpine) |
@@ -14,11 +14,11 @@
 ## 外部サービス設定
 
 ### Supabase (Authentication → URL Configuration)
-- **Site URL**: `https://shikumika-app-466617344999.asia-northeast1.run.app`
-- **Redirect URLs**: `https://shikumika-app-466617344999.asia-northeast1.run.app/**`
+- **Site URL**: `https://shikumika-app-364jgme3ja-an.a.run.app`
+- **Redirect URLs**: `https://shikumika-app-364jgme3ja-an.a.run.app/**`
 
 ### Google Cloud Console (OAuth 2.0 クライアント)
-- **承認済みの JavaScript 生成元**: `https://shikumika-app-466617344999.asia-northeast1.run.app`
+- **承認済みの JavaScript 生成元**: `https://shikumika-app-364jgme3ja-an.a.run.app`
 - **承認済みのリダイレクト URI**:
   - `http://localhost:3001/api/calendar/callback` (ローカル開発用)
   - `https://whsjsscgmkkkzgcwxjko.supabase.co/auth/v1/callback` (Supabase Auth用)
@@ -47,7 +47,7 @@ gcloud builds submit \
   --substitutions="_NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL,_NEXT_PUBLIC_SUPABASE_ANON_KEY=$SUPABASE_KEY"
 
 # 2. デプロイ (Cloud Run)
-SERVICE_URL="https://shikumika-app-466617344999.asia-northeast1.run.app"
+SERVICE_URL="https://shikumika-app-364jgme3ja-an.a.run.app"
 ENV_VARS=$(grep -v '^#' .env.local | grep -v '^$' | grep '=' | \
   sed "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=$SERVICE_URL/api/calendar/callback|" | \
   sed "s|NEXTAUTH_URL=.*|NEXTAUTH_URL=$SERVICE_URL|" | \
