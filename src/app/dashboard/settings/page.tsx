@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
+import { CalendarSettings } from "@/components/dashboard/calendar-settings"
 import { NotificationSettings } from "@/components/notifications"
 
 export default async function SettingsPage() {
@@ -22,6 +23,7 @@ export default async function SettingsPage() {
                     </p>
                 </div>
 
+                <CalendarSettings />
                 <NotificationSettings />
             </div>
         </div>

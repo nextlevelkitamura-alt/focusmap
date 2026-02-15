@@ -16,8 +16,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // イベント取得（常に forceSync=true で Google Calendar API から最新のイベントを取得）
-  const fetchEvents = useCallback(async (forceSync = true) => {
-    console.log('[useCalendarEvents] Fetching events with calendarIds:', options.calendarIds, 'forceSync:', forceSync);
+  const fetchEvents = useCallback(async (forceSync = true, retryCount = 0) => {
     setIsLoading(true);
     setError(null);
 
@@ -30,16 +29,15 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
       if (options.calendarIds && options.calendarIds.length > 0) {
         params.append('calendarId', options.calendarIds.join(','));
-        console.log('[useCalendarEvents] Added calendarId param:', options.calendarIds.join(','));
-      } else {
-        console.log('[useCalendarEvents] No calendarIds specified, fetching all events');
       }
-
-      console.log('[useCalendarEvents] Fetching URL:', `/api/calendar/events/list?${params}`);
 
       const response = await fetch(`/api/calendar/events/list?${params}`);
 
-      console.log('[useCalendarEvents] Response status:', response.status);
+      // 503 = トークンリフレッシュ済み、リトライ可能
+      if (response.status === 503 && retryCount < 1) {
+        await new Promise(r => setTimeout(r, 500));
+        return fetchEvents(forceSync, retryCount + 1);
+      }
 
       const contentType = response.headers.get("content-type");
       if (!response.ok) {
@@ -54,18 +52,14 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
         } catch (e) {
           // Ignore parsing errors
         }
-        console.error('[useCalendarEvents] Error response:', errorMessage);
         throw new Error(errorMessage);
       }
 
       if (contentType && contentType.indexOf("application/json") !== -1) {
         const data = await response.json();
-        console.log('[useCalendarEvents] Received events:', data.events?.length || 0);
         setEvents(data.events || []);
         setLastSyncedAt(new Date(data.syncedAt));
       } else {
-        // Fallback or empty
-        console.log('[useCalendarEvents] Non-JSON response');
         setEvents([]);
       }
     } catch (err) {

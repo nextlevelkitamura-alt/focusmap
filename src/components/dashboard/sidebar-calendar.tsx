@@ -184,30 +184,27 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
     }, [events, setEvents, refetch, updateLinkedTask, showError])
 
     const handleEventTimeChange = useCallback(async (eventId: string, newStartTime: Date, newEndTime: Date) => {
-        console.log('Event time change:', eventId, newStartTime, newEndTime)
         const event = events.find(e => e.id === eventId)
         if (!event) return
 
+        const durationMinutes = Math.round((newEndTime.getTime() - newStartTime.getTime()) / (1000 * 60))
+
+        // 楽観的更新: ローカルの events を即座に更新（refetch不要 → フリッカー防止）
+        setEvents(prev => prev.map(e =>
+            e.id === eventId
+                ? { ...e, start_time: newStartTime.toISOString(), end_time: newEndTime.toISOString() }
+                : e
+        ))
+
         try {
-            // タスクに紐付いている場合は、タスクを更新（useTaskCalendarSyncが自動でGoogleカレンダーも同期）
             if (event.task_id && onUpdateTask) {
-                console.log('Updating task:', event.task_id)
-
-                // 所要時間を計算
-                const durationMinutes = Math.round((newEndTime.getTime() - newStartTime.getTime()) / (1000 * 60))
-
+                // タスクに紐付いている場合は、タスクを更新（useTaskCalendarSyncが自動でGoogleカレンダーも同期）
                 await onUpdateTask(event.task_id, {
                     scheduled_at: newStartTime.toISOString(),
                     estimated_time: durationMinutes
                 })
-
-                console.log('Task updated successfully, refreshing calendar')
-                // カレンダーを再取得して変更を反映
-                await refetch()
             } else {
                 // タスクに紐付いていない場合は、Google Calendar APIを直接更新
-                console.log('Updating calendar event directly (not linked to task)')
-                const durationMinutes = Math.round((newEndTime.getTime() - newStartTime.getTime()) / (1000 * 60))
                 const response = await fetch(`/api/calendar/events/${eventId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
@@ -226,7 +223,6 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 const data = await response.json()
 
                 if (data.success) {
-                    console.log('Event time updated successfully')
                     // API がリンク先の task_id を返した場合、タスク一覧も更新
                     if (data.task_id && onUpdateTask) {
                         await onUpdateTask(data.task_id, {
@@ -238,17 +234,26 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                             e.id === eventId ? { ...e, task_id: data.task_id } : e
                         ))
                     }
-                    refetch()
                 } else {
-                    console.error('Failed to update event time:', data.error)
+                    // 失敗: 元の位置に戻す
+                    setEvents(prev => prev.map(e =>
+                        e.id === eventId
+                            ? { ...e, start_time: event.start_time, end_time: event.end_time }
+                            : e
+                    ))
                     showError('時間の更新に失敗しました: ' + (data.error?.message || '不明なエラー'))
                 }
             }
         } catch (err) {
-            console.error('Failed to update event time:', err)
-            alert('時間の更新に失敗しました: ' + (err instanceof Error ? err.message : '不明なエラー'))
+            // 失敗: 元の位置に戻す
+            setEvents(prev => prev.map(e =>
+                e.id === eventId
+                    ? { ...e, start_time: event.start_time, end_time: event.end_time }
+                    : e
+            ))
+            showError('時間の更新に失敗しました: ' + (err instanceof Error ? err.message : '不明なエラー'))
         }
-    }, [events, refetch, onUpdateTask])
+    }, [events, setEvents, onUpdateTask, showError])
 
     // イベント削除のコア処理（確認ダイアログなし・楽観的UI）
     // 即座にUIから削除し、バックグラウンドでAPI削除。失敗時は復元+エラー通知

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
-import { fetchCalendarEvents, fetchMultipleCalendarEvents } from '@/lib/google-calendar';
+import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
 
 /**
  * Googleカレンダーからイベントを取得
@@ -272,8 +272,31 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('Calendar events list error:', error);
 
-    // トークン期限切れのエラー
+    // トークン期限切れの場合、手動リフレッシュを試みる
     if (error.message.includes('invalid_grant') || error.message.includes('Token')) {
+      try {
+        console.log('[events/list] Token expired, attempting manual refresh...');
+        const { oauth2Client } = await getCalendarClient(user.id);
+        const { credentials } = await oauth2Client.refreshAccessToken();
+        if (credentials.access_token) {
+          console.log('[events/list] Token refreshed successfully, retrying...');
+          // tokens イベントハンドラでDBに保存される
+          // クライアントにリトライを促す
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: 'TOKEN_REFRESHED',
+                message: 'Token was refreshed. Please retry the request.'
+              }
+            },
+            { status: 503 }
+          );
+        }
+      } catch (refreshError) {
+        console.error('[events/list] Token refresh failed:', refreshError);
+      }
+
       return NextResponse.json(
         {
           success: false,

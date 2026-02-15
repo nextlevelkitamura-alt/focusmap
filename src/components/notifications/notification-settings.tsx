@@ -93,11 +93,20 @@ export function NotificationSettings() {
   }
 
   if (error) {
+    const isTableMissing = error.message?.includes('schema cache') || error.message?.includes('relation');
     return (
       <Card>
-        <CardContent className="p-6">
-          <div className="text-center text-sm text-destructive">
-            エラーが発生しました: {error.message}
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5" />
+            通知設定
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center text-sm text-muted-foreground py-4">
+            {isTableMissing
+              ? '通知機能は現在準備中です'
+              : `エラーが発生しました: ${error.message}`}
           </div>
         </CardContent>
       </Card>

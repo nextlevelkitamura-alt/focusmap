@@ -63,10 +63,13 @@ export async function getCalendarClient(userId: string) {
     process.env.GOOGLE_REDIRECT_URI
   );
 
-  // トークンをセット
+  // トークンをセット（expiry_dateを含めることでgoogleapisが自動リフレッシュできるようにする）
   oauth2Client.setCredentials({
     access_token: settings.google_access_token,
     refresh_token: settings.google_refresh_token,
+    expiry_date: settings.google_token_expires_at
+      ? new Date(settings.google_token_expires_at).getTime()
+      : undefined,
   });
 
   // トークン更新時のハンドラー
@@ -77,13 +80,18 @@ export async function getCalendarClient(userId: string) {
         ? new Date(tokens.expiry_date).toISOString()
         : new Date(Date.now() + 3600 * 1000).toISOString();
 
-      // 新しいアクセストークンをDBに保存
+      // 新しいトークンをDBに保存（refresh_tokenが返された場合はそれも保存）
+      const updateData: Record<string, string> = {
+        google_access_token: tokens.access_token,
+        google_token_expires_at: expiresAt,
+      };
+      if (tokens.refresh_token) {
+        updateData.google_refresh_token = tokens.refresh_token;
+      }
+
       await supabase
         .from('user_calendar_settings')
-        .update({
-          google_access_token: tokens.access_token,
-          google_token_expires_at: expiresAt,
-        })
+        .update(updateData)
         .eq('user_id', userId);
     }
   });
