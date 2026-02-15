@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Task, TaskGroup } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
@@ -37,7 +37,7 @@ export function useMindMapSync({
     initialTasks = []
 }: UseMindMapSyncProps): UseMindMapSyncReturn {
     const supabase = createClient()
-    const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
+    const { cancelNotifications } = useNotificationScheduler()
     const [groups, setGroups] = useState<TaskGroup[]>(initialGroups)
     const [tasks, setTasks] = useState<Task[]>(initialTasks)
     const [isLoading, setIsLoading] = useState(false)
@@ -47,19 +47,8 @@ export function useMindMapSync({
     useEffect(() => { setGroups(initialGroups) }, [initialGroups])
     useEffect(() => { setTasks(initialTasks) }, [initialTasks])
 
-    // カレンダー同期のデバウンス用 ref
-    // updateTask が連続で呼ばれても、同期は最後の1回だけ実行される
-    const syncTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-    const tasksRef = useRef(tasks)
-    tasksRef.current = tasks
-
-    // クリーンアップ: コンポーネントアンマウント時にタイマーをキャンセル
-    useEffect(() => {
-        return () => {
-            syncTimers.current.forEach(timer => clearTimeout(timer))
-            syncTimers.current.clear()
-        }
-    }, [])
+    // カレンダー同期は useTaskCalendarSync フック（center-pane.tsx）に一元化
+    // updateTask では DB 更新のみ行い、props 変更で useTaskCalendarSync が検知して同期する
 
     // TEMPORARILY DISABLED REALTIME TO PREVENT CRASH
     // TODO: Re-enable with proper error handling once the root cause is identified
@@ -124,6 +113,7 @@ export function useMindMapSync({
 
     // --- Task Operations ---
     // OPTIMISTIC UI: Generate client-side UUID and update local state immediately
+    // バックグラウンドで POST /api/tasks を呼び出し、サーバーサイドで INSERT
     const createTask = useCallback(async (groupId: string, title: string = "New Task", parentTaskId: string | null = null): Promise<Task | null> => {
         // Generate client-side UUID for instant feedback
         const optimisticId = crypto.randomUUID();
@@ -159,40 +149,42 @@ export function useMindMapSync({
         setTasks(prev => [...prev, optimisticTask]);
 
         // Return optimistic task immediately for instant focus
-        // Background sync to Supabase
+        // Background sync via API route (サーバーサイドでINSERT → エラーはサーバーログで確認可能)
         (async () => {
             try {
-                const { data, error } = await supabase.from('tasks').insert({
-                    id: optimisticId, // Use the same ID we generated
-                    user_id: userId,
-                    group_id: groupId,
-                    parent_task_id: parentTaskId,
-                    title,
-                    status: 'todo',
-                    // priority: null で作成（明示的に設定されるまで未設定）
-                    order_index: maxOrder,
-                    actual_time_minutes: 0,
-                    estimated_time: 0
-                }).select().single();
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: optimisticId,
+                        group_id: groupId,
+                        parent_task_id: parentTaskId,
+                        title,
+                        order_index: maxOrder,
+                    }),
+                });
 
-                if (error) {
-                    throw error;
+                const result = await response.json();
+
+                if (!result.success) {
+                    console.error('[Sync] createTask API failed:', result.error);
+                    throw new Error(result.error?.message || 'タスクの作成に失敗しました');
                 }
 
                 // Update with server response (in case of any server-side modifications)
-                if (data) {
-                    setTasks(prev => prev.map(t => t.id === optimisticId ? data : t));
+                if (result.task) {
+                    setTasks(prev => prev.map(t => t.id === optimisticId ? result.task : t));
                 }
-            } catch (e) {
+            } catch (e: any) {
                 console.error('[Sync] createTask failed, rolling back:', e);
                 // ROLLBACK: Remove the optimistic task
                 setTasks(prev => prev.filter(t => t.id !== optimisticId));
-                alert('タスクの作成に失敗しました。もう一度お試しください。');
+                alert(`タスクの作成に失敗しました: ${e?.message || '不明なエラー'}`);
             }
         })();
 
         return optimisticTask;
-    }, [userId, tasks, supabase]);
+    }, [userId, tasks]);
 
     const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
         // Optimistic update
@@ -201,83 +193,8 @@ export function useMindMapSync({
         try {
             await supabase.from('tasks').update(updates).eq('id', taskId)
 
-            // GOOGLE CALENDAR SYNC: デバウンスで1回だけ実行
-            // updateTask が連続で呼ばれても（scheduled_at, estimated_time, title 等）、
-            // 500ms 待って最新の state で1回だけ sync する
-            const shouldSyncCalendar = updates.scheduled_at !== undefined
-                || updates.estimated_time !== undefined
-                || updates.title !== undefined
-            if (shouldSyncCalendar) {
-                // 既存のタイマーをキャンセル
-                if (syncTimers.current.has(taskId)) {
-                    clearTimeout(syncTimers.current.get(taskId))
-                }
-
-                syncTimers.current.set(taskId, setTimeout(async () => {
-                    syncTimers.current.delete(taskId)
-
-                    // 最新の state から task を読む（クロージャの stale state を回避）
-                    const latestTask = tasksRef.current.find(t => t.id === taskId)
-                    if (!latestTask?.scheduled_at) return
-
-                    // Cancel existing notifications
-                    try {
-                        await cancelNotifications('task', taskId)
-                    } catch (error) {
-                        console.error('[Notification] Failed to cancel notifications:', error)
-                    }
-
-                    const syncEstimatedTime = latestTask.estimated_time || 60
-
-                    try {
-                        // google_event_id がある場合はPATCH、ない場合はPOST
-                        // サーバー側でもDB上のgoogle_event_idを確認するため、二重防止
-                        const method = latestTask.google_event_id ? 'PATCH' : 'POST'
-                        const syncResponse = await fetch('/api/calendar/sync-task', {
-                            method,
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                taskId,
-                                scheduled_at: latestTask.scheduled_at,
-                                estimated_time: syncEstimatedTime,
-                                calendar_id: latestTask.calendar_id || 'primary'
-                            })
-                        })
-                        // sync成功時、ローカル state に google_event_id を反映
-                        if (syncResponse.ok) {
-                            const syncData = await syncResponse.json()
-                            if (syncData.googleEventId) {
-                                setTasks(prev => prev.map(t =>
-                                    t.id === taskId
-                                        ? { ...t, google_event_id: syncData.googleEventId }
-                                        : t
-                                ))
-                            }
-                        }
-                    } catch (error) {
-                        console.error('[Calendar Sync] Failed to sync task:', error)
-                    }
-
-                    // Schedule notification for task start
-                    try {
-                        const scheduledTime = new Date(latestTask.scheduled_at)
-                        const notificationTime = new Date(scheduledTime.getTime() - 15 * 60 * 1000)
-                        if (notificationTime > new Date()) {
-                            await scheduleNotification({
-                                targetType: 'task',
-                                targetId: taskId,
-                                notificationType: 'task_start',
-                                scheduledAt: notificationTime,
-                                title: 'タスク開始',
-                                body: latestTask.title || 'タスクがまもなく開始されます',
-                                actionUrl: `/dashboard?task=${taskId}`,
-                            })
-                        }
-                    } catch (error) {
-                        console.error('[Notification] Failed to schedule notification:', error)
-                    }
-                }, 500)) // 500ms デバウンス
-            }
+            // カレンダー同期は useTaskCalendarSync フックが一元管理（center-pane.tsx）
+            // ここでは DB 更新のみ → props 変更 → useTaskCalendarSync が検知して同期
 
             // AUTO-COMPLETE PARENT: If status changed to 'done', check if all siblings are also done
             if (updates.status === 'done') {

@@ -19,7 +19,7 @@ import 'reactflow/dist/style.css';
 import dagre from 'dagre';
 import { Task, TaskGroup, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, Target, Clock, Check, GripVertical, MoreHorizontal } from "lucide-react";
+import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, MoreHorizontal } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
@@ -312,7 +312,8 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(data?.label ?? '');
     const [showCaret, setShowCaret] = useState(false);
-    
+    const justFocusedRef = useRef(false);
+
     const settings = data?.displaySettings || { showStatus: true, showPriority: true, showScheduledAt: true, showEstimatedTime: true, showProgress: true, showCollapseButton: true };
 
     // Auto-complete logic: Check if all tasks are completed
@@ -334,12 +335,21 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
         }
     }, [isGroupCompleted, data]);
 
-    // Sync label
+    // Trigger edit from external (new group creation)
     useEffect(() => {
-        if (!isEditing) {
+        if (data?.triggerEdit && !isEditing) {
+            setIsEditing(true);
+            setShowCaret(true);
+            setEditValue('');
+        }
+    }, [data?.triggerEdit, isEditing]);
+
+    // Sync label (skip when triggerEdit is active to prevent overwriting empty edit value)
+    useEffect(() => {
+        if (!isEditing && !data?.triggerEdit) {
             setEditValue(data?.label ?? '');
         }
-    }, [data?.label, isEditing]);
+    }, [data?.label, isEditing, data?.triggerEdit]);
 
     // Focus input when editing
     useEffect(() => {
@@ -353,10 +363,14 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
     // Keep input focused when selected so IME can start from first key
     useLayoutEffect(() => {
         if (selected && inputRef.current) {
+            justFocusedRef.current = true;
             inputRef.current.focus();
             if (!isEditing) {
                 setShowCaret(false);
-                }
+            }
+            requestAnimationFrame(() => {
+                justFocusedRef.current = false;
+            });
         }
     }, [selected, isEditing]);
 
@@ -369,15 +383,47 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
 
     const handleInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
         e.stopPropagation();
-        if (!isEditing && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                setIsEditing(true);
-            setShowCaret(true);
-            if (inputRef.current) {
-                inputRef.current.setSelectionRange(0, inputRef.current.value.length);
+
+        if (!isEditing) {
+            // Selection mode
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (data?.onAddChild) await data.onAddChild();
+                return;
             }
-            return;
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                if (data?.onAddSibling) await data.onAddSibling();
+                return;
+            }
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                if (data?.onDelete) await data.onDelete();
+                return;
+            }
+            if (e.key === 'F2' || e.key === ' ') {
+                e.preventDefault();
+                setIsEditing(true);
+                setShowCaret(true);
+                requestAnimationFrame(() => {
+                    if (inputRef.current) {
+                        const len = inputRef.current.value.length;
+                        inputRef.current.setSelectionRange(len, len);
+                    }
+                });
+                return;
+            }
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                setIsEditing(true);
+                setShowCaret(true);
+                if (inputRef.current) {
+                    inputRef.current.setSelectionRange(0, inputRef.current.value.length);
+                }
+                return;
+            }
         }
 
+        // Edit mode
         if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
             e.preventDefault();
             await saveValue();
@@ -389,22 +435,27 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
             setIsEditing(false);
             setShowCaret(false);
         }
-    }, [saveValue, data?.label]);
+    }, [saveValue, data?.label, data, isEditing]);
 
     const handleWrapperKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLDivElement>) => {
         if (isEditing) return;
         e.stopPropagation();
 
-        if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            if (data?.onAddChild) await data.onAddChild();
+        } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            if (data?.onAddSibling) await data.onAddSibling();
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
             e.preventDefault();
             if (data?.onDelete) await data.onDelete();
         } else if (e.key === 'F2') {
             e.preventDefault();
             setIsEditing(true);
+            setShowCaret(true);
             setEditValue(data?.label ?? '');
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            // IMPORTANT (IME): don't inject the first character into state (causes "kあ").
-            // The input is already focused while selected, so IME can start composition normally.
             setIsEditing(true);
             setShowCaret(true);
             if (inputRef.current) {
@@ -478,6 +529,7 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
                     value={editValue}
                 onChange={(e) => {
                     if (!isEditing) {
+                        if (justFocusedRef.current) return;
                         setIsEditing(true);
                         setShowCaret(true);
                     }
@@ -620,29 +672,33 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [isEditing, setIsEditing] = useState<boolean>(false);
-    const [isConfirmed, setIsConfirmed] = useState<boolean>(false); // 確定待ち状態（3段階目）
     const [editValue, setEditValue] = useState<string>(data?.label ?? '');
     const [showCaret, setShowCaret] = useState<boolean>(false);
     const [showScheduleMenu, setShowScheduleMenu] = useState<boolean>(false);
 
     // Flag to prevent double-save when exiting via keyboard (Enter/Tab/Escape)
     const isSavingViaKeyboardRef = useRef(false);
+    // Track whether node was already selected before a mousedown (for click-to-edit)
+    const wasSelectedRef = useRef(false);
+    // Guard: prevent focus operations from triggering onChange → edit mode
+    const justFocusedRef = useRef(false);
 
     // Trigger edit from external
     useEffect(() => {
         if (data?.triggerEdit && !isEditing) {
+            console.log('[TaskNode triggerEdit] Entering edit mode, taskId:', data?.taskId);
             setIsEditing(true);
             setShowCaret(true);
             setEditValue(data?.initialValue ?? '');
         }
     }, [data?.triggerEdit, data?.initialValue, isEditing]);
 
-    // Sync label
+    // Sync label (skip when triggerEdit is active to prevent overwriting empty edit value for new nodes)
     useEffect(() => {
-        if (!isEditing) {
+        if (!isEditing && !data?.triggerEdit) {
             setEditValue(data?.label ?? '');
         }
-    }, [data?.label, isEditing]);
+    }, [data?.label, isEditing, data?.triggerEdit]);
 
     // Auto-focus input when editing (avoid rAF/select to keep IME stable)
     useEffect(() => {
@@ -654,13 +710,14 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     // Auto-focus input when selected so the first key goes to IME safely
     useLayoutEffect(() => {
         if (selected && inputRef.current) {
+            justFocusedRef.current = true;
             inputRef.current.focus();
             if (!isEditing) {
                 setShowCaret(false);
             }
-        } else {
-            // 選択が外れたら確定待ち状態をリセット
-            setIsConfirmed(false);
+            requestAnimationFrame(() => {
+                justFocusedRef.current = false;
+            });
         }
     }, [selected, isEditing]);
 
@@ -690,23 +747,22 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
         e.stopPropagation();
 
         if (!isEditing) {
-            // Selection Mode & Confirmed Mode behaviors (input is focused for IME-friendly first key)
+            // Selection Mode: XMind-style keyboard shortcuts
             if (e.key === 'Tab') {
                 e.preventDefault();
-                setIsConfirmed(false); // 確定待ち状態をリセット
+                console.log('[TaskNode handleInputKeyDown] Tab pressed, calling onAddChild');
                 if (data?.onAddChild) await data.onAddChild();
                 return;
             }
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                // Enter in selection mode → create sibling task
                 e.preventDefault();
-                setIsConfirmed(false); // 確定待ち状態をリセット
+                console.log('[TaskNode handleInputKeyDown] Enter pressed, calling onAddSibling');
                 if (data?.onAddSibling) await data.onAddSibling();
                 return;
             }
             if (e.key === 'Escape') {
-                // Confirmed Mode -> Selection Mode: exit confirmed state
                 e.preventDefault();
-                setIsConfirmed(false);
                 return;
             }
             if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -721,9 +777,21 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 }
                 return;
             }
+            if (e.key === 'F2' || e.key === ' ') {
+                // F2 / Space → edit mode with cursor at end
+                e.preventDefault();
+                setIsEditing(true);
+                setShowCaret(true);
+                requestAnimationFrame(() => {
+                    if (inputRef.current) {
+                        const len = inputRef.current.value.length;
+                        inputRef.current.setSelectionRange(len, len);
+                    }
+                });
+                return;
+            }
             if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                // Selection Mode / Confirmed Mode -> Edit Mode: allow IME to start from first key
-                setIsConfirmed(false); // 確定待ち状態をリセット
+                // Typing → overwrite mode (select all text, new input replaces)
                 setIsEditing(true);
                 setShowCaret(true);
                 if (inputRef.current) {
@@ -733,8 +801,9 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             }
         }
 
+        // Edit Mode key handlers
         if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-            // Edit Mode + Enter = Save text and enter "Confirmed" state (3-stage model)
+            // Edit Mode + Enter = Save and return to selection mode (XMind 2-stage)
             e.preventDefault();
             e.stopPropagation();
 
@@ -743,11 +812,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             await saveValue();
             setIsEditing(false);
             setShowCaret(false);
-            setIsConfirmed(true); // 確定待ち状態へ遷移
 
             setTimeout(() => { isSavingViaKeyboardRef.current = false; }, 0);
         } else if (e.key === 'Tab') {
-            // Edit Mode + Tab = Confirm + Create Child
+            // Edit Mode + Tab = Save + Create Child
             e.preventDefault();
 
             isSavingViaKeyboardRef.current = true;
@@ -764,10 +832,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 isSavingViaKeyboardRef.current = false;
             }, 0);
         } else if (e.key === 'Escape') {
+            // Edit Mode + Escape = Cancel and return to selection mode
             e.preventDefault();
             isSavingViaKeyboardRef.current = true;
             setEditValue(data?.label ?? '');
-            setIsConfirmed(false); // Escapeはキャンセルなので確定待ち状態にしない
             exitEditMode();
             setShowCaret(false);
             setTimeout(() => {
@@ -783,29 +851,25 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
 
         if (e.key === 'Tab') {
             e.preventDefault();
-            setIsConfirmed(false); // 確定待ち状態をリセット
             if (data?.onAddChild) await data.onAddChild();
         } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
             e.preventDefault();
-            setIsConfirmed(false); // 確定待ち状態をリセット
             if (data?.onAddSibling) await data.onAddSibling();
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
             e.preventDefault();
             if (data?.onDelete) await data.onDelete();
         } else if (e.key === 'F2') {
             e.preventDefault();
-            setIsConfirmed(false); // 確定待ち状態をリセット
             setIsEditing(true);
             setShowCaret(true);
             setEditValue(data?.label ?? '');
         } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-            // Arrow key navigation (tree-based, not visual)
             e.preventDefault();
             if (data?.onNavigate) {
                 data.onNavigate(e.key as 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight');
             }
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            // Fallback: focus input and enter edit mode (IME-friendly)
+            // Typing → overwrite mode (IME-friendly)
             inputRef.current?.focus();
             setIsEditing(true);
             setShowCaret(true);
@@ -817,13 +881,12 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
 
     const handleDoubleClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
-        setIsConfirmed(false); // 確定待ち状態をリセット
         setIsEditing(true);
         setShowCaret(true);
         setEditValue(data?.label ?? '');
         requestAnimationFrame(() => {
             const len = inputRef.current?.value.length ?? 0;
-            inputRef.current?.setSelectionRange(0, len);
+            inputRef.current?.setSelectionRange(len, len);
         });
     }, [data?.label]);
 
@@ -831,11 +894,9 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
         if (!isEditing) return;
         // Skip if exiting via keyboard (Enter/Tab/Escape already handled save)
         if (isSavingViaKeyboardRef.current) {
-            console.log('[TaskNode] Blur skipped (keyboard exit)');
             return;
         }
 
-        console.log('[TaskNode] Blur triggered (mouse), saving');
         try {
             await saveValue();
         } catch (error) {
@@ -846,14 +907,15 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
         }
     }, [saveValue]);
 
-    // Ensure focus when clicked (IME-friendly)
+    // Track selection state before mousedown for click-to-edit detection
     const handleWrapperMouseDown = useCallback((e: React.MouseEvent) => {
-        // Do not stop propagation: ReactFlow needs the event to manage selection.
+        // Record whether node was already selected before this click
+        wasSelectedRef.current = !!selected;
         if (!isEditing) {
             setShowCaret(false);
-        inputRef.current?.focus();
+            inputRef.current?.focus();
         }
-    }, [isEditing]);
+    }, [isEditing, selected]);
 
     // ドラッグ開始時の処理（カレンダーにドロップするため）
     const handleDragStart = useCallback((e: React.DragEvent) => {
@@ -974,6 +1036,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                     value={editValue}
                 onChange={(e) => {
                     if (!isEditing) {
+                        if (justFocusedRef.current) return;
                         setIsEditing(true);
                         setShowCaret(true);
                     }
@@ -983,6 +1046,16 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 }}
                     onBlur={handleInputBlur}
                 onKeyDown={handleInputKeyDown as any}
+                onClick={(e) => {
+                    if (isEditing) {
+                        e.stopPropagation();
+                    } else if (wasSelectedRef.current) {
+                        // Click on already-selected node's text → enter edit mode at cursor position
+                        e.stopPropagation();
+                        setIsEditing(true);
+                        setShowCaret(true);
+                    }
+                }}
                 onCompositionStart={() => {
                     if (!isEditing) {
                         setIsEditing(true);
@@ -991,7 +1064,8 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 }}
                     className={cn(
                     "nodrag nopan flex-1 bg-transparent border-none text-xs focus:outline-none focus:ring-0 px-0.5 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words",
-                    !showCaret && "caret-transparent pointer-events-none select-none",
+                    !showCaret && "caret-transparent",
+                    !showCaret && !selected && "pointer-events-none select-none",
                     data?.status === 'done' && "line-through text-muted-foreground"
                 )}
             />
@@ -1153,13 +1227,6 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 </div>
             )}
 
-            {/* Confirmed state indicator */}
-            {isConfirmed && (
-                <div className="nodrag nopan shrink-0 ml-1" title="確定済み - Enterで新規タスク作成">
-                    <Check className="w-3 h-3 text-green-500" />
-                </div>
-            )}
-
             <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-1 !h-1" />
         </div>
     );
@@ -1260,67 +1327,46 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     // REF: Focus queue - persists through dagre re-layouts
     const focusQueueRef = useRef<string | null>(null);
 
+    // HELPER: Find the editable element (textarea or input) inside a node
+    const findEditableElement = useCallback((nodeElement: Element): HTMLTextAreaElement | HTMLInputElement | null => {
+        return (nodeElement.querySelector('textarea') ?? nodeElement.querySelector('input')) as HTMLTextAreaElement | HTMLInputElement | null;
+    }, []);
+
     // HELPER: Robust DOM polling focus function
-    // Uses React Flow's standard node wrapper structure for reliable element detection
     const focusNodeWithPolling = useCallback((targetId: string, maxDuration: number = 200) => {
         const startTime = Date.now();
-        let attemptCount = 0;
 
         const attemptFocus = () => {
-            attemptCount++;
-
-            // Check if we've exceeded max duration
             if (Date.now() - startTime > maxDuration) {
-                console.log('[MindMap] Focus polling timed out for:', targetId, 'after', attemptCount, 'attempts');
                 focusQueueRef.current = null;
                 return;
             }
 
-            // Strategy 1: React Flow standard selector
-            let nodeElement = document.querySelector(`.react-flow__node[data-id="${targetId}"]`);
-
-            // Strategy 2: Fallback to data-id only (for custom nodes)
-            if (!nodeElement) {
-                nodeElement = document.querySelector(`[data-id="${targetId}"]`);
-            }
+            const nodeElement = document.querySelector(`.react-flow__node[data-id="${targetId}"]`)
+                ?? document.querySelector(`[data-id="${targetId}"]`);
 
             if (nodeElement) {
-                // Look for input inside the node (edit mode)
-                const inputElement = nodeElement.querySelector('input') as HTMLInputElement;
-                if (inputElement) {
-                    console.log('[MindMap] Focus success (input):', targetId, 'attempt:', attemptCount);
-                    inputElement.focus();
-                    inputElement.select(); // Select all text for easy replacement
+                const editableEl = findEditableElement(nodeElement);
+                if (editableEl) {
+                    editableEl.focus();
                     focusQueueRef.current = null;
                     return;
                 }
 
-                // If no input, focus the wrapper with tabindex (select mode trigger)
                 const wrapperElement = nodeElement.querySelector('[tabindex="0"]') as HTMLElement;
                 if (wrapperElement) {
-                    console.log('[MindMap] Focus success (wrapper):', targetId, 'attempt:', attemptCount);
                     wrapperElement.focus();
                     focusQueueRef.current = null;
                     return;
                 }
-
-                // Last resort: focus the node element itself if it has tabindex
-                if (nodeElement instanceof HTMLElement && nodeElement.tabIndex >= 0) {
-                    console.log('[MindMap] Focus success (node):', targetId, 'attempt:', attemptCount);
-                    nodeElement.focus();
-                    focusQueueRef.current = null;
-                    return;
-                }
             }
 
-            // Element not found yet, retry on next animation frame
             requestAnimationFrame(attemptFocus);
         };
 
-        // Clear any existing focus queue and start polling immediately
         focusQueueRef.current = targetId;
         requestAnimationFrame(attemptFocus);
-    }, []);
+    }, [findEditableElement]);
 
     // HELPER: Persistent DOM polling using setInterval (V2)
     // Ensures focus is captured even if React renders are delayed
@@ -1358,22 +1404,29 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             if (!nodeElement) nodeElement = document.querySelector(`[data-id="${targetId}"]`);
 
             if (nodeElement) {
-                const inputElement = nodeElement.querySelector('input') as HTMLInputElement;
+                const editableEl = findEditableElement(nodeElement);
                 const wrapperElement = nodeElement.querySelector('[tabindex="0"]') as HTMLElement;
 
-                // If preferInput is true, wait for input unless we've exceeded the input wait threshold
-                if (preferInput && !inputElement && elapsed < inputWaitThreshold) {
-                    // Node found but input not ready yet - keep waiting
+                // If preferInput is true, wait for editable element unless we've exceeded the input wait threshold
+                if (preferInput && !editableEl && elapsed < inputWaitThreshold) {
+                    // Node found but textarea/input not ready yet - keep waiting
                     return;
                 }
 
                 // Now decide what to focus
-                const targetElement = inputElement ?? wrapperElement ?? (nodeElement as HTMLElement);
+                // When preferInput is false (e.g. after delete), use wrapper for selection mode
+                const targetElement = preferInput
+                    ? (editableEl ?? wrapperElement ?? (nodeElement as HTMLElement))
+                    : (wrapperElement ?? (nodeElement as HTMLElement));
 
                 if (targetElement) {
-                    console.log('[MindMap] Focus SUCCESS for:', targetId, `in ${elapsed}ms, element:`, inputElement ? 'input' : 'wrapper');
+                    console.log('[MindMap] Focus SUCCESS for:', targetId, `in ${elapsed}ms, element:`, targetElement === editableEl ? 'textarea' : 'wrapper');
                     targetElement.focus();
-                    if (inputElement) inputElement.select();
+                    // For new nodes (preferInput), place cursor at end
+                    if (preferInput && editableEl && targetElement === editableEl) {
+                        const len = editableEl.value.length;
+                        editableEl.setSelectionRange(len, len);
+                    }
 
                     clearInterval(timer);
                     activeTimerRef.current = null;
@@ -1393,7 +1446,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         // Store the timer reference for potential cancellation
         activeTimerRef.current = timer;
-    }, []);
+    }, [findEditableElement]);
 
     // EFFECT: Detect new task and queue focus with DOM polling
     useEffect(() => {
@@ -1444,7 +1497,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
             if (newestGroup?.id) {
                 applySelection(new Set([newestGroup.id]), newestGroup.id, 'user');
-                focusNodeWithPollingV2(newestGroup.id, 300, false);
+                setPendingEditNodeId(newestGroup.id);
+                focusNodeWithPollingV2(newestGroup.id, 500, true);
             }
 
             isCreatingGroupRef.current = false;
@@ -1452,14 +1506,6 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         prevGroupCountRef.current = currentCount;
     }, [groups, focusNodeWithPollingV2, applySelection]);
-
-    // EFFECT: Backup focus trigger when pendingEditNodeId changes
-    useEffect(() => {
-        if (pendingEditNodeId && focusQueueRef.current === pendingEditNodeId) {
-            // Additional polling attempt as backup (V2)
-            focusNodeWithPollingV2(pendingEditNodeId, 100);
-        }
-    }, [pendingEditNodeId, focusNodeWithPollingV2]);
 
     // EFFECT: Clear pendingEditNodeId after a delay
     useEffect(() => {
@@ -1569,15 +1615,38 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         const currentIndex = allSiblings.findIndex(t => t.id === taskId);
 
-        // Delete focus order:
-        // - Upper sibling
-        // - Lower sibling
-        // - Parent (fallback to group)
+        // XMind-style delete focus order:
+        // 1. Next sibling (below)
+        // 2. Previous sibling (above)
+        // 3. Parent task (or group if root task)
+        if (currentIndex < allSiblings.length - 1) return allSiblings[currentIndex + 1].id;
         if (currentIndex > 0) return allSiblings[currentIndex - 1].id;
-        if (currentIndex === 0 && allSiblings.length > 1) return allSiblings[1].id;
         if (task.parent_task_id) return task.parent_task_id;
         return task.group_id;
     }, [tasks, getTaskById]);
+
+    // Calculate next focus after group deletion (下→上→project-root)
+    const calculateNextGroupFocus = useCallback((groupId: string): string | null => {
+        const sorted = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        const idx = sorted.findIndex(g => g.id === groupId);
+        if (idx === -1) return 'project-root';
+        if (idx < sorted.length - 1) return sorted[idx + 1].id;
+        if (idx > 0) return sorted[idx - 1].id;
+        return 'project-root';
+    }, [groups]);
+
+    // Delete group with focus management
+    const deleteGroup = useCallback(async (groupId: string) => {
+        if (!onDeleteGroup) return;
+        const nextFocusId = calculateNextGroupFocus(groupId);
+        await onDeleteGroup(groupId);
+        applySelection(nextFocusId ? new Set([nextFocusId]) : new Set(), nextFocusId, 'user');
+        if (nextFocusId) {
+            requestAnimationFrame(() => {
+                focusNodeWithPollingV2(nextFocusId, 300, false);
+            });
+        }
+    }, [onDeleteGroup, calculateNextGroupFocus, applySelection, focusNodeWithPollingV2]);
 
     // Add child task
     const addChildTask = useCallback(async (parentTaskId: string) => {
@@ -1594,16 +1663,14 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             return next;
         });
 
-        // Set flag (mostly for logs now)
-        isCreatingNodeRef.current = true;
-
+        console.log('[addChildTask] Creating child task for parent:', parentTaskId);
         const newTask = await onCreateTask(group.id, "", parentTaskId);
+        console.log('[addChildTask] Task created:', newTask?.id);
         if (newTask) {
-            console.log('[MindMap] Child task created:', newTask.id, 'Focusing immediately (V2)');
-            // Direct focus on the explicit ID
-            focusNodeWithPollingV2(newTask.id);
-            applySelection(new Set([newTask.id]), newTask.id, 'user');
+            console.log('[addChildTask] Calling focusNodeWithPollingV2 for:', newTask.id);
             setPendingEditNodeId(newTask.id);
+            applySelection(new Set([newTask.id]), newTask.id, 'user');
+            focusNodeWithPollingV2(newTask.id);
         }
     }, [getTaskById, getGroupForTask, onCreateTask, focusNodeWithPollingV2, applySelection]);
 
@@ -1624,16 +1691,14 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             });
         }
 
-        // Set flag (mostly for logs now)
-        isCreatingNodeRef.current = true;
-
+        console.log('[addSiblingTask] Creating sibling task for:', taskId);
         const newTask = await onCreateTask(group.id, "", task.parent_task_id);
+        console.log('[addSiblingTask] Task created:', newTask?.id);
         if (newTask) {
-            console.log('[MindMap] Sibling task created:', newTask.id, 'Focusing immediately (V2)');
-            // Direct focus on the explicit ID - fixes "focus reverting to old task" bug
-            focusNodeWithPollingV2(newTask.id);
-            applySelection(new Set([newTask.id]), newTask.id, 'user');
+            console.log('[addSiblingTask] Calling focusNodeWithPollingV2 for:', newTask.id);
             setPendingEditNodeId(newTask.id);
+            applySelection(new Set([newTask.id]), newTask.id, 'user');
+            focusNodeWithPollingV2(newTask.id);
         }
     }, [getTaskById, getGroupForTask, onCreateTask, focusNodeWithPollingV2, applySelection]);
 
@@ -1706,24 +1771,9 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         if (targetId) {
             applySelection(new Set([targetId]), targetId, 'user');
-            // Focus the target node's wrapper using multiple selector strategies
-            requestAnimationFrame(() => {
-                // Try React Flow standard selector first
-                let targetElement = document.querySelector(`.react-flow__node[data-id="${targetId}"] [tabindex="0"]`) as HTMLElement;
-
-                // Fallback to data-id only
-                if (!targetElement) {
-                    targetElement = document.querySelector(`[data-id="${targetId}"] [tabindex="0"]`) as HTMLElement;
-                }
-
-                if (targetElement) {
-                    targetElement.focus();
-                } else {
-                    console.warn('[MindMap] Could not find target element for navigation:', targetId);
-                }
-            });
+            focusNodeWithPollingV2(targetId, 200, true);
         }
-    }, [navigateToSibling, navigateToParent, navigateToFirstChild, applySelection]);
+    }, [navigateToSibling, navigateToParent, navigateToFirstChild, applySelection, focusNodeWithPollingV2]);
 
     // Save task title
     const saveTaskTitle = useCallback(async (taskId: string, newTitle: string) => {
@@ -1752,7 +1802,13 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     }, [onUpdateTask]);
 
     // Check if node should trigger edit
-    const shouldTriggerEdit = useCallback((taskId: string) => pendingEditNodeId === taskId, [pendingEditNodeId]);
+    const shouldTriggerEdit = useCallback((taskId: string) => {
+        const result = pendingEditNodeId === taskId;
+        if (result) {
+            console.log('[shouldTriggerEdit] TRUE for taskId:', taskId, 'pendingEditNodeId:', pendingEditNodeId);
+        }
+        return result;
+    }, [pendingEditNodeId]);
 
     // DERIVED STATE
     const { nodes, edges } = useMemo(() => {
@@ -1781,6 +1837,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             resultNodes.push({
                 id: 'project-root',
                 type: 'projectNode',
+                selected: selectedNodeIds.has('project-root'),
                 data: {
                     label: project?.title ?? 'Project',
                     onAddChild: () => createGroupAndFocus("New Group"),
@@ -1874,6 +1931,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 resultNodes.push({
                     id: task.id,
                     type: 'taskNode',
+                    selected: selectedNodeIds.has(task.id),
                     data: {
                         taskId: task.id, // カレンダードラッグ&ドロップ用
                         label: task.title ?? 'Task',
@@ -1941,6 +1999,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 resultNodes.push({
                     id: group.id,
                     type: 'groupNode',
+                    selected: selectedNodeIds.has(group.id),
                     data: {
                         label: group.title ?? 'Group',
                         priority: group.priority,
@@ -1950,10 +2009,25 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                         estimatedIsOverride: groupIsEstimatedOverride,
                         tasks: groupTasks,
                         isSelected: selectedNodeIds.has(group.id),
+                        triggerEdit: shouldTriggerEdit(group.id),
                         onSave: (newTitle: string) => onUpdateGroupTitle?.(group.id, newTitle),
                         onUpdateGroup: (updates: any) => onUpdateGroup?.(group.id, updates),
                         onUpdateTask: onUpdateTask,
-                        onDelete: () => onDeleteGroup?.(group.id),
+                        onAddChild: async () => {
+                            if (onCreateTask) {
+                                console.log('[GroupNode onAddChild] Creating task...');
+                                const newTask = await onCreateTask(group.id, "", null);
+                                console.log('[GroupNode onAddChild] Task created:', newTask?.id);
+                                if (newTask) {
+                                    console.log('[GroupNode onAddChild] Calling focusNodeWithPollingV2 for:', newTask.id);
+                                    setPendingEditNodeId(newTask.id);
+                                    applySelection(new Set([newTask.id]), newTask.id, 'user');
+                                    focusNodeWithPollingV2(newTask.id);
+                                }
+                            }
+                        },
+                        onAddSibling: () => createGroupAndFocus("New Group"),
+                        onDelete: () => deleteGroup(group.id),
                         hasChildren: hasGroupChildren(group.id),
                         collapsed: collapsedGroupIds.has(group.id),
                         onToggleCollapse: () => toggleGroupCollapse(group.id),
@@ -2008,9 +2082,10 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         addSiblingTask,
         deleteTask,
         onUpdateGroupTitle,
-        onDeleteGroup,
+        deleteGroup,
         hasChildren,
         hasGroupChildren,
+        selectedNodeIds,
         collapsedTaskIds,
         collapsedGroupIds,
         toggleTaskCollapse,
@@ -2062,7 +2137,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         if (recentUser) return;
         if (typeof document !== 'undefined') {
             const activeTag = document.activeElement?.tagName;
-            if (activeTag === 'INPUT') return;
+            if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
         }
         focusNodeWithPollingV2(selectedNodeId, 200, false);
     }, [groupsJson, tasksJson, selectedNodeId, focusNodeWithPollingV2]);
@@ -2184,15 +2259,19 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         if (event.key === 'Tab') {
             event.preventDefault();
             if (onCreateTask) {
-                isCreatingNodeRef.current = true;
-                await onCreateTask(selectedNodeId, "", null);
+                const newTask = await onCreateTask(selectedNodeId, "", null);
+                if (newTask) {
+                    setPendingEditNodeId(newTask.id);
+                    applySelection(new Set([newTask.id]), newTask.id, 'user');
+                    focusNodeWithPollingV2(newTask.id);
+                }
             }
         } else if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
             // Create new group when Enter is pressed on a group node
             event.preventDefault();
             await createGroupAndFocus("New Group");
             }
-    }, [selectedNodeId, selectedNodeIds, tasks, groups, hasChildren, onDeleteTask, onCreateTask, createGroupAndFocus, markUserAction]);
+    }, [selectedNodeId, selectedNodeIds, tasks, groups, hasChildren, onDeleteTask, onCreateTask, createGroupAndFocus, markUserAction, focusNodeWithPollingV2, applySelection]);
 
     return (
         <div

@@ -8,6 +8,8 @@ interface UseTaskCalendarSyncOptions {
   google_event_id: string | null
   onSyncSuccess?: () => void
   onSyncError?: (error: Error) => void
+  /** 同期成功時に google_event_id をローカルステートに反映するコールバック */
+  onGoogleEventIdChange?: (googleEventId: string) => void
 }
 
 type SyncStatus = 'idle' | 'syncing' | 'success' | 'error'
@@ -19,7 +21,8 @@ export function useTaskCalendarSync({
   calendar_id,
   google_event_id,
   onSyncSuccess,
-  onSyncError
+  onSyncError,
+  onGoogleEventIdChange
 }: UseTaskCalendarSyncOptions) {
   const [status, setStatus] = useState<SyncStatus>('idle')
   const [error, setError] = useState<Error | null>(null)
@@ -72,6 +75,14 @@ export function useTaskCalendarSync({
         }
 
         throw new Error(errorData.error || `Sync failed: ${response.statusText}`)
+      }
+
+      // 同期成功: google_event_id をローカルステートに反映
+      if (method === 'POST' || method === 'PATCH') {
+        const data = await response.json()
+        if (data.googleEventId) {
+          onGoogleEventIdChange?.(data.googleEventId)
+        }
       }
 
       setStatus('success')

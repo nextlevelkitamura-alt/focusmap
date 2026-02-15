@@ -10,6 +10,8 @@ import { CalendarDayView } from "@/components/calendar/calendar-day-view"
 import { CalendarEventEditModal, EventUpdatePayload } from "@/components/calendar/calendar-event-edit-modal"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
+import { useCalendarToast } from "@/components/calendar/calendar-toast"
+import { CalendarToast } from "@/components/calendar/calendar-toast"
 import { startOfMonth, endOfMonth, addMonths } from "date-fns"
 import { HOUR_HEIGHT } from "@/lib/calendar-constants"
 import { Task } from "@/types/database"
@@ -35,6 +37,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
     // カレンダーリスト（編集モーダル用）
     const { calendars } = useCalendars()
+    const { toast, hideToast, error: showError } = useCalendarToast()
 
     // CalendarSelector から選択状態を受け取るローカルステート
     const [visibleCalendarIds, setVisibleCalendarIds] = useState<string[]>([])
@@ -102,51 +105,83 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         setIsEditModalOpen(true)
     }, [events])
 
+    // タスク更新のヘルパー（楽観的UI更新用）
+    const updateLinkedTask = useCallback((taskId: string, updates: EventUpdatePayload) => {
+        if (!onUpdateTask) return
+        const priorityMap: Record<string, number> = { high: 3, medium: 2, low: 1 }
+        onUpdateTask(taskId, {
+            title: updates.title,
+            scheduled_at: updates.start_time,
+            estimated_time: updates.estimated_time,
+            ...(updates.priority ? { priority: priorityMap[updates.priority] } : {}),
+            ...(updates.calendar_id ? { calendar_id: updates.calendar_id } : {}),
+        }).catch(err => console.error('[handleEventSave] Task update failed:', err))
+    }, [onUpdateTask])
+
     const handleEventSave = useCallback(async (eventId: string, updates: EventUpdatePayload) => {
         const event = events.find(e => e.id === eventId)
-        if (!event) {
-            throw new Error('Event not found')
+        if (!event) return
+
+        // 楽観的UI更新: 即座にカレンダー側を変更
+        const updatedEvent: CalendarEvent = {
+            ...event,
+            title: updates.title,
+            start_time: updates.start_time,
+            end_time: updates.end_time,
+            ...(updates.priority ? { priority: updates.priority } : {}),
+            ...(updates.calendar_id ? { calendar_id: updates.calendar_id } : {}),
+            ...(updates.estimated_time ? { estimated_time: updates.estimated_time } : {}),
+        }
+        setEvents(prev => prev.map(e => e.id === eventId ? updatedEvent : e))
+
+        // タスク側も楽観的に更新（task_id がある場合のみ）
+        const taskId = event.task_id
+        if (taskId) {
+            updateLinkedTask(taskId, updates)
         }
 
-        // Google Calendar API + DB + タスクを一括更新（サーバー側で完結）
-        const response = await fetch(`/api/calendar/events/${eventId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                title: updates.title,
-                start_time: updates.start_time,
-                end_time: updates.end_time,
-                description: event.description,
-                location: event.location,
-                googleEventId: event.google_event_id,
-                calendarId: updates.calendar_id || event.calendar_id,
-                estimated_time: updates.estimated_time,
-                priority: updates.priority,
+        // バックグラウンドで API 呼び出し
+        try {
+            const response = await fetch(`/api/calendar/events/${eventId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: updates.title,
+                    start_time: updates.start_time,
+                    end_time: updates.end_time,
+                    description: event.description,
+                    location: event.location,
+                    googleEventId: event.google_event_id,
+                    calendarId: updates.calendar_id || event.calendar_id,
+                    estimated_time: updates.estimated_time,
+                    priority: updates.priority,
+                })
             })
-        })
 
-        const data = await response.json()
+            const data = await response.json()
 
-        if (!data.success) {
-            throw new Error(data.error?.message || '更新に失敗しました')
+            if (!data.success) {
+                throw new Error(data.error?.message || '更新に失敗しました')
+            }
+
+            // API がリンク先の task_id を返した場合、楽観的更新できなかった分を補完
+            if (data.task_id && !taskId) {
+                updateLinkedTask(data.task_id, updates)
+                // 次回から楽観的更新できるよう、イベントに task_id を記録
+                setEvents(prev => prev.map(e =>
+                    e.id === eventId ? { ...e, task_id: data.task_id } : e
+                ))
+            }
+
+            // 成功: 最新データに同期
+            await refetch()
+        } catch (err) {
+            console.error('[handleEventSave] Failed:', err)
+            // 失敗: ロールバック + エラー通知
+            setEvents(prev => prev.map(e => e.id === eventId ? event : e))
+            showError(`予定の更新に失敗しました: ${err instanceof Error ? err.message : '不明なエラー'}`)
         }
-
-        // サーバーがタスクIDを返した場合 → クライアント側の楽観的更新でUI即時反映
-        const taskId = data.task_id || event.task_id
-        if (taskId && onUpdateTask) {
-            console.log('[handleEventSave] Optimistic update for task:', taskId)
-            const priorityMap: Record<string, number> = { high: 3, medium: 2, low: 1 }
-            await onUpdateTask(taskId, {
-                title: updates.title,
-                scheduled_at: updates.start_time,
-                estimated_time: updates.estimated_time,
-                ...(updates.priority ? { priority: priorityMap[updates.priority] } : {}),
-                ...(updates.calendar_id ? { calendar_id: updates.calendar_id } : {}),
-            })
-        }
-
-        await refetch()
-    }, [events, refetch, onUpdateTask])
+    }, [events, setEvents, refetch, updateLinkedTask, showError])
 
     const handleEventTimeChange = useCallback(async (eventId: string, newStartTime: Date, newEndTime: Date) => {
         console.log('Event time change:', eventId, newStartTime, newEndTime)
@@ -172,7 +207,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
             } else {
                 // タスクに紐付いていない場合は、Google Calendar APIを直接更新
                 console.log('Updating calendar event directly (not linked to task)')
-                const response = await fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`, {
+                const durationMinutes = Math.round((newEndTime.getTime() - newStartTime.getTime()) / (1000 * 60))
+                const response = await fetch(`/api/calendar/events/${eventId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -182,7 +218,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         description: event.description,
                         location: event.location,
                         googleEventId: event.google_event_id,
-                        calendarId: event.calendar_id
+                        calendarId: event.calendar_id,
+                        estimated_time: durationMinutes,
                     })
                 })
 
@@ -190,10 +227,21 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
                 if (data.success) {
                     console.log('Event time updated successfully')
+                    // API がリンク先の task_id を返した場合、タスク一覧も更新
+                    if (data.task_id && onUpdateTask) {
+                        await onUpdateTask(data.task_id, {
+                            scheduled_at: newStartTime.toISOString(),
+                            estimated_time: durationMinutes,
+                        })
+                        // 次回から楽観的更新できるよう task_id を記録
+                        setEvents(prev => prev.map(e =>
+                            e.id === eventId ? { ...e, task_id: data.task_id } : e
+                        ))
+                    }
                     refetch()
                 } else {
                     console.error('Failed to update event time:', data.error)
-                    alert('時間の更新に失敗しました: ' + (data.error?.message || '不明なエラー'))
+                    showError('時間の更新に失敗しました: ' + (data.error?.message || '不明なエラー'))
                 }
             }
         } catch (err) {
@@ -345,6 +393,15 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                     .map(c => ({ id: c.google_calendar_id, name: c.name, background_color: c.background_color || undefined }))
                 }
             />
+
+            {/* エラー通知トースト */}
+            {toast && (
+                <CalendarToast
+                    type={toast.type}
+                    message={toast.message}
+                    onClose={hideToast}
+                />
+            )}
         </div>
     )
 })

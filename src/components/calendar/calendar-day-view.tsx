@@ -164,10 +164,15 @@ export function CalendarDayView({
 
         // 最新のpreviewPositionを保持するローカル変数
         let latestPreview: { top: number; newStartTime: Date; newEndTime: Date } | null = null
+        const MIN_DRAG_DISTANCE = 5 // px: これ以上動かないとドラッグと判定しない
+        const startClientY = e.clientY
 
         // グローバルマウスイベントを設定
         const handleMouseMove = (moveEvent: MouseEvent) => {
             if (!calendarGridRef.current) return
+
+            // 最小移動距離に達していなければドラッグ開始しない
+            if (Math.abs(moveEvent.clientY - startClientY) < MIN_DRAG_DISTANCE) return
 
             const gridRect = calendarGridRef.current.getBoundingClientRect()
             const currentScrollTop = calendarGridRef.current.scrollTop

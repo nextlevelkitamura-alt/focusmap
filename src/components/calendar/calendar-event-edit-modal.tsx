@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
-import { Loader2, Trash2, X } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { format, addMinutes } from 'date-fns';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 
@@ -63,7 +63,6 @@ export function CalendarEventEditModal({
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [reminder, setReminder] = useState<number>(15);
   const [calendarId, setCalendarId] = useState<string>('');
-  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -128,7 +127,7 @@ export function CalendarEventEditModal({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!event || !startDate) return;
 
     if (!title.trim()) {
@@ -137,28 +136,20 @@ export function CalendarEventEditModal({
     }
 
     setError(null);
-    setIsSaving(true);
 
-    try {
-      const computedEndTime = addMinutes(startDate, duration);
+    const computedEndTime = addMinutes(startDate, duration);
 
-      await onSave(event.id, {
-        title: title.trim(),
-        start_time: startDate.toISOString(),
-        end_time: computedEndTime.toISOString(),
-        priority: isTaskLinked ? priority : undefined,
-        reminders: reminder > 0 ? [reminder] : [],
-        calendar_id: calendarId,
-        estimated_time: duration,
-      });
-
-      onClose();
-    } catch (err) {
-      console.error('Failed to save event:', err);
-      setError(err instanceof Error ? err.message : '保存に失敗しました');
-    } finally {
-      setIsSaving(false);
-    }
+    // 即座にモーダルを閉じ、バックグラウンドで保存
+    onClose();
+    onSave(event.id, {
+      title: title.trim(),
+      start_time: startDate.toISOString(),
+      end_time: computedEndTime.toISOString(),
+      priority: isTaskLinked ? priority : undefined,
+      reminders: reminder > 0 ? [reminder] : [],
+      calendar_id: calendarId,
+      estimated_time: duration,
+    });
   };
 
   if (!isOpen || !event) return null;
@@ -203,7 +194,7 @@ export function CalendarEventEditModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="予定のタイトル"
-              disabled={isSaving}
+              disabled={false}
               className="h-8 text-sm"
             />
           </div>
@@ -337,7 +328,7 @@ export function CalendarEventEditModal({
                   setError(err instanceof Error ? err.message : '削除に失敗しました');
                 }
               }}
-              disabled={isSaving}
+              disabled={false}
               className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
             >
               <Trash2 className="h-4 w-4" />
@@ -346,11 +337,11 @@ export function CalendarEventEditModal({
             <div />
           )}
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose} disabled={isSaving} size="sm" className="h-8 text-xs">
+            <Button variant="outline" onClick={onClose} disabled={false} size="sm" className="h-8 text-xs">
               キャンセル
             </Button>
-            <Button onClick={handleSave} disabled={isSaving} size="sm" className="h-8 text-xs">
-              {isSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            <Button onClick={handleSave} disabled={false} size="sm" className="h-8 text-xs">
+
               保存
             </Button>
           </div>

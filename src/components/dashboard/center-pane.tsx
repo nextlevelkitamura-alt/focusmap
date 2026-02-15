@@ -197,7 +197,7 @@ function TaskItem({
     const { runningTaskId, currentElapsedSeconds, startTimer, pauseTimer, completeTimer, interruptTimer, isLoading } = useTimer();
     const isTimerRunning = runningTaskId === task.id;
 
-    // Calendar sync hook
+    // Calendar sync hook（カレンダー同期の一元管理）
     const { status: syncStatus, error: syncError, retry: syncRetry } = useTaskCalendarSync({
         taskId: task.id,
         scheduled_at: task.scheduled_at,
@@ -207,6 +207,10 @@ function TaskItem({
         onSyncSuccess: async () => {
             // カレンダーを更新
             await onRefreshCalendar?.()
+        },
+        onGoogleEventIdChange: (googleEventId) => {
+            // 同期成功時に google_event_id をローカルステートに反映
+            onUpdateTask?.(task.id, { google_event_id: googleEventId })
         }
     });
 

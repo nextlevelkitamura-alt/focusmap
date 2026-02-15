@@ -69,8 +69,9 @@
   - 参考: [計画書](plans/features/render-deployment.md)
 
 #### 機能拡張
-- 🔧 **カレンダーイベント編集UI**（タップ→モダンな編集モーダル） → [計画](plans/features/calendar-event-edit-modal.md)
-- ○ **プロジェクト管理CRUD**（左サイドバー: プロジェクト作成・切替・削除）
+- ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル） → [計画](plans/features/calendar-event-edit-modal.md)
+- 🔧 **マインドマップ操作感改善**（XMind風の操作体系） → [計画](plans/features/mindmap-ux-improvement.md)
+- 🔧 **プロジェクト管理CRUD**（左サイドバー: UI改善 + 作成・ステータス変更） → [計画](plans/features/project-management-crud.md)
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -78,6 +79,9 @@
 ---
 
 ## 完了履歴
+- 2026-02-15: **カレンダーイベント編集UI** 完了
+  - 直接モーダル方式・楽観的UI・タスク連携改善
+  - カレンダー二重同期問題修正（useTaskCalendarSync 一元管理）
 - 2026-02-13: **タスク削除時にGoogleカレンダー予定も自動削除** 完了
 - 2026-02-13: **Cloud Run 本番デプロイ** 完了（https://shikumika-app-466617344999.asia-northeast1.run.app）
 - 2026-02-12: **Cloud Run デプロイ対応** 完了
@@ -120,4 +124,5 @@
 
 ## 現在進行中のタスク
 
-なし
+- 🔧 マインドマップ操作感改善（XMind風） → [計画](plans/features/mindmap-ux-improvement.md)
+- 🔧 プロジェクト管理CRUD → [計画](plans/features/project-management-crud.md)
