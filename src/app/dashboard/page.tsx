@@ -13,9 +13,9 @@ export default async function DashboardPage() {
     }
 
     // Fetch ALL data (Hierarchical)
-    // 1. Goals
-    const { data: goals } = await supabase
-        .from("goals")
+    // 1. Spaces
+    const { data: spaces } = await supabase
+        .from("spaces")
         .select("*")
         .order("created_at", { ascending: false })
 
@@ -39,7 +39,7 @@ export default async function DashboardPage() {
 
     return (
         <DashboardClient
-            initialGoals={goals || []}
+            initialSpaces={spaces || []}
             initialProjects={projects || []}
             initialGroups={groups || []}
             initialTasks={tasks || []}

@@ -109,7 +109,7 @@
 #### 機能拡張
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル） → [計画](plans/features/calendar-event-edit-modal.md)
 - 🔧 **マインドマップ操作感改善**（XMind風の操作体系） → [計画](plans/features/mindmap-ux-improvement.md)
-- 🔧 **プロジェクト管理CRUD**（左サイドバー: UI改善 + 作成・ステータス変更） → [計画](plans/features/project-management-crud.md)
+- 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -168,4 +168,4 @@
 ## 現在進行中のタスク
 
 - 🔧 マインドマップ操作感改善（XMind風） → [計画](plans/features/mindmap-ux-improvement.md)
-- 🔧 プロジェクト管理CRUD → [計画](plans/features/project-management-crud.md)
+- 🔧 スペース機能 + 左サイドバー再設計 → [計画](plans/features/space-sidebar-redesign.md)

@@ -1,17 +1,20 @@
 -- Create tables
-create table goals (
+create table spaces (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users not null,
   title text not null,
   description text,
   status text default 'in_progress', -- in_progress, completed, archived
+  default_calendar_id text, -- Google Calendar ID for this space
+  icon text,
+  color text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
 create table projects (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users not null,
-  goal_id uuid references goals on delete cascade not null,
+  space_id uuid references spaces on delete cascade not null,
   title text not null,
   purpose text, -- 目的
   category_tag text,
@@ -45,13 +48,13 @@ create table tasks (
 );
 
 -- Enable RLS
-alter table goals enable row level security;
+alter table spaces enable row level security;
 alter table projects enable row level security;
 alter table task_groups enable row level security;
 alter table tasks enable row level security;
 
 -- Create Policies
-create policy "Users can CRUD their own goals" on goals
+create policy "Users can CRUD their own spaces" on spaces
   for all using (auth.uid() = user_id);
 
 create policy "Users can CRUD their own projects" on projects

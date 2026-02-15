@@ -93,6 +93,9 @@ interface CenterPaneProps {
     onDeleteTask?: (taskId: string) => Promise<void>
     onMoveTask?: (taskId: string, newGroupId: string) => Promise<void>
     onBulkDelete?: (groupIds: string[], taskIds: string[]) => Promise<void>
+    onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
+    onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
+    onPromoteTaskToGroup?: (taskId: string) => Promise<void>
     onRefreshCalendar?: () => Promise<void>
 }
 
@@ -663,6 +666,9 @@ export function CenterPane({
     onDeleteTask,
     onMoveTask,
     onBulkDelete,
+    onReorderTask,
+    onReorderGroup,
+    onPromoteTaskToGroup,
     onRefreshCalendar
 }: CenterPaneProps) {
     // Splitter State
@@ -823,6 +829,9 @@ export function CenterPane({
                         onDeleteTask={onDeleteTask}
                         onMoveTask={onMoveTask}
                         onBulkDelete={onBulkDelete}
+                        onReorderTask={onReorderTask}
+                        onReorderGroup={onReorderGroup}
+                        onPromoteTaskToGroup={onPromoteTaskToGroup}
                     />
                     <Button
                         variant="outline"
@@ -849,6 +858,8 @@ export function CenterPane({
                             onUpdateTask={onUpdateTask}
                             onDeleteTask={onDeleteTask}
                             onMoveTask={onMoveTask}
+                            onReorderTask={onReorderTask}
+                            onReorderGroup={onReorderGroup}
                         />
                         <Button
                             variant="ghost"

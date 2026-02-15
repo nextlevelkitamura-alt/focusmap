@@ -286,7 +286,8 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
             ref={wrapperRef}
             className={cn(
                 "w-[300px] px-4 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-center shadow-lg transition-all outline-none min-h-[60px] flex items-center justify-center",
-                selected && "ring-2 ring-white ring-offset-2 ring-offset-background"
+                selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
+                data?.isDropTarget && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background bg-sky-500/10"
             )}
             tabIndex={0}
             onKeyDown={handleWrapperKeyDown}
@@ -541,15 +542,22 @@ const GroupNode = React.memo(({ data, selected }: NodeProps) => {
         <div
             ref={wrapperRef}
             className={cn(
-                "group w-auto min-w-[240px] max-w-[320px] px-3 py-2 rounded-lg bg-card border text-sm font-medium shadow transition-all outline-none min-h-[40px] flex items-center gap-2",
+                "relative group w-auto min-w-[240px] max-w-[320px] px-3 py-2 rounded-lg bg-card border text-sm font-medium shadow transition-all outline-none min-h-[40px] flex items-center gap-2",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
-                data?.isDropTarget && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background"
+                data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background bg-sky-500/10",
             )}
             tabIndex={0}
             onKeyDown={handleWrapperKeyDown}
             onDoubleClick={handleDoubleClick}
             onMouseDown={handleWrapperMouseDown}
         >
+            {/* Drop position indicators */}
+            {data?.isDropTarget && data?.dropPosition === 'above' && (
+                <div className="absolute -top-1.5 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
+            )}
+            {data?.isDropTarget && data?.dropPosition === 'below' && (
+                <div className="absolute -bottom-1.5 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
+            )}
             <Handle type="target" position={Position.Left} className="!bg-muted-foreground" />
             
             {/* Checkbox (left) */}
@@ -1121,10 +1129,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
         <div
             ref={wrapperRef}
             className={cn(
-                "w-[225px] px-2 py-1.5 rounded bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all outline-none min-h-[30px] group",
+                "relative w-[225px] px-2 py-1.5 rounded bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all outline-none min-h-[30px] group",
                 !isEditing && "cursor-grab active:cursor-grabbing",
                 (selected || data?.isSelected) && "ring-2 ring-white ring-offset-2 ring-offset-background",
-                data?.isDropTarget && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400"
+                data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
             )}
             tabIndex={0}
             draggable={!isEditing}
@@ -1134,6 +1142,13 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             onDoubleClick={handleDoubleClick}
             onMouseDown={handleWrapperMouseDown}
         >
+            {/* Drop position indicators */}
+            {data?.isDropTarget && data?.dropPosition === 'above' && (
+                <div className="absolute -top-1 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
+            )}
+            {data?.isDropTarget && data?.dropPosition === 'below' && (
+                <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
+            )}
             {/* Row 1: テキスト + メニュー */}
             <div className="flex items-center gap-1 w-full">
                 {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
@@ -1416,9 +1431,12 @@ interface MindMapProps {
     onDeleteTask?: (taskId: string) => Promise<void>
     onMoveTask?: (taskId: string, newGroupId: string) => Promise<void>
     onBulkDelete?: (groupIds: string[], taskIds: string[]) => Promise<void>
+    onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
+    onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
+    onPromoteTaskToGroup?: (taskId: string) => Promise<void>
 }
 
-function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGroup, onCreateGroup, onDeleteGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGroup, onCreateGroup, onDeleteGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onReorderGroup, onPromoteTaskToGroup }: MindMapProps) {
     const reactFlow = useReactFlow();
     const projectId = project?.id ?? '';
     const USER_ACTION_WINDOW_MS = 800;
@@ -1455,8 +1473,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null);
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set());
     const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
-    const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
-    const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
+    const dropInfoRef = useRef<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
+    const dragPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
     const lastUserActionAtRef = useRef<number>(0);
     const selectedNodeIdRef = useRef<string | null>(null);
     const markUserAction = useCallback(() => {
@@ -1600,7 +1618,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         });
     }, []);
 
-    const getDropTargetNode = useCallback((dragged: Node) => {
+    const getDropInfo = useCallback((dragged: Node): { node: Node; position: 'above' | 'below' | 'as-child' } | null => {
         const getNodeRect = (n: Node) => {
             const position = n.positionAbsolute ?? n.position;
             const width = n.width ?? (n.type === 'projectNode' ? PROJECT_NODE_WIDTH : n.type === 'groupNode' ? GROUP_NODE_WIDTH : NODE_WIDTH);
@@ -1612,33 +1630,62 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 bottom: position.y + height,
                 centerX: position.x + width / 2,
                 centerY: position.y + height / 2,
+                width,
+                height,
             };
         };
 
         const draggedRect = getNodeRect(dragged);
         const candidates = reactFlow
             .getNodes()
-            .filter(n => n.id !== dragged.id && (n.type === 'taskNode' || n.type === 'groupNode'));
+            .filter(n => n.id !== dragged.id);
 
-        let best: { node: Node; dist: number } | null = null;
+        // 純粋な距離ベース: 最も近いノードをドロップターゲットにする
+        // （overlap判定だとY方向に離れたグループ間の移動ができない）
+        const MAX_DIST = 300;
+        let best: { node: Node; dist: number; position: 'above' | 'below' | 'as-child' } | null = null;
+
         for (const candidate of candidates) {
             const rect = getNodeRect(candidate);
-            const inside =
-                draggedRect.centerX >= rect.left &&
-                draggedRect.centerX <= rect.right &&
-                draggedRect.centerY >= rect.top &&
-                draggedRect.centerY <= rect.bottom;
-            if (!inside) continue;
 
-            const dx = rect.centerX - draggedRect.centerX;
-            const dy = rect.centerY - draggedRect.centerY;
-            const dist = Math.hypot(dx, dy);
+            // ドラッグノードの中心からターゲットの矩形までの最短距離を計算
+            const clampedX = Math.max(rect.left, Math.min(draggedRect.centerX, rect.right));
+            const clampedY = Math.max(rect.top, Math.min(draggedRect.centerY, rect.bottom));
+            const dist = Math.hypot(clampedX - draggedRect.centerX, clampedY - draggedRect.centerY);
+
+            if (dist > MAX_DIST) continue;
+
+            // ドロップ位置を判定
+            let position: 'above' | 'below' | 'as-child';
+            if (candidate.type === 'projectNode') {
+                position = 'as-child';
+            } else {
+                const relativeY = draggedRect.centerY - rect.top;
+                const relativeX = draggedRect.centerX - rect.centerX;
+
+                // LR layout: as-child は、ドラッグ位置がターゲットの右寄りの場合のみ
+                // （左 or 同じ位置 = 兄弟として above/below）
+                if (relativeX > rect.width * 0.3) {
+                    // ターゲットより右にいる → as-child 可能
+                    if (relativeY < rect.height * 0.33) {
+                        position = 'above';
+                    } else if (relativeY > rect.height * 0.67) {
+                        position = 'below';
+                    } else {
+                        position = 'as-child';
+                    }
+                } else {
+                    // 同じX位置 or 左 → 兄弟のみ（above/below）
+                    position = relativeY < rect.height * 0.5 ? 'above' : 'below';
+                }
+            }
+
             if (!best || dist < best.dist) {
-                best = { node: candidate, dist };
+                best = { node: candidate, dist, position };
             }
         }
 
-        return best?.node ?? null;
+        return best ? { node: best.node, position: best.position } : null;
     }, [reactFlow]);
     const createGroupAndFocus = useCallback(async (title: string) => {
         if (!onCreateGroup) return;
@@ -1845,7 +1892,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     }, [pendingEditNodeId]);
 
     // DERIVED STATE
-    const { nodes, edges } = useMemo(() => {
+    const { nodes: layoutNodes, edges } = useMemo(() => {
         const resultNodes: Node[] = [];
         const resultEdges: Edge[] = [];
 
@@ -1877,6 +1924,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                     label: project?.title ?? 'Project',
                     onAddChild: () => createGroupAndFocus("New Group"),
                     isSelected: selectedNodeIds.has('project-root'),
+                    isDropTarget: false,
+                    dropPosition: null,
                     onSave: async (newTitle: string) => {
                         if (onUpdateProject && project?.id) {
                             await onUpdateProject(project.id, newTitle);
@@ -1992,7 +2041,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                         hasChildren: taskHasChildren,
                         collapsed: collapsedTaskIds.has(task.id),
                         onToggleCollapse: () => toggleTaskCollapse(task.id),
-                        isDropTarget: dropTargetNodeId === task.id,
+                        isDropTarget: false,
+                        dropPosition: null,
                         displaySettings: displaySettings,
                         onDragStart: (taskId: string, title: string) => startDrag(taskId, title),
                         onDragEnd: () => endDrag(),
@@ -2064,11 +2114,12 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                         hasChildren: hasGroupChildren(group.id),
                         collapsed: collapsedGroupIds.has(group.id),
                         onToggleCollapse: () => toggleGroupCollapse(group.id),
-                        isDropTarget: dropTargetNodeId === group.id,
+                        isDropTarget: false,
+                        dropPosition: null,
                         displaySettings: displaySettings,
                     },
                     position: { x: 300, y: groupY },
-                    draggable: false,
+                    draggable: true,
                 });
                 resultEdges.push({ id: `e-proj-${group.id}`, source: 'project-root', target: group.id, type: 'smoothstep' });
 
@@ -2090,17 +2141,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         }
 
         // Apply dagre layout to get optimal positions
-        const layouted = getLayoutedElements(resultNodes, resultEdges);
-        if (Object.keys(dragPositions).length === 0) {
-            return layouted;
-        }
-
-        return {
-            nodes: layouted.nodes.map((node) =>
-                dragPositions[node.id] ? { ...node, position: dragPositions[node.id] } : node
-            ),
-            edges: layouted.edges,
-        };
+        return getLayoutedElements(resultNodes, resultEdges);
     }, [
         projectId,
         groupsJson,
@@ -2126,18 +2167,35 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         toggleTaskCollapse,
         toggleGroupCollapse,
         handleNavigate,
-        dropTargetNodeId,
-        dragPositions,
         displaySettings,
     ]);
+
+    // DOM 直接操作でドロップターゲットの CSS クラスを切り替え（React 再レンダリングなし）
+    const DROP_CLASSES = ['drop-target-above', 'drop-target-below', 'drop-target-child'] as const;
+    const clearDropTargetDOM = useCallback(() => {
+        const prev = dropInfoRef.current;
+        if (prev) {
+            const el = document.querySelector(`.react-flow__node[data-id="${prev.nodeId}"]`);
+            if (el) DROP_CLASSES.forEach(c => el.classList.remove(c));
+        }
+        dropInfoRef.current = null;
+    }, []);
+
+    const applyDropTargetDOM = useCallback((nodeId: string, position: 'above' | 'below' | 'as-child') => {
+        const el = document.querySelector(`.react-flow__node[data-id="${nodeId}"]`);
+        if (el) {
+            DROP_CLASSES.forEach(c => el.classList.remove(c));
+            el.classList.add(position === 'as-child' ? 'drop-target-child' : `drop-target-${position}`);
+        }
+    }, []);
 
     const handleNodeClick: NodeMouseHandler = useCallback((_, node) => {
         applySelection(new Set([node.id]), node.id, 'user');
     }, [applySelection]);
     const handlePaneClick = useCallback(() => {
         applySelection(new Set(), null, 'user');
-        setDropTargetNodeId(null);
-    }, [applySelection]);
+        clearDropTargetDOM();
+    }, [applySelection, clearDropTargetDOM]);
 
     const handleSelectionChange = useCallback((params: { nodes: Node[]; edges: Edge[] }) => {
         // IMPORTANT: Do NOT feed selection back into the `nodes` prop via `selected: ...`
@@ -2162,9 +2220,9 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         setSelectedNodeId(primaryId);
         selectedNodeIdRef.current = primaryId;
         if (params.nodes.length === 0) {
-            setDropTargetNodeId(null);
+            clearDropTargetDOM();
         }
-    }, []);
+    }, [clearDropTargetDOM]);
 
     // Prevent DB refreshes from stealing focus
     useLayoutEffect(() => {
@@ -2188,60 +2246,137 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         reactFlow.zoomTo(next);
     }, [reactFlow]);
 
+    const handleNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
+        if (node.type === 'projectNode') return;
+        dragPositionsRef.current[node.id] = node.position;
+    }, []);
+
     const handleNodeDrag = useCallback((_: React.MouseEvent, node: Node) => {
-        if (node.type !== 'taskNode') return;
-        const target = getDropTargetNode(node);
-        setDropTargetNodeId(target?.id ?? null);
-        setDragPositions(prev => ({ ...prev, [node.id]: node.position }));
-    }, [getDropTargetNode]);
+        if (node.type === 'projectNode') return;
 
-    const handleNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
-        if (node.type !== 'taskNode') return;
-        if (!onUpdateTask) return;
+        const info = getDropInfo(node);
+        const prev = dropInfoRef.current;
+        const newNodeId = info?.node.id ?? null;
+        const newPosition = info?.position ?? null;
 
-        const draggedTask = getTaskById(node.id);
-        if (!draggedTask) return;
-
-        const target = getDropTargetNode(node);
-        setDropTargetNodeId(null);
-        setDragPositions(prev => {
-            if (!prev[node.id]) return prev;
-            const next = { ...prev };
-            delete next[node.id];
-            return next;
-        });
-        if (!target) return;
-
-        if (target.type === 'taskNode') {
-            if (isDescendant(node.id, target.id)) return;
-            const targetTask = getTaskById(target.id);
-            if (!targetTask) return;
-
-            const newParentId = targetTask.id;
-            const newGroupId = targetTask.group_id;
-
-            if (newParentId === draggedTask.parent_task_id && newGroupId === draggedTask.group_id) return;
-
-            setCollapsedTaskIds(prev => {
-                if (!prev.has(newParentId)) return prev;
-                const next = new Set(prev);
-                next.delete(newParentId);
-                return next;
-            });
-
-            onUpdateTask(draggedTask.id, { parent_task_id: newParentId, group_id: newGroupId });
+        // 変更がなければ位置だけ更新して終了（DOM 操作もなし）
+        if (prev?.nodeId === newNodeId && prev?.position === newPosition) {
+            dragPositionsRef.current[node.id] = node.position;
             return;
         }
 
-        if (target.type === 'groupNode') {
-            const newParentId = null;
-            const newGroupId = target.id;
+        // 前のターゲットのクラスを除去
+        clearDropTargetDOM();
 
-            if (newParentId === draggedTask.parent_task_id && newGroupId === draggedTask.group_id) return;
-
-            onUpdateTask(draggedTask.id, { parent_task_id: newParentId, group_id: newGroupId });
+        // 新しいターゲットにクラスを付与
+        if (newNodeId && newPosition) {
+            applyDropTargetDOM(newNodeId, newPosition);
+            dropInfoRef.current = { nodeId: newNodeId, position: newPosition };
         }
-    }, [onUpdateTask, getTaskById, isDescendant, getDropTargetNode]);
+
+        dragPositionsRef.current[node.id] = node.position;
+    }, [getDropInfo, clearDropTargetDOM, applyDropTargetDOM]);
+
+    const handleNodeDragStop = useCallback((_evt: React.MouseEvent, node: Node) => {
+        if (node.type === 'projectNode') return;
+
+        const info = getDropInfo(node);
+        clearDropTargetDOM();
+        delete dragPositionsRef.current[node.id];
+        if (!info) return;
+
+        const { node: target, position } = info;
+
+        // ====== Task ノードのドラッグ ======
+        if (node.type === 'taskNode') {
+            const draggedTask = getTaskById(node.id);
+            if (!draggedTask) return;
+
+            if (target.type === 'taskNode') {
+                if (isDescendant(node.id, target.id)) return;
+                const targetTask = getTaskById(target.id);
+                if (!targetTask) return;
+
+                if (position === 'as-child') {
+                    // 既に子の場合 → 兄弟に昇格（below扱い）
+                    if (draggedTask.parent_task_id === targetTask.id) {
+                        onReorderTask?.(draggedTask.id, targetTask.id, 'below');
+                        return;
+                    }
+                    // ターゲットの子になる
+                    const newParentId = targetTask.id;
+                    const newGroupId = targetTask.group_id;
+                    if (newParentId === draggedTask.parent_task_id && newGroupId === draggedTask.group_id) return;
+
+                    setCollapsedTaskIds(prev => {
+                        if (!prev.has(newParentId)) return prev;
+                        const next = new Set(prev);
+                        next.delete(newParentId);
+                        return next;
+                    });
+                    onUpdateTask?.(draggedTask.id, { parent_task_id: newParentId, group_id: newGroupId });
+                } else {
+                    // above/below = ターゲットと同じ親の兄弟としてリオーダー
+                    onReorderTask?.(draggedTask.id, targetTask.id, position);
+                }
+                return;
+            }
+
+            if (target.type === 'groupNode') {
+                // グループルートに移動
+                const newGroupId = target.id;
+                if (null === draggedTask.parent_task_id && newGroupId === draggedTask.group_id) return;
+                onUpdateTask?.(draggedTask.id, { parent_task_id: null, group_id: newGroupId });
+                return;
+            }
+
+            if (target.type === 'projectNode') {
+                // ProjectNode にドロップ = 新グループ作成 + タスク移動（undo対応）
+                onPromoteTaskToGroup?.(draggedTask.id);
+                return;
+            }
+        }
+
+        // ====== Group ノードのドラッグ ======
+        if (node.type === 'groupNode') {
+            if (target.type === 'groupNode') {
+                if (node.id === target.id) return;
+                if (position === 'as-child') {
+                    // マージ: 確認ダイアログ付き
+                    const draggedLabel = (node.data as any)?.label || 'グループ';
+                    const targetLabel = (target.data as any)?.label || 'グループ';
+                    const confirmed = window.confirm(
+                        `「${draggedLabel}」の全タスクを「${targetLabel}」に移動しますか？\n空になったグループは削除されます。`
+                    );
+                    if (confirmed) {
+                        const tasksToMove = tasks.filter(t => t.group_id === node.id && !t.parent_task_id);
+                        for (const task of tasksToMove) {
+                            onUpdateTask?.(task.id, { group_id: target.id });
+                        }
+                        // 子タスクも一括移動
+                        const childTasks = tasks.filter(t => t.group_id === node.id && t.parent_task_id);
+                        for (const task of childTasks) {
+                            onUpdateTask?.(task.id, { group_id: target.id });
+                        }
+                        onDeleteGroup?.(node.id);
+                    }
+                } else {
+                    // above/below: グループ順序変更
+                    onReorderGroup?.(node.id, target.id, position);
+                }
+                return;
+            }
+
+            // Group → Task: タスクの所属グループの位置にリオーダー
+            if (target.type === 'taskNode') {
+                const targetTask = getTaskById(target.id);
+                if (targetTask && targetTask.group_id !== node.id) {
+                    const reorderPos = position === 'as-child' ? 'below' : position;
+                    onReorderGroup?.(node.id, targetTask.group_id, reorderPos);
+                }
+            }
+        }
+    }, [onUpdateTask, onDeleteGroup, onPromoteTaskToGroup, onReorderTask, onReorderGroup, getTaskById, isDescendant, getDropInfo, clearDropTargetDOM, tasks]);
 
     const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
         markUserAction();
@@ -2343,11 +2478,12 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             </div>
 
             <ReactFlow
-                nodes={nodes}
+                nodes={layoutNodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
                 defaultViewport={defaultViewport}
                 onNodeClick={handleNodeClick}
+                onNodeDragStart={handleNodeDragStart}
                 onNodeDrag={handleNodeDrag}
                 onNodeDragStop={handleNodeDragStop}
                 onPaneClick={handlePaneClick}

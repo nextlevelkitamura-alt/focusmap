@@ -134,3 +134,57 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* ReactFlow: ドラッグ可能なノードにグラブカーソル */
+.react-flow__node[draggable="true"] {
+  cursor: grab;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+/* ReactFlow: ドラッグ中のノード — 浮遊感+掴んでいる感 */
+/* NOTE: transform は使用禁止（ReactFlow の translate と競合する） */
+.react-flow__node.dragging {
+  opacity: 0.9;
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.5)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+  z-index: 1000 !important;
+  cursor: grabbing;
+}
+
+/* ドロップターゲット: as-child（子になる） */
+.react-flow__node.drop-target-child > div {
+  outline: 2px solid rgba(56, 189, 248, 0.6);
+  outline-offset: 2px;
+  background-color: rgba(14, 165, 233, 0.08);
+  border-radius: 8px;
+  transition: outline 0.1s ease, background-color 0.1s ease;
+}
+
+/* ドロップターゲット: above（上に挿入） */
+.react-flow__node.drop-target-above::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgb(96, 165, 250);
+  border-radius: 9999px;
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ドロップターゲット: below（下に挿入） */
+.react-flow__node.drop-target-below::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgb(96, 165, 250);
+  border-radius: 9999px;
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
+  pointer-events: none;
+  z-index: 10;
+}

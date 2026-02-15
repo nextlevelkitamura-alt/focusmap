@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/utils/supabase/client"
 import { useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -13,12 +13,38 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User } from "lucide-react"
+import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check } from "lucide-react"
+import { Space } from "@/types/database"
 
-export function Header() {
+interface HeaderProps {
+    spaces?: Space[]
+    selectedSpaceId?: string | null
+    onSelectSpace?: (id: string | null) => void
+    onCreateSpace?: (title: string) => Promise<Space | null>
+    onUpdateSpace?: (spaceId: string, updates: Partial<Space>) => Promise<void>
+    onDeleteSpace?: (spaceId: string) => Promise<void>
+}
+
+export function Header({
+    spaces = [],
+    selectedSpaceId = null,
+    onSelectSpace,
+    onCreateSpace,
+    onUpdateSpace,
+    onDeleteSpace,
+}: HeaderProps) {
     const router = useRouter()
     const [user, setUser] = useState<any>(null)
     const [supabase] = useState(() => createClient())
+
+    // Space create/rename state
+    const [isCreatingSpace, setIsCreatingSpace] = useState(false)
+    const [newSpaceTitle, setNewSpaceTitle] = useState("")
+    const [renamingSpaceId, setRenamingSpaceId] = useState<string | null>(null)
+    const [renameTitle, setRenameTitle] = useState("")
+    const createInputRef = useRef<HTMLInputElement>(null)
+    const renameInputRef = useRef<HTMLInputElement>(null)
+    const [dropdownOpen, setDropdownOpen] = useState(false)
 
     useEffect(() => {
         const getUser = async () => {
@@ -28,16 +54,44 @@ export function Header() {
         getUser()
     }, [supabase])
 
+    useEffect(() => {
+        if (isCreatingSpace && createInputRef.current) {
+            createInputRef.current.focus()
+        }
+    }, [isCreatingSpace])
+
+    useEffect(() => {
+        if (renamingSpaceId && renameInputRef.current) {
+            renameInputRef.current.focus()
+            renameInputRef.current.select()
+        }
+    }, [renamingSpaceId])
+
     const handleLogout = async () => {
         await supabase.auth.signOut()
         router.refresh()
         router.push("/login")
     }
 
-    const [activeTab, setActiveTab] = useState("dashboard")
+    const handleCreateSubmit = async () => {
+        if (!newSpaceTitle.trim() || !onCreateSpace) return
+        await onCreateSpace(newSpaceTitle.trim())
+        setNewSpaceTitle("")
+        setIsCreatingSpace(false)
+    }
+
+    const handleRenameSubmit = async () => {
+        if (!renameTitle.trim() || !renamingSpaceId || !onUpdateSpace) return
+        await onUpdateSpace(renamingSpaceId, { title: renameTitle.trim() })
+        setRenamingSpaceId(null)
+        setRenameTitle("")
+    }
+
+    const selectedSpace = spaces.find(s => s.id === selectedSpaceId)
+    const displayName = selectedSpaceId === null ? "全体" : (selectedSpace?.title || "Space")
 
     return (
-        <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-50">
+        <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
             {/* Left: Logo & Space Switcher */}
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
@@ -49,49 +103,132 @@ export function Header() {
 
                 <div className="h-6 w-px bg-border mx-2" />
 
-                <DropdownMenu>
+                <DropdownMenu open={dropdownOpen} onOpenChange={(open) => {
+                    setDropdownOpen(open)
+                    if (!open) {
+                        setIsCreatingSpace(false)
+                        setNewSpaceTitle("")
+                        setRenamingSpaceId(null)
+                        setRenameTitle("")
+                    }
+                }}>
                     <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="sm" className="gap-2 font-normal">
-                            株式会社ネクストレベル
+                            {selectedSpaceId === null && <Layers className="h-3.5 w-3.5 text-muted-foreground" />}
+                            {displayName}
                             <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-[200px]">
+                    <DropdownMenuContent align="start" className="w-[220px]">
                         <DropdownMenuLabel>Spaces</DropdownMenuLabel>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem>株式会社ネクストレベル</DropdownMenuItem>
-                        <DropdownMenuItem>Private</DropdownMenuItem>
+
+                        {/* 全体 option */}
+                        <DropdownMenuItem
+                            onClick={() => onSelectSpace?.(null)}
+                            className="gap-2"
+                        >
+                            <Layers className="h-3.5 w-3.5" />
+                            全体
+                            {selectedSpaceId === null && <Check className="h-3.5 w-3.5 ml-auto" />}
+                        </DropdownMenuItem>
+
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem>+ Create Space</DropdownMenuItem>
+
+                        {/* Space list */}
+                        {spaces.map(space => (
+                            renamingSpaceId === space.id ? (
+                                <div key={space.id} className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                        ref={renameInputRef}
+                                        value={renameTitle}
+                                        onChange={(e) => setRenameTitle(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleRenameSubmit()
+                                            if (e.key === 'Escape') { setRenamingSpaceId(null); setRenameTitle("") }
+                                        }}
+                                        onBlur={handleRenameSubmit}
+                                        className="w-full text-sm bg-muted/50 border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                </div>
+                            ) : (
+                                <div key={space.id} className="group flex items-center">
+                                    <DropdownMenuItem
+                                        onClick={() => onSelectSpace?.(space.id)}
+                                        className="flex-1 gap-2"
+                                    >
+                                        {space.title}
+                                        {selectedSpaceId === space.id && <Check className="h-3.5 w-3.5 ml-auto" />}
+                                    </DropdownMenuItem>
+                                    <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                            className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                setRenamingSpaceId(space.id)
+                                                setRenameTitle(space.title)
+                                            }}
+                                        >
+                                            <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                            className="h-5 w-5 flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                if (window.confirm(`スペース「${space.title}」を削除しますか？\n配下のプロジェクト・タスクも全て削除されます。`)) {
+                                                    onDeleteSpace?.(space.id)
+                                                }
+                                            }}
+                                        >
+                                            <Trash2 className="h-3 w-3" />
+                                        </button>
+                                    </div>
+                                </div>
+                            )
+                        ))}
+
+                        <DropdownMenuSeparator />
+
+                        {/* Create Space */}
+                        {isCreatingSpace ? (
+                            <div className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                    ref={createInputRef}
+                                    value={newSpaceTitle}
+                                    onChange={(e) => setNewSpaceTitle(e.target.value)}
+                                    placeholder="スペース名..."
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleCreateSubmit()
+                                        if (e.key === 'Escape') { setIsCreatingSpace(false); setNewSpaceTitle("") }
+                                    }}
+                                    onBlur={() => {
+                                        if (newSpaceTitle.trim()) handleCreateSubmit()
+                                        else { setIsCreatingSpace(false); setNewSpaceTitle("") }
+                                    }}
+                                    className="w-full text-sm bg-muted/50 border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-primary"
+                                />
+                            </div>
+                        ) : (
+                            <DropdownMenuItem onClick={(e) => {
+                                e.preventDefault()
+                                setIsCreatingSpace(true)
+                            }}>
+                                <Plus className="h-3.5 w-3.5 mr-2" />
+                                スペースを追加
+                            </DropdownMenuItem>
+                        )}
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
 
-            {/* Center: Navigation (Moved from MiniSidebar) */}
+            {/* Center: Navigation */}
             <div className="hidden md:flex items-center gap-1 absolute left-1/2 -translate-x-1/2">
                 <Button
-                    variant={activeTab === 'dashboard' ? 'secondary' : 'ghost'}
+                    variant="secondary"
                     size="sm"
                     className="gap-2"
-                    onClick={() => setActiveTab('dashboard')}
                 >
                     Dashboard
-                </Button>
-                <Button
-                    variant={activeTab === 'goals' ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className="gap-2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setActiveTab('goals')}
-                >
-                    Goals
-                </Button>
-                <Button
-                    variant={activeTab === 'documents' ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className="gap-2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setActiveTab('documents')}
-                >
-                    Documents
                 </Button>
             </div>
 

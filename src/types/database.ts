@@ -9,13 +9,16 @@ export type Json =
 export interface Database {
     public: {
         Tables: {
-            goals: {
+            spaces: {
                 Row: {
                     id: string
                     user_id: string
                     title: string
                     description: string | null
                     status: string
+                    default_calendar_id: string | null
+                    icon: string | null
+                    color: string | null
                     created_at: string
                 }
                 Insert: {
@@ -24,6 +27,9 @@ export interface Database {
                     title: string
                     description?: string | null
                     status?: string
+                    default_calendar_id?: string | null
+                    icon?: string | null
+                    color?: string | null
                     created_at?: string
                 }
                 Update: {
@@ -32,6 +38,9 @@ export interface Database {
                     title?: string
                     description?: string | null
                     status?: string
+                    default_calendar_id?: string | null
+                    icon?: string | null
+                    color?: string | null
                     created_at?: string
                 }
             }
@@ -39,7 +48,7 @@ export interface Database {
                 Row: {
                     id: string
                     user_id: string
-                    goal_id: string
+                    space_id: string
                     title: string
                     purpose: string | null
                     category_tag: string | null
@@ -51,7 +60,7 @@ export interface Database {
                 Insert: {
                     id?: string
                     user_id: string
-                    goal_id: string
+                    space_id: string
                     title: string
                     purpose?: string | null
                     category_tag?: string | null
@@ -63,7 +72,7 @@ export interface Database {
                 Update: {
                     id?: string
                     user_id?: string
-                    goal_id?: string
+                    space_id?: string
                     title?: string
                     purpose?: string | null
                     category_tag?: string | null
@@ -112,8 +121,10 @@ export interface Database {
                 Row: {
                     id: string
                     user_id: string
-                    group_id: string
+                    group_id: string | null  // 🔄 Optional (will be removed in Phase 3)
+                    project_id: string | null  // 🆕 For project-level tasks/groups
                     parent_task_id: string | null
+                    is_group: boolean  // 🆕 Group flag (true = group, false = task)
                     title: string
                     status: string
                     priority: number | null
@@ -133,8 +144,10 @@ export interface Database {
                 Insert: {
                     id?: string
                     user_id: string
-                    group_id: string
+                    group_id?: string | null  // 🔄 Optional (will be removed in Phase 3)
+                    project_id?: string | null  // 🆕 For project-level tasks/groups
                     parent_task_id?: string | null
+                    is_group?: boolean  // 🆕 Group flag (default: false)
                     title: string
                     status?: string
                     priority?: number | null
@@ -154,8 +167,10 @@ export interface Database {
                 Update: {
                     id?: string
                     user_id?: string
-                    group_id?: string
+                    group_id?: string | null  // 🔄 Optional (will be removed in Phase 3)
+                    project_id?: string | null  // 🆕 For project-level tasks/groups
                     parent_task_id?: string | null
+                    is_group?: boolean  // 🆕 Group flag
                     title?: string
                     status?: string
                     priority?: number | null
@@ -435,3 +450,7 @@ export type TaskGroupUpdate = Database['public']['Tables']['task_groups']['Updat
 export type Project = Database['public']['Tables']['projects']['Row']
 export type ProjectInsert = Database['public']['Tables']['projects']['Insert']
 export type ProjectUpdate = Database['public']['Tables']['projects']['Update']
+
+export type Space = Database['public']['Tables']['spaces']['Row']
+export type SpaceInsert = Database['public']['Tables']['spaces']['Insert']
+export type SpaceUpdate = Database['public']['Tables']['spaces']['Update']

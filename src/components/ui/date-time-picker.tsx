@@ -187,25 +187,31 @@ export function DateTimePicker({ date, setDate, trigger }: DateTimePickerProps) 
         }
     }, [isOpen, date])
 
+    // ポップアップを閉じた時のみ親に確定値を渡す（閉じ防止）
+    const handleOpenChange = (open: boolean) => {
+        if (!open && tempDate) {
+            setDate(tempDate)
+        }
+        setIsOpen(open)
+    }
+
     const handleDateSelect = (newDate: Date | undefined) => {
         if (!newDate) return
-        
+
         // 既に時間が設定されている場合はその時間を保持、初回はデフォルト時間（09:00）
         const current = tempDate || new Date()
         newDate.setHours(tempDate ? current.getHours() : 9)
         newDate.setMinutes(tempDate ? current.getMinutes() : 0)
-        
+
         setTempDate(newDate)
-        setDate(newDate) // 即座に確定
     }
 
     const handleTimeChange = (type: "hour" | "minute", value: number) => {
         const newDate = tempDate ? new Date(tempDate) : new Date()
         if (type === "hour") newDate.setHours(value)
         else newDate.setMinutes(value)
-        
+
         setTempDate(newDate)
-        setDate(newDate) // リアルタイムで更新
     }
 
     // SSR時は何も表示しない（Hydration Error 回避）
@@ -225,7 +231,7 @@ export function DateTimePicker({ date, setDate, trigger }: DateTimePickerProps) 
     }
 
     return (
-        <Popover open={isOpen} onOpenChange={setIsOpen}>
+        <Popover open={isOpen} onOpenChange={handleOpenChange}>
             <PopoverTrigger asChild>
                 {trigger || (
                     <Button
@@ -261,6 +267,16 @@ export function DateTimePicker({ date, setDate, trigger }: DateTimePickerProps) 
                     {/* RIGHT: TIME WHEEL */}
                     <TimeWheel selectedDate={tempDate} onTimeChange={handleTimeChange} />
                 </div>
+
+                {/* 選択中の日時プレビュー */}
+                {tempDate && (
+                    <div className="px-4 pb-3 pt-1 border-t border-zinc-800/60">
+                        <div className="text-xs text-zinc-400 flex items-center gap-2">
+                            <CalendarIcon className="h-3.5 w-3.5" />
+                            {format(tempDate, "M月d日 HH:mm", { locale: ja })}
+                        </div>
+                    </div>
+                )}
             </PopoverContent>
         </Popover>
     )

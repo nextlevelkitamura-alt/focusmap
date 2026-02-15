@@ -22,24 +22,29 @@ export interface UserCalendar {
   updated_at: string;
 }
 
-/**
- * カレンダーリストの管理用フック
- */
-export function useCalendars() {
-  const [calendars, setCalendars] = useState<UserCalendar[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+// --- Module-level cache (shared across all hook instances) ---
+let cachedCalendars: UserCalendar[] | null = null;
+let cacheTimestamp = 0;
+let inflight: Promise<UserCalendar[]> | null = null;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const listeners = new Set<(calendars: UserCalendar[]) => void>();
 
-  // カレンダーリストを取得
-  const fetchCalendars = useCallback(async (forceSync = false) => {
-    console.log('[useCalendars] Fetching calendars, forceSync:', forceSync);
-    setIsLoading(true);
-    setError(null);
+function notifyListeners(calendars: UserCalendar[]) {
+  listeners.forEach(fn => fn(calendars));
+}
 
+async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]> {
+  // Return cache if fresh and not forced
+  if (!forceSync && cachedCalendars && (Date.now() - cacheTimestamp < CACHE_TTL)) {
+    return cachedCalendars;
+  }
+
+  // Deduplicate in-flight requests
+  if (inflight && !forceSync) return inflight;
+
+  inflight = (async () => {
     try {
       const response = await fetch(`/api/calendars${forceSync ? '?forceSync=true' : ''}`);
-      console.log('[useCalendars] Response status:', response.status);
-
       const contentType = response.headers.get("content-type");
       if (!response.ok) {
         let errorMessage = 'Failed to fetch calendars';
@@ -50,56 +55,86 @@ export function useCalendars() {
           } else {
             errorMessage = await response.text();
           }
-        } catch (e) {
+        } catch {
           // Ignore parsing mismatch
         }
-        console.error('[useCalendars] Error:', errorMessage);
         throw new Error(errorMessage);
       }
 
-      let data = { calendars: [] };
+      let data = { calendars: [] as UserCalendar[] };
       if (contentType && contentType.indexOf("application/json") !== -1) {
         data = await response.json();
       }
-      console.log('[useCalendars] Received calendars:', {
-        count: data.calendars?.length || 0,
-        calendars: data.calendars?.map((c: UserCalendar) => ({ name: c.name, id: c.google_calendar_id, selected: c.selected }))
-      });
-      setCalendars(data.calendars || []);
 
-      // ローカルストレージにも保存
+      const calendars = data.calendars || [];
+      cachedCalendars = calendars;
+      cacheTimestamp = Date.now();
+      notifyListeners(calendars);
+
+      // Save to localStorage
       try {
         localStorage.setItem('calendar-selection', JSON.stringify(
-          data.calendars.reduce((acc: Record<string, boolean>, cal: UserCalendar) => {
+          calendars.reduce((acc: Record<string, boolean>, cal: UserCalendar) => {
             acc[cal.google_calendar_id] = cal.selected;
             return acc;
           }, {})
         ));
-      } catch (e) {
-        // ローカルストレージへの保存は失敗しても無視
-        console.warn('Failed to save calendar selection to localStorage:', e);
+      } catch {
+        // Ignore localStorage errors
       }
+
+      return calendars;
+    } finally {
+      inflight = null;
+    }
+  })();
+
+  return inflight;
+}
+
+/**
+ * カレンダーリストの管理用フック（モジュールレベルキャッシュで高速化）
+ */
+export function useCalendars() {
+  const [calendars, setCalendars] = useState<UserCalendar[]>(cachedCalendars || []);
+  const [isLoading, setIsLoading] = useState(!cachedCalendars);
+  const [error, setError] = useState<Error | null>(null);
+
+  // Subscribe to cache updates from other instances
+  useEffect(() => {
+    const listener = (cals: UserCalendar[]) => setCalendars(cals);
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  }, []);
+
+  // カレンダーリストを取得
+  const fetchCalendars = useCallback(async (forceSync = false) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const result = await fetchCalendarsShared(forceSync);
+      setCalendars(result);
     } catch (err) {
-      const error = err as Error;
-      console.error('[useCalendars] Fetch failed:', error.message);
-      setError(error);
-      throw error;
+      setError(err as Error);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // 初回取得
+  // 初回取得（キャッシュがあれば即座に返る）
   useEffect(() => {
     fetchCalendars();
   }, [fetchCalendars]);
 
   // カレンダーの表示/非表示を切り替え
   const toggleCalendar = useCallback(async (id: string, selected: boolean) => {
-    // Optimistic Update
-    setCalendars(prev => prev.map(cal =>
+    // Optimistic Update (local + cache)
+    const updateFn = (cals: UserCalendar[]) => cals.map(cal =>
       cal.id === id ? { ...cal, selected } : cal
-    ));
+    );
+    setCalendars(updateFn);
+    if (cachedCalendars) cachedCalendars = updateFn(cachedCalendars);
 
     try {
       const response = await fetch(`/api/calendars/${id}`, {
@@ -112,37 +147,30 @@ export function useCalendars() {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to toggle calendar');
       }
-
-      // ローカルストレージを更新
-      try {
-        const stored = JSON.parse(localStorage.getItem('calendar-selection') || '{}');
-        const calendar = calendars.find(c => c.id === id);
-        if (calendar) {
-          stored[calendar.google_calendar_id] = selected;
-          localStorage.setItem('calendar-selection', JSON.stringify(stored));
-        }
-      } catch (e) {
-        console.warn('Failed to update localStorage:', e);
-      }
     } catch (err) {
-      // Rollback
-      setCalendars(prev => prev.map(cal =>
+      // Rollback (local + cache)
+      const rollbackFn = (cals: UserCalendar[]) => cals.map(cal =>
         cal.id === id ? { ...cal, selected: !selected } : cal
-      ));
+      );
+      setCalendars(rollbackFn);
+      if (cachedCalendars) cachedCalendars = rollbackFn(cachedCalendars);
       setError(err as Error);
       throw err;
     }
-  }, [calendars]);
+  }, []);
 
   // 全選択/全解除
   const toggleAll = useCallback(async (selected: boolean) => {
-    // Optimistic Update
-    setCalendars(prev => prev.map(cal => ({ ...cal, selected })));
+    const prevCalendars = cachedCalendars ? [...cachedCalendars] : calendars;
+
+    // Optimistic Update (local + cache)
+    const updateFn = (cals: UserCalendar[]) => cals.map(cal => ({ ...cal, selected }));
+    setCalendars(updateFn);
+    if (cachedCalendars) cachedCalendars = updateFn(cachedCalendars);
 
     try {
-      // 各カレンダーを個別に更新
       await Promise.all(
-        calendars.map(cal =>
+        prevCalendars.map(cal =>
           fetch(`/api/calendars/${cal.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -150,20 +178,9 @@ export function useCalendars() {
           })
         )
       );
-
-      // ローカルストレージを更新
-      try {
-        const stored = calendars.reduce((acc, cal) => {
-          acc[cal.google_calendar_id] = selected;
-          return acc;
-        }, {} as Record<string, boolean>);
-        localStorage.setItem('calendar-selection', JSON.stringify(stored));
-      } catch (e) {
-        console.warn('Failed to update localStorage:', e);
-      }
     } catch (err) {
       // Rollback
-      fetchCalendars();
+      fetchCalendars(true);
       setError(err as Error);
     }
   }, [calendars, fetchCalendars]);

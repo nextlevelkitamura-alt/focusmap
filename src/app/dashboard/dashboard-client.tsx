@@ -4,19 +4,20 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { LeftSidebar } from "@/components/dashboard/left-sidebar"
 import { CenterPane } from "@/components/dashboard/center-pane"
 import { RightSidebar, RightSidebarRef } from "@/components/dashboard/right-sidebar"
-import { Database, Task, TaskGroup, Project } from "@/types/database"
+import { Header } from "@/components/layout/header"
+import { Database, Task, TaskGroup, Project, Space } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Target } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-
-type Goal = Database['public']['Tables']['goals']['Row']
+import { useView } from "@/contexts/ViewContext"
+import { TodayView } from "@/components/today/today-view"
 
 interface DashboardClientProps {
-    initialGoals: Goal[]
+    initialSpaces: Space[]
     initialProjects: Project[]
     initialGroups: TaskGroup[]
     initialTasks: Task[]
@@ -24,19 +25,19 @@ interface DashboardClientProps {
 }
 
 export function DashboardClient({
-    initialGoals,
+    initialSpaces,
     initialProjects,
     initialGroups,
     initialTasks,
     userId
 }: DashboardClientProps) {
     // State
-    const [goals] = useState<Goal[]>(initialGoals)
+    const [spaces, setSpaces] = useState<Space[]>(initialSpaces)
     const [projects, setProjects] = useState<Project[]>(initialProjects)
 
-    // Selection State
-    const [selectedGoalId, setSelectedGoalId] = useState<string | null>(
-        initialGoals.length > 0 ? initialGoals[0].id : null
+    // Selection State — null means "全体" (all spaces)
+    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(
+        initialSpaces.length > 0 ? initialSpaces[0].id : null
     )
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
         initialProjects.length > 0 ? initialProjects[0].id : null
@@ -44,21 +45,23 @@ export function DashboardClient({
 
     // STABLE reference for filtered projects using useMemo
     const filteredProjects = useMemo(() =>
-        projects.filter(p => p.goal_id === selectedGoalId),
-        [projects, selectedGoalId]
+        selectedSpaceId === null
+            ? projects  // "全体" shows all projects
+            : projects.filter(p => p.space_id === selectedSpaceId),
+        [projects, selectedSpaceId]
     )
 
-    // Auto-select first project when goal changes (NOTE: deps are primitives only)
+    // Auto-select first project when space changes (NOTE: deps are primitives only)
     useEffect(() => {
-        if (selectedGoalId) {
-            const projectsInGoal = projects.filter(p => p.goal_id === selectedGoalId)
-            if (projectsInGoal.length > 0 && !projectsInGoal.find(p => p.id === selectedProjectId)) {
-                setSelectedProjectId(projectsInGoal[0].id)
-            } else if (projectsInGoal.length === 0) {
-                setSelectedProjectId(null)
-            }
+        const projectsInSpace = selectedSpaceId === null
+            ? projects
+            : projects.filter(p => p.space_id === selectedSpaceId)
+        if (projectsInSpace.length > 0 && !projectsInSpace.find(p => p.id === selectedProjectId)) {
+            setSelectedProjectId(projectsInSpace[0].id)
+        } else if (projectsInSpace.length === 0) {
+            setSelectedProjectId(null)
         }
-    }, [selectedGoalId]) // ONLY depends on selectedGoalId, not objects
+    }, [selectedSpaceId]) // ONLY depends on selectedSpaceId, not objects
 
     const selectedProject = useMemo(() =>
         projects.find(p => p.id === selectedProjectId),
@@ -91,6 +94,9 @@ export function DashboardClient({
         moveTask,
         updateProjectTitle,
         bulkDelete,
+        reorderTask,
+        reorderGroup,
+        promoteTaskToGroup,
         isLoading,
         undo,
         redo,
@@ -132,15 +138,89 @@ export function DashboardClient({
         await rightSidebarRef.current?.refreshCalendar()
     }, [deleteTask])
 
+    // --- Project CRUD ---
+    const handleCreateProject = useCallback(async (title: string, status: string = 'active', targetSpaceId?: string) => {
+        const spaceId = targetSpaceId || selectedSpaceId || (spaces.length > 0 ? spaces[0].id : null)
+        if (!spaceId) return null
+
+        const res = await fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ space_id: spaceId, title, status }),
+        })
+        if (!res.ok) return null
+        const newProject: Project = await res.json()
+        setProjects(prev => [newProject, ...prev])
+        setSelectedProjectId(newProject.id)
+        return newProject
+    }, [selectedSpaceId, spaces])
+
+    const handleUpdateProject = useCallback(async (projectId: string, updates: Partial<Project>) => {
+        // Optimistic update
+        setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...updates } : p))
+        await fetch(`/api/projects/${projectId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+        })
+    }, [])
+
+    const handleDeleteProject = useCallback(async (projectId: string) => {
+        // Optimistic update
+        setProjects(prev => prev.filter(p => p.id !== projectId))
+        if (selectedProjectId === projectId) {
+            const remaining = projects.filter(p => p.id !== projectId)
+            setSelectedProjectId(remaining.length > 0 ? remaining[0].id : null)
+        }
+        await fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
+    }, [selectedProjectId, projects])
+
+    // --- Space CRUD ---
+    const handleCreateSpace = useCallback(async (title: string) => {
+        const res = await fetch('/api/spaces', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title }),
+        })
+        if (!res.ok) return null
+        const newSpace: Space = await res.json()
+        setSpaces(prev => [newSpace, ...prev])
+        setSelectedSpaceId(newSpace.id)
+        return newSpace
+    }, [])
+
+    const handleUpdateSpace = useCallback(async (spaceId: string, updates: Partial<Space>) => {
+        setSpaces(prev => prev.map(s => s.id === spaceId ? { ...s, ...updates } : s))
+        await fetch(`/api/spaces/${spaceId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+        })
+    }, [])
+
+    const handleDeleteSpace = useCallback(async (spaceId: string) => {
+        setSpaces(prev => prev.filter(s => s.id !== spaceId))
+        setProjects(prev => prev.filter(p => p.space_id !== spaceId))
+        if (selectedSpaceId === spaceId) {
+            setSelectedSpaceId(null)
+        }
+        await fetch(`/api/spaces/${spaceId}`, { method: 'DELETE' })
+    }, [selectedSpaceId])
+
+    // --- View State ---
+    const { activeView } = useView()
+
+    // Merge all tasks: current project (latest state) + other projects (initial state)
+    const allTasksMerged = useMemo(() => {
+        const currentMap = new Map(currentTasks.map(t => [t.id, t]))
+        return initialTasks.map(t => currentMap.get(t.id) || t)
+    }, [initialTasks, currentTasks])
+
     // --- Undo/Redo Keyboard Listener ---
     const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            // テキスト編集中はブラウザ標準のundo/redoに任せる
-            const el = document.activeElement
-            if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA') return
-
             if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
                 e.preventDefault()
                 if (e.shiftKey) {
@@ -235,7 +315,17 @@ export function DashboardClient({
 
     return (
         <DragProvider>
-            <TimerProvider tasks={currentTasks} onUpdateTask={updateTask}>
+            <TimerProvider tasks={allTasksMerged} onUpdateTask={updateTask}>
+                {/* Header with Space Switcher */}
+                <Header
+                    spaces={spaces}
+                    selectedSpaceId={selectedSpaceId}
+                    onSelectSpace={setSelectedSpaceId}
+                    onCreateSpace={handleCreateSpace}
+                    onUpdateSpace={handleUpdateSpace}
+                    onDeleteSpace={handleDeleteSpace}
+                />
+
                 {/* Undo/Redo Toast */}
                 {undoToast && (
                     <CalendarToast
@@ -245,7 +335,33 @@ export function DashboardClient({
                         onClose={() => setUndoToast(null)}
                     />
                 )}
-                <div className="flex h-full w-full relative gap-0">
+                {/* === Mobile: Today View === */}
+                {activeView === 'today' && (
+                    <div className="flex-1 md:hidden overflow-hidden">
+                        <TodayView
+                            allTasks={allTasksMerged}
+                            allGroups={initialGroups}
+                            onUpdateTask={updateTask}
+                        />
+                    </div>
+                )}
+
+                {/* === Mobile: Habits View (placeholder) === */}
+                {activeView === 'habits' && (
+                    <div className="flex-1 md:hidden overflow-hidden flex items-center justify-center">
+                        <div className="text-center text-muted-foreground">
+                            <Target className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">習慣ビューは準備中です</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* === Desktop: Always 3-pane. Mobile: Only for map view === */}
+                <div className={cn(
+                    "flex-1 w-full relative gap-0 overflow-hidden",
+                    "md:flex",
+                    activeView === 'map' ? "flex" : "hidden"
+                )}>
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(
                     "absolute top-4 z-50 hidden md:flex transition-all duration-300 ease-in-out",
@@ -274,12 +390,14 @@ export function DashboardClient({
                     style={isLeftSidebarCollapsed ? {} : { minWidth: '13rem' }}
                 >
                     <LeftSidebar
-                        goals={goals}
-                        selectedGoalId={selectedGoalId}
-                        onSelectGoal={setSelectedGoalId}
+                        spaces={spaces}
+                        selectedSpaceId={selectedSpaceId}
                         projects={filteredProjects}
                         selectedProjectId={selectedProjectId}
                         onSelectProject={setSelectedProjectId}
+                        onCreateProject={handleCreateProject}
+                        onUpdateProject={handleUpdateProject}
+                        onDeleteProject={handleDeleteProject}
                     />
                 </div>
 
@@ -299,6 +417,9 @@ export function DashboardClient({
                         onDeleteTask={handleDeleteTask}
                         onMoveTask={moveTask}
                         onBulkDelete={bulkDelete}
+                        onReorderTask={reorderTask}
+                        onReorderGroup={reorderGroup}
+                        onPromoteTaskToGroup={promoteTaskToGroup}
                         onRefreshCalendar={handleRefreshCalendar}
                     />
                 </div>

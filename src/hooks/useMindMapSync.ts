@@ -1,15 +1,16 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Task, TaskGroup } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
+import { getGroups, isGroup } from '@/lib/task-helpers'
 
 interface UseMindMapSyncProps {
     projectId: string | null
     userId: string
-    initialGroups: TaskGroup[]
+    initialGroups: TaskGroup[]  // 🔄 Phase 2では互換性のため残す
     initialTasks?: Task[]
 }
 
@@ -26,6 +27,9 @@ interface UseMindMapSyncReturn {
     moveTask: (taskId: string, newGroupId: string) => Promise<void>
     updateProjectTitle: (projectId: string, title: string) => Promise<void>
     bulkDelete: (groupIds: string[], taskIds: string[]) => Promise<void>
+    reorderTask: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
+    reorderGroup: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
+    promoteTaskToGroup: (taskId: string) => Promise<void>
     isLoading: boolean
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
@@ -43,13 +47,54 @@ export function useMindMapSync({
 }: UseMindMapSyncProps): UseMindMapSyncReturn {
     const supabase = createClient()
     const { cancelNotifications } = useNotificationScheduler()
-    const [groups, setGroups] = useState<TaskGroup[]>(initialGroups)
-    const [tasks, setTasks] = useState<Task[]>(initialTasks)
+
+    // 🆕 統合されたステート管理（グループとタスクを1つのリストに）
+    const [allTasks, setAllTasks] = useState<Task[]>([
+        ...initialGroups.map(g => ({ ...g, is_group: true, group_id: null, project_id: g.project_id } as Task)),
+        ...initialTasks
+    ])
     const [isLoading, setIsLoading] = useState(false)
     const { pushAction, undo, redo, canUndo, canRedo, clear } = useUndoRedo()
 
-    useEffect(() => { setGroups(initialGroups) }, [initialGroups])
-    useEffect(() => { setTasks(initialTasks) }, [initialTasks])
+    // 🆕 計算プロパティ: グループとタスクを分離（早期に宣言して依存関係を解決）
+    const groups = useMemo(() => {
+        return allTasks
+            .filter(t => t.is_group === true)
+            .sort((a, b) => a.order_index - b.order_index) as TaskGroup[]
+    }, [allTasks])
+
+    const tasks = useMemo(() => {
+        return allTasks
+            .filter(t => t.is_group !== true)
+            .sort((a, b) => a.order_index - b.order_index)
+    }, [allTasks])
+
+    // setGroups と setTasks のエイリアス（後方互換性のため）
+    const setGroups = useCallback((updater: TaskGroup[] | ((prev: TaskGroup[]) => TaskGroup[])) => {
+        setAllTasks(prev => {
+            const currentGroups = prev.filter(t => t.is_group === true) as TaskGroup[]
+            const currentTasks = prev.filter(t => t.is_group !== true)
+            const newGroups = typeof updater === 'function' ? updater(currentGroups) : updater
+            return [...(newGroups as Task[]), ...currentTasks]
+        })
+    }, [])
+
+    const setTasks = useCallback((updater: Task[] | ((prev: Task[]) => Task[])) => {
+        setAllTasks(prev => {
+            const currentGroups = prev.filter(t => t.is_group === true)
+            const currentTasks = prev.filter(t => t.is_group !== true)
+            const newTasks = typeof updater === 'function' ? updater(currentTasks) : updater
+            return [...currentGroups, ...newTasks]
+        })
+    }, [])
+
+    // 🆕 初期データの更新時に統合
+    useEffect(() => {
+        setAllTasks([
+            ...initialGroups.map(g => ({ ...g, is_group: true, group_id: null, project_id: g.project_id } as Task)),
+            ...initialTasks
+        ])
+    }, [initialGroups, initialTasks])
 
     // プロジェクト切替時にundo/redoスタックをクリア
     useEffect(() => { clear() }, [projectId, clear])
@@ -511,6 +556,255 @@ export function useMindMapSync({
         return tasks.filter(t => t.group_id === groupId && !t.parent_task_id).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     }, [tasks])
 
+    // --- Reorder Operations ---
+    const reorderTask = useCallback(async (taskId: string, referenceTaskId: string, position: 'above' | 'below') => {
+        const task = tasks.find(t => t.id === taskId)
+        const referenceTask = tasks.find(t => t.id === referenceTaskId)
+        if (!task || !referenceTask) return
+
+        // Before state for undo
+        const beforeGroupId = task.group_id
+        const beforeParentId = task.parent_task_id
+        const beforeOrderIndex = task.order_index
+
+        // Siblings at drop target (excluding the dragged task)
+        const siblings = tasks
+            .filter(t =>
+                t.group_id === referenceTask.group_id &&
+                t.parent_task_id === referenceTask.parent_task_id &&
+                t.id !== taskId
+            )
+            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+
+        const refIndex = siblings.findIndex(t => t.id === referenceTaskId)
+        const insertAt = position === 'above' ? refIndex : refIndex + 1
+
+        const reordered = [
+            ...siblings.slice(0, insertAt),
+            task,
+            ...siblings.slice(insertAt),
+        ]
+
+        // Build updates
+        const updates: { id: string; order_index: number; group_id?: string; parent_task_id?: string | null }[] = []
+        reordered.forEach((t, i) => {
+            if (t.id === taskId) {
+                updates.push({
+                    id: t.id,
+                    order_index: i,
+                    group_id: referenceTask.group_id,
+                    parent_task_id: referenceTask.parent_task_id,
+                })
+            } else if ((t.order_index ?? 0) !== i) {
+                updates.push({ id: t.id, order_index: i })
+            }
+        })
+
+        // Optimistic update
+        setTasks(prev => {
+            let updated = [...prev]
+            for (const u of updates) {
+                updated = updated.map(t => t.id === u.id ? { ...t, ...u } : t)
+            }
+            return updated
+        })
+
+        pushAction({
+            description: `「${task.title}」を並び替え`,
+            undo: async () => {
+                // Restore original position
+                setTasks(prev => prev.map(t => {
+                    if (t.id === taskId) {
+                        return { ...t, group_id: beforeGroupId, parent_task_id: beforeParentId, order_index: beforeOrderIndex }
+                    }
+                    const original = tasks.find(o => o.id === t.id)
+                    return original ? { ...t, order_index: original.order_index } : t
+                }))
+                await supabase.from('tasks').update({
+                    group_id: beforeGroupId,
+                    parent_task_id: beforeParentId,
+                    order_index: beforeOrderIndex,
+                }).eq('id', taskId)
+                // Restore sibling order_index
+                for (const sib of siblings) {
+                    const original = tasks.find(o => o.id === sib.id)
+                    if (original && original.order_index !== sib.order_index) {
+                        await supabase.from('tasks').update({ order_index: original.order_index }).eq('id', sib.id)
+                    }
+                }
+            },
+            redo: async () => {
+                setTasks(prev => {
+                    let updated = [...prev]
+                    for (const u of updates) {
+                        updated = updated.map(t => t.id === u.id ? { ...t, ...u } : t)
+                    }
+                    return updated
+                })
+                for (const u of updates) {
+                    const { id, ...rest } = u
+                    await supabase.from('tasks').update(rest).eq('id', id)
+                }
+            },
+        })
+
+        // DB sync
+        try {
+            for (const u of updates) {
+                const { id, ...rest } = u
+                await supabase.from('tasks').update(rest).eq('id', id)
+            }
+        } catch (e) {
+            console.error('[Sync] reorderTask failed:', e)
+        }
+    }, [supabase, tasks, pushAction])
+
+    const reorderGroup = useCallback(async (groupId: string, referenceGroupId: string, position: 'above' | 'below') => {
+        const movingGroup = groups.find(g => g.id === groupId)
+        if (!movingGroup) return
+
+        const siblings = groups
+            .filter(g => g.id !== groupId)
+            .sort((a, b) => a.order_index - b.order_index)
+
+        const refIndex = siblings.findIndex(g => g.id === referenceGroupId)
+        const insertAt = position === 'above' ? refIndex : refIndex + 1
+
+        const reordered = [
+            ...siblings.slice(0, insertAt),
+            movingGroup,
+            ...siblings.slice(insertAt),
+        ]
+
+        // Build updates
+        const updates: { id: string; order_index: number }[] = []
+        reordered.forEach((g, i) => {
+            if (g.order_index !== i) {
+                updates.push({ id: g.id, order_index: i })
+            }
+        })
+
+        // Before state for undo
+        const beforeOrders = groups.map(g => ({ id: g.id, order_index: g.order_index }))
+
+        // Optimistic update
+        setGroups(prev => {
+            let updated = [...prev]
+            for (const u of updates) {
+                updated = updated.map(g => g.id === u.id ? { ...g, order_index: u.order_index } : g)
+            }
+            return updated.sort((a, b) => a.order_index - b.order_index)
+        })
+
+        pushAction({
+            description: `「${movingGroup.title}」グループを並び替え`,
+            undo: async () => {
+                setGroups(prev => {
+                    let updated = [...prev]
+                    for (const bo of beforeOrders) {
+                        updated = updated.map(g => g.id === bo.id ? { ...g, order_index: bo.order_index } : g)
+                    }
+                    return updated.sort((a, b) => a.order_index - b.order_index)
+                })
+                for (const bo of beforeOrders) {
+                    await supabase.from('task_groups').update({ order_index: bo.order_index }).eq('id', bo.id)
+                }
+            },
+            redo: async () => {
+                setGroups(prev => {
+                    let updated = [...prev]
+                    for (const u of updates) {
+                        updated = updated.map(g => g.id === u.id ? { ...g, order_index: u.order_index } : g)
+                    }
+                    return updated.sort((a, b) => a.order_index - b.order_index)
+                })
+                for (const u of updates) {
+                    await supabase.from('task_groups').update({ order_index: u.order_index }).eq('id', u.id)
+                }
+            },
+        })
+
+        // DB sync
+        try {
+            for (const u of updates) {
+                await supabase.from('task_groups').update({ order_index: u.order_index }).eq('id', u.id)
+            }
+        } catch (e) {
+            console.error('[Sync] reorderGroup failed:', e)
+        }
+    }, [supabase, groups, pushAction])
+
+    // タスクをプロジェクトノードにドロップ → 新グループ作成 + タスク移動（1 undo で戻る）
+    const promoteTaskToGroup = useCallback(async (taskId: string) => {
+        const task = tasks.find(t => t.id === taskId)
+        if (!task || !projectId) return
+
+        const beforeGroupId = task.group_id
+        const beforeParentId = task.parent_task_id
+        const childTasks = tasks.filter(t => t.group_id === task.group_id && t.parent_task_id === taskId)
+        const childBefore = childTasks.map(c => ({ id: c.id, group_id: c.group_id }))
+
+        try {
+            const maxOrder = groups.length > 0 ? Math.max(...groups.map(g => g.order_index)) + 1 : 0
+            const { data: newGroup, error } = await supabase.from('task_groups').insert({
+                user_id: userId,
+                project_id: projectId,
+                title: task.title,
+                order_index: maxOrder,
+            }).select().single()
+
+            if (error || !newGroup) throw error || new Error('Group creation failed')
+
+            // Optimistic update
+            setGroups(prev => [...prev, newGroup].sort((a, b) => a.order_index - b.order_index))
+            setTasks(prev => prev.map(t => {
+                if (t.id === taskId) return { ...t, group_id: newGroup.id, parent_task_id: null }
+                if (childTasks.some(c => c.id === t.id)) return { ...t, group_id: newGroup.id }
+                return t
+            }))
+
+            // DB sync
+            await supabase.from('tasks').update({ group_id: newGroup.id, parent_task_id: null }).eq('id', taskId)
+            for (const child of childTasks) {
+                await supabase.from('tasks').update({ group_id: newGroup.id }).eq('id', child.id)
+            }
+
+            pushAction({
+                description: `「${task.title}」をグループに昇格`,
+                undo: async () => {
+                    // タスクを元に戻す
+                    setTasks(prev => prev.map(t => {
+                        if (t.id === taskId) return { ...t, group_id: beforeGroupId, parent_task_id: beforeParentId }
+                        const cb = childBefore.find(c => c.id === t.id)
+                        if (cb) return { ...t, group_id: cb.group_id }
+                        return t
+                    }))
+                    setGroups(prev => prev.filter(g => g.id !== newGroup.id))
+                    await supabase.from('tasks').update({ group_id: beforeGroupId, parent_task_id: beforeParentId }).eq('id', taskId)
+                    for (const cb of childBefore) {
+                        await supabase.from('tasks').update({ group_id: cb.group_id }).eq('id', cb.id)
+                    }
+                    await supabase.from('task_groups').delete().eq('id', newGroup.id)
+                },
+                redo: async () => {
+                    setGroups(prev => [...prev, newGroup].sort((a, b) => a.order_index - b.order_index))
+                    setTasks(prev => prev.map(t => {
+                        if (t.id === taskId) return { ...t, group_id: newGroup.id, parent_task_id: null }
+                        if (childTasks.some(c => c.id === t.id)) return { ...t, group_id: newGroup.id }
+                        return t
+                    }))
+                    await supabase.from('task_groups').upsert(newGroup)
+                    await supabase.from('tasks').update({ group_id: newGroup.id, parent_task_id: null }).eq('id', taskId)
+                    for (const child of childTasks) {
+                        await supabase.from('tasks').update({ group_id: newGroup.id }).eq('id', child.id)
+                    }
+                },
+            })
+        } catch (e) {
+            console.error('[Sync] promoteTaskToGroup failed:', e)
+        }
+    }, [projectId, userId, groups, tasks, supabase, pushAction])
+
     const updateProjectTitle = useCallback(async (projectId: string, title: string) => {
         try {
             await supabase.from('projects').update({ title }).eq('id', projectId)
@@ -532,6 +826,9 @@ export function useMindMapSync({
         moveTask,
         updateProjectTitle,
         bulkDelete,
+        reorderTask,
+        reorderGroup,
+        promoteTaskToGroup,
         isLoading,
         getChildTasks,
         getParentTasks,
