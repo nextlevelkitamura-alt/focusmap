@@ -11,6 +11,44 @@
 
 ---
 
+## 開発時の参照先と注意点
+
+### カレンダー連携（修正頻度高）
+
+**データフロー**: DB → useMindMapSync → mind-map.tsx(TaskNode data) → TaskCalendarSelect / DateTimePicker → useTaskCalendarSync → API
+
+| レイヤー | ファイル | 注意点 |
+|---|---|---|
+| DB スキーマ | `src/types/database.ts` | `tasks.calendar_id`（`google_calendar_id`ではない） |
+| 型定義（マインドマップ） | `src/components/dashboard/mind-map.tsx` 内 `parsedTasks` | JSON.parse時の型にcalendar_idを含めること |
+| データ同期 | `src/hooks/useMindMapSync.ts` | updateTaskはoptimistic update + Supabase直接更新 |
+| カレンダー同期 | `src/hooks/useTaskCalendarSync.ts` | `scheduled_at` + `estimated_time` + `calendar_id` の3つが揃った時のみ同期発火 |
+| 同期API | `src/app/api/calendar/sync-task/route.ts` | POST(新規)/PATCH(更新)/DELETE(削除) |
+| カレンダーリスト | `src/hooks/useCalendars.ts` → `src/app/api/calendars/route.ts` | `user_calendars.google_calendar_id` がカレンダー識別子 |
+| UI: カレンダー選択 | `src/components/tasks/task-calendar-select.tsx` | valueは`google_calendar_id`形式（メールアドレス等） |
+| UI: 日時選択 | `src/components/ui/date-time-picker.tsx` | propsは `date` + `setDate`（`value`/`onChange`ではない） |
+
+### フィールド名の対応表
+
+| 場所 | フィールド名 | 値の例 |
+|---|---|---|
+| `tasks` テーブル | `calendar_id` | `"nextlevel.kitamura@gmail.com"` |
+| `user_calendars` テーブル | `google_calendar_id` | `"nextlevel.kitamura@gmail.com"` |
+| `task_groups` テーブル | ※calendar_idなし | — |
+| `calendar_events` テーブル | `calendar_id` | `"nextlevel.kitamura@gmail.com"` |
+
+### マインドマップ（ReactFlow）
+
+| ファイル | 役割 |
+|---|---|
+| `src/components/dashboard/mind-map.tsx` | ノード定義(ProjectNode/GroupNode/TaskNode) + レイアウト計算 |
+| `src/components/dashboard/center-pane.tsx` | マインドマップ + タスクリスト表示、useTaskCalendarSync使用箇所 |
+| `src/hooks/useMindMapSync.ts` | DB同期（CRUD操作） |
+
+**注意**: ReactFlowのnodeTypesはコンポーネント外で定義すること（再レンダリング防止）
+
+---
+
 ## 現在のフェーズ: Phase 1 - 開発中
 
 ## 機能一覧
@@ -79,6 +117,11 @@
 ---
 
 ## 完了履歴
+- 2026-02-15: **マインドマップメニューのカレンダー・日時設定修正** 完了
+  - calendar_idフィールド名の不一致修正（google_calendar_id → calendar_id）
+  - DateTimePickerのprops不一致修正（value/onChange → date/setDate）
+  - parsedTasks型にcalendar_id追加
+  - ROADMAP.mdに開発時の参照先と注意点を追加
 - 2026-02-15: **カレンダーイベント編集UI** 完了
   - 直接モーダル方式・楽観的UI・タスク連携改善
   - カレンダー二重同期問題修正（useTaskCalendarSync 一元管理）

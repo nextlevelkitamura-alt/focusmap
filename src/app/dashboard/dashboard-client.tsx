@@ -8,6 +8,7 @@ import { Database, Task, TaskGroup, Project } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
+import { CalendarToast } from "@/components/calendar/calendar-toast"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -89,7 +90,12 @@ export function DashboardClient({
         deleteTask,
         moveTask,
         updateProjectTitle,
-        isLoading
+        bulkDelete,
+        isLoading,
+        undo,
+        redo,
+        canUndo,
+        canRedo,
     } = useMindMapSync({
         projectId: selectedProjectId,
         userId,
@@ -99,7 +105,7 @@ export function DashboardClient({
 
     // STABLE handlers using useCallback
     const handleCreateGroup = useCallback(async (title: string) => {
-        await createGroup(title)
+        return await createGroup(title)
     }, [createGroup])
 
     const handleUpdateProjectTitle = useCallback(async (projectId: string, newTitle: string) => {
@@ -126,9 +132,37 @@ export function DashboardClient({
         await rightSidebarRef.current?.refreshCalendar()
     }, [deleteTask])
 
+    // --- Undo/Redo Keyboard Listener ---
+    const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
+
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            // テキスト編集中はブラウザ標準のundo/redoに任せる
+            const el = document.activeElement
+            if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA') return
+
+            if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+                e.preventDefault()
+                if (e.shiftKey) {
+                    // Cmd+Shift+Z = Redo
+                    redo().then(desc => {
+                        if (desc) setUndoToast({ type: 'info', message: `やり直し: ${desc}` })
+                    })
+                } else {
+                    // Cmd+Z = Undo
+                    undo().then(desc => {
+                        if (desc) setUndoToast({ type: 'success', message: `元に戻す: ${desc}` })
+                    })
+                }
+            }
+        }
+        document.addEventListener('keydown', handler)
+        return () => document.removeEventListener('keydown', handler)
+    }, [undo, redo])
+
     // Sidebar State
     const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
-    const [rightSidebarWidth, setRightSidebarWidth] = useState(360)
+    const [rightSidebarWidth, setRightSidebarWidth] = useState(320)
     const isDraggingRightRef = useRef(false)
     const dragStartXRef = useRef(0)
     const dragStartWidthRightRef = useRef(0)
@@ -202,11 +236,20 @@ export function DashboardClient({
     return (
         <DragProvider>
             <TimerProvider tasks={currentTasks} onUpdateTask={updateTask}>
+                {/* Undo/Redo Toast */}
+                {undoToast && (
+                    <CalendarToast
+                        type={undoToast.type}
+                        message={undoToast.message}
+                        duration={2000}
+                        onClose={() => setUndoToast(null)}
+                    />
+                )}
                 <div className="flex h-full w-full relative gap-0">
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(
                     "absolute top-4 z-50 hidden md:flex transition-all duration-300 ease-in-out",
-                    isLeftSidebarCollapsed ? "left-4" : "left-[272px]"
+                    isLeftSidebarCollapsed ? "left-4" : "left-[220px]"
                 )}>
                     <Button
                         variant="ghost"
@@ -226,9 +269,9 @@ export function DashboardClient({
                 <div
                     className={cn(
                         "hidden md:flex flex-none overflow-hidden h-full transition-all duration-300 ease-in-out",
-                        isLeftSidebarCollapsed ? "w-0 opacity-0" : "w-64 opacity-100"
+                        isLeftSidebarCollapsed ? "w-0 opacity-0" : "w-52 opacity-100"
                     )}
-                    style={isLeftSidebarCollapsed ? {} : { minWidth: '16rem' }}
+                    style={isLeftSidebarCollapsed ? {} : { minWidth: '13rem' }}
                 >
                     <LeftSidebar
                         goals={goals}
@@ -255,13 +298,14 @@ export function DashboardClient({
                         onUpdateTask={updateTask}
                         onDeleteTask={handleDeleteTask}
                         onMoveTask={moveTask}
+                        onBulkDelete={bulkDelete}
                         onRefreshCalendar={handleRefreshCalendar}
                     />
                 </div>
 
                 {/* Right Resize Handle */}
                 <div
-                    className="hidden lg:flex w-1 h-full bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-none items-center justify-center group"
+                    className="w-1 h-full bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-none flex items-center justify-center group"
                     onMouseDown={handleRightMouseDown}
                     onTouchStart={handleRightTouchStart}
                 >
@@ -270,7 +314,7 @@ export function DashboardClient({
 
                 {/* Pane 3: Right Sidebar (Calendar) */}
                 <div
-                    className="hidden lg:block flex-none overflow-hidden h-full"
+                    className="flex-none overflow-hidden h-full"
                     style={{ width: rightSidebarWidth }}
                 >
                     <RightSidebar ref={rightSidebarRef} onUpdateTask={updateTask} />

@@ -21,7 +21,7 @@ export function TaskCalendarSelect({
     className
 }: TaskCalendarSelectProps) {
     const [open, setOpen] = useState(false)
-    const { calendars, isLoading } = useCalendars()
+    const { calendars, isLoading, error } = useCalendars()
 
     // Find selected calendar by google_calendar_id
     const selectedCalendar = useMemo(() => {
@@ -49,6 +49,18 @@ export function TaskCalendarSelect({
             <Button variant="ghost" size="sm" disabled className={cn("h-6 text-xs gap-1", className)}>
                 <span className="w-2 h-2 rounded-full bg-muted animate-pulse" />
                 <span className="text-muted-foreground">読込中...</span>
+            </Button>
+        )
+    }
+
+    // Show error state or empty state
+    if (error || calendars.length === 0) {
+        return (
+            <Button variant="ghost" size="sm" disabled className={cn("h-6 text-xs gap-1", className)}>
+                <CalendarIcon className="w-3.5 h-3.5 shrink-0 opacity-50" />
+                <span className="text-muted-foreground truncate">
+                    {error ? 'カレンダー連携が必要です' : 'カレンダーがありません'}
+                </span>
             </Button>
         )
     }

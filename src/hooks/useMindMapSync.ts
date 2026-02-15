@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Task, TaskGroup } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
+import { useUndoRedo } from '@/hooks/useUndoRedo'
 
 interface UseMindMapSyncProps {
     projectId: string | null
@@ -24,10 +25,14 @@ interface UseMindMapSyncReturn {
     deleteTask: (taskId: string) => Promise<void>
     moveTask: (taskId: string, newGroupId: string) => Promise<void>
     updateProjectTitle: (projectId: string, title: string) => Promise<void>
+    bulkDelete: (groupIds: string[], taskIds: string[]) => Promise<void>
     isLoading: boolean
-    // Helper functions for parent-child relationships
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
+    undo: () => Promise<string | null>
+    redo: () => Promise<string | null>
+    canUndo: () => boolean
+    canRedo: () => boolean
 }
 
 export function useMindMapSync({
@@ -41,23 +46,16 @@ export function useMindMapSync({
     const [groups, setGroups] = useState<TaskGroup[]>(initialGroups)
     const [tasks, setTasks] = useState<Task[]>(initialTasks)
     const [isLoading, setIsLoading] = useState(false)
+    const { pushAction, undo, redo, canUndo, canRedo, clear } = useUndoRedo()
 
-    // Keep local state in sync with server-provided initial data
-    // (These inputs are stable in DashboardClient via useMemo, so this won't loop.)
     useEffect(() => { setGroups(initialGroups) }, [initialGroups])
     useEffect(() => { setTasks(initialTasks) }, [initialTasks])
 
+    // プロジェクト切替時にundo/redoスタックをクリア
+    useEffect(() => { clear() }, [projectId, clear])
+
     // カレンダー同期は useTaskCalendarSync フック（center-pane.tsx）に一元化
     // updateTask では DB 更新のみ行い、props 変更で useTaskCalendarSync が検知して同期する
-
-    // TEMPORARILY DISABLED REALTIME TO PREVENT CRASH
-    // TODO: Re-enable with proper error handling once the root cause is identified
-    /*
-    useEffect(() => {
-        if (!projectId || !userId) return
-        // ... realtime subscription code ...
-    }, [projectId, userId, supabase])
-    */
 
     // --- Group Operations ---
     const createGroup = useCallback(async (title: string) => {
@@ -73,7 +71,20 @@ export function useMindMapSync({
             }).select().single()
 
             if (error) throw error
-            if (data) setGroups(prev => [...prev, data].sort((a, b) => a.order_index - b.order_index))
+            if (data) {
+                setGroups(prev => [...prev, data].sort((a, b) => a.order_index - b.order_index))
+                pushAction({
+                    description: `「${title}」グループを作成`,
+                    undo: async () => {
+                        setGroups(prev => prev.filter(g => g.id !== data.id))
+                        await supabase.from('task_groups').delete().eq('id', data.id)
+                    },
+                    redo: async () => {
+                        setGroups(prev => [...prev, data].sort((a, b) => a.order_index - b.order_index))
+                        await supabase.from('task_groups').upsert(data)
+                    },
+                })
+            }
             return data
         } catch (e) {
             console.error('[Sync] createGroup failed:', e)
@@ -81,48 +92,101 @@ export function useMindMapSync({
         } finally {
             setIsLoading(false)
         }
-    }, [projectId, userId, groups, supabase])
+    }, [projectId, userId, groups, supabase, pushAction])
 
     const updateGroupTitle = useCallback(async (groupId: string, title: string) => {
+        const oldTitle = groups.find(g => g.id === groupId)?.title ?? ''
         setGroups(prev => prev.map(g => g.id === groupId ? { ...g, title } : g))
+
+        pushAction({
+            description: `「${oldTitle}」の名前変更`,
+            undo: async () => {
+                setGroups(prev => prev.map(g => g.id === groupId ? { ...g, title: oldTitle } : g))
+                await supabase.from('task_groups').update({ title: oldTitle }).eq('id', groupId)
+            },
+            redo: async () => {
+                setGroups(prev => prev.map(g => g.id === groupId ? { ...g, title } : g))
+                await supabase.from('task_groups').update({ title }).eq('id', groupId)
+            },
+        })
+
         try {
             await supabase.from('task_groups').update({ title }).eq('id', groupId)
         } catch (e) {
             console.error('[Sync] updateGroupTitle failed:', e)
         }
-    }, [supabase])
+    }, [supabase, groups, pushAction])
 
     const updateGroup = useCallback(async (groupId: string, updates: Partial<TaskGroup>) => {
+        const beforeGroup = groups.find(g => g.id === groupId)
+        const beforeValues: Partial<TaskGroup> = {}
+        for (const key of Object.keys(updates) as (keyof TaskGroup)[]) {
+            if (beforeGroup) (beforeValues as any)[key] = beforeGroup[key]
+        }
+
         setGroups(prev => prev.map(g => g.id === groupId ? { ...g, ...updates } : g))
+
+        pushAction({
+            description: `グループ設定を変更`,
+            undo: async () => {
+                setGroups(prev => prev.map(g => g.id === groupId ? { ...g, ...beforeValues } : g))
+                await supabase.from('task_groups').update(beforeValues).eq('id', groupId)
+            },
+            redo: async () => {
+                setGroups(prev => prev.map(g => g.id === groupId ? { ...g, ...updates } : g))
+                await supabase.from('task_groups').update(updates).eq('id', groupId)
+            },
+        })
+
         try {
             await supabase.from('task_groups').update(updates).eq('id', groupId)
         } catch (e) {
             console.error('[Sync] updateGroup failed:', e)
         }
-    }, [supabase])
+    }, [supabase, groups, pushAction])
 
     const deleteGroup = useCallback(async (groupId: string) => {
+        const capturedGroup = groups.find(g => g.id === groupId)
+        const capturedTasks = tasks.filter(t => t.group_id === groupId)
+
         setGroups(prev => prev.filter(g => g.id !== groupId))
         setTasks(prev => prev.filter(t => t.group_id !== groupId))
+
+        if (capturedGroup) {
+            pushAction({
+                description: `「${capturedGroup.title}」グループを削除`,
+                undo: async () => {
+                    setGroups(prev => [...prev, capturedGroup].sort((a, b) => a.order_index - b.order_index))
+                    setTasks(prev => [...prev, ...capturedTasks.map(t => ({ ...t, google_event_id: null }))])
+                    await supabase.from('task_groups').upsert(capturedGroup)
+                    for (const task of capturedTasks) {
+                        const { google_event_id, ...rest } = task
+                        await supabase.from('tasks').upsert({ ...rest, google_event_id: null })
+                    }
+                },
+                redo: async () => {
+                    setGroups(prev => prev.filter(g => g.id !== groupId))
+                    setTasks(prev => prev.filter(t => t.group_id !== groupId))
+                    await supabase.from('task_groups').delete().eq('id', groupId)
+                },
+            })
+        }
+
         try {
             await supabase.from('task_groups').delete().eq('id', groupId)
         } catch (e) {
             console.error('[Sync] deleteGroup failed:', e)
         }
-    }, [supabase])
+    }, [supabase, groups, tasks, pushAction])
 
     // --- Task Operations ---
-    // OPTIMISTIC UI: Generate client-side UUID and update local state immediately
-    // バックグラウンドで POST /api/tasks を呼び出し、サーバーサイドで INSERT
     const createTask = useCallback(async (groupId: string, title: string = "New Task", parentTaskId: string | null = null): Promise<Task | null> => {
-        // Generate client-side UUID for instant feedback
         const optimisticId = crypto.randomUUID();
         const now = new Date().toISOString();
 
         const groupTasks = tasks.filter(t => t.group_id === groupId);
         const maxOrder = groupTasks.length > 0 ? Math.max(...groupTasks.map(t => t.order_index ?? 0)) + 1 : 0;
 
-        // Create optimistic task object
         const optimisticTask: Task = {
             id: optimisticId,
             user_id: userId,
@@ -138,19 +202,32 @@ export function useMindMapSync({
             google_event_id: null,
             calendar_event_id: null,
             calendar_id: null,
-            // Timer fields
             total_elapsed_seconds: 0,
             last_started_at: null,
             is_timer_running: false,
             created_at: now,
         };
 
-        // IMMEDIATELY update local state (Optimistic Update)
         setTasks(prev => [...prev, optimisticTask]);
 
-        // Return optimistic task immediately for instant focus
-        // Background sync via API route (サーバーサイドでINSERT → エラーはサーバーログで確認可能)
-        (async () => {
+        pushAction({
+            description: `タスクを作成`,
+            undo: async () => {
+                setTasks(prev => prev.filter(t => t.id !== optimisticId))
+                try {
+                    await fetch(`/api/tasks/${optimisticId}`, { method: 'DELETE' })
+                } catch (e) {
+                    console.error('[UndoRedo] undo createTask failed:', e)
+                }
+            },
+            redo: async () => {
+                setTasks(prev => [...prev, optimisticTask])
+                await supabase.from('tasks').upsert(optimisticTask)
+            },
+        })
+
+        // Background sync via API route
+        ;(async () => {
             try {
                 const response = await fetch('/api/tasks', {
                     method: 'POST',
@@ -171,46 +248,51 @@ export function useMindMapSync({
                     throw new Error(result.error?.message || 'タスクの作成に失敗しました');
                 }
 
-                // Update with server response (in case of any server-side modifications)
                 if (result.task) {
                     setTasks(prev => prev.map(t => t.id === optimisticId ? result.task : t));
                 }
             } catch (e: any) {
                 console.error('[Sync] createTask failed, rolling back:', e);
-                // ROLLBACK: Remove the optimistic task
                 setTasks(prev => prev.filter(t => t.id !== optimisticId));
                 alert(`タスクの作成に失敗しました: ${e?.message || '不明なエラー'}`);
             }
         })();
 
         return optimisticTask;
-    }, [userId, tasks]);
+    }, [userId, tasks, supabase, pushAction]);
 
     const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        // Capture before state for undo
+        const beforeTask = tasks.find(t => t.id === taskId)
+        const beforeValues: Partial<Task> = {}
+        for (const key of Object.keys(updates) as (keyof Task)[]) {
+            if (beforeTask) (beforeValues as any)[key] = beforeTask[key]
+        }
+
+        // Capture parent status for auto-complete undo
+        let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
+
         // Optimistic update
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
 
         try {
             await supabase.from('tasks').update(updates).eq('id', taskId)
 
-            // カレンダー同期は useTaskCalendarSync フックが一元管理（center-pane.tsx）
-            // ここでは DB 更新のみ → props 変更 → useTaskCalendarSync が検知して同期
-
-            // AUTO-COMPLETE PARENT: If status changed to 'done', check if all siblings are also done
+            // AUTO-COMPLETE PARENT
             if (updates.status === 'done') {
                 const task = tasks.find(t => t.id === taskId);
                 if (task?.parent_task_id) {
-                    // Get all siblings (including this task with updated status)
                     const siblings = tasks
                         .filter(t => t.parent_task_id === task.parent_task_id)
                         .map(t => t.id === taskId ? { ...t, status: 'done' } : t);
 
-                    // Check if ALL siblings are done
                     const allSiblingsDone = siblings.every(s => s.status === 'done');
 
                     if (allSiblingsDone) {
-                        console.log('[AutoComplete] All children done, completing parent:', task.parent_task_id);
-                        // Auto-complete parent (optimistic + DB)
+                        const parent = tasks.find(t => t.id === task.parent_task_id)
+                        if (parent && parent.status !== 'done') {
+                            parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
+                        }
                         setTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'done' } : t
                         ));
@@ -219,14 +301,13 @@ export function useMindMapSync({
                 }
             }
 
-            // AUTO-UNCOMPLETE PARENT: If status changed to 'todo'/'pending', uncomplete parent if it was done
+            // AUTO-UNCOMPLETE PARENT
             if (updates.status && updates.status !== 'done') {
                 const task = tasks.find(t => t.id === taskId);
                 if (task?.parent_task_id) {
                     const parent = tasks.find(t => t.id === task.parent_task_id);
                     if (parent?.status === 'done') {
-                        console.log('[AutoComplete] Child incomplete, uncompleting parent:', task.parent_task_id);
-                        // Auto-uncomplete parent (optimistic + DB)
+                        parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
                         setTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'todo' } : t
                         ));
@@ -237,18 +318,79 @@ export function useMindMapSync({
         } catch (e) {
             console.error('[Sync] updateTask failed:', e)
         }
-    }, [supabase, tasks])
+
+        // Record undo action (after auto-complete so we capture parent changes)
+        const capturedParentUndo = parentAutoCompleteUndo
+        pushAction({
+            description: `「${beforeTask?.title || 'タスク'}」を変更`,
+            undo: async () => {
+                setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+                await supabase.from('tasks').update(beforeValues).eq('id', taskId)
+                // Restore parent auto-complete if it was triggered
+                if (capturedParentUndo) {
+                    setTasks(prev => prev.map(t =>
+                        t.id === capturedParentUndo.parentId ? { ...t, status: capturedParentUndo.beforeStatus } : t
+                    ))
+                    await supabase.from('tasks').update({ status: capturedParentUndo.beforeStatus }).eq('id', capturedParentUndo.parentId)
+                }
+            },
+            redo: async () => {
+                setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
+                await supabase.from('tasks').update(updates).eq('id', taskId)
+                // Re-apply auto-complete
+                if (capturedParentUndo) {
+                    const newStatus = updates.status === 'done' ? 'done' : 'todo'
+                    setTasks(prev => prev.map(t =>
+                        t.id === capturedParentUndo.parentId ? { ...t, status: newStatus } : t
+                    ))
+                    await supabase.from('tasks').update({ status: newStatus }).eq('id', capturedParentUndo.parentId)
+                }
+            },
+        })
+    }, [supabase, tasks, pushAction])
 
     const deleteTask = useCallback(async (taskId: string) => {
-        // Optimistic UI update
-        setTasks(prev => prev.filter(t => t.id !== taskId))
+        // Capture task + all descendants before deletion
+        const capturedTask = tasks.find(t => t.id === taskId)
+        const getDescendants = (id: string): Task[] => {
+            const children = tasks.filter(t => t.parent_task_id === id)
+            return children.flatMap(c => [c, ...getDescendants(c.id)])
+        }
+        const capturedDescendants = getDescendants(taskId)
+        const allCaptured = capturedTask ? [capturedTask, ...capturedDescendants] : capturedDescendants
 
-        // Cancel notifications for this task
+        // Optimistic UI update (remove task + descendants)
+        const allIds = new Set(allCaptured.map(t => t.id))
+        setTasks(prev => prev.filter(t => !allIds.has(t.id)))
+
+        if (capturedTask) {
+            pushAction({
+                description: `「${capturedTask.title}」を削除`,
+                undo: async () => {
+                    // Restore all captured tasks (with google_event_id reset for re-sync)
+                    const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
+                    setTasks(prev => [...prev, ...restored])
+                    for (const task of allCaptured) {
+                        const { google_event_id, ...rest } = task
+                        await supabase.from('tasks').upsert({ ...rest, google_event_id: null })
+                    }
+                },
+                redo: async () => {
+                    setTasks(prev => prev.filter(t => !allIds.has(t.id)))
+                    try {
+                        await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                    } catch (e) {
+                        console.error('[UndoRedo] redo deleteTask failed:', e)
+                    }
+                },
+            })
+        }
+
+        // Cancel notifications
         try {
             await cancelNotifications('task', taskId);
         } catch (error) {
             console.error('[Notification] Failed to cancel notifications:', error);
-            // Don't block the task deletion if notification cancellation fails
         }
 
         // Call API endpoint which handles both calendar event and task deletion
@@ -262,26 +404,105 @@ export function useMindMapSync({
                 console.error('[Sync] deleteTask API failed:', error)
                 throw new Error(error.error?.message || 'Failed to delete task')
             }
-
-            console.log('[Sync] Task and calendar event deleted successfully')
         } catch (e) {
             console.error('[Sync] deleteTask failed:', e)
-            // Revert optimistic update on failure
-            // Note: We'd need to fetch the task again to restore it properly
-            // For now, just log the error - the task is already removed from UI
         }
-    }, [cancelNotifications])
+    }, [cancelNotifications, tasks, supabase, pushAction])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
+        const oldGroupId = tasks.find(t => t.id === taskId)?.group_id
+        const taskTitle = tasks.find(t => t.id === taskId)?.title || 'タスク'
+
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, group_id: newGroupId } : t))
+
+        if (oldGroupId) {
+            pushAction({
+                description: `「${taskTitle}」を移動`,
+                undo: async () => {
+                    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, group_id: oldGroupId } : t))
+                    await supabase.from('tasks').update({ group_id: oldGroupId }).eq('id', taskId)
+                },
+                redo: async () => {
+                    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, group_id: newGroupId } : t))
+                    await supabase.from('tasks').update({ group_id: newGroupId }).eq('id', taskId)
+                },
+            })
+        }
+
         try {
             await supabase.from('tasks').update({ group_id: newGroupId }).eq('id', taskId)
         } catch (e) {
             console.error('[Sync] moveTask failed:', e)
         }
-    }, [supabase])
+    }, [supabase, tasks, pushAction])
 
-    // --- Helper Functions for Parent-Child Relationships ---
+    // --- Bulk Delete (with single undo action) ---
+    const bulkDelete = useCallback(async (groupIds: string[], taskIds: string[]) => {
+        const capturedGroups = groups.filter(g => groupIds.includes(g.id))
+        // Capture tasks from deleted groups + individually selected tasks
+        const groupTaskIds = new Set(tasks.filter(t => groupIds.includes(t.group_id)).map(t => t.id))
+        const allTaskIds = new Set([...taskIds, ...groupTaskIds])
+        // Also capture descendants of explicitly selected tasks
+        const getDescendants = (id: string): string[] => {
+            const children = tasks.filter(t => t.parent_task_id === id)
+            return children.flatMap(c => [c.id, ...getDescendants(c.id)])
+        }
+        for (const tid of taskIds) {
+            for (const did of getDescendants(tid)) allTaskIds.add(did)
+        }
+        const capturedTasks = tasks.filter(t => allTaskIds.has(t.id))
+
+        // Optimistic UI update
+        setGroups(prev => prev.filter(g => !groupIds.includes(g.id)))
+        setTasks(prev => prev.filter(t => !allTaskIds.has(t.id)))
+
+        pushAction({
+            description: `${capturedGroups.length > 0 ? capturedGroups.length + '個のグループ' : ''}${capturedGroups.length > 0 && capturedTasks.length > 0 ? 'と' : ''}${capturedTasks.length > 0 ? capturedTasks.length + '個のタスク' : ''}を削除`,
+            undo: async () => {
+                if (capturedGroups.length > 0) {
+                    setGroups(prev => [...prev, ...capturedGroups].sort((a, b) => a.order_index - b.order_index))
+                    for (const group of capturedGroups) {
+                        await supabase.from('task_groups').upsert(group)
+                    }
+                }
+                if (capturedTasks.length > 0) {
+                    const restored = capturedTasks.map(t => ({ ...t, google_event_id: null }))
+                    setTasks(prev => [...prev, ...restored])
+                    for (const task of capturedTasks) {
+                        const { google_event_id, ...rest } = task
+                        await supabase.from('tasks').upsert({ ...rest, google_event_id: null })
+                    }
+                }
+            },
+            redo: async () => {
+                setGroups(prev => prev.filter(g => !groupIds.includes(g.id)))
+                setTasks(prev => prev.filter(t => !allTaskIds.has(t.id)))
+                for (const gid of groupIds) {
+                    await supabase.from('task_groups').delete().eq('id', gid)
+                }
+                for (const tid of taskIds) {
+                    try { await fetch(`/api/tasks/${tid}`, { method: 'DELETE' }) } catch {}
+                }
+            },
+        })
+
+        // DB sync
+        try {
+            for (const gid of groupIds) {
+                await supabase.from('task_groups').delete().eq('id', gid)
+            }
+            // Delete only explicitly selected tasks (group tasks are cascade deleted)
+            for (const tid of taskIds) {
+                if (!groupTaskIds.has(tid)) {
+                    await fetch(`/api/tasks/${tid}`, { method: 'DELETE' })
+                }
+            }
+        } catch (e) {
+            console.error('[Sync] bulkDelete failed:', e)
+        }
+    }, [supabase, groups, tasks, pushAction])
+
+    // --- Helper Functions ---
     const getChildTasks = useCallback((parentTaskId: string): Task[] => {
         return tasks.filter(t => t.parent_task_id === parentTaskId).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     }, [tasks])
@@ -310,8 +531,13 @@ export function useMindMapSync({
         deleteTask,
         moveTask,
         updateProjectTitle,
+        bulkDelete,
         isLoading,
         getChildTasks,
-        getParentTasks
+        getParentTasks,
+        undo,
+        redo,
+        canUndo,
+        canRedo,
     }
 }

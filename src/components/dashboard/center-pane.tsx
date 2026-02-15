@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Task, TaskGroup, Project } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Play, Check, ChevronRight, ChevronDown, Plus, Trash2, Pause, Timer, GripVertical, Calendar as CalendarIcon, X, Target, Clock } from "lucide-react"
+import { MoreHorizontal, Play, Check, ChevronRight, ChevronDown, Plus, Trash2, Pause, Timer, GripVertical, Calendar as CalendarIcon, X, Target, Clock, Maximize2, Minimize2 } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { MindMap } from "./mind-map"
@@ -86,12 +86,13 @@ interface CenterPaneProps {
     onUpdateGroupTitle?: (groupId: string, newTitle: string) => void
     onUpdateGroup?: (groupId: string, updates: Partial<TaskGroup>) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
-    onCreateGroup?: (title: string) => void
+    onCreateGroup?: (title: string) => Promise<TaskGroup | null>
     onDeleteGroup?: (groupId: string) => void
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onMoveTask?: (taskId: string, newGroupId: string) => Promise<void>
+    onBulkDelete?: (groupIds: string[], taskIds: string[]) => Promise<void>
     onRefreshCalendar?: () => Promise<void>
 }
 
@@ -661,12 +662,26 @@ export function CenterPane({
     onUpdateTask,
     onDeleteTask,
     onMoveTask,
+    onBulkDelete,
     onRefreshCalendar
 }: CenterPaneProps) {
     // Splitter State
     const [topHeight, setTopHeight] = useState(50)
     const containerRef = useRef<HTMLDivElement>(null)
     const isDraggingRef = useRef(false)
+
+    // Fullscreen State
+    const [isFullscreen, setIsFullscreen] = useState(false)
+
+    // Escape key to exit fullscreen
+    useEffect(() => {
+        if (!isFullscreen) return
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setIsFullscreen(false)
+        }
+        document.addEventListener('keydown', handleKeyDown)
+        return () => document.removeEventListener('keydown', handleKeyDown)
+    }, [isFullscreen])
 
     // Group Collapse State
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
@@ -791,34 +806,72 @@ export function CenterPane({
 
     return (
         <div ref={containerRef} className="h-full flex flex-col bg-background overflow-hidden relative">
-            {/* Mind Map Area (Top) */}
-            <div style={{ height: `${topHeight}%` }} className="min-h-[100px] border-b bg-muted/5 relative overflow-hidden group flex flex-col transition-none">
-                <MindMap
-                    project={project}
-                    groups={groups}
-                    tasks={tasks}
-                    onUpdateGroupTitle={onUpdateGroupTitle || (() => { })}
-                    onUpdateGroup={onUpdateGroup}
-                    onUpdateProject={onUpdateProject}
-                    onCreateGroup={onCreateGroup}
-                    onDeleteGroup={onDeleteGroup}
-                    onCreateTask={onCreateTask}
-                    onUpdateTask={onUpdateTask}
-                    onDeleteTask={onDeleteTask}
-                    onMoveTask={onMoveTask}
-                />
-            </div>
+            {/* Mind Map Area - Fullscreen or Split */}
+            {isFullscreen ? (
+                <div className="fixed inset-0 z-50 bg-background">
+                    <MindMap
+                        project={project}
+                        groups={groups}
+                        tasks={tasks}
+                        onUpdateGroupTitle={onUpdateGroupTitle || (() => { })}
+                        onUpdateGroup={onUpdateGroup}
+                        onUpdateProject={onUpdateProject}
+                        onCreateGroup={onCreateGroup}
+                        onDeleteGroup={onDeleteGroup}
+                        onCreateTask={onCreateTask}
+                        onUpdateTask={onUpdateTask}
+                        onDeleteTask={onDeleteTask}
+                        onMoveTask={onMoveTask}
+                        onBulkDelete={onBulkDelete}
+                    />
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setIsFullscreen(false)}
+                        className="absolute top-3 right-14 z-10 h-8 w-8 bg-background/80 backdrop-blur"
+                    >
+                        <Minimize2 className="h-4 w-4" />
+                    </Button>
+                </div>
+            ) : (
+                <>
+                    <div style={{ height: `${topHeight}%` }} className="min-h-[100px] border-b bg-muted/5 relative overflow-hidden group flex flex-col transition-none">
+                        <MindMap
+                            project={project}
+                            groups={groups}
+                            tasks={tasks}
+                            onUpdateGroupTitle={onUpdateGroupTitle || (() => { })}
+                            onUpdateGroup={onUpdateGroup}
+                            onUpdateProject={onUpdateProject}
+                            onCreateGroup={onCreateGroup}
+                            onDeleteGroup={onDeleteGroup}
+                            onCreateTask={onCreateTask}
+                            onUpdateTask={onUpdateTask}
+                            onDeleteTask={onDeleteTask}
+                            onMoveTask={onMoveTask}
+                        />
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setIsFullscreen(true)}
+                            className="absolute top-3 right-14 z-10 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                            <Maximize2 className="h-4 w-4" />
+                        </Button>
+                    </div>
 
-            {/* Splitter Handle */}
-            <div
-                className="h-2 bg-background border-b hover:bg-primary/10 cursor-row-resize flex items-center justify-center z-10 -mt-1"
-                onMouseDown={handleMouseDown}
-            >
-                <div className="w-8 h-1 bg-muted-foreground/20 rounded-full" />
-            </div>
+                    {/* Splitter Handle */}
+                    <div
+                        className="h-2 bg-background border-b hover:bg-primary/10 cursor-row-resize flex items-center justify-center z-10 -mt-1"
+                        onMouseDown={handleMouseDown}
+                    >
+                        <div className="w-8 h-1 bg-muted-foreground/20 rounded-full" />
+                    </div>
+                </>
+            )}
 
-            {/* Task List (Bottom) */}
-            <div className="flex-1 min-h-0 bg-background flex flex-col">
+            {/* Task List (Bottom) - hidden in fullscreen */}
+            <div className={cn("flex-1 min-h-0 bg-background flex flex-col", isFullscreen && "hidden")}>
                 <div className="px-4 py-2 border-b flex justify-between items-center bg-card">
                     <h2 className="font-semibold text-sm">タスク</h2>
                 </div>
@@ -900,6 +953,7 @@ export function CenterPane({
 
                                             {/* Group Title */}
                                             <input
+                                                key={group.title}
                                                 className="font-medium text-sm bg-transparent border-none focus:outline-none focus:ring-0 px-1 min-w-0 flex-1"
                                                 defaultValue={group.title}
                                                 onBlur={(e) => {
