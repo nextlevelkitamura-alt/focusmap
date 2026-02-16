@@ -108,6 +108,8 @@
 
 #### 機能拡張
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル） → [計画](plans/features/calendar-event-edit-modal.md)
+- 🔧 **グループとタスクの統合**（task_groupsをtasksに統合、階層構造の統一） → [計画](../../../.claude/plans/zany-seeking-leaf.md)
+  - Phase 1: DB移行完了 ✅ | Phase 2: コード変更中 🔧 | Phase 3: 旧テーブル削除 ○
 - 🔧 **マインドマップ操作感改善**（XMind風の操作体系） → [計画](plans/features/mindmap-ux-improvement.md)
 - 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
 - ○ マインドマップのエクスポート/インポート
@@ -117,6 +119,10 @@
 ---
 
 ## 完了履歴
+- 2026-02-16: **グループとタスクの統合 Phase 1 & Phase 2（途中）** 実施中
+  - Phase 1: tasksテーブルにis_group/project_idカラム追加、task_groupsデータ移行完了（5グループ移行済み）
+  - Phase 2: 型定義(database.ts)、ヘルパー関数(task-helpers.ts)、useMindMapSync.ts統合完了
+  - Phase 2残り: UIコンポーネント更新(mind-map.tsx, center-pane.tsx)、カレンダー同期更新
 - 2026-02-15: **マインドマップメニューのカレンダー・日時設定修正** 完了
   - calendar_idフィールド名の不一致修正（google_calendar_id → calendar_id）
   - DateTimePickerのprops不一致修正（value/onChange → date/setDate）
@@ -167,5 +173,9 @@
 
 ## 現在進行中のタスク
 
+- 🔧 **グループとタスクの統合** → [計画](../../../.claude/plans/zany-seeking-leaf.md) | [引き継ぎ書](plans/features/group-task-unification-handover.md)
+  - **Phase 1 完了**: DB移行（is_group, project_idカラム追加、データ移行済み）
+  - **Phase 2 途中**: 型定義・ヘルパー関数・useMindMapSync更新済み、UIコンポーネント更新残り
+  - **Phase 3 未着手**: 旧テーブル（task_groups）削除
 - 🔧 マインドマップ操作感改善（XMind風） → [計画](plans/features/mindmap-ux-improvement.md)
 - 🔧 スペース機能 + 左サイドバー再設計 → [計画](plans/features/space-sidebar-redesign.md)
