@@ -15,7 +15,7 @@ import 'reactflow/dist/style.css'
 import dagre from 'dagre'
 import { Task, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus } from "lucide-react"
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
@@ -227,7 +227,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
                     onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
-                    enterKeyHint="return"
+                    enterKeyHint="enter"
                     onKeyDown={(e) => {
                         if (e.nativeEvent.isComposing) return
                         if (e.key === 'Enter') { e.preventDefault(); handleSave() }
@@ -324,7 +324,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         value={editValue}
                         onChange={(e) => { setEditValue(e.target.value); justSavedRef.current = false }}
                         onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
-                        enterKeyHint="return"
+                        enterKeyHint="enter"
                         onKeyDown={(e) => {
                             if (e.nativeEvent.isComposing) return
                             if (e.key === 'Enter') {
@@ -699,6 +699,16 @@ function MobileMindMapContent({
         })
     }, [selectedNodeId, taskMap, onCreateTask])
 
+    const handleAccessoryAddSibling = useCallback(() => {
+        if (!selectedNodeId) return
+        const task = taskMap.get(selectedNodeId)
+        if (!task) return
+        const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
+        onCreateTask?.(rootGroupId, '', task.parent_task_id || undefined).then(newTask => {
+            if (newTask) setSelectedNodeId(newTask.id)
+        })
+    }, [selectedNodeId, taskMap, onCreateTask])
+
     const handleAccessoryDelete = useCallback(() => {
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
@@ -744,7 +754,7 @@ function MobileMindMapContent({
                 {/* No controls or background on mobile to save space */}
             </ReactFlow>
 
-            {/* Keyboard Accessory Bar - マインドマップ編集用 */}
+            {/* Keyboard Accessory Bar - XMind風レイアウト */}
             {selectedNodeId && isKeyboardOpen && (
                 <div
                     className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
@@ -753,15 +763,38 @@ function MobileMindMapContent({
                     onTouchStart={(e) => e.preventDefault()}
                 >
                     <div className="flex items-center justify-between px-2 py-1.5 safe-area-inset-bottom">
+                        {/* 左: 閉じる */}
+                        <button
+                            onClick={handleAccessoryDismiss}
+                            className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-muted-foreground active:bg-muted transition-colors"
+                        >
+                            <span className="text-xs">閉じる</span>
+                            <ChevronDownKb className="w-4 h-4" />
+                        </button>
+
+                        {/* 右: 兄弟・子・削除（右手操作に最適化） */}
                         <div className="flex items-center gap-0.5">
-                            {/* 子ノード作成（Tab相当） */}
+                            {/* 兄弟ノード追加 */}
+                            <button
+                                onClick={handleAccessoryAddSibling}
+                                className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
+                                title="兄弟ノード追加"
+                            >
+                                <Plus className="w-5 h-5" />
+                                <span className="text-xs">兄弟</span>
+                            </button>
+
+                            {/* セパレータ */}
+                            <div className="w-px h-5 bg-border mx-1" />
+
+                            {/* 子ノード作成 */}
                             <button
                                 onClick={handleAccessoryAddChild}
                                 className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
                                 title="子ノード追加"
                             >
                                 <CornerDownRight className="w-5 h-5" />
-                                <span className="text-xs">子追加</span>
+                                <span className="text-xs">子</span>
                             </button>
 
                             {/* セパレータ */}
@@ -776,15 +809,6 @@ function MobileMindMapContent({
                                 <Trash2 className="w-4.5 h-4.5" />
                             </button>
                         </div>
-
-                        {/* キーボード閉じる */}
-                        <button
-                            onClick={handleAccessoryDismiss}
-                            className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-muted-foreground active:bg-muted transition-colors"
-                        >
-                            <span className="text-xs">閉じる</span>
-                            <ChevronDownKb className="w-4 h-4" />
-                        </button>
                     </div>
                 </div>
             )}
