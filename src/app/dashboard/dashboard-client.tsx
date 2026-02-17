@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
 import { TodayView } from "@/components/today/today-view"
 import { HabitsView } from "@/components/habits/habits-view"
+import { OutlineView } from "@/components/mobile/outline-view"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -408,11 +409,36 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {/* === Desktop: Always 3-pane. Mobile: Only for map view === */}
+                {/* === Mobile: Map View (Outline) === */}
+                {activeView === 'map' && (
+                    <div className="flex-1 md:hidden overflow-hidden">
+                        <OutlineView
+                            project={selectedProject}
+                            groups={currentGroups}
+                            tasks={currentTasks}
+                            spaces={spaces}
+                            projects={filteredProjects}
+                            selectedProjectId={selectedProjectId}
+                            selectedSpaceId={selectedSpaceId}
+                            onSelectProject={setSelectedProjectId}
+                            onCreateGroup={handleCreateGroup}
+                            onCreateTask={createTask}
+                            onUpdateTask={updateTask}
+                            onDeleteTask={handleDeleteTask}
+                            onDeleteGroup={handleDeleteGroup}
+                            onMoveTask={moveTask}
+                            onReorderTask={reorderTask}
+                            onUpdateGroupTitle={updateGroupTitle}
+                            onUpdateGroup={updateGroup}
+                        />
+                    </div>
+                )}
+
+                {/* === Desktop: Always 3-pane === */}
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
-                    "md:flex",
-                    activeView === 'map' ? "flex" : "hidden"
+                    "hidden md:flex",
+                    activeView === 'map' ? "md:flex" : ""
                 )}>
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(
