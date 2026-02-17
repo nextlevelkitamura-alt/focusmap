@@ -430,6 +430,7 @@ export function DashboardClient({
                             onReorderTask={reorderTask}
                             onUpdateGroupTitle={updateGroupTitle}
                             onUpdateGroup={updateGroup}
+                            onUpdateProject={handleUpdateProjectTitle}
                         />
                     </div>
                 )}
