@@ -133,7 +133,7 @@ export function useMindMapSync({
             user_id: userId,
             group_id: null,
             project_id: projectId,
-            is_group: false,
+            is_group: true, // ルートタスク（グループ）なので true
             parent_task_id: null,
             title,
             status: 'todo',
@@ -148,6 +148,9 @@ export function useMindMapSync({
             total_elapsed_seconds: 0,
             last_started_at: null,
             is_timer_running: false,
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
             created_at: now,
         }
 
@@ -170,19 +173,27 @@ export function useMindMapSync({
 
         // Background INSERT
         try {
+            console.log('[Sync] Creating root task (group):', optimisticId, title);
             const { error } = await supabase.from('tasks').insert({
                 id: optimisticId,
                 user_id: userId,
                 project_id: projectId,
-                is_group: false,
+                is_group: true, // ルートタスク（グループ）なので true
                 parent_task_id: null,
                 title,
                 status: 'todo',
                 order_index: maxOrder,
                 actual_time_minutes: 0,
                 estimated_time: 0,
+                is_habit: false,
+                habit_frequency: null,
+                habit_icon: null,
             })
-            if (error) throw error
+            if (error) {
+                console.error('[Sync] createGroup INSERT failed:', error);
+                throw error;
+            }
+            console.log('[Sync] createGroup INSERT success:', optimisticId);
             pendingOptimisticTasks.current.delete(optimisticId)
         } catch (e) {
             console.error('[Sync] createGroup failed:', e)
@@ -213,7 +224,13 @@ export function useMindMapSync({
         })
 
         try {
-            await supabase.from('tasks').update({ title }).eq('id', groupId)
+            console.log('[Sync] Updating group title:', groupId, oldTitle, '->', title);
+            const { error } = await supabase.from('tasks').update({ title }).eq('id', groupId)
+            if (error) {
+                console.error('[Sync] updateGroupTitle UPDATE failed:', error);
+                throw error;
+            }
+            console.log('[Sync] updateGroupTitle UPDATE success:', groupId);
         } catch (e) {
             console.error('[Sync] updateGroupTitle failed:', e)
         }
