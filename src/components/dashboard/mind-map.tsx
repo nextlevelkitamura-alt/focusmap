@@ -681,6 +681,13 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                     <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", data?.status === 'done' ? "bg-primary" : "bg-muted-foreground/30")} />
                 )}
 
+                {/* Habit Icon Badge */}
+                {data?.is_habit && data?.habit_icon && (
+                    <span className="text-sm shrink-0" title="習慣">
+                        {data.habit_icon}
+                    </span>
+                )}
+
                 <textarea
                     ref={inputRef as any}
                     rows={1}
@@ -861,6 +868,24 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                         >
                                             カスタム
                                         </Button>
+                                    </div>
+
+                                    {/* Habit Icon Selection */}
+                                    <div className="text-xs text-muted-foreground">アイコン</div>
+                                    <div className="grid grid-cols-6 gap-1">
+                                        {['🏃', '💪', '📚', '🧘', '🎯', '✍️', '🌱', '💧', '🍎', '😴', '🧹', '💰'].map((icon) => (
+                                            <button
+                                                key={icon}
+                                                type="button"
+                                                className={cn(
+                                                    "h-8 rounded text-lg hover:bg-muted transition-colors",
+                                                    data?.habit_icon === icon ? "bg-primary/20 ring-1 ring-primary" : ""
+                                                )}
+                                                onClick={() => data?.onUpdateHabit?.({ habit_icon: icon })}
+                                            >
+                                                {icon}
+                                            </button>
+                                        ))}
                                     </div>
                                 </>
                             )}
