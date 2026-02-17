@@ -344,7 +344,7 @@ export function useMindMapSync({
             },
         })
 
-        // Background sync: 親INSERT待機 → 直接INSERT → 失敗時APIルートフォールバック
+        // Background sync: 親INSERT待機 → 直接INSERT → 失敗時APIルートフォールバック（リトライあり）
         const insertPromise = (async () => {
             try {
                 // 親タスクの INSERT 完了を待機
@@ -354,6 +354,32 @@ export function useMindMapSync({
                         console.log('[Sync] Waiting for parent INSERT:', effectiveParentId);
                         await parentPending;
                         console.log('[Sync] Parent INSERT completed:', effectiveParentId);
+                    }
+
+                    // 親タスクが DB に存在することを確認（最大 3 回試行、500ms 間隔）
+                    let parentExists = false;
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        const { data: parentTask } = await supabase
+                            .from('tasks')
+                            .select('id')
+                            .eq('id', effectiveParentId)
+                            .single();
+
+                        if (parentTask) {
+                            parentExists = true;
+                            console.log('[Sync] Parent task exists in DB:', effectiveParentId);
+                            break;
+                        }
+
+                        if (attempt < 2) {
+                            console.log(`[Sync] Parent task not found, retrying (${attempt + 1}/3)...`);
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    }
+
+                    if (!parentExists) {
+                        console.error('[Sync] Parent task does not exist in DB after 3 attempts:', effectiveParentId);
+                        throw new Error('Parent task not found in database');
                     }
                 }
 
@@ -406,6 +432,8 @@ export function useMindMapSync({
                     return;
                 }
 
+                const errorText = await response.text();
+                console.error('[Sync] API INSERT failed:', errorText);
                 console.error('[Sync] createTask ROLLBACK:', optimisticId);
                 pendingOptimisticTasks.current.delete(optimisticId);
                 setAllTasks(prev => prev.filter(t => t.id !== optimisticId));
