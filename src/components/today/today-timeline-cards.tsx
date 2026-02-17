@@ -8,7 +8,7 @@ import {
     Calendar as CalendarIcon, ChevronDown, ChevronUp
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useState } from "react"
+import { useState, useMemo } from "react"
 
 // --- Types ---
 
@@ -36,6 +36,38 @@ export function TodayTimelineCards({
     const timer = useTimer()
     const [showAllUnscheduled, setShowAllUnscheduled] = useState(false)
     const displayedUnscheduled = showAllUnscheduled ? unscheduledTasks : unscheduledTasks.slice(0, 5)
+
+    // Calculate free time slots (gaps between timeline items)
+    const freeTimeSlots = useMemo(() => {
+        const slots: { startTime: Date; endTime: Date }[] = []
+        for (let i = 0; i < timelineItems.length - 1; i++) {
+            const currentEnd = timelineItems[i].endTime
+            const nextStart = timelineItems[i + 1].startTime
+            const gapMinutes = (nextStart.getTime() - currentEnd.getTime()) / (1000 * 60)
+
+            // Show gap if 30 minutes or more
+            if (gapMinutes >= 30) {
+                slots.push({ startTime: currentEnd, endTime: nextStart })
+            }
+        }
+        return slots
+    }, [timelineItems])
+
+    // Find current time slot index for indicator
+    const currentTimeSlotIndex = useMemo(() => {
+        for (let i = 0; i < timelineItems.length; i++) {
+            if (currentTime >= timelineItems[i].startTime && currentTime < timelineItems[i].endTime) {
+                return i
+            }
+        }
+        // Check if current time is in a gap
+        for (let i = 0; i < timelineItems.length - 1; i++) {
+            if (currentTime >= timelineItems[i].endTime && currentTime < timelineItems[i + 1].startTime) {
+                return i + 0.5 // Between items
+            }
+        }
+        return -1 // Not in timeline
+    }, [timelineItems, currentTime])
 
     return (
         <>
@@ -111,21 +143,37 @@ export function TodayTimelineCards({
                     </div>
                 )}
 
-                <div className="space-y-1.5">
-                    {timelineItems.map((item) => (
-                        <TimelineCard
-                            key={item.type === 'event' ? `e-${item.data.id}` : `t-${(item.data as Task).id}`}
-                            item={item}
-                            currentTime={currentTime}
-                            timer={timer}
-                        />
+                <div className="space-y-2">
+                    {timelineItems.map((item, index) => (
+                        <div key={item.type === 'event' ? `e-${item.data.id}` : `t-${(item.data as Task).id}`}>
+                            <TimelineCard
+                                item={item}
+                                currentTime={currentTime}
+                                timer={timer}
+                            />
+                            {/* Free time slot after this item */}
+                            {freeTimeSlots.find(slot =>
+                                slot.startTime.getTime() === item.endTime.getTime()
+                            ) && (
+                                <FreeTimeSlot
+                                    slot={freeTimeSlots.find(slot =>
+                                        slot.startTime.getTime() === item.endTime.getTime()
+                                    )!}
+                                    currentTime={currentTime}
+                                />
+                            )}
+                            {/* Current time indicator (if in gap) */}
+                            {currentTimeSlotIndex === index + 0.5 && (
+                                <CurrentTimeIndicator />
+                            )}
+                        </div>
                     ))}
                 </div>
             </div>
 
             {/* Unscheduled Tasks */}
             {unscheduledTasks.length > 0 && (
-                <div className="px-4 mt-5">
+                <div className="px-4 mt-4">
                     <div className="flex items-center gap-2 mb-2">
                         <Clock className="w-3.5 h-3.5 text-muted-foreground" />
                         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -297,6 +345,63 @@ function TimelineCard({
                         <Play className="w-4 h-4" />
                     </button>
                 )}
+            </div>
+        </div>
+    )
+}
+
+// --- Free Time Slot ---
+
+function FreeTimeSlot({
+    slot,
+    currentTime,
+}: {
+    slot: { startTime: Date; endTime: Date }
+    currentTime: Date
+}) {
+    const startStr = slot.startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const endStr = slot.endTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const durationMinutes = Math.round((slot.endTime.getTime() - slot.startTime.getTime()) / (1000 * 60))
+    const isNow = currentTime >= slot.startTime && currentTime < slot.endTime
+
+    return (
+        <div className={cn(
+            "my-2 py-2 px-3 rounded-lg border-2 border-dashed transition-colors",
+            isNow
+                ? "border-orange-300 bg-orange-50/30 dark:border-orange-700/50 dark:bg-orange-950/20"
+                : "border-muted-foreground/20 bg-muted/10"
+        )}>
+            <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className={cn(
+                        "font-medium",
+                        isNow ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground"
+                    )}>
+                        空き時間
+                    </span>
+                </div>
+                <span className="text-muted-foreground">
+                    {startStr} - {endStr} ({durationMinutes}分)
+                </span>
+            </div>
+        </div>
+    )
+}
+
+// --- Current Time Indicator ---
+
+function CurrentTimeIndicator() {
+    const now = new Date()
+    const timeStr = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+
+    return (
+        <div className="relative my-3">
+            <div className="absolute left-0 right-0 flex items-center">
+                <div className="flex-shrink-0 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    {timeStr}
+                </div>
+                <div className="flex-1 h-0.5 bg-red-500 ml-2" />
             </div>
         </div>
     )
