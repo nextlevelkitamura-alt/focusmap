@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+'use client';
+
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { CalendarEvent } from '@/types/calendar';
 
 interface UseCalendarEventsOptions {
@@ -6,37 +8,91 @@ interface UseCalendarEventsOptions {
   timeMax: Date;
   calendarIds?: string[];
   autoSync?: boolean;
-  syncInterval?: number;  // ミリ秒（デフォルト: 300000 = 5分）
+  syncInterval?: number;  // ミリ秒（デフォルト: 600000 = 10分）
 }
 
-export function useCalendarEvents(options: UseCalendarEventsOptions) {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+// --- Module-level cache (shared across all hook instances) ---
+interface CacheEntry {
+  events: CalendarEvent[];
+  syncedAt: Date;
+  expiresAt: number;
+}
 
-  // イベント取得（常に forceSync=true で Google Calendar API から最新のイベントを取得）
-  const fetchEvents = useCallback(async (forceSync = true, retryCount = 0) => {
-    setIsLoading(true);
-    setError(null);
+const cache = new Map<string, CacheEntry>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const inflightRequests = new Map<string, Promise<CalendarEvent[]>>();
 
+// Backoff state for quota errors
+let quotaErrorCount = 0;
+let quotaBackoffUntil = 0;
+
+function getCacheKey(timeMin: Date, timeMax: Date, calendarIds?: string[]): string {
+  const ids = calendarIds && calendarIds.length > 0 ? calendarIds.sort().join(',') : 'primary';
+  return `${timeMin.toISOString()}-${timeMax.toISOString()}-${ids}`;
+}
+
+function isQuotaError(error: any): boolean {
+  return error?.message?.includes('Quota exceeded') ||
+         error?.message?.includes('quota') ||
+         error?.message?.includes('rate limit');
+}
+
+async function fetchEventsShared(
+  timeMin: Date,
+  timeMax: Date,
+  calendarIds?: string[],
+  forceSync = false
+): Promise<CalendarEvent[]> {
+  const cacheKey = getCacheKey(timeMin, timeMax, calendarIds);
+
+  // Check backoff
+  if (Date.now() < quotaBackoffUntil) {
+    const waitTime = Math.ceil((quotaBackoffUntil - Date.now()) / 1000);
+    console.log(`[useCalendarEvents] In backoff period, waiting ${waitTime}s...`);
+    throw new Error(`API quota exceeded. Please wait ${waitTime} seconds before retrying.`);
+  }
+
+  // Return cache if fresh and not forced
+  if (!forceSync) {
+    const cached = cache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      console.log('[useCalendarEvents] Returning cached events');
+      return cached.events;
+    }
+  }
+
+  // Deduplicate in-flight requests
+  const inflight = inflightRequests.get(cacheKey);
+  if (inflight && !forceSync) {
+    console.log('[useCalendarEvents] Returning in-flight request');
+    return inflight;
+  }
+
+  const requestPromise = (async () => {
     try {
       const params = new URLSearchParams({
-        timeMin: options.timeMin.toISOString(),
-        timeMax: options.timeMax.toISOString(),
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
         forceSync: forceSync.toString(),
       });
 
-      if (options.calendarIds && options.calendarIds.length > 0) {
-        params.append('calendarId', options.calendarIds.join(','));
+      if (calendarIds && calendarIds.length > 0) {
+        params.append('calendarId', calendarIds.join(','));
       }
 
+      console.log('[useCalendarEvents] Fetching from API...', { forceSync });
       const response = await fetch(`/api/calendar/events/list?${params}`);
 
       // 503 = トークンリフレッシュ済み、リトライ可能
-      if (response.status === 503 && retryCount < 1) {
-        await new Promise(r => setTimeout(r, 500));
-        return fetchEvents(forceSync, retryCount + 1);
+      if (response.status === 503) {
+        await new Promise(r => setTimeout(r, 1000));
+        // Retry once
+        const retryResponse = await fetch(`/api/calendar/events/list?${params}`);
+        if (!retryResponse.ok) {
+          throw new Error('Failed to fetch events after token refresh');
+        }
+        const retryData = await retryResponse.json();
+        return retryData.events || [];
       }
 
       const contentType = response.headers.get("content-type");
@@ -52,44 +108,107 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
         } catch (e) {
           // Ignore parsing errors
         }
+
+        // Handle quota errors with exponential backoff
+        if (isQuotaError({ message: errorMessage })) {
+          quotaErrorCount++;
+          const backoffTime = Math.min(60000 * Math.pow(2, quotaErrorCount - 1), 300000); // Max 5 minutes
+          quotaBackoffUntil = Date.now() + backoffTime;
+          console.error(`[useCalendarEvents] Quota error, backing off for ${backoffTime}ms`);
+        }
+
         throw new Error(errorMessage);
       }
 
+      let events: CalendarEvent[] = [];
       if (contentType && contentType.indexOf("application/json") !== -1) {
         const data = await response.json();
-        setEvents(data.events || []);
-        setLastSyncedAt(new Date(data.syncedAt));
-      } else {
-        setEvents([]);
+        events = data.events || [];
       }
+
+      // Reset quota error count on success
+      quotaErrorCount = 0;
+
+      // Update cache
+      cache.set(cacheKey, {
+        events,
+        syncedAt: new Date(),
+        expiresAt: Date.now() + CACHE_TTL
+      });
+
+      console.log('[useCalendarEvents] Fetched and cached', events.length, 'events');
+      return events;
+    } finally {
+      inflightRequests.delete(cacheKey);
+    }
+  })();
+
+  inflightRequests.set(cacheKey, requestPromise);
+  return requestPromise;
+}
+
+export function useCalendarEvents(options: UseCalendarEventsOptions) {
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  // Use ref to track previous calendarIds to prevent unnecessary refetches
+  const prevCalendarIdsRef = useRef<string>();
+  const calendarIdsKey = useMemo(() =>
+    options.calendarIds?.sort().join(',') || '',
+    [options.calendarIds]
+  );
+
+  // Fetch events with proper caching
+  const fetchEvents = useCallback(async (forceSync = false) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const result = await fetchEventsShared(
+        options.timeMin,
+        options.timeMax,
+        options.calendarIds,
+        forceSync
+      );
+      setEvents(result);
+      setLastSyncedAt(new Date());
     } catch (err) {
       setError(err as Error);
-      console.error('Failed to fetch calendar events:', err);
+      console.error('[useCalendarEvents] Error:', err);
     } finally {
       setIsLoading(false);
     }
   }, [options.timeMin, options.timeMax, options.calendarIds]);
 
-  // calendarIds の変更を監視して再取得
+  // Initial fetch + calendarIds change detection
   useEffect(() => {
-    console.log('[useCalendarEvents] calendarIds changed, refetching...');
-    fetchEvents();
-  }, [options.calendarIds]); // calendarIds 自体を依存配列に追加
+    if (prevCalendarIdsRef.current !== calendarIdsKey) {
+      console.log('[useCalendarEvents] calendarIds changed, fetching...', calendarIdsKey);
+      prevCalendarIdsRef.current = calendarIdsKey;
+      fetchEvents(false); // Use cache first
+    }
+  }, [calendarIdsKey, fetchEvents]);
 
-  // 自動同期
+  // Auto-sync (10 minutes interval by default)
   useEffect(() => {
     if (!options.autoSync) return;
 
     const interval = setInterval(
-      () => fetchEvents(),
-      options.syncInterval || 300000
+      () => {
+        console.log('[useCalendarEvents] Auto-sync triggered');
+        fetchEvents(false); // Use cache first, only fetch if expired
+      },
+      options.syncInterval || 600000 // 10 minutes
     );
 
     return () => clearInterval(interval);
-  }, [fetchEvents, options.autoSync, options.syncInterval]);
+  }, [options.autoSync, options.syncInterval, fetchEvents]);
 
-  // 手動同期
+  // Manual sync (force refresh)
   const syncNow = useCallback(() => {
+    console.log('[useCalendarEvents] Manual sync');
     return fetchEvents(true);
   }, [fetchEvents]);
 
