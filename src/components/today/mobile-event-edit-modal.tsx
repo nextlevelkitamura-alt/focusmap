@@ -132,12 +132,7 @@ export function MobileEventEditModal({
                 const event = target.data
                 const baseDate = target.startTime
                 const newStart = parseTimeToDate(baseDate, startTime)
-                const newEnd = parseTimeToDate(baseDate, endTime)
-
-                // If end is before start, assume next day
-                if (newEnd <= newStart) {
-                    newEnd.setDate(newEnd.getDate() + 1)
-                }
+                const newEnd = new Date(newStart.getTime() + duration * 60000)
 
                 await onSaveEvent(event.id, {
                     title,
@@ -155,10 +150,10 @@ export function MobileEventEditModal({
         }
     }
 
-    // Update end time when start or duration changes (task only)
+    // Update end time when start or duration changes
     const handleStartTimeChange = (newTime: string) => {
         setStartTime(newTime)
-        if (target?.type === 'task') {
+        if (target) {
             const base = target.startTime
             const newStart = parseTimeToDate(base, newTime)
             const newEnd = new Date(newStart.getTime() + duration * 60000)
@@ -168,7 +163,7 @@ export function MobileEventEditModal({
 
     const handleDurationChange = (newDuration: number) => {
         setDuration(newDuration)
-        if (target?.type === 'task') {
+        if (target) {
             const base = target.startTime
             const newStart = parseTimeToDate(base, startTime)
             const newEnd = new Date(newStart.getTime() + newDuration * 60000)
@@ -192,7 +187,7 @@ export function MobileEventEditModal({
             {/* Bottom Sheet */}
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[85vh] overflow-y-auto"
+                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[95vh] overflow-y-auto"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
@@ -246,48 +241,32 @@ export function MobileEventEditModal({
                         />
                     </div>
 
-                    {isTask ? (
-                        /* Duration (Task only) */
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <Clock className="w-3.5 h-3.5" />
-                                所要時間
-                            </label>
-                            <div className="flex flex-wrap gap-2">
-                                {DURATION_OPTIONS.map(d => (
-                                    <button
-                                        key={d}
-                                        onClick={() => handleDurationChange(d)}
-                                        className={cn(
-                                            "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                                            duration === d
-                                                ? "bg-primary text-primary-foreground border-primary"
-                                                : "bg-background hover:bg-muted border-border"
-                                        )}
-                                    >
-                                        {d >= 60 ? `${d / 60}時間` : `${d}分`}
-                                    </button>
-                                ))}
-                            </div>
-                            <p className="text-[10px] text-muted-foreground">
-                                終了: {endTime}
-                            </p>
+                    {/* Duration (both task and event) */}
+                    <div className="space-y-1.5">
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <Clock className="w-3.5 h-3.5" />
+                            所要時間
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                            {DURATION_OPTIONS.map(d => (
+                                <button
+                                    key={d}
+                                    onClick={() => handleDurationChange(d)}
+                                    className={cn(
+                                        "px-3 py-1.5 text-sm rounded-lg border transition-colors",
+                                        duration === d
+                                            ? "bg-primary text-primary-foreground border-primary"
+                                            : "bg-background hover:bg-muted border-border"
+                                    )}
+                                >
+                                    {d >= 60 ? `${d / 60}時間` : `${d}分`}
+                                </button>
+                            ))}
                         </div>
-                    ) : (
-                        /* End Time (Event only) */
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <Clock className="w-3.5 h-3.5" />
-                                終了時間
-                            </label>
-                            <input
-                                type="time"
-                                value={endTime}
-                                onChange={(e) => setEndTime(e.target.value)}
-                                className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                            />
-                        </div>
-                    )}
+                        <p className="text-[10px] text-muted-foreground">
+                            終了: {endTime}
+                        </p>
+                    </div>
 
                     {/* Calendar Selection (Task only, writable calendars) */}
                     {isTask && availableCalendars.length > 0 && (

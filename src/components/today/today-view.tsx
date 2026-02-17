@@ -152,11 +152,27 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
         await onUpdateTask(taskId, { status: newStatus })
     }, [localTasks, onUpdateTask])
 
-    // Toggle child task status
-    const toggleChildTask = useCallback(async (taskId: string, currentStatus: string) => {
+    // Toggle child task status + auto-complete/uncomplete parent habit
+    const toggleChildTask = useCallback(async (
+        taskId: string,
+        currentStatus: string,
+        habitItem?: HabitWithDetails
+    ) => {
         const newStatus = currentStatus === 'done' ? 'todo' : 'done'
         await onUpdateTask(taskId, { status: newStatus })
-    }, [onUpdateTask])
+
+        // Auto-complete/uncomplete parent habit
+        if (habitItem && habitItem.childTasks.length > 0) {
+            const allDone = habitItem.childTasks.every(c =>
+                c.id === taskId ? newStatus === 'done' : c.status === 'done'
+            )
+            if (allDone && !habitItem.isCompletedToday) {
+                await toggleCompletion(habitItem.habit.id)
+            } else if (!allDone && habitItem.isCompletedToday) {
+                await toggleCompletion(habitItem.habit.id)
+            }
+        }
+    }, [onUpdateTask, toggleCompletion])
 
     // Handle item tap (open edit modal)
     const handleItemTap = useCallback((item: EditTarget) => {
@@ -348,39 +364,52 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                             </button>
                         </div>
                         <div className="space-y-1">
-                            {todayHabits.map(item => (
-                                <button
-                                    key={item.habit.id}
-                                    onClick={() => toggleCompletion(item.habit.id)}
-                                    className={cn(
-                                        "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all active:scale-[0.98]",
-                                        item.isCompletedToday
-                                            ? "bg-primary/8 dark:bg-primary/15"
-                                            : "hover:bg-muted/40 active:bg-muted/60"
-                                    )}
-                                >
-                                    {item.isCompletedToday ? (
-                                        <CheckSquare className="w-4 h-4 text-primary flex-shrink-0" />
-                                    ) : (
-                                        <Square className="w-4 h-4 text-muted-foreground/40 flex-shrink-0" />
-                                    )}
-                                    <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
-                                    <span className={cn(
-                                        "text-xs truncate flex-1 text-left",
-                                        item.isCompletedToday
-                                            ? "text-primary font-medium line-through"
-                                            : "text-foreground"
-                                    )}>
-                                        {item.habit.title}
-                                    </span>
-                                    {item.streak > 0 && (
-                                        <span className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium flex-shrink-0">
-                                            <Flame className="w-3 h-3" />
-                                            {item.streak}
+                            {todayHabits.map(item => {
+                                const hasChildren = item.childTasks.length > 0
+                                return (
+                                    <button
+                                        key={item.habit.id}
+                                        onClick={() => {
+                                            if (!hasChildren) toggleCompletion(item.habit.id)
+                                        }}
+                                        className={cn(
+                                            "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all",
+                                            !hasChildren && "active:scale-[0.98]",
+                                            item.isCompletedToday
+                                                ? "bg-primary/8 dark:bg-primary/15"
+                                                : !hasChildren
+                                                    ? "hover:bg-muted/40 active:bg-muted/60"
+                                                    : ""
+                                        )}
+                                    >
+                                        {item.isCompletedToday ? (
+                                            <CheckSquare className={cn("w-4 h-4 flex-shrink-0", hasChildren ? "text-primary/50" : "text-primary")} />
+                                        ) : (
+                                            <Square className={cn("w-4 h-4 flex-shrink-0", hasChildren ? "text-muted-foreground/20" : "text-muted-foreground/40")} />
+                                        )}
+                                        <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
+                                        <span className={cn(
+                                            "text-xs truncate flex-1 text-left",
+                                            item.isCompletedToday
+                                                ? "text-primary font-medium line-through"
+                                                : "text-foreground"
+                                        )}>
+                                            {item.habit.title}
                                         </span>
-                                    )}
-                                </button>
-                            ))}
+                                        {hasChildren && (
+                                            <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                                                {item.childTasks.filter(c => c.status === 'done').length}/{item.childTasks.length}
+                                            </span>
+                                        )}
+                                        {item.streak > 0 && (
+                                            <span className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium flex-shrink-0">
+                                                <Flame className="w-3 h-3" />
+                                                {item.streak}
+                                            </span>
+                                        )}
+                                    </button>
+                                )
+                            })}
                         </div>
                     </div>
 
@@ -402,7 +431,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                                                 >
                                                     <button
                                                         className="flex-shrink-0"
-                                                        onClick={() => toggleChildTask(child.id, child.status || 'todo')}
+                                                        onClick={() => toggleChildTask(child.id, child.status || 'todo', item)}
                                                     >
                                                         {child.status === 'done' ? (
                                                             <CheckSquare className="w-3.5 h-3.5 text-primary" />

@@ -491,7 +491,15 @@ export function useMindMapSync({
         const currentAll = allTasksRef.current;
         const beforeTask = currentAll.find(t => t.id === taskId)
         if (!beforeTask) {
-            console.error('[Sync] updateTask: task not found in state:', taskId)
+            // Task not in current project state (e.g. habit child from another project)
+            // Still perform DB update directly
+            console.log('[Sync] updateTask: task not in local state, updating DB directly:', taskId.slice(0, 8))
+            try {
+                const { error } = await supabase.from('tasks').update(updates).eq('id', taskId)
+                if (error) console.error('[Sync] updateTask direct DB error:', error)
+            } catch (e) {
+                console.error('[Sync] updateTask direct DB failed:', e)
+            }
             return
         }
         const beforeValues: Partial<Task> = {}
