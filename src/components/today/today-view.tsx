@@ -98,15 +98,6 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
         })
     }, [localTasks, habitGroupIds, today])
 
-    // Unscheduled active tasks (excluding habits)
-    const unscheduledTasks = useMemo(() => {
-        return localTasks.filter(t => {
-            if (habitGroupIds.has(t.parent_task_id ?? '')) return false
-            if (t.scheduled_at) return false
-            if (t.status === 'done' || t.status === 'archived') return false
-            return true
-        })
-    }, [localTasks, habitGroupIds])
 
     // Merge calendar events + scheduled tasks into timeline
     const timelineItems = useMemo(() => {
@@ -403,7 +394,6 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                 {timelineMode === 'calendar' ? (
                     <TodayTimelineCalendar
                         timelineItems={timelineItems}
-                        unscheduledTasks={unscheduledTasks}
                         allDayEvents={allDayEvents}
                         eventsLoading={eventsLoading}
                         currentTime={currentTime}
@@ -413,7 +403,6 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                     <div className="flex-1 overflow-y-auto no-scrollbar">
                         <TodayTimelineCards
                             timelineItems={timelineItems}
-                            unscheduledTasks={unscheduledTasks}
                             allDayEvents={allDayEvents}
                             eventsLoading={eventsLoading}
                             currentTime={currentTime}

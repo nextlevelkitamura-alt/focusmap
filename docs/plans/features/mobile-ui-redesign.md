@@ -83,19 +83,15 @@ PC でも同等の機能をアクセスできるレスポンシブ設計。
 │  └──────────────────────┘│
 │                          │
 │  ── 空き時間 (11:30-13:00)│  ← 空き時間スロット
-│  ┌──────────────────────┐│
-│  │ 📝 ドキュメント作成   ││  ← 未スケジュールタスク
-│  │    見積: 45min        ││     ドラッグで時間割り当て可能
-│  └──────────────────────┘│
 │                          │
 │  ┌─ 14:00 ─────────────┐│
 │  │ 📅 1on1 面談         ││
 │  └──────────────────────┘│
 │                          │
-│  ── 未スケジュール ──     │
-│  ┌──────────────────────┐│
-│  │ □ バグ修正 (30min)   ││  ← D&D でタイムラインに配置
-│  │ □ PRレビュー (15min) ││
+│  ┌─ 15:00 ─────────────┐│
+│  │ ✅ 報告書作成        ││
+│  │    15:00 - 16:00     ││
+│  │    ▶ タイマー開始     ││
 │  └──────────────────────┘│
 │                          │
 ├──────────────────────────┤
@@ -106,8 +102,15 @@ PC でも同等の機能をアクセスできるレスポンシブ設計。
 #### 構成要素
 
 **A. 習慣バー（上部固定）**
-- 今日の習慣を横一列で表示
-- 各習慣はタップで完了/未完了を切り替え
+- **今日該当する習慣のみ表示**（頻度設定でフィルタ）
+- タップで展開 → 習慣の子タスクをチェックボックス付きリストで表示
+  ```
+  💪 筋トレ          🔥 5日
+    ☑ 腕立て10回
+    ☐ スクワット10回
+    ☑ プランク30秒
+  ```
+- 全子タスク完了 → 習慣達成（`habit_completions` に記録）
 - 週の達成状況を小さなドット（7つ）で表示
 - スワイプで前後の日を確認可能
 
@@ -117,13 +120,7 @@ PC でも同等の機能をアクセスできるレスポンシブ設計。
 - 空き時間スロットの可視化
 - タスクカードにタイマーボタン（▶）を直接配置
 
-**C. 未スケジュールタスクセクション（下部）**
-- 今日期限だがまだ時間未割り当てのタスク
-- ドラッグ&ドロップでタイムラインに配置可能
-- タップでクイック時間設定
-
-**D. ドラッグ&ドロップ**
-- 未スケジュールタスクをタイムラインにドラッグ → 時間割り当て
+**C. ドラッグ&ドロップ（既存機能）**
 - タイムライン内のタスクをドラッグ → 時間変更
 - 右端のカレンダーとの D&D は既存機能を活用
 
@@ -163,6 +160,46 @@ PC でも同等の機能をアクセスできるレスポンシブ設計。
 - 基本的に既存の CenterPane をそのまま活用
 - スマホ用にスペース/プロジェクト選択を上部に配置（左サイドバーの代替）
 - ピンチズーム・スワイプ対応
+
+---
+
+### 2-B. マインドマップ - タスクメニュー（習慣設定）
+
+**タスクノードのメニューに「習慣」セクションを追加**:
+
+```
+┌─ タスクメニュー ──────────┐
+│ 優先度                    │
+│  [高] [中] [低]           │
+│ ───────────────────────  │
+│ 所要時間                  │
+│  [15分] [30分] [1時間]   │
+│ ───────────────────────  │
+│ スケジュール              │
+│  [日時を設定]            │
+│ ───────────────────────  │
+│ カレンダー                │
+│  [カレンダーを選択]      │
+│ ───────────────────────  │
+│ 習慣 ⭐NEW                │
+│  ☐ このタスクを習慣に     │  ← トグル
+│                          │
+│  （チェック時に表示）↓   │
+│  アイコン: [💪] [📖] [...] │
+│  頻度:                   │
+│   ○ 毎日                 │
+│   ○ 平日のみ             │
+│   ○ カスタム             │
+│     [月][火][水][木][金] │
+│     [土][日]             │
+└──────────────────────────┘
+```
+
+**挙動**:
+- 「このタスクを習慣に」をチェック → `is_habit = true`
+- 習慣に設定されたタスクの子タスクは、自動的に「習慣項目」として扱われる
+- マインドマップ上では、習慣タスクにアイコンバッジを表示（例: 💪）
+- 頻度設定で「今日」ビューの表示をフィルタ
 
 ---
 
@@ -254,99 +291,147 @@ PC でも同等の機能をアクセスできるレスポンシブ設計。
 
 ## データベース設計
 
-### 新規テーブル: `habits`
+### 既存テーブル拡張: `tasks`
+
+**習慣機能のために以下のカラムを追加**:
 
 ```sql
-CREATE TABLE habits (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    icon TEXT,                          -- 絵文字アイコン（💧, 📖 等）
-    frequency TEXT NOT NULL DEFAULT 'daily',  -- 'daily', 'weekdays', 'custom'
-    frequency_days INTEGER[],          -- custom の場合: [1,2,3,4,5] (月-金)
-    target_count INTEGER DEFAULT 1,    -- 1日の目標回数
-    order_index INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- 習慣関連カラムの追加
+ALTER TABLE tasks ADD COLUMN is_habit BOOLEAN DEFAULT false;
+ALTER TABLE tasks ADD COLUMN habit_frequency TEXT; -- 'daily', 'weekdays', 'custom:1,2,3,4,5'
+ALTER TABLE tasks ADD COLUMN habit_icon TEXT; -- 絵文字アイコン（💪, 📖, 💧 等）
 
--- RLS
-ALTER TABLE habits ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users manage own habits"
-    ON habits FOR ALL USING (auth.uid() = user_id);
+-- インデックス追加（習慣タスクの検索を高速化）
+CREATE INDEX idx_tasks_is_habit ON tasks(user_id, is_habit) WHERE is_habit = true;
 ```
 
-### 新規テーブル: `habit_logs`
+**習慣の構造**:
+- 習慣タスク: `is_habit = true` かつ `parent_task_id IS NULL`（ルートタスク）
+- 習慣項目（子タスク）: `parent_task_id = {習慣タスクのID}`
+
+**例**:
+```
+tasks:
+  id: habit-1, title: "筋トレ", is_habit: true, habit_frequency: "daily", habit_icon: "💪"
+    ├─ id: item-1, title: "腕立て10回", parent_task_id: habit-1
+    ├─ id: item-2, title: "スクワット10回", parent_task_id: habit-1
+    └─ id: item-3, title: "プランク30秒", parent_task_id: habit-1
+```
+
+### 新規テーブル: `habit_completions`
+
+**習慣の完了記録を保存**:
 
 ```sql
-CREATE TABLE habit_logs (
+CREATE TABLE habit_completions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    habit_id UUID NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+    habit_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     completed_date DATE NOT NULL,       -- 完了日（時間は不要）
-    count INTEGER DEFAULT 1,            -- 回数（複数回の場合）
+    child_task_ids UUID[],              -- 完了した子タスクのID配列
     created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
 
     UNIQUE(habit_id, completed_date)    -- 1日1レコード
 );
 
 -- RLS
-ALTER TABLE habit_logs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users manage own habit logs"
-    ON habit_logs FOR ALL USING (auth.uid() = user_id);
+ALTER TABLE habit_completions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own habit completions"
+    ON habit_completions FOR ALL USING (auth.uid() = user_id);
 
 -- インデックス
-CREATE INDEX idx_habit_logs_date ON habit_logs(habit_id, completed_date);
-CREATE INDEX idx_habit_logs_user_date ON habit_logs(user_id, completed_date);
+CREATE INDEX idx_habit_completions_date ON habit_completions(habit_id, completed_date);
+CREATE INDEX idx_habit_completions_user_date ON habit_completions(user_id, completed_date);
 ```
+
+**達成判定ロジック**:
+- 習慣の全子タスクが完了（`status = 'done'`）→ 習慣達成
+- `habit_completions` に記録を保存（ストリーク計算用）
 
 ---
 
 ## API 設計
 
-### 習慣 CRUD
-```
-GET    /api/habits              → 一覧取得
-POST   /api/habits              → 新規作成
-PATCH  /api/habits/[id]         → 更新
-DELETE /api/habits/[id]         → 削除
+### 習慣タスク管理（既存タスクAPIを拡張）
+
+習慣は `tasks` テーブルの一部なので、既存のタスクAPI（`useMindMapSync`）を使用。
+新しいフィールドのみ追加対応：
+
+```typescript
+// タスク更新時に habit 関連フィールドも送信
+PATCH /api/tasks/[id]
+{
+  is_habit: true,
+  habit_frequency: "weekdays",
+  habit_icon: "💪"
+}
 ```
 
-### 習慣ログ
+### 習慣完了記録
+
 ```
-POST   /api/habits/[id]/log     → 完了記録（toggle）
-GET    /api/habits/logs?from=&to=  → 期間指定でログ取得
+POST   /api/habits/completions        → 習慣完了を記録
+  Request: { habit_id: UUID, completed_date: DATE }
+  Response: { success: boolean, streak: number }
+
+GET    /api/habits/completions?from=&to=  → 期間指定で完了記録取得
+  Response: { habit_id: UUID, dates: DATE[] }[]
+
+DELETE /api/habits/completions/[id]   → 完了記録の削除（やり直し）
+```
+
+### 習慣一覧取得（フィルタ付き）
+
+```
+GET    /api/habits                    → 習慣タスク一覧取得
+  Query: { date?: DATE }  // 指定日に該当する習慣のみ（頻度フィルタ）
+  Response: {
+    id: UUID,
+    title: string,
+    habit_icon: string,
+    habit_frequency: string,
+    child_tasks: Task[],
+    completions: { date: DATE, child_task_ids: UUID[] }[]
+  }[]
 ```
 
 ### 今日ビュー用
+
 ```
-GET    /api/today               → 今日のタスク + イベント + 習慣を統合取得
+GET    /api/today                     → 今日のタスク + イベント + 習慣を統合取得
+  Response: {
+    scheduled_tasks: Task[],
+    calendar_events: CalendarEvent[],
+    habits: Habit[],  // 今日該当する習慣のみ
+  }
 ```
 
 ---
 
 ## コンポーネント設計
 
-### 新規コンポーネント
+### 新規・更新コンポーネント
 
 ```
 src/components/
 ├── mobile/
-│   ├── bottom-nav.tsx             # 更新: 4タブ構成
+│   ├── bottom-nav.tsx             # 更新: 4タブ構成（今日/マップ/習慣/設定）
 │   └── mobile-header.tsx          # 新規: スマホ用ヘッダー
 ├── today/
-│   ├── today-view.tsx             # 新規: 今日ビューのメインコンポーネント
-│   ├── habit-bar.tsx              # 新規: 習慣バー（横スクロール）
-│   ├── timeline-view.tsx          # 新規: タイムライン表示
-│   ├── timeline-event-card.tsx    # 新規: タイムライン上のイベントカード
-│   ├── timeline-task-card.tsx     # 新規: タイムライン上のタスクカード
-│   ├── unscheduled-tasks.tsx      # 新規: 未スケジュールタスクリスト
-│   └── time-slot.tsx              # 新規: 空き時間スロット
+│   ├── today-view.tsx             # 更新: 習慣バー統合、未スケジュールタスク削除
+│   ├── habit-bar.tsx              # 更新: 子タスクチェックボックス表示対応
+│   ├── today-timeline-calendar.tsx # 既存: カレンダー形式タイムライン
+│   ├── today-timeline-cards.tsx    # 既存: カード形式タイムライン
+│   └── (unscheduled-tasks.tsx)    # 削除: 未スケジュールタスクリストは不要
 ├── habits/
-│   ├── habits-view.tsx            # 新規: 習慣ビューのメインコンポーネント
-│   ├── habit-card.tsx             # 新規: 習慣カード
-│   ├── habit-week-calendar.tsx    # 新規: 週カレンダー
+│   ├── habits-view.tsx            # 新規: 習慣管理ビュー（全習慣一覧）
+│   ├── habit-card.tsx             # 新規: 習慣カード（展開で子タスク表示）
+│   ├── habit-week-calendar.tsx    # 新規: 週カレンダー（スワイプ対応）
+│   ├── habit-form.tsx             # 新規: 習慣作成/編集フォーム
+│   └── habit-frequency-select.tsx # 新規: 頻度選択UI（毎日/平日/カスタム）
+├── dashboard/
+│   ├── mind-map.tsx               # 更新: メニューに「習慣」セクション追加
 │   ├── habit-streak.tsx           # 新規: ストリーク表示
 │   └── habit-form.tsx             # 新規: 習慣作成/編集フォーム
 └── dashboard/
@@ -381,41 +466,57 @@ src/app/dashboard/
 ## 実装フェーズ
 
 ### Phase 1: ボトムナビ + ルーティング基盤（1-2日）
-- [ ] ボトムナビを4タブに更新
+- [ ] ボトムナビを4タブに更新（今日/マップ/習慣/設定）
 - [ ] `/dashboard/map` ルート作成（既存 CenterPane を移動）
 - [ ] `/dashboard/habits` ルート作成（プレースホルダー）
 - [ ] `/dashboard` を「今日」ビューのエントリーポイントに
 - [ ] スマホ用ヘッダーコンポーネント作成（日付表示）
 - [ ] マップビューにスペース/プロジェクト選択ドロップダウン追加
 
-### Phase 2: 「今日」ビュー - タイムライン（3-4日）
-- [ ] タイムラインコンポーネント実装
-- [ ] Google Calendar イベント + スケジュール済みタスクの統合表示
-- [ ] 現在時刻インジケーター
-- [ ] 空き時間スロットの可視化
-- [ ] タスクカード内のタイマーボタン
-- [ ] 未スケジュールタスクセクション
+### Phase 2: 「今日」ビュー - 未スケジュールタスク削除（0.5日）⭐修正
+- [ ] `today-view.tsx` から `unscheduledTasks` 関連ロジック削除
+- [ ] `TodayTimelineCalendar` から未スケジュールタスクセクション削除
+- [ ] `TodayTimelineCards` から未スケジュールタスクセクション削除
+- [ ] 未スケジュールタスク用のD&D処理を削除
 
-### Phase 3: 「今日」ビュー - ドラッグ&ドロップ（2-3日）
-- [ ] 未スケジュールタスク → タイムラインへのD&D
-- [ ] タイムライン内のタスク時間変更 D&D
-- [ ] Google Calendar API 連携（時間変更の同期）
-
-### Phase 4: 習慣機能 - DB + API（1-2日）
-- [ ] `habits` / `habit_logs` テーブル作成
+### Phase 3: 習慣機能 - DB + マイグレーション（1日）⭐修正
+- [ ] `tasks` テーブルに習慣カラム追加（`is_habit`, `habit_frequency`, `habit_icon`）
+- [ ] `habit_completions` テーブル作成
 - [ ] RLS ポリシー設定
-- [ ] 習慣 CRUD API 実装
-- [ ] 習慣ログ API 実装
-- [ ] `useHabits` Hook 作成
+- [ ] `src/types/database.ts` の型定義更新
 
-### Phase 5: 習慣ビュー UI（2-3日）
-- [ ] 習慣ビューメインコンポーネント
-- [ ] 習慣カード（週の達成状況 + ストリーク）
-- [ ] 週カレンダー（スワイプ可能）
-- [ ] 習慣作成/編集フォーム
-- [ ] 習慣バー（「今日」ビュー上部）
+### Phase 4: マインドマップ - 習慣設定UI（1-2日）⭐新規
+- [ ] `mind-map.tsx` のタスクメニューに「習慣」セクション追加
+- [ ] 習慣トグル（`is_habit`）の実装
+- [ ] 頻度選択UI（毎日/平日/カスタム）の実装
+- [ ] アイコン選択UI（絵文字ピッカー）の実装
+- [ ] 習慣タスクのバッジ表示（マインドマップ上）
+- [ ] `useMindMapSync` での習慣フィールド更新対応
 
-### Phase 6: PC版統合（2-3日）
+### Phase 5: 習慣API + Hook（1-2日）⭐修正
+- [ ] 習慣完了記録API（`/api/habits/completions`）
+- [ ] 習慣一覧取得API（`/api/habits`、頻度フィルタ付き）
+- [ ] `useHabits` Hook 作成（習慣取得 + 完了記録 + ストリーク計算）
+- [ ] 頻度判定ロジック（今日該当する習慣か？）
+
+### Phase 6: 「今日」ビュー - 習慣バー強化（2-3日）⭐修正
+- [ ] モック習慣データを削除、DBから習慣タスク取得
+- [ ] 習慣の子タスク（習慣項目）を取得・表示
+- [ ] 習慣展開時に子タスクのチェックボックス表示
+- [ ] 子タスク完了状態の更新（`status = 'done'`）
+- [ ] 全子タスク完了 → `habit_completions` に記録
+- [ ] ストリーク計算・表示（🔥アイコン）
+- [ ] 週間達成状況（7日分のドット）の表示
+
+### Phase 7: 習慣ビュー（別ページ）（2-3日）⭐修正
+- [ ] `habits-view.tsx` - 習慣管理ビュー（全習慣一覧）
+- [ ] `habit-card.tsx` - 習慣カード（展開で子タスク表示）
+- [ ] `habit-week-calendar.tsx` - 週カレンダー（スワイプ対応）
+- [ ] `habit-form.tsx` - 習慣作成/編集フォーム
+- [ ] `habit-frequency-select.tsx` - 頻度選択UI
+- [ ] `/dashboard/habits` ページの実装
+
+### Phase 8: PC版統合（2-3日）
 - [ ] 中央ペインにビュー切り替えタブ追加（今日 / マップ / 習慣）
 - [ ] 既存の3ペイン構成との統合
 - [ ] 習慣バーのPC表示最適化
@@ -428,19 +529,27 @@ src/app/dashboard/
 ```
 Phase 1 (ルーティング基盤)
     ↓
-Phase 2 (今日ビュー - タイムライン)
+Phase 2 (未スケジュールタスク削除) ← 独立、短期
     ↓
-Phase 3 (今日ビュー - D&D)         Phase 4 (習慣 - DB/API)
-    ↓                                  ↓
-    ↓                              Phase 5 (習慣 - UI)
-    ↓                                  ↓
-    └──────────────────────────────────┘
-                    ↓
-            Phase 6 (PC版統合)
+Phase 3 (習慣DB)
+    ↓
+Phase 4 (マインドマップ習慣設定) ─┐
+    ↓                            │
+Phase 5 (習慣API + Hook) ────────┤
+    ↓                            │
+Phase 6 (今日ビュー習慣バー) ────┤
+    ↓                            │
+Phase 7 (習慣ビュー) ────────────┘
+    ↓
+Phase 8 (PC版統合)
 ```
 
-- Phase 4-5 は Phase 2-3 と並行可能
-- Phase 6 は全フェーズ完了後
+**並行実行可能**:
+- Phase 4（マインドマップ）と Phase 5（API）は部分的に並行可能
+- Phase 6 と Phase 7 は Phase 5 完了後に並行可能
+
+**クリティカルパス**:
+Phase 3 → Phase 5 → Phase 6 → Phase 8
 
 ---
 
@@ -449,16 +558,33 @@ Phase 3 (今日ビュー - D&D)         Phase 4 (習慣 - DB/API)
 | リスク | レベル | 対策 |
 |--------|--------|------|
 | 既存マインドマップの移動 | LOW | CenterPaneをそのまま再利用、ルートだけ変更 |
-| タイムラインの D&D 実装 | MEDIUM | 既存の @hello-pangea/dnd を活用 |
-| Google Calendar との統合 | LOW | 既存 API をそのまま利用 |
-| 習慣のDB設計 | LOW | シンプルなテーブル設計 |
+| 未スケジュールタスク削除の影響 | LOW | 既存コードから該当部分を削除するだけ |
+| tasksテーブルへの習慣統合 | MEDIUM | 既存タスクとの整合性確認、マイグレーション慎重に |
+| 頻度フィルタのロジック | MEDIUM | 曜日判定の実装を慎重に（タイムゾーン考慮） |
+| 習慣達成判定（全子タスク完了） | MEDIUM | 子タスクの状態監視、リアルタイム更新 |
 | スマホ ↔ PC の状態共有 | MEDIUM | URL ベースのルーティングで統一 |
 
 ---
 
 ## 推奨実装順序
 
-→ **Phase 1 から /impl で着手**
+### クイックスタート: Phase 2（未スケジュールタスク削除）
 
-Phase 1 でルーティング基盤を整え、画面遷移が動く状態を先に作る。
-その後、各ビューの中身を順次実装していく。
+→ **Phase 2 から /impl で着手**（最も簡単、即効性あり）
+
+Phase 2 は既存コードから不要な部分を削除するだけなので、すぐに完了できます。
+「今日」ビューをシンプルにしてから、習慣機能の実装に進みましょう。
+
+### 本格実装: Phase 3〜8
+
+Phase 3（DB）→ Phase 4（マインドマップ）→ Phase 5（API）→ Phase 6（今日ビュー）→ Phase 7（習慣ビュー）→ Phase 8（PC版）
+
+**Phase 3 は `/tdd` 推奨**（DB設計は慎重に）
+**Phase 4-8 は `/impl` 推奨**（UI実装がメイン）
+
+### 段階的リリース案
+
+1. **Phase 2 完了** → すぐにリリース（シンプル化）
+2. **Phase 3-6 完了** → 習慣機能β版リリース（今日ビュー + マインドマップ）
+3. **Phase 7 完了** → 習慣管理画面追加
+4. **Phase 8 完了** → PC版対応完了、正式リリース

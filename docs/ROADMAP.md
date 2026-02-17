@@ -110,6 +110,11 @@
   - Phase 1: DB移行 ✅ | Phase 2: コード変更 ✅ | Phase 3: 旧テーブル削除 ○
 - 🔧 **マインドマップ操作感改善**（XMind風の操作体系） → [計画](plans/features/mindmap-ux-improvement.md)
 - 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
+- 🔧 **習慣機能強化 + モバイルUI改善**（タスク統合型習慣トラッカー、マインドマップ連携） → [計画](plans/features/mobile-ui-redesign.md)
+  - Phase 2: 未スケジュールタスク削除 ○
+  - Phase 3-6: 習慣機能（DB、マインドマップ、今日ビュー） ○
+  - Phase 7: 習慣ビュー ○
+  - Phase 8: PC版統合 ○
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能

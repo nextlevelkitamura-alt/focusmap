@@ -20,7 +20,6 @@ type TimelineItem =
 
 interface TodayTimelineCalendarProps {
     timelineItems: TimelineItem[]
-    unscheduledTasks: Task[]
     allDayEvents: CalendarEvent[]
     eventsLoading: boolean
     currentTime: Date
@@ -44,7 +43,6 @@ function getHeightPx(startDate: Date, endDate: Date): number {
 // --- Main Component ---
 export function TodayTimelineCalendar({
     timelineItems,
-    unscheduledTasks,
     allDayEvents,
     eventsLoading,
     currentTime,
@@ -274,53 +272,6 @@ export function TodayTimelineCalendar({
                     </div>
                 </div>
             </div>
-
-            {/* Unscheduled Tasks (below the grid) */}
-            {unscheduledTasks.length > 0 && (
-                <div className="flex-shrink-0 border-t bg-background px-3 py-2 max-h-40 overflow-y-auto">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                            未スケジュール
-                        </span>
-                        <span className="text-[9px] text-muted-foreground bg-muted px-1 py-0.5 rounded-full">
-                            {unscheduledTasks.length}
-                        </span>
-                    </div>
-                    <div className="space-y-0.5">
-                        {unscheduledTasks.slice(0, 5).map(task => (
-                            <div
-                                key={task.id}
-                                className="flex items-center gap-2 py-1.5 px-1.5 rounded-md active:bg-muted/50"
-                            >
-                                <button onClick={() => onToggleTask(task.id)} className="flex-shrink-0">
-                                    {task.status === 'done' ? (
-                                        <CheckSquare className="w-3.5 h-3.5 text-primary" />
-                                    ) : (
-                                        <Square className="w-3.5 h-3.5 text-muted-foreground" />
-                                    )}
-                                </button>
-                                <span className={cn(
-                                    "text-xs flex-1 truncate",
-                                    task.status === 'done' && "line-through text-muted-foreground"
-                                )}>
-                                    {task.title}
-                                </span>
-                                {task.estimated_time > 0 && (
-                                    <span className="text-[9px] text-muted-foreground">{task.estimated_time}分</span>
-                                )}
-                                {timer.runningTaskId !== task.id && (
-                                    <button
-                                        onClick={() => timer.startTimer(task)}
-                                        className="p-1.5 rounded active:bg-muted text-muted-foreground"
-                                    >
-                                        <Play className="w-3 h-3" />
-                                    </button>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
         </div>
     )
 }
