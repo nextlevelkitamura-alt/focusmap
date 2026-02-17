@@ -73,7 +73,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
     }, [today])
 
     // Fetch calendar events for today
-    const { events: calendarEvents, isLoading: eventsLoading } = useCalendarEvents({
+    const { events: calendarEvents, isLoading: eventsLoading, error: eventsError } = useCalendarEvents({
         timeMin: today,
         timeMax: tomorrow,
         calendarIds: selectedCalendarIds,
@@ -251,7 +251,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                                     className={cn(
                                         "flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all",
                                         habit.completedToday
-                                            ? "bg-primary/10 text-primary border-primary/30"
+                                            ? "bg-primary/10 text-primary border-primary/30 dark:bg-primary/20 dark:border-primary/40"
                                             : "bg-background text-muted-foreground border-border"
                                     )}
                                 >
@@ -346,6 +346,18 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
 
             {/* Timeline Content */}
             <div className="flex-1 overflow-hidden flex flex-col">
+                {/* Calendar Events Error */}
+                {eventsError && (
+                    <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+                        <p className="text-sm text-red-700 dark:text-red-300">
+                            カレンダーイベントの取得に失敗しました
+                        </p>
+                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                            {eventsError.message}
+                        </p>
+                    </div>
+                )}
+
                 {timelineMode === 'calendar' ? (
                     <TodayTimelineCalendar
                         timelineItems={timelineItems}

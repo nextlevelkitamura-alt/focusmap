@@ -140,7 +140,7 @@ export function TodayTimelineCalendar({
 
             {/* Active Timer Banner */}
             {timer.runningTask && (
-                <div className="mx-2 mt-2 p-2.5 rounded-lg bg-primary/5 border border-primary/20 flex-shrink-0">
+                <div className="mx-2 mt-2 p-2.5 rounded-lg bg-primary/5 border border-primary/20 dark:bg-primary/10 dark:border-primary/30 flex-shrink-0">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0 flex-1">
                             <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
@@ -152,13 +152,15 @@ export function TodayTimelineCalendar({
                             </span>
                             <button
                                 onClick={() => timer.pauseTimer()}
-                                className="p-1 rounded-full bg-primary/10 active:bg-primary/20 text-primary"
+                                aria-label="タイマーを一時停止"
+                                className="p-1 rounded-full bg-primary/10 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                             >
                                 <Pause className="w-3.5 h-3.5" />
                             </button>
                             <button
                                 onClick={() => timer.completeTimer()}
-                                className="p-1 rounded-full bg-green-500/10 active:bg-green-500/20 text-green-600"
+                                aria-label="タスクを完了"
+                                className="p-1 rounded-full bg-green-500/10 active:bg-green-500/20 text-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                             >
                                 <Check className="w-3.5 h-3.5" />
                             </button>
@@ -400,7 +402,7 @@ function TaskBlock({
         <div className={cn(
             "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
             isRunning
-                ? "bg-primary/10 border-primary ring-1 ring-primary/30"
+                ? "bg-primary/15 dark:bg-primary/10 border-primary ring-1 ring-primary/40 dark:ring-primary/30"
                 : isDone
                     ? "bg-muted/30 border-muted-foreground/30"
                     : "bg-green-50 dark:bg-green-950/40 border-green-400",
@@ -409,7 +411,11 @@ function TaskBlock({
         )}>
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
-                    <button onClick={() => onToggle(task.id)} className="flex-shrink-0">
+                    <button
+                        onClick={() => onToggle(task.id)}
+                        aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
+                        className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                    >
                         {isDone ? (
                             <CheckSquare className="w-3 h-3 text-primary" />
                         ) : (
@@ -424,11 +430,19 @@ function TaskBlock({
                     </span>
                     <div className="ml-auto flex-shrink-0">
                         {isRunning ? (
-                            <button onClick={() => timer.pauseTimer()} className="p-0.5 text-primary">
+                            <button
+                                onClick={() => timer.pauseTimer()}
+                                aria-label="タイマーを一時停止"
+                                className="p-0.5 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                            >
                                 <Pause className="w-3 h-3" />
                             </button>
                         ) : (
-                            <button onClick={() => timer.startTimer(task)} className="p-0.5 text-muted-foreground">
+                            <button
+                                onClick={() => timer.startTimer(task)}
+                                aria-label={`${task.title}のタイマーを開始`}
+                                className="p-0.5 text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                            >
                                 <Play className="w-3 h-3" />
                             </button>
                         )}
@@ -438,7 +452,11 @@ function TaskBlock({
                 <>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <button onClick={() => onToggle(task.id)} className="flex-shrink-0">
+                            <button
+                                onClick={() => onToggle(task.id)}
+                                aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
+                                className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                            >
                                 {isDone ? (
                                     <CheckSquare className="w-3.5 h-3.5 text-primary" />
                                 ) : (
@@ -454,11 +472,19 @@ function TaskBlock({
                         </div>
                         <div className="flex-shrink-0 ml-1">
                             {isRunning ? (
-                                <button onClick={() => timer.pauseTimer()} className="p-1 rounded-full bg-primary/10 text-primary">
+                                <button
+                                    onClick={() => timer.pauseTimer()}
+                                    aria-label="タイマーを一時停止"
+                                    className="p-1 rounded-full bg-primary/10 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+                                >
                                     <Pause className="w-3.5 h-3.5" />
                                 </button>
                             ) : (
-                                <button onClick={() => timer.startTimer(task)} className="p-1 rounded-full active:bg-muted text-muted-foreground">
+                                <button
+                                    onClick={() => timer.startTimer(task)}
+                                    aria-label={`${task.title}のタイマーを開始`}
+                                    className="p-1 rounded-full active:bg-muted text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+                                >
                                     <Play className="w-3.5 h-3.5" />
                                 </button>
                             )}

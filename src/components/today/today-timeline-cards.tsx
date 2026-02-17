@@ -41,7 +41,7 @@ export function TodayTimelineCards({
         <>
             {/* Active Timer Banner */}
             {timer.runningTask && (
-                <div className="mx-4 mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20">
+                <div className="mx-4 mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 dark:bg-primary/10 dark:border-primary/30">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0 flex-1">
                             <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
@@ -53,13 +53,15 @@ export function TodayTimelineCards({
                             </span>
                             <button
                                 onClick={() => timer.pauseTimer()}
-                                className="p-1.5 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary"
+                                aria-label="タイマーを一時停止"
+                                className="p-1.5 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                             >
                                 <Pause className="w-4 h-4" />
                             </button>
                             <button
                                 onClick={() => timer.completeTimer()}
-                                className="p-1.5 rounded-full bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/20 text-green-600"
+                                aria-label="タスクを完了"
+                                className="p-1.5 rounded-full bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/20 text-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                             >
                                 <Check className="w-4 h-4" />
                             </button>
@@ -141,12 +143,13 @@ export function TodayTimelineCards({
                             >
                                 <button
                                     onClick={() => onToggleTask(task.id)}
-                                    className="flex-shrink-0"
+                                    aria-label={task.status === 'done' ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
+                                    className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded transition-transform active:scale-95"
                                 >
                                     {task.status === 'done' ? (
-                                        <CheckSquare className="w-4 h-4 text-primary" />
+                                        <CheckSquare className="w-4 h-4 text-primary transition-all" />
                                     ) : (
-                                        <Square className="w-4 h-4 text-muted-foreground" />
+                                        <Square className="w-4 h-4 text-muted-foreground transition-all" />
                                     )}
                                 </button>
                                 <span className={cn(
@@ -163,7 +166,8 @@ export function TodayTimelineCards({
                                 {timer.runningTaskId !== task.id && (
                                     <button
                                         onClick={() => timer.startTimer(task)}
-                                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-2 md:p-1 rounded hover:bg-muted active:bg-muted text-muted-foreground"
+                                        aria-label={`${task.title}のタイマーを開始`}
+                                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-2 md:p-1 rounded hover:bg-muted active:bg-muted text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:opacity-100 transition-opacity duration-200"
                                     >
                                         <Play className="w-3.5 h-3.5" />
                                     </button>
@@ -174,12 +178,13 @@ export function TodayTimelineCards({
                     {unscheduledTasks.length > 5 && (
                         <button
                             onClick={() => setShowAllUnscheduled(prev => !prev)}
-                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1 px-2 py-1"
+                            aria-label={showAllUnscheduled ? '未スケジュールタスクを折りたたむ' : `他 ${unscheduledTasks.length - 5}件を表示`}
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1 px-2 py-1 rounded focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors"
                         >
                             {showAllUnscheduled ? (
-                                <><ChevronUp className="w-3 h-3" />折りたたむ</>
+                                <><ChevronUp className="w-3 h-3 transition-transform" />折りたたむ</>
                             ) : (
-                                <><ChevronDown className="w-3 h-3" />他 {unscheduledTasks.length - 5}件を表示</>
+                                <><ChevronDown className="w-3 h-3 transition-transform" />他 {unscheduledTasks.length - 5}件を表示</>
                             )}
                         </button>
                     )}
@@ -244,7 +249,7 @@ function TimelineCard({
         <div className={cn(
             "relative flex gap-3 p-3 rounded-xl border transition-colors",
             isRunning
-                ? "border-primary bg-primary/5"
+                ? "border-primary/60 bg-primary/10 dark:border-primary/50 dark:bg-primary/10"
                 : isNow
                     ? "border-green-300 bg-green-50/50 dark:border-green-700 dark:bg-green-950/30"
                     : "border-border",
@@ -278,14 +283,16 @@ function TimelineCard({
                 {isRunning ? (
                     <button
                         onClick={() => timer.pauseTimer()}
-                        className="p-2 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary"
+                        aria-label="タイマーを一時停止"
+                        className="p-2 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                     >
                         <Pause className="w-4 h-4" />
                     </button>
                 ) : (
                     <button
                         onClick={() => timer.startTimer(task)}
-                        className="p-2 rounded-full hover:bg-muted active:bg-muted text-muted-foreground hover:text-primary"
+                        aria-label={`${task.title}のタイマーを開始`}
+                        className="p-2 rounded-full hover:bg-muted active:bg-muted text-muted-foreground hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                     >
                         <Play className="w-4 h-4" />
                     </button>
