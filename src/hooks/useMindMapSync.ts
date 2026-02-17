@@ -171,36 +171,44 @@ export function useMindMapSync({
             },
         })
 
-        // Background INSERT
-        try {
-            console.log('[Sync] Creating root task (group):', optimisticId, title);
-            const { error } = await supabase.from('tasks').insert({
-                id: optimisticId,
-                user_id: userId,
-                project_id: projectId,
-                is_group: true, // ルートタスク（グループ）なので true
-                parent_task_id: null,
-                title,
-                status: 'todo',
-                order_index: maxOrder,
-                actual_time_minutes: 0,
-                estimated_time: 0,
-                is_habit: false,
-                habit_frequency: null,
-                habit_icon: null,
-            })
-            if (error) {
-                console.error('[Sync] createGroup INSERT failed:', error);
-                throw error;
+        // Background INSERT（createTask と同じパターン）
+        const insertPromise = (async () => {
+            try {
+                console.log('[Sync] Creating root task (group):', optimisticId, title);
+                const { error } = await supabase.from('tasks').insert({
+                    id: optimisticId,
+                    user_id: userId,
+                    project_id: projectId,
+                    is_group: true, // ルートタスク（グループ）なので true
+                    parent_task_id: null,
+                    title,
+                    status: 'todo',
+                    order_index: maxOrder,
+                    actual_time_minutes: 0,
+                    estimated_time: 0,
+                    is_habit: false,
+                    habit_frequency: null,
+                    habit_icon: null,
+                })
+                if (error) {
+                    console.error('[Sync] createGroup INSERT failed:', error);
+                    throw error;
+                }
+                console.log('[Sync] createGroup INSERT success:', optimisticId);
+                pendingOptimisticTasks.current.delete(optimisticId)
+            } catch (e) {
+                console.error('[Sync] createGroup failed:', e)
+                pendingOptimisticTasks.current.delete(optimisticId)
+                setAllTasks(prev => prev.filter(t => t.id !== optimisticId))
             }
-            console.log('[Sync] createGroup INSERT success:', optimisticId);
-            pendingOptimisticTasks.current.delete(optimisticId)
-        } catch (e) {
-            console.error('[Sync] createGroup failed:', e)
-            pendingOptimisticTasks.current.delete(optimisticId)
-            setAllTasks(prev => prev.filter(t => t.id !== optimisticId))
-            return null
-        }
+        })();
+
+        // CRITICAL: pendingInserts に登録してから INSERT を開始
+        // これにより、子タスクが親の INSERT 完了を確実に待つことができる
+        pendingInserts.current.set(optimisticId, insertPromise);
+        insertPromise.finally(() => {
+            pendingInserts.current.delete(optimisticId);
+        });
 
         return optimisticTask
     }, [projectId, userId, supabase, pushAction])
