@@ -111,7 +111,7 @@
 - 🔧 **マインドマップ操作感改善**（XMind風の操作体系） → [計画](plans/features/mindmap-ux-improvement.md)
 - 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
 - 🔧 **習慣機能強化 + モバイルUI改善**（タスク統合型習慣トラッカー、マインドマップ連携） → [計画](plans/features/mobile-ui-redesign.md)
-  - Phase 2: 未スケジュールタスク削除 ○
+  - Phase 2: 未スケジュールタスク削除 ✅
   - Phase 3-6: 習慣機能（DB、マインドマップ、今日ビュー） ○
   - Phase 7: 習慣ビュー ○
   - Phase 8: PC版統合 ○
@@ -123,6 +123,7 @@
 
 ## 完了履歴
 
+- 2026-02-17: **習慣機能強化 Phase 2** 完了（未スケジュールタスク削除）
 - 2026-02-16: **グループとタスクの統合 Phase 1-2** 完了（GroupNode廃止、全ノードTaskNode化）
 - 2026-02-15: **カレンダーイベント編集UI** 完了
 - 2026-02-13: **タスク削除時にGoogleカレンダー予定も自動削除** 完了

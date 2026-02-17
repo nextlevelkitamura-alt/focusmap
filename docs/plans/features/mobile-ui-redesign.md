@@ -473,11 +473,11 @@ src/app/dashboard/
 - [ ] スマホ用ヘッダーコンポーネント作成（日付表示）
 - [ ] マップビューにスペース/プロジェクト選択ドロップダウン追加
 
-### Phase 2: 「今日」ビュー - 未スケジュールタスク削除（0.5日）⭐修正
-- [ ] `today-view.tsx` から `unscheduledTasks` 関連ロジック削除
-- [ ] `TodayTimelineCalendar` から未スケジュールタスクセクション削除
-- [ ] `TodayTimelineCards` から未スケジュールタスクセクション削除
-- [ ] 未スケジュールタスク用のD&D処理を削除
+### Phase 2: 「今日」ビュー - 未スケジュールタスク削除（0.5日）⭐修正 ✅
+- [x] `today-view.tsx` から `unscheduledTasks` 関連ロジック削除
+- [x] `TodayTimelineCalendar` から未スケジュールタスクセクション削除
+- [x] `TodayTimelineCards` から未スケジュールタスクセクション削除
+- [x] 未スケジュールタスク用のD&D処理を削除
 
 ### Phase 3: 習慣機能 - DB + マイグレーション（1日）⭐修正
 - [ ] `tasks` テーブルに習慣カラム追加（`is_habit`, `habit_frequency`, `habit_icon`）
