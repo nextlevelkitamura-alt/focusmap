@@ -330,6 +330,11 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     // Guard: prevent focus operations from triggering onChange → edit mode
     const justFocusedRef = useRef(false);
 
+    // Drag sensitivity: prevent accidental drag on click
+    const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+    const [isDraggable, setIsDraggable] = useState<boolean>(false);
+    const DRAG_THRESHOLD = 15; // 15px threshold (prevents accidental drag)
+
     // Trigger edit from external
     useEffect(() => {
         if (data?.triggerEdit && !isEditing) {
@@ -576,11 +581,40 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     const handleWrapperMouseDown = useCallback((e: React.MouseEvent) => {
         // Record whether node was already selected before this click
         wasSelectedRef.current = !!selected;
+
+        // Drag sensitivity: record start position
+        dragStartPosRef.current = { x: e.clientX, y: e.clientY };
+        setIsDraggable(false);
+
+        // Keep focus on wrapper for keyboard shortcuts (Return, Tab, etc.)
+        // Only move focus to input when entering edit mode via double-click or F2
         if (!isEditing) {
             setShowCaret(false);
-            inputRef.current?.focus();
+            // Ensure wrapper maintains focus for keyboard events
+            requestAnimationFrame(() => {
+                wrapperRef.current?.focus();
+            });
         }
     }, [isEditing, selected]);
+
+    // Mouse move handler to detect drag threshold
+    const handleWrapperMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!dragStartPosRef.current || isDraggable) return;
+
+        const dx = e.clientX - dragStartPosRef.current.x;
+        const dy = e.clientY - dragStartPosRef.current.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > DRAG_THRESHOLD) {
+            setIsDraggable(true);
+        }
+    }, [isDraggable, DRAG_THRESHOLD]);
+
+    // Mouse up handler to reset drag state
+    const handleWrapperMouseUp = useCallback(() => {
+        dragStartPosRef.current = null;
+        setIsDraggable(false);
+    }, []);
 
     // ドラッグ開始時の処理（カレンダーにドロップするため）
     const handleDragStart = useCallback((e: React.DragEvent) => {
@@ -644,12 +678,15 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
             )}
             tabIndex={0}
-            draggable={!isEditing}
+            draggable={!isEditing && isDraggable}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             onKeyDown={handleWrapperKeyDown}
             onDoubleClick={handleDoubleClick}
             onMouseDown={handleWrapperMouseDown}
+            onMouseMove={handleWrapperMouseMove}
+            onMouseUp={handleWrapperMouseUp}
+            onMouseLeave={handleWrapperMouseUp}
         >
             {/* Drop position indicators */}
             {data?.isDropTarget && data?.dropPosition === 'above' && (
