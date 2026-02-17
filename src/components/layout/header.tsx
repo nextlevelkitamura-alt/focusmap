@@ -91,7 +91,7 @@ export function Header({
     const displayName = selectedSpaceId === null ? "全体" : (selectedSpace?.title || "Space")
 
     return (
-        <header className="h-14 border-b flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
+        <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
             {/* Left: Logo & Space Switcher */}
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
