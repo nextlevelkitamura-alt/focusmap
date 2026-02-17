@@ -211,7 +211,7 @@ export function MobileEventEditModal({
                 </div>
 
                 {/* Form */}
-                <div className="px-4 pb-6 space-y-4">
+                <div className="px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] space-y-4">
                     {/* Title */}
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">

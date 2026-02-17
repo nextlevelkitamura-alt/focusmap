@@ -420,51 +420,54 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                         </div>
                     </div>
 
-                    {/* Expanded: Child tasks only (no duplicate title, no week dots) */}
+                    {/* Expanded: Child tasks only (compact) */}
                     {habitsExpanded && (
-                        <div className="px-4 pb-3 space-y-1.5 animate-in slide-in-from-top-2 duration-200">
+                        <div className="px-4 pb-2 space-y-0.5 animate-in slide-in-from-top-2 duration-200">
                             {todayHabits.map(item => (
                                 item.childTasks.length > 0 && (
-                                    <div key={item.habit.id} className="space-y-0.5">
+                                    <div key={item.habit.id} className="space-y-0">
                                         {item.childTasks.map(child => {
                                             const isRunning = timer.runningTaskId === child.id
                                             const isDone = child.status === 'done'
+                                            const hasElapsed = (child.total_elapsed_seconds ?? 0) > 0
                                             return (
                                                 <div
                                                     key={child.id}
                                                     className={cn(
-                                                        "flex items-center gap-2 rounded-lg transition-colors",
+                                                        "flex items-center gap-1.5 rounded-md transition-colors",
                                                         isRunning && "bg-primary/10"
                                                     )}
                                                 >
-                                                    {/* Tappable area: checkbox + title (entire row except timer) */}
+                                                    {/* Tappable area: checkbox + title */}
                                                     <button
-                                                        className={cn(
-                                                            "flex items-center gap-2 flex-1 min-w-0 py-2.5 px-2 rounded-lg active:bg-muted/50 transition-colors"
-                                                        )}
+                                                        className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
                                                         onClick={() => toggleChildTask(child.id, child.status || 'todo', item)}
                                                     >
                                                         {isDone ? (
-                                                            <CheckSquare className="w-4 h-4 text-primary flex-shrink-0" />
+                                                            <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                                                         ) : (
-                                                            <Square className="w-4 h-4 text-muted-foreground/50 flex-shrink-0" />
+                                                            <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
                                                         )}
                                                         <span className={cn(
-                                                            "text-sm flex-1 truncate text-left",
+                                                            "text-xs flex-1 truncate text-left",
                                                             isDone ? "line-through text-muted-foreground" : "text-foreground"
                                                         )}>
                                                             {child.title}
                                                         </span>
                                                     </button>
-                                                    {/* Timer display + button (separate tap target) */}
-                                                    {isRunning && (
+                                                    {/* Timer display: show elapsed even when stopped */}
+                                                    {isRunning ? (
                                                         <span className="text-[10px] font-mono text-primary flex-shrink-0">
                                                             {formatTime(timer.currentElapsedSeconds)}
                                                         </span>
-                                                    )}
+                                                    ) : hasElapsed ? (
+                                                        <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
+                                                            {formatTime(child.total_elapsed_seconds ?? 0)}
+                                                        </span>
+                                                    ) : null}
                                                     <button
                                                         className={cn(
-                                                            "p-2 rounded-full flex-shrink-0",
+                                                            "p-1.5 rounded-full flex-shrink-0",
                                                             isRunning ? "text-primary bg-primary/10" : "text-muted-foreground/50 active:bg-muted/50"
                                                         )}
                                                         onClick={(e) => {
@@ -472,7 +475,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                                                             isRunning ? timer.pauseTimer() : timer.startTimer(child)
                                                         }}
                                                     >
-                                                        {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                                                        {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                                                     </button>
                                                 </div>
                                             )
