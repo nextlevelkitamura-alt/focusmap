@@ -135,19 +135,29 @@
   display: none;
 }
 
+/* ReactFlow: ノード位置変更時のスムーズアニメーション */
+.react-flow__node {
+  transition: transform 200ms ease, filter 0.15s ease, opacity 0.15s ease;
+}
+
 /* ReactFlow: ドラッグ可能なノードにグラブカーソル */
 .react-flow__node[draggable="true"] {
   cursor: grab;
-  transition: filter 0.15s ease, opacity 0.15s ease;
 }
 
 /* ReactFlow: ドラッグ中のノード — 浮遊感+掴んでいる感 */
-/* NOTE: transform は使用禁止（ReactFlow の translate と競合する） */
+/* NOTE: transform のトランジションを無効化（ドラッグ追従を妨げる） */
 .react-flow__node.dragging {
+  transition: filter 0.15s ease, opacity 0.15s ease !important;
   opacity: 0.9;
   filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.5)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
   z-index: 1000 !important;
   cursor: grabbing;
+}
+
+/* ReactFlow: 範囲選択中もトランジション無効化 */
+.react-flow__node.selected.dragging {
+  transition: filter 0.15s ease, opacity 0.15s ease !important;
 }
 
 /* ドロップターゲット: as-child（子になる） */

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect, useCallback } from "react"
-import { Task, TaskGroup } from "@/types/database"
+import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
@@ -20,13 +20,12 @@ type TimelineItem =
 
 interface TodayViewProps {
     allTasks: Task[]
-    allGroups: TaskGroup[]
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
 }
 
 // --- Main Component ---
 
-export function TodayView({ allTasks, allGroups, onUpdateTask }: TodayViewProps) {
+export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
     const { selectedCalendarIds } = useCalendars()
     const timer = useTimer()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
@@ -57,18 +56,18 @@ export function TodayView({ allTasks, allGroups, onUpdateTask }: TodayViewProps)
         calendarIds: selectedCalendarIds,
     })
 
-    // Habit groups: groups with "習慣" in title
+    // Habit groups: root tasks with "習慣" in title
     const habitGroupIds = useMemo(() => {
         const ids = new Set<string>()
-        for (const g of allGroups) {
-            if (g.title.includes('習慣')) ids.add(g.id)
+        for (const t of localTasks) {
+            if (t.parent_task_id === null && t.title.includes('習慣')) ids.add(t.id)
         }
         return ids
-    }, [allGroups])
+    }, [localTasks])
 
     // Habit tasks
     const habitTasks = useMemo(() =>
-        localTasks.filter(t => habitGroupIds.has(t.group_id) && t.status !== 'archived'),
+        localTasks.filter(t => habitGroupIds.has(t.parent_task_id ?? '') && t.status !== 'archived'),
         [localTasks, habitGroupIds]
     )
 
@@ -76,7 +75,7 @@ export function TodayView({ allTasks, allGroups, onUpdateTask }: TodayViewProps)
     const todayScheduledTasks = useMemo(() => {
         const todayStr = today.toISOString().split('T')[0]
         return localTasks.filter(t => {
-            if (habitGroupIds.has(t.group_id)) return false
+            if (habitGroupIds.has(t.parent_task_id ?? '')) return false
             if (!t.scheduled_at) return false
             return t.scheduled_at.startsWith(todayStr)
         })
@@ -85,7 +84,7 @@ export function TodayView({ allTasks, allGroups, onUpdateTask }: TodayViewProps)
     // Unscheduled active tasks (excluding habits, max display)
     const unscheduledTasks = useMemo(() => {
         return localTasks.filter(t => {
-            if (habitGroupIds.has(t.group_id)) return false
+            if (habitGroupIds.has(t.parent_task_id ?? '')) return false
             if (t.scheduled_at) return false
             if (t.status === 'done' || t.status === 'archived') return false
             return true

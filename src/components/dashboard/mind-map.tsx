@@ -17,9 +17,9 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import dagre from 'dagre';
-import { Task, TaskGroup, Project } from "@/types/database";
+import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, MoreHorizontal } from "lucide-react";
+import { Calendar as CalendarIcon, X, Target, Clock, GripVertical } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
@@ -28,6 +28,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Button } from "@/components/ui/button";
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
 import { DateTimePicker } from "@/lib/dynamic-imports";
+import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 
 // --- Dagre Layout Function ---
 const dagreGraph = new dagre.graphlib.Graph();
@@ -37,8 +38,6 @@ const NODE_WIDTH = 225; // 1.5x of 150
 const NODE_HEIGHT = 40;
 const PROJECT_NODE_WIDTH = 300; // 1.5x of 200
 const PROJECT_NODE_HEIGHT = 60;
-const GROUP_NODE_WIDTH = 240; // 1.5x of 160
-const GROUP_NODE_HEIGHT = 50;
 
 /** タイトル長とメタデータ有無からTaskNodeの高さを推定（dagre layout用） */
 const estimateTaskNodeHeight = (title: string, hasInfoRow: boolean) => {
@@ -69,9 +68,6 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edg
         if (node.type === 'projectNode') {
             width = PROJECT_NODE_WIDTH;
             height = PROJECT_NODE_HEIGHT;
-        } else if (node.type === 'groupNode') {
-            width = GROUP_NODE_WIDTH;
-            height = GROUP_NODE_HEIGHT;
         } else if (node.type === 'taskNode' && node.height) {
             height = node.height;
         }
@@ -93,9 +89,6 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edg
         if (node.type === 'projectNode') {
             width = PROJECT_NODE_WIDTH;
             height = PROJECT_NODE_HEIGHT;
-        } else if (node.type === 'groupNode') {
-            width = GROUP_NODE_WIDTH;
-            height = GROUP_NODE_HEIGHT;
         } else if (node.type === 'taskNode' && node.height) {
             height = node.height;
         }
@@ -320,501 +313,6 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
 });
 ProjectNode.displayName = 'ProjectNode';
 
-// GROUP NODE with keyboard support
-const GroupNode = React.memo(({ data, selected }: NodeProps) => {
-    const inputRef = useRef<HTMLInputElement>(null);
-    const wrapperRef = useRef<HTMLDivElement>(null);
-    const [isEditing, setIsEditing] = useState(false);
-    const [editValue, setEditValue] = useState(data?.label ?? '');
-    const [showCaret, setShowCaret] = useState(false);
-    const justFocusedRef = useRef(false);
-    // Flag to prevent double-save when exiting via keyboard (Enter/Escape)
-    const isSavingViaKeyboardRef = useRef(false);
-    // Track whether node was already selected before a mousedown (for click-to-edit)
-    const wasSelectedRef = useRef(false);
-
-    const settings = data?.displaySettings || { showStatus: true, showPriority: true, showScheduledAt: true, showEstimatedTime: true, showProgress: true, showCollapseButton: true };
-
-    // Auto-complete logic: Check if all tasks are completed
-    const isGroupCompleted = useMemo(() => {
-        const tasks = data?.tasks || [];
-        if (tasks.length === 0) return false;
-        return tasks.every((t: any) => t.status === 'done');
-    }, [data?.tasks]);
-
-    // Handle group checkbox toggle
-    const handleGroupCheckToggle = useCallback(async (e: React.MouseEvent) => {
-        e.stopPropagation();
-        const tasks = data?.tasks || [];
-        const newStatus = isGroupCompleted ? 'todo' : 'done';
-        
-        // Update all child tasks
-        for (const task of tasks) {
-            await data?.onUpdateTask?.(task.id, { status: newStatus });
-        }
-    }, [isGroupCompleted, data]);
-
-    // Trigger edit from external (new group creation)
-    useEffect(() => {
-        if (data?.triggerEdit && !isEditing) {
-            setIsEditing(true);
-            setShowCaret(true);
-            setEditValue('');
-        }
-    }, [data?.triggerEdit, isEditing]);
-
-    // Sync label (skip when triggerEdit is active to prevent overwriting empty edit value)
-    useEffect(() => {
-        if (!isEditing && !data?.triggerEdit) {
-            setEditValue(data?.label ?? '');
-        }
-    }, [data?.label, isEditing, data?.triggerEdit]);
-
-    // Focus input when editing
-    useEffect(() => {
-        if (isEditing && inputRef.current) {
-            inputRef.current.focus();
-            const len = inputRef.current.value.length;
-            inputRef.current.setSelectionRange(len, len);
-        }
-    }, [isEditing]);
-
-    // Keep input focused when selected so IME can start from first key
-    useLayoutEffect(() => {
-        if (selected && inputRef.current) {
-            justFocusedRef.current = true;
-            inputRef.current.focus();
-            // Don't hide caret if triggerEdit is pending (new node entering edit mode)
-            if (!isEditing && !data?.triggerEdit) {
-                setShowCaret(false);
-            }
-            requestAnimationFrame(() => {
-                justFocusedRef.current = false;
-            });
-        }
-    }, [selected, isEditing, data?.triggerEdit]);
-
-    const saveValue = useCallback(async () => {
-        const trimmed = editValue.trim();
-        if (trimmed && trimmed !== data?.label && data?.onSave) {
-            await data.onSave(trimmed);
-        }
-    }, [editValue, data]);
-
-    const handleInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
-        e.stopPropagation();
-
-        if (!isEditing) {
-            // Selection Mode: XMind-style keyboard shortcuts
-            if (e.key === 'Tab') {
-                e.preventDefault();
-                if (data?.onAddChild) await data.onAddChild();
-                return;
-            }
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                // Enter in selection mode → create sibling group
-                e.preventDefault();
-                if (data?.onAddSibling) await data.onAddSibling();
-                return;
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                return;
-            }
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                e.preventDefault();
-                if (data?.onDelete) await data.onDelete();
-                return;
-            }
-            if (e.key === 'F2' || e.key === ' ') {
-                // F2 / Space → edit mode with cursor at end
-                e.preventDefault();
-                setIsEditing(true);
-                setShowCaret(true);
-                requestAnimationFrame(() => {
-                    if (inputRef.current) {
-                        const len = inputRef.current.value.length;
-                        inputRef.current.setSelectionRange(len, len);
-                    }
-                });
-                return;
-            }
-            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                // Typing → overwrite mode (select all text, new input replaces)
-                setIsEditing(true);
-                setShowCaret(true);
-                if (inputRef.current) {
-                    inputRef.current.setSelectionRange(0, inputRef.current.value.length);
-                }
-                return;
-            }
-        }
-
-        // Edit Mode key handlers
-        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-            // Edit Mode + Enter = Save and return to selection mode
-            e.preventDefault();
-            e.stopPropagation();
-
-            isSavingViaKeyboardRef.current = true;
-
-            await saveValue();
-            setIsEditing(false);
-            setShowCaret(false);
-
-            setTimeout(() => { isSavingViaKeyboardRef.current = false; }, 0);
-        } else if (e.key === 'Escape') {
-            // Edit Mode + Escape = Cancel and return to selection mode
-            e.preventDefault();
-            isSavingViaKeyboardRef.current = true;
-            setEditValue(data?.label ?? '');
-            setIsEditing(false);
-            setShowCaret(false);
-            setTimeout(() => { isSavingViaKeyboardRef.current = false; }, 0);
-        }
-    }, [saveValue, data?.label, data, isEditing]);
-
-    const handleWrapperKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLDivElement>) => {
-        if (isEditing) return;
-        e.stopPropagation();
-
-        if (e.key === 'Tab') {
-            e.preventDefault();
-            if (data?.onAddChild) await data.onAddChild();
-        } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            if (data?.onAddSibling) await data.onAddSibling();
-        } else if (e.key === 'Delete' || e.key === 'Backspace') {
-            e.preventDefault();
-            if (data?.onDelete) await data.onDelete();
-        } else if (e.key === 'F2') {
-            e.preventDefault();
-            setIsEditing(true);
-            setShowCaret(true);
-            setEditValue(data?.label ?? '');
-        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            setIsEditing(true);
-            setShowCaret(true);
-            if (inputRef.current) {
-                inputRef.current.setSelectionRange(0, inputRef.current.value.length);
-            }
-        }
-    }, [isEditing, data]);
-
-    const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-        e.stopPropagation();
-        setIsEditing(true);
-        setEditValue(data?.label ?? '');
-        setShowCaret(true);
-        requestAnimationFrame(() => {
-            const len = inputRef.current?.value.length ?? 0;
-            inputRef.current?.setSelectionRange(0, len);
-        });
-    }, [data?.label]);
-
-    const handleInputBlur = useCallback(async () => {
-        if (!isEditing) return;
-        // Skip if exiting via keyboard (Enter/Escape already handled save)
-        if (isSavingViaKeyboardRef.current) {
-            return;
-        }
-
-        try {
-            await saveValue();
-        } catch (error) {
-            console.error('[GroupNode] Error saving on blur:', error);
-        } finally {
-            setIsEditing(false);
-            setShowCaret(false);
-        }
-    }, [saveValue, isEditing]);
-
-    // Track selection state before mousedown for click-to-edit detection
-    const handleWrapperMouseDown = useCallback((e: React.MouseEvent) => {
-        wasSelectedRef.current = !!selected;
-        if (!isEditing) {
-            setShowCaret(false);
-            inputRef.current?.focus();
-        }
-    }, [isEditing, selected]);
-
-    return (
-        <div
-            ref={wrapperRef}
-            className={cn(
-                "relative group w-auto min-w-[240px] max-w-[320px] px-3 py-2 rounded-lg bg-card border text-sm font-medium shadow transition-all outline-none min-h-[40px] flex items-center gap-2",
-                selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
-                data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background bg-sky-500/10",
-            )}
-            tabIndex={0}
-            onKeyDown={handleWrapperKeyDown}
-            onDoubleClick={handleDoubleClick}
-            onMouseDown={handleWrapperMouseDown}
-        >
-            {/* Drop position indicators */}
-            {data?.isDropTarget && data?.dropPosition === 'above' && (
-                <div className="absolute -top-1.5 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
-            )}
-            {data?.isDropTarget && data?.dropPosition === 'below' && (
-                <div className="absolute -bottom-1.5 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
-            )}
-            <Handle type="target" position={Position.Left} className="!bg-muted-foreground" />
-            
-            {/* Checkbox (left) */}
-            {settings.showStatus && (
-                <button
-                    type="button"
-                    className={cn(
-                        "nodrag nopan w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
-                        isGroupCompleted 
-                            ? "bg-primary border-primary text-primary-foreground" 
-                            : "border-muted-foreground/30 hover:border-primary"
-                    )}
-                    onClick={handleGroupCheckToggle}
-                    title={isGroupCompleted ? "グループを未完了に戻す" : "グループを完了"}
-                >
-                    {isGroupCompleted && (
-                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                    )}
-                </button>
-            )}
-
-            {/* Group Name */}
-            <textarea
-                ref={inputRef as any}
-                rows={1}
-                    value={editValue}
-                onChange={(e) => {
-                    if (!isEditing) {
-                        if (justFocusedRef.current) return;
-                        setIsEditing(true);
-                        setShowCaret(true);
-                    }
-                    setEditValue(e.target.value);
-                    e.target.style.height = 'auto';
-                    e.target.style.height = `${e.target.scrollHeight}px`;
-                }}
-                    onBlur={handleInputBlur}
-                onKeyDown={handleInputKeyDown as any}
-                onClick={(e) => {
-                    if (isEditing) {
-                        e.stopPropagation();
-                    } else if (wasSelectedRef.current) {
-                        // Click on already-selected node's text → enter edit mode at cursor position
-                        e.stopPropagation();
-                        setIsEditing(true);
-                        setShowCaret(true);
-                    }
-                }}
-                onCompositionStart={() => {
-                    if (!isEditing) {
-                        setIsEditing(true);
-                        setShowCaret(true);
-                    }
-                }}
-                    className={cn(
-                    "nodrag nopan flex-1 bg-transparent border-none text-sm text-center focus:outline-none focus:ring-0 resize-none overflow-hidden min-w-0",
-                    !showCaret && "caret-transparent",
-                    !showCaret && !selected && "pointer-events-none select-none"
-                )}
-            />
-
-            {/* Estimated Time (Group) */}
-            {settings.showEstimatedTime && (
-                <>
-                    {(data?.estimatedDisplayMinutes ?? 0) > 0 ? (
-                        <div className="nodrag nopan flex items-center gap-1 shrink-0">
-                            <EstimatedTimePopover
-                                valueMinutes={data.estimatedDisplayMinutes}
-                                onChangeMinutes={(minutes) => data.onUpdateGroup?.({ estimated_time: minutes })}
-                                isOverridden={!!data?.estimatedIsOverride}
-                                autoMinutes={data?.estimatedAutoMinutes}
-                                onResetAuto={() => data.onUpdateGroup?.({ estimated_time: null })}
-                                trigger={
-                                    <span
-                                        className="cursor-pointer"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <EstimatedTimeBadge
-                                            minutes={data.estimatedDisplayMinutes}
-                                            className="text-[10px] px-1.5 py-0.5"
-                                            title={
-                                                data?.estimatedIsOverride
-                                                    ? `手動設定（自動集計: ${data.estimatedAutoMinutes ? formatEstimatedTime(data.estimatedAutoMinutes) : "0分"}）`
-                                                    : `自動集計（全階層）: ${data.estimatedAutoMinutes ? formatEstimatedTime(data.estimatedAutoMinutes) : "0分"}`
-                                            }
-                                        />
-                                    </span>
-                                }
-                            />
-                            {data?.estimatedIsOverride && (
-                                <button
-                                    className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        data.onUpdateGroup?.({ estimated_time: null })
-                                    }}
-                                    title="自動集計に戻す"
-                                >
-                                    <X className="w-2.5 h-2.5" />
-                                </button>
-                            )}
-                        </div>
-                    ) : (
-                        <EstimatedTimePopover
-                            valueMinutes={0}
-                            onChangeMinutes={(minutes) => data.onUpdateGroup?.({ estimated_time: minutes })}
-                            isOverridden={false}
-                            autoMinutes={data?.estimatedAutoMinutes}
-                            trigger={
-                        <button
-                            className="nodrag nopan p-0.5 rounded text-zinc-500 hover:text-zinc-400 transition-colors text-xs opacity-0 group-hover:opacity-100"
-                            title="見積もり（グループ上書き）"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <Clock className="w-3.5 h-3.5" />
-                        </button>
-                            }
-                        />
-                    )}
-                </>
-            )}
-
-            {/* Priority Badge (if set) */}
-            {settings.showPriority && data?.priority != null && (
-                <PriorityPopover
-                    value={data.priority as Priority}
-                    onChange={(priority) => data.onUpdateGroup?.({ priority })}
-                    trigger={
-                        <span className="nodrag nopan cursor-pointer shrink-0">
-                            <PriorityBadge value={data.priority as Priority} className="text-[10px] px-1.5 py-0.5" />
-                        </span>
-                    }
-                />
-            )}
-
-            {/* Date Display (if set) */}
-            {settings.showScheduledAt && data?.scheduled_at && (
-                <DateTimePicker
-                    date={new Date(data.scheduled_at)}
-                    setDate={(date) => data.onUpdateGroup?.({ scheduled_at: date?.toISOString() || null })}
-                    trigger={
-                        <span className="nodrag nopan text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 whitespace-nowrap">
-                            {new Date(data.scheduled_at).toLocaleDateString('ja-JP', { 
-                                month: 'numeric', 
-                                day: 'numeric', 
-                                hour: '2-digit', 
-                                minute: '2-digit' 
-                            })}
-                        </span>
-                    }
-                />
-            )}
-
-            {/* Collapse Button (right) */}
-            {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
-                <button
-                    type="button"
-                    className="nodrag nopan ml-auto text-[10px] text-muted-foreground hover:text-foreground shrink-0"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        data.onToggleCollapse?.();
-                    }}
-                    aria-label={data?.collapsed ? 'Expand' : 'Collapse'}
-                >
-                    {data?.collapsed ? '>' : 'v'}
-                </button>
-            )}
-
-            {/* Quick Action Menu (right edge with 3-line icon) */}
-            <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                    <button
-                        type="button"
-                        className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0 ml-1"
-                        onClick={(e) => e.stopPropagation()}
-                        title="グループ詳細設定"
-                    >
-                        <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
-                            <rect x="1" y="2" width="10" height="1.2" rx="0.6"/>
-                            <rect x="1" y="5.4" width="10" height="1.2" rx="0.6"/>
-                            <rect x="1" y="8.8" width="10" height="1.2" rx="0.6"/>
-                        </svg>
-                    </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                    {/* Priority */}
-                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">優先度</div>
-                    <div className="px-2 pb-2">
-                        <PriorityPopover
-                            value={(data?.priority ?? 3) as Priority}
-                            onChange={(priority) => data?.onUpdateGroup?.({ priority })}
-                            trigger={
-                                <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
-                                    <Target className="w-3 h-3 mr-2" style={{ color: getPriorityIconColor((data?.priority ?? 3) as Priority) }} />
-                                    {data?.priority != null ? (
-                                        <PriorityBadge value={data.priority as Priority} />
-                                    ) : (
-                                        <span className="text-muted-foreground">優先度を設定</span>
-                                    )}
-                                </Button>
-                            }
-                        />
-                    </div>
-
-                    {/* Estimated Time */}
-                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">所要時間</div>
-                    <div className="px-2 pb-2">
-                        <EstimatedTimePopover
-                            valueMinutes={data?.estimatedDisplayMinutes ?? 0}
-                            onChangeMinutes={(minutes) => data?.onUpdateGroup?.({ estimated_time: minutes })}
-                            isOverridden={!!data?.estimatedIsOverride}
-                            autoMinutes={data?.estimatedAutoMinutes}
-                            onResetAuto={() => data?.onUpdateGroup?.({ estimated_time: null })}
-                            trigger={
-                                <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
-                                    <Clock className="w-3 h-3 mr-2" />
-                                    {(data?.estimatedDisplayMinutes ?? 0) > 0 ? (
-                                        <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} />
-                                    ) : (
-                                        <span className="text-muted-foreground">所要時間を設定</span>
-                                    )}
-                                </Button>
-                            }
-                        />
-                    </div>
-
-                    {/* Scheduled At */}
-                    <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">スケジュール</div>
-                    <div className="px-2 pb-2">
-                        <DateTimePicker
-                            date={data?.scheduled_at ? new Date(data.scheduled_at) : undefined}
-                            setDate={(date) => {
-                                data?.onUpdateGroup?.({ scheduled_at: date ? date.toISOString() : null });
-                            }}
-                            trigger={
-                                <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
-                                    <CalendarIcon className="w-3 h-3 mr-2" />
-                                    {data?.scheduled_at ? (
-                                        <span>{new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                                    ) : (
-                                        <span className="text-muted-foreground">日時を設定</span>
-                                    )}
-                                </Button>
-                            }
-                        />
-                    </div>
-                </DropdownMenuContent>
-            </DropdownMenu>
-
-            <Handle type="source" position={Position.Right} className="!bg-muted-foreground" />
-        </div>
-    );
-});
-GroupNode.displayName = 'GroupNode';
-
 // TASK NODE
 const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     const inputRef = useRef<HTMLInputElement>(null);
@@ -908,7 +406,12 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             // Selection Mode: XMind-style keyboard shortcuts
             if (e.key === 'Tab') {
                 e.preventDefault();
-                if (data?.onAddChild) await data.onAddChild();
+                if (e.shiftKey) {
+                    // Shift+Tab → promote (move to parent's sibling level)
+                    if (data?.onPromote) await data.onPromote();
+                } else {
+                    if (data?.onAddChild) await data.onAddChild();
+                }
                 return;
             }
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
@@ -1007,7 +510,12 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
 
         if (e.key === 'Tab') {
             e.preventDefault();
-            if (data?.onAddChild) await data.onAddChild();
+            if (e.shiftKey) {
+                // Shift+Tab → promote (move to parent's sibling level)
+                if (data?.onPromote) await data.onPromote();
+            } else {
+                if (data?.onAddChild) await data.onAddChild();
+            }
         } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
             e.preventDefault();
             if (data?.onAddSibling) await data.onAddSibling();
@@ -1414,55 +922,66 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
 });
 TaskNode.displayName = 'TaskNode';
 
-const nodeTypes = { projectNode: ProjectNode, groupNode: GroupNode, taskNode: TaskNode };
+const nodeTypes = { projectNode: ProjectNode, taskNode: TaskNode };
 const defaultViewport = { x: 0, y: 0, zoom: 0.8 };
 
 interface MindMapProps {
     project: Project
-    groups: TaskGroup[]
+    groups: Task[]              // ルートタスク（parent_task_id === null）
     tasks: Task[]
-    onUpdateGroupTitle: (groupId: string, newTitle: string) => void
-    onUpdateGroup?: (groupId: string, updates: Partial<TaskGroup>) => Promise<void>
-    onCreateGroup?: (title: string) => Promise<TaskGroup | null>
-    onDeleteGroup?: (groupId: string) => void
+    onCreateGroup?: (title: string) => Promise<Task | null>
+    onDeleteGroup?: (groupId: string) => Promise<void>
+    onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
-    onMoveTask?: (taskId: string, newGroupId: string) => Promise<void>
     onBulkDelete?: (groupIds: string[], taskIds: string[]) => Promise<void>
     onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
-    onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
-    onPromoteTaskToGroup?: (taskId: string) => Promise<void>
+    onRefreshCalendar?: () => Promise<void>
 }
 
-function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGroup, onCreateGroup, onDeleteGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onReorderGroup, onPromoteTaskToGroup }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar }: MindMapProps) {
     const reactFlow = useReactFlow();
     const projectId = project?.id ?? '';
     const USER_ACTION_WINDOW_MS = 800;
 
     // DragContext - MindMapContentで使用してTaskNodeに渡す
     const { startDrag, endDrag } = useDrag()
-    
+
     // MindMap Display Settings
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
+
+    // カレンダー同期（マインドマップのタスク全体）
+    useMultiTaskCalendarSync({
+        tasks: [...groups, ...tasks], // ルートタスク + 子タスク
+        onRefreshCalendar,
+        onUpdateTask,
+    });
     const groupsJson = JSON.stringify(groups?.map(g => ({
         id: g?.id,
         title: g?.title,
-        priority: (g as any)?.priority ?? null,
-        scheduled_at: (g as any)?.scheduled_at ?? null,
-        estimated_time: (g as any)?.estimated_time ?? null,
+        status: g?.status ?? 'todo',
+        parent_task_id: g?.parent_task_id ?? null,
+        order_index: g?.order_index ?? 0,
+        created_at: g?.created_at,
+        priority: g?.priority ?? null,
+        scheduled_at: g?.scheduled_at ?? null,
+        estimated_time: g?.estimated_time ?? null,
+        calendar_id: g?.calendar_id ?? null,
+        google_event_id: g?.google_event_id ?? null,
     })) ?? []);
     const tasksJson = JSON.stringify(tasks?.map(t => ({
         id: t?.id,
         title: t?.title,
         status: t?.status,
-        group_id: t?.group_id,
+        // 新スキーマ: group_id は不要（parent_task_id のみ使用）
         parent_task_id: t?.parent_task_id,
         order_index: t?.order_index,
         created_at: t?.created_at,
         scheduled_at: t?.scheduled_at,
         google_event_id: t?.google_event_id,
+        calendar_id: t?.calendar_id,
         priority: (t as any)?.priority, // Include priority (no default value)
         estimated_time: t?.estimated_time ?? 0,
     })) ?? []);
@@ -1472,11 +991,13 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null);
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set());
-    const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
     const dropInfoRef = useRef<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
     const dragPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
     const lastUserActionAtRef = useRef<number>(0);
     const selectedNodeIdRef = useRef<string | null>(null);
+    const isDraggingRef = useRef(false);
+    // Hold latest callbacks in a ref so they don't invalidate useMemos
+    const callbacksRef = useRef<Record<string, any>>({});
     const markUserAction = useCallback(() => {
         lastUserActionAtRef.current = Date.now();
     }, []);
@@ -1490,7 +1011,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         // CRITICAL: Sync ref immediately so focusNodeWithPollingV2 doesn't cancel itself
         selectedNodeIdRef.current = primaryId;
 
-        // Sync ReactFlow's internal selection state
+        // Sync ReactFlow's internal selection state immediately
+        // (the `nodes` prop will also update on next render, but this ensures no gap)
         reactFlow.setNodes((nodes) =>
             nodes.map((node) => ({
                 ...node,
@@ -1510,15 +1032,23 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     // RACE CONDITION FIX: Cancels previous focus operation when new one starts
     const activeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-    const focusNodeWithPollingV2 = useCallback((targetId: string, maxDuration: number = 500, preferInput: boolean = true) => {
+    const focusNodeWithPollingV2 = useCallback((targetId: string, maxDuration: number = 800, preferInput: boolean = true) => {
         const startTime = Date.now();
         const pollingInterval = 10;
-        const inputWaitThreshold = 300;
+        const inputWaitThreshold = 500; // 新規ノードの input 出現を待つ時間を延長
 
         // Cancel any ongoing focus operation
         if (activeTimerRef.current) {
             clearInterval(activeTimerRef.current);
             activeTimerRef.current = null;
+        }
+
+        // 既存のフォーカスを即座にクリア（新規ノード追加時に古いノードへの入力を防ぐ）
+        if (typeof document !== 'undefined' && preferInput) {
+            const currentActive = document.activeElement as HTMLElement;
+            if (currentActive && (currentActive.tagName === 'INPUT' || currentActive.tagName === 'TEXTAREA')) {
+                currentActive.blur();
+            }
         }
 
         const timer = setInterval(() => {
@@ -1537,6 +1067,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 const editableEl = findEditableElement(nodeElement);
                 const wrapperElement = nodeElement.querySelector('[tabindex="0"]') as HTMLElement;
 
+                // input 要素が出現するまで待機（新規ノードは triggerEdit で input が遅れて表示される）
                 if (preferInput && !editableEl && elapsed < inputWaitThreshold) {
                     return;
                 }
@@ -1577,22 +1108,22 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     }, [pendingEditNodeId]);
 
     // Helpers
-    const getTaskById = useCallback((id: string) => tasks.find(t => t.id === id), [tasks]);
-    const getGroupForTask = useCallback((task: Task) => groups.find(g => g.id === task.group_id), [groups]);
+    const getTaskById = useCallback((id: string) => {
+        return tasks.find(t => t.id === id) ?? groups.find(g => g.id === id);
+    }, [tasks, groups]);
     const hasChildren = useCallback((taskId: string) => tasks.some(t => t.parent_task_id === taskId), [tasks]);
-    const hasGroupChildren = useCallback((groupId: string) => tasks.some(t => t.group_id === groupId), [tasks]);
     const isDescendant = useCallback((ancestorId: string, childId: string): boolean => {
-        const taskById = new Map(tasks.map(t => [t.id, t]));
-        let current = taskById.get(childId);
+        const allTasksMap = new Map([...groups, ...tasks].map(t => [t.id, t]));
+        let current = allTasksMap.get(childId);
         const visited = new Set<string>();
         while (current?.parent_task_id) {
             if (current.parent_task_id === ancestorId) return true;
             if (visited.has(current.parent_task_id)) break;
             visited.add(current.parent_task_id);
-            current = taskById.get(current.parent_task_id);
+            current = allTasksMap.get(current.parent_task_id);
         }
         return false;
-    }, [tasks]);
+    }, [groups, tasks]);
 
     const toggleTaskCollapse = useCallback((taskId: string) => {
         setCollapsedTaskIds(prev => {
@@ -1606,23 +1137,11 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         });
     }, []);
 
-    const toggleGroupCollapse = useCallback((groupId: string) => {
-        setCollapsedGroupIds(prev => {
-            const next = new Set(prev);
-            if (next.has(groupId)) {
-                next.delete(groupId);
-            } else {
-                next.add(groupId);
-            }
-            return next;
-        });
-    }, []);
-
     const getDropInfo = useCallback((dragged: Node): { node: Node; position: 'above' | 'below' | 'as-child' } | null => {
         const getNodeRect = (n: Node) => {
             const position = n.positionAbsolute ?? n.position;
-            const width = n.width ?? (n.type === 'projectNode' ? PROJECT_NODE_WIDTH : n.type === 'groupNode' ? GROUP_NODE_WIDTH : NODE_WIDTH);
-            const height = n.height ?? (n.type === 'projectNode' ? PROJECT_NODE_HEIGHT : n.type === 'groupNode' ? GROUP_NODE_HEIGHT : NODE_HEIGHT);
+            const width = n.width ?? (n.type === 'projectNode' ? PROJECT_NODE_WIDTH : NODE_WIDTH);
+            const height = n.height ?? (n.type === 'projectNode' ? PROJECT_NODE_HEIGHT : NODE_HEIGHT);
             return {
                 left: position.x,
                 top: position.y,
@@ -1642,7 +1161,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         // 純粋な距離ベース: 最も近いノードをドロップターゲットにする
         // （overlap判定だとY方向に離れたグループ間の移動ができない）
-        const MAX_DIST = 300;
+        // 500px: 2階層目(x=700)からグループ(x≈300)への距離をカバー
+        const MAX_DIST = 500;
         let best: { node: Node; dist: number; position: 'above' | 'below' | 'as-child' } | null = null;
 
         for (const candidate of candidates) {
@@ -1687,65 +1207,48 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         return best ? { node: best.node, position: best.position } : null;
     }, [reactFlow]);
-    const createGroupAndFocus = useCallback(async (title: string) => {
+    const createRootTaskAndFocus = useCallback(async (title: string) => {
         if (!onCreateGroup) return;
-        const newGroup = await onCreateGroup(title);
-        if (newGroup?.id) {
-            setPendingEditNodeId(newGroup.id);
-            applySelection(new Set([newGroup.id]), newGroup.id, 'user');
-            focusNodeWithPollingV2(newGroup.id, 500, true);
+        const newTask = await onCreateGroup(title);
+        if (newTask?.id) {
+            setPendingEditNodeId(newTask.id);
+            applySelection(new Set([newTask.id]), newTask.id, 'user');
+            focusNodeWithPollingV2(newTask.id, 500, true);
         }
     }, [onCreateGroup, applySelection, focusNodeWithPollingV2]);
 
     const calculateNextFocus = useCallback((taskId: string): string | null => {
+        // ルートタスクの場合
+        const isRootTask = groups.some(g => g.id === taskId);
+        if (isRootTask) {
+            const sorted = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            const idx = sorted.findIndex(g => g.id === taskId);
+            if (idx === -1) return 'project-root';
+            if (idx < sorted.length - 1) return sorted[idx + 1].id;
+            if (idx > 0) return sorted[idx - 1].id;
+            return 'project-root';
+        }
+
         const task = getTaskById(taskId);
         if (!task) return null;
 
+        // 同じ parent_task_id を持つタスクが兄弟
         const allSiblings = tasks
-            .filter(t => t.group_id === task.group_id && t.parent_task_id === task.parent_task_id)
+            .filter(t => t.parent_task_id === task.parent_task_id)
             .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
         const currentIndex = allSiblings.findIndex(t => t.id === taskId);
 
-        // XMind-style delete focus order:
-        // 1. Next sibling (below)
-        // 2. Previous sibling (above)
-        // 3. Parent task (or group if root task)
+        // XMind-style delete focus order: 下→上→親
         if (currentIndex < allSiblings.length - 1) return allSiblings[currentIndex + 1].id;
         if (currentIndex > 0) return allSiblings[currentIndex - 1].id;
         if (task.parent_task_id) return task.parent_task_id;
-        return task.group_id;
-    }, [tasks, getTaskById]);
-
-    // Calculate next focus after group deletion (下→上→project-root)
-    const calculateNextGroupFocus = useCallback((groupId: string): string | null => {
-        const sorted = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-        const idx = sorted.findIndex(g => g.id === groupId);
-        if (idx === -1) return 'project-root';
-        if (idx < sorted.length - 1) return sorted[idx + 1].id;
-        if (idx > 0) return sorted[idx - 1].id;
         return 'project-root';
-    }, [groups]);
+    }, [groups, tasks, getTaskById]);
 
-    // Delete group with focus management
-    const deleteGroup = useCallback(async (groupId: string) => {
-        if (!onDeleteGroup) return;
-        const nextFocusId = calculateNextGroupFocus(groupId);
-        await onDeleteGroup(groupId);
-        applySelection(nextFocusId ? new Set([nextFocusId]) : new Set(), nextFocusId, 'user');
-        if (nextFocusId) {
-            requestAnimationFrame(() => {
-                focusNodeWithPollingV2(nextFocusId, 300, false);
-            });
-        }
-    }, [onDeleteGroup, calculateNextGroupFocus, applySelection, focusNodeWithPollingV2]);
-
-    // Add child task
+    // Add child task（統一版：ルートタスクも子タスクも同じ処理）
     const addChildTask = useCallback(async (parentTaskId: string) => {
-        const parentTask = getTaskById(parentTaskId);
-        if (!parentTask || !onCreateTask) return;
-        const group = getGroupForTask(parentTask);
-        if (!group) return;
+        if (!onCreateTask) return;
 
         // Auto-expand parent when adding a child
         setCollapsedTaskIds(prev => {
@@ -1755,40 +1258,68 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             return next;
         });
 
-        const newTask = await onCreateTask(group.id, "", parentTaskId);
+        const newTask = await onCreateTask(parentTaskId, "", parentTaskId);
         if (newTask) {
             setPendingEditNodeId(newTask.id);
             applySelection(new Set([newTask.id]), newTask.id, 'user');
             focusNodeWithPollingV2(newTask.id);
         }
-    }, [getTaskById, getGroupForTask, onCreateTask, focusNodeWithPollingV2, applySelection]);
+    }, [onCreateTask, focusNodeWithPollingV2, applySelection]);
 
-    // Add sibling task
+    // Add sibling task（統一版：ルートタスクなら新しいルートを作成）
     const addSiblingTask = useCallback(async (taskId: string) => {
+        // ルートタスクの場合 → 新しいルートタスクを作成
+        const isRootTask = groups.some(g => g.id === taskId);
+        if (isRootTask) {
+            await createRootTaskAndFocus("New Task");
+            return;
+        }
+
         const task = getTaskById(taskId);
-        if (!task || !onCreateTask) return;
-        const group = getGroupForTask(task);
-        if (!group) return;
+        if (!task || !onCreateTask || !task.parent_task_id) return;
 
         // Auto-expand parent when adding a sibling under a collapsed parent
-        if (task.parent_task_id) {
-            setCollapsedTaskIds(prev => {
-                if (!prev.has(task.parent_task_id!)) return prev;
-                const next = new Set(prev);
-                next.delete(task.parent_task_id!);
-                return next;
-            });
-        }
+        setCollapsedTaskIds(prev => {
+            if (!prev.has(task.parent_task_id!)) return prev;
+            const next = new Set(prev);
+            next.delete(task.parent_task_id!);
+            return next;
+        });
 
-        const newTask = await onCreateTask(group.id, "", task.parent_task_id);
+        const newTask = await onCreateTask(task.parent_task_id, "", task.parent_task_id);
         if (newTask) {
             setPendingEditNodeId(newTask.id);
             applySelection(new Set([newTask.id]), newTask.id, 'user');
             focusNodeWithPollingV2(newTask.id);
         }
-    }, [getTaskById, getGroupForTask, onCreateTask, focusNodeWithPollingV2, applySelection]);
+    }, [groups, getTaskById, onCreateTask, createRootTaskAndFocus, focusNodeWithPollingV2, applySelection]);
 
-    // Delete task
+    // Promote task (Shift+Tab: 子タスクを親の兄弟に昇格、ルート直下ならルートに昇格)
+    const promoteTask = useCallback(async (taskId: string) => {
+        const task = getTaskById(taskId);
+        if (!task || !onUpdateTask) return;
+
+        // 親タスクを取得
+        const parentTask = task.parent_task_id ? getTaskById(task.parent_task_id) : null;
+        if (!parentTask) {
+            // 既にルートタスク → 昇格不要
+            return;
+        }
+
+        // 祖父（親の親）のIDを取得 = 昇格先の parent_task_id
+        const grandparentId = parentTask.parent_task_id;
+
+        if (grandparentId) {
+            // parent_task_id を祖父に変更 → 親の兄弟になる
+            await onUpdateTask(taskId, { parent_task_id: grandparentId });
+        } else {
+            // 親がルートタスク → ルートレベルに昇格
+            await onUpdateTask(taskId, { parent_task_id: null, project_id: project?.id ?? null });
+        }
+        focusNodeWithPollingV2(taskId);
+    }, [getTaskById, onUpdateTask, focusNodeWithPollingV2, project?.id]);
+
+    // Delete task（フォーカス移動を即座に行い、API呼び出しはバックグラウンドで実行）
     const deleteTask = useCallback(async (taskId: string) => {
         if (!onDeleteTask) return;
 
@@ -1799,22 +1330,31 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         }
 
         const nextFocusId = calculateNextFocus(taskId);
-        await onDeleteTask(taskId);
+        // 削除をバックグラウンドで実行（await しない → フォーカス移動が即座に行われる）
+        onDeleteTask(taskId);
         applySelection(nextFocusId ? new Set([nextFocusId]) : new Set(), nextFocusId, 'user');
         if (nextFocusId) {
-            requestAnimationFrame(() => {
-                focusNodeWithPollingV2(nextFocusId, 300, false);
-            });
+            focusNodeWithPollingV2(nextFocusId, 300, false);
         }
-    }, [hasChildren, calculateNextFocus, onDeleteTask, applySelection]);
+    }, [hasChildren, calculateNextFocus, onDeleteTask, applySelection, focusNodeWithPollingV2]);
 
-    // Navigation helpers for arrow keys
+    // Navigation helpers for arrow keys（ルートタスク対応）
     const navigateToSibling = useCallback((taskId: string, direction: 'up' | 'down'): string | null => {
+        // ルートタスクの場合
+        const isRootTask = groups.some(g => g.id === taskId);
+        if (isRootTask) {
+            const sorted = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            const idx = sorted.findIndex(g => g.id === taskId);
+            if (idx === -1) return null;
+            const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+            return sorted[targetIdx]?.id ?? null;
+        }
+
         const task = getTaskById(taskId);
         if (!task) return null;
 
         const siblings = tasks
-            .filter(t => t.group_id === task.group_id && t.parent_task_id === task.parent_task_id)
+            .filter(t => t.parent_task_id === task.parent_task_id)
             .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
         const currentIndex = siblings.findIndex(t => t.id === taskId);
@@ -1822,13 +1362,16 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
         const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
         return siblings[targetIndex]?.id ?? null;
-    }, [tasks, getTaskById]);
+    }, [groups, tasks, getTaskById]);
 
     const navigateToParent = useCallback((taskId: string): string | null => {
+        const isRootTask = groups.some(g => g.id === taskId);
+        if (isRootTask) return 'project-root';
+
         const task = getTaskById(taskId);
         if (!task) return null;
-        return task.parent_task_id ?? task.group_id ?? null;
-    }, [getTaskById]);
+        return task.parent_task_id ?? 'project-root';
+    }, [groups, getTaskById]);
 
     const navigateToFirstChild = useCallback((taskId: string): string | null => {
         const children = tasks
@@ -1891,58 +1434,51 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
         return pendingEditNodeId === taskId;
     }, [pendingEditNodeId]);
 
-    // DERIVED STATE
-    const { nodes: layoutNodes, edges } = useMemo(() => {
+    // Keep callbacksRef in sync (avoids putting callbacks in useMemo deps)
+    callbacksRef.current = {
+        saveTaskTitle, addChildTask, addSiblingTask, deleteTask,
+        handleNavigate, promoteTask, updateTaskScheduledAt,
+        updateTaskPriority, updateTaskEstimatedTime,
+        onUpdateTask, toggleTaskCollapse, startDrag, endDrag,
+        createRootTaskAndFocus, onUpdateProject,
+    };
+
+    // ===== STEP 1: Structure + dagre layout (expensive, only on data/collapse change) =====
+    type ParsedTask = {
+        id: string; title: string; status: string;
+        parent_task_id: string | null; order_index: number;
+        created_at: string; priority: number | null;
+        scheduled_at: string | null; estimated_time: number | null;
+        calendar_id: string | null; google_event_id: string | null;
+    };
+
+    const { structureNodes, edges, taskDataMap } = useMemo(() => {
         const resultNodes: Node[] = [];
         const resultEdges: Edge[] = [];
+        const dataMap = new Map<string, ParsedTask & { hasChildren: boolean; estimatedDisplayMinutes: number; estimatedAutoMinutes: number; estimatedIsOverride: boolean }>();
 
-        if (!projectId) return { nodes: resultNodes, edges: resultEdges };
+        if (!projectId) return { structureNodes: resultNodes, edges: resultEdges, taskDataMap: dataMap };
 
         try {
-            const parsedGroups = JSON.parse(groupsJson) as {
-                id: string;
-                title: string;
-                priority: number | null;
-                scheduled_at: string | null;
-                estimated_time: number | null;
-            }[];
-            const parsedTasks = JSON.parse(tasksJson) as {
-                id: string; title: string; status: string; group_id: string;
-                parent_task_id: string | null; order_index: number; created_at: string;
-                scheduled_at: string | null;
-                google_event_id: string | null;
-                calendar_id: string | null;
-                priority: number | null;
-                estimated_time: number;
-            }[];
+            const parsedGroups = JSON.parse(groupsJson) as ParsedTask[];
+            const parsedTasks = JSON.parse(tasksJson) as ParsedTask[];
 
             resultNodes.push({
                 id: 'project-root',
                 type: 'projectNode',
-                selected: selectedNodeIds.has('project-root'),
-                data: {
-                    label: project?.title ?? 'Project',
-                    onAddChild: () => createGroupAndFocus("New Group"),
-                    isSelected: selectedNodeIds.has('project-root'),
-                    isDropTarget: false,
-                    dropPosition: null,
-                    onSave: async (newTitle: string) => {
-                        if (onUpdateProject && project?.id) {
-                            await onUpdateProject(project.id, newTitle);
-                        }
-                    },
-                    onDelete: () => {}
-                },
+                data: { label: project?.title ?? 'Project' },
                 position: { x: 50, y: 200 },
                 draggable: false,
             });
 
             const safeGroups = parsedGroups.filter(g => g?.id);
-            const groupIdSet = new Set(safeGroups.map(g => g.id));
-            const safeTasks = parsedTasks.filter(t => t?.id && t?.group_id && groupIdSet.has(t.group_id));
+            const safeTasks = parsedTasks.filter(t => t?.id);
 
-            // Build child tasks map
-            const childTasksByParent: Record<string, typeof safeTasks> = {};
+            const taskById: Record<string, ParsedTask> = {};
+            for (const g of safeGroups) { taskById[g.id] = g; }
+            for (const t of safeTasks) { taskById[t.id] = t; }
+
+            const childTasksByParent: Record<string, ParsedTask[]> = {};
             for (const task of safeTasks) {
                 if (task.parent_task_id) {
                     if (!childTasksByParent[task.parent_task_id]) childTasksByParent[task.parent_task_id] = [];
@@ -1953,11 +1489,6 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 childTasksByParent[key].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
             }
 
-            const taskById: Record<string, typeof safeTasks[number]> = {};
-            for (const t of safeTasks) {
-                taskById[t.id] = t;
-            }
-
             const getChildrenLocal = (taskId: string) => childTasksByParent[taskId] ?? [];
 
             const getTaskEffectiveMinutes = (taskId: string): number => {
@@ -1965,40 +1496,28 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 if (!self) return 0;
                 const children = getChildrenLocal(taskId);
                 if (children.length === 0) return self.estimated_time ?? 0;
-                if ((self.estimated_time ?? 0) > 0) return self.estimated_time;
+                if ((self.estimated_time ?? 0) > 0) return self.estimated_time!;
                 return children.reduce((acc, c) => acc + getTaskEffectiveMinutes(c.id), 0);
             };
 
             const getTaskAutoMinutes = (taskId: string): number => {
                 const children = getChildrenLocal(taskId);
                 if (children.length === 0) return taskById[taskId]?.estimated_time ?? 0;
-                // ignore self override: sum children's effective minutes
                 return children.reduce((acc, c) => acc + getTaskEffectiveMinutes(c.id), 0);
             };
 
-            // Root tasks (no parent)
-            const rootTasks = safeTasks.filter(t => !t.parent_task_id).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-
-            const rootTasksByGroup: Record<string, typeof safeTasks> = {};
-            for (const task of rootTasks) {
-                if (!rootTasksByGroup[task.group_id]) rootTasksByGroup[task.group_id] = [];
-                rootTasksByGroup[task.group_id].push(task);
-            }
-
-            // Recursive function to render tasks (max 6 levels)
-            const MAX_DEPTH = 6;
-            const BASE_X = 520;
+            const MAX_DEPTH = 7;
+            const BASE_X = 300;
             const X_STEP = 180;
 
             const renderTasksRecursively = (
-                task: typeof safeTasks[0],
+                task: ParsedTask,
                 parentId: string,
                 depth: number,
                 yOffsetRef: { current: number }
             ) => {
                 if (depth >= MAX_DEPTH) return;
 
-                const triggerEdit = shouldTriggerEdit(task.id);
                 const taskHasChildren = (childTasksByParent[task.id]?.length ?? 0) > 0;
                 const taskIsEstimatedOverride = taskHasChildren && ((task.estimated_time ?? 0) > 0);
                 const taskAutoEstimatedMinutes = taskHasChildren ? getTaskAutoMinutes(task.id) : 0;
@@ -2009,13 +1528,22 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
                 const taskHasInfo = (taskDisplayEstimatedMinutes > 0) || task.priority != null || !!task.scheduled_at;
                 const taskNodeHeight = estimateTaskNodeHeight(task.title || '', taskHasInfo);
+
+                // Store computed data for data injection pass
+                dataMap.set(task.id, {
+                    ...task,
+                    hasChildren: taskHasChildren,
+                    estimatedDisplayMinutes: taskDisplayEstimatedMinutes,
+                    estimatedAutoMinutes: taskAutoEstimatedMinutes,
+                    estimatedIsOverride: taskIsEstimatedOverride,
+                });
+
                 resultNodes.push({
                     id: task.id,
                     type: 'taskNode',
-                    selected: selectedNodeIds.has(task.id),
                     height: taskNodeHeight,
                     data: {
-                        taskId: task.id, // カレンダードラッグ&ドロップ用
+                        taskId: task.id,
                         label: task.title ?? 'Task',
                         status: task.status ?? 'todo',
                         scheduled_at: task.scheduled_at,
@@ -2025,27 +1553,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                         estimatedDisplayMinutes: taskDisplayEstimatedMinutes,
                         estimatedAutoMinutes: taskAutoEstimatedMinutes,
                         estimatedIsOverride: taskIsEstimatedOverride,
-                        isSelected: selectedNodeIds.has(task.id),
-                        triggerEdit,
-                        initialValue: '',
-                        onSave: (t: string) => saveTaskTitle(task.id, t),
-                        onUpdateDate: (d: string | null) => updateTaskScheduledAt(task.id, d),
-                        onUpdateScheduledAt: (d: string) => updateTaskScheduledAt(task.id, d),
-                        onUpdatePriority: (p: number) => updateTaskPriority(task.id, p),
-                        onUpdateEstimatedTime: (m: number) => updateTaskEstimatedTime(task.id, m),
-                        onUpdateCalendar: (calendarId: string | null) => onUpdateTask?.(task.id, { calendar_id: calendarId }),
-                        onAddChild: () => addChildTask(task.id),
-                        onAddSibling: () => addSiblingTask(task.id),
-                        onDelete: () => deleteTask(task.id),
-                        onNavigate: (direction: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => handleNavigate(task.id, direction),
                         hasChildren: taskHasChildren,
-                        collapsed: collapsedTaskIds.has(task.id),
-                        onToggleCollapse: () => toggleTaskCollapse(task.id),
-                        isDropTarget: false,
-                        dropPosition: null,
-                        displaySettings: displaySettings,
-                        onDragStart: (taskId: string, title: string) => startDrag(taskId, title),
-                        onDragEnd: () => endDrag(),
                     },
                     position: { x: xPos, y: yOffsetRef.current },
                     draggable: true,
@@ -2059,116 +1567,90 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
                 yOffsetRef.current += 40;
 
-                // Render children recursively (skip if collapsed)
                 if (!collapsedTaskIds.has(task.id)) {
-                const children = childTasksByParent[task.id] ?? [];
-                for (const child of children) {
-                    renderTasksRecursively(child, task.id, depth + 1, yOffsetRef);
+                    const children = childTasksByParent[task.id] ?? [];
+                    for (const child of children) {
+                        renderTasksRecursively(child, task.id, depth + 1, yOffsetRef);
                     }
                 }
             };
 
+            const sortedRootTasks = [...safeGroups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
             let globalYOffset = 50;
 
-            safeGroups.forEach((group) => {
-                const groupY = globalYOffset;
-
-                // Get all tasks in this group (for auto-complete logic)
-                const groupTasks = safeTasks.filter(t => t.group_id === group.id);
-                const groupRootTasks = rootTasksByGroup[group.id] ?? [];
-                const groupAutoEstimatedMinutes = groupRootTasks.reduce((acc, t) => acc + getTaskEffectiveMinutes(t.id), 0);
-                const groupIsEstimatedOverride = group.estimated_time != null;
-                const groupDisplayEstimatedMinutes = groupIsEstimatedOverride
-                    ? (group.estimated_time ?? 0)
-                    : groupAutoEstimatedMinutes;
-
-                resultNodes.push({
-                    id: group.id,
-                    type: 'groupNode',
-                    selected: selectedNodeIds.has(group.id),
-                    data: {
-                        label: group.title ?? 'Group',
-                        priority: group.priority,
-                        scheduled_at: group.scheduled_at,
-                        estimatedDisplayMinutes: groupDisplayEstimatedMinutes,
-                        estimatedAutoMinutes: groupAutoEstimatedMinutes,
-                        estimatedIsOverride: groupIsEstimatedOverride,
-                        tasks: groupTasks,
-                        isSelected: selectedNodeIds.has(group.id),
-                        triggerEdit: shouldTriggerEdit(group.id),
-                        onSave: (newTitle: string) => onUpdateGroupTitle?.(group.id, newTitle),
-                        onUpdateGroup: (updates: any) => onUpdateGroup?.(group.id, updates),
-                        onUpdateTask: onUpdateTask,
-                        onAddChild: async () => {
-                            if (onCreateTask) {
-                                const newTask = await onCreateTask(group.id, "", null);
-                                if (newTask) {
-                                    setPendingEditNodeId(newTask.id);
-                                    applySelection(new Set([newTask.id]), newTask.id, 'user');
-                                    focusNodeWithPollingV2(newTask.id);
-                                }
-                            }
-                        },
-                        onAddSibling: () => createGroupAndFocus("New Group"),
-                        onDelete: () => deleteGroup(group.id),
-                        hasChildren: hasGroupChildren(group.id),
-                        collapsed: collapsedGroupIds.has(group.id),
-                        onToggleCollapse: () => toggleGroupCollapse(group.id),
-                        isDropTarget: false,
-                        dropPosition: null,
-                        displaySettings: displaySettings,
-                    },
-                    position: { x: 300, y: groupY },
-                    draggable: true,
-                });
-                resultEdges.push({ id: `e-proj-${group.id}`, source: 'project-root', target: group.id, type: 'smoothstep' });
-
-                if (collapsedGroupIds.has(group.id)) {
-                    globalYOffset = Math.max(globalYOffset + 80, groupY + 30);
-                    return;
-                }
-
-                const yOffsetRef = { current: groupY - 20 };
-
-                for (const task of groupRootTasks) {
-                    renderTasksRecursively(task, group.id, 0, yOffsetRef);
-                }
-
+            for (const rootTask of sortedRootTasks) {
+                const yOffsetRef = { current: globalYOffset };
+                renderTasksRecursively(rootTask, 'project-root', 0, yOffsetRef);
                 globalYOffset = Math.max(globalYOffset + 80, yOffsetRef.current + 30);
-            });
+            }
         } catch (err) {
             console.error('[MindMap] Error:', err);
         }
 
-        // Apply dagre layout to get optimal positions
-        return getLayoutedElements(resultNodes, resultEdges);
-    }, [
-        projectId,
-        groupsJson,
-        tasksJson,
-        project?.title,
-        pendingEditNodeId,  // CRITICAL: 直接依存させることでトリガー検出を確実にする
-        shouldTriggerEdit,
-        saveTaskTitle,
-        updateTaskScheduledAt,
-        updateTaskPriority,
-        updateTaskEstimatedTime,
-        addChildTask,
-        addSiblingTask,
-        createGroupAndFocus,
-        deleteTask,
-        onUpdateGroupTitle,
-        deleteGroup,
-        hasChildren,
-        hasGroupChildren,
-        selectedNodeIds,
-        collapsedTaskIds,
-        collapsedGroupIds,
-        toggleTaskCollapse,
-        toggleGroupCollapse,
-        handleNavigate,
-        displaySettings,
-    ]);
+        const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(resultNodes, resultEdges);
+        return { structureNodes: layouted, edges: layoutedEdges, taskDataMap: dataMap };
+    }, [projectId, groupsJson, tasksJson, project?.title, collapsedTaskIds]);
+
+    // ===== STEP 2: Inject interactive data (cheap, runs on selection/edit/settings change) =====
+    const layoutNodes = useMemo(() => {
+        const cbs = callbacksRef.current;
+        return structureNodes.map(node => {
+            if (node.type === 'projectNode') {
+                return {
+                    ...node,
+                    selected: selectedNodeIds.has('project-root'),
+                    data: {
+                        ...node.data,
+                        label: project?.title ?? 'Project',
+                        onAddChild: () => cbs.createRootTaskAndFocus("New Task"),
+                        isSelected: selectedNodeIds.has('project-root'),
+                        isDropTarget: false,
+                        dropPosition: null,
+                        onSave: async (newTitle: string) => {
+                            if (cbs.onUpdateProject && project?.id) {
+                                await cbs.onUpdateProject(project.id, newTitle);
+                            }
+                        },
+                        onDelete: () => {}
+                    },
+                };
+            }
+
+            // TaskNode
+            const taskId = node.id;
+            const taskData = taskDataMap.get(taskId);
+            const triggerEdit = pendingEditNodeId === taskId;
+
+            return {
+                ...node,
+                selected: selectedNodeIds.has(taskId),
+                data: {
+                    ...node.data,
+                    isSelected: selectedNodeIds.has(taskId),
+                    triggerEdit,
+                    initialValue: '',
+                    collapsed: collapsedTaskIds.has(taskId),
+                    isDropTarget: false,
+                    dropPosition: null,
+                    displaySettings: displaySettings,
+                    onSave: (t: string) => cbs.saveTaskTitle(taskId, t),
+                    onUpdateDate: (d: string | null) => cbs.updateTaskScheduledAt(taskId, d),
+                    onUpdateScheduledAt: (d: string) => cbs.updateTaskScheduledAt(taskId, d),
+                    onUpdatePriority: (p: number) => cbs.updateTaskPriority(taskId, p),
+                    onUpdateEstimatedTime: (m: number) => cbs.updateTaskEstimatedTime(taskId, m),
+                    onUpdateCalendar: (calendarId: string | null) => cbs.onUpdateTask?.(taskId, { calendar_id: calendarId }),
+                    onAddChild: () => cbs.addChildTask(taskId),
+                    onAddSibling: () => cbs.addSiblingTask(taskId),
+                    onPromote: () => cbs.promoteTask(taskId),
+                    onDelete: () => cbs.deleteTask(taskId),
+                    onNavigate: (direction: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => cbs.handleNavigate(taskId, direction),
+                    onToggleCollapse: () => cbs.toggleTaskCollapse(taskId),
+                    onDragStart: (tid: string, title: string) => cbs.startDrag(tid, title),
+                    onDragEnd: () => cbs.endDrag(),
+                },
+            };
+        });
+    }, [structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id]);
 
     // DOM 直接操作でドロップターゲットの CSS クラスを切り替え（React 再レンダリングなし）
     const DROP_CLASSES = ['drop-target-above', 'drop-target-below', 'drop-target-child'] as const;
@@ -2195,17 +1677,29 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     const handlePaneClick = useCallback(() => {
         applySelection(new Set(), null, 'user');
         clearDropTargetDOM();
+        // フォーカスをマインドマップの外に移す（input/textareaからフォーカスを外す）
+        if (typeof document !== 'undefined') {
+            const activeElement = document.activeElement as HTMLElement;
+            if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+                activeElement.blur();
+            }
+        }
     }, [applySelection, clearDropTargetDOM]);
 
     const handleSelectionChange = useCallback((params: { nodes: Node[]; edges: Edge[] }) => {
-        // IMPORTANT: Do NOT feed selection back into the `nodes` prop via `selected: ...`
-        // ReactFlow should own selection UI state. We only track selected IDs for bulk actions.
+        // Skip if drag is in progress (ReactFlow fires selection changes during drag)
+        if (isDraggingRef.current) return;
+
+        // Only process selection changes from recent user interactions (mouse/keyboard)
         const now = Date.now();
         const recentUser = now - lastUserActionAtRef.current < USER_ACTION_WINDOW_MS;
         if (!recentUser) {
             return;
         }
+
         const nextIds = new Set(params.nodes.map(n => n.id));
+
+        // Debounce: avoid processing identical selections
         setSelectedNodeIds((prev) => {
             if (prev.size === nextIds.size) {
                 let same = true;
@@ -2216,9 +1710,11 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
             }
             return nextIds;
         });
+
         const primaryId = params.nodes[0]?.id ?? null;
         setSelectedNodeId(primaryId);
         selectedNodeIdRef.current = primaryId;
+
         if (params.nodes.length === 0) {
             clearDropTargetDOM();
         }
@@ -2248,6 +1744,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
 
     const handleNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
         if (node.type === 'projectNode') return;
+        isDraggingRef.current = true;
         dragPositionsRef.current[node.id] = node.position;
     }, []);
 
@@ -2278,6 +1775,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
     }, [getDropInfo, clearDropTargetDOM, applyDropTargetDOM]);
 
     const handleNodeDragStop = useCallback((_evt: React.MouseEvent, node: Node) => {
+        isDraggingRef.current = false;
         if (node.type === 'projectNode') return;
 
         const info = getDropInfo(node);
@@ -2297,6 +1795,9 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 const targetTask = getTaskById(target.id);
                 if (!targetTask) return;
 
+                const isRootDragged = groups.some(g => g.id === node.id);
+                const isRootTarget = groups.some(g => g.id === target.id);
+
                 if (position === 'as-child') {
                     // 既に子の場合 → 兄弟に昇格（below扱い）
                     if (draggedTask.parent_task_id === targetTask.id) {
@@ -2305,8 +1806,7 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                     }
                     // ターゲットの子になる
                     const newParentId = targetTask.id;
-                    const newGroupId = targetTask.group_id;
-                    if (newParentId === draggedTask.parent_task_id && newGroupId === draggedTask.group_id) return;
+                    if (newParentId === draggedTask.parent_task_id) return;
 
                     setCollapsedTaskIds(prev => {
                         if (!prev.has(newParentId)) return prev;
@@ -2314,153 +1814,205 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                         next.delete(newParentId);
                         return next;
                     });
-                    onUpdateTask?.(draggedTask.id, { parent_task_id: newParentId, group_id: newGroupId });
+                    const updates: Partial<Task> = { parent_task_id: newParentId };
+                    if (isRootDragged) updates.project_id = null;
+                    onUpdateTask?.(draggedTask.id, updates);
                 } else {
-                    // above/below = ターゲットと同じ親の兄弟としてリオーダー
-                    onReorderTask?.(draggedTask.id, targetTask.id, position);
+                    // above/below = 兄弟としてリオーダー
+                    if (isRootDragged && isRootTarget) {
+                        // ルートタスク同士
+                        onReorderGroup?.(draggedTask.id, targetTask.id, position);
+                    } else {
+                        onReorderTask?.(draggedTask.id, targetTask.id, position);
+                    }
                 }
-                return;
-            }
-
-            if (target.type === 'groupNode') {
-                // グループルートに移動
-                const newGroupId = target.id;
-                if (null === draggedTask.parent_task_id && newGroupId === draggedTask.group_id) return;
-                onUpdateTask?.(draggedTask.id, { parent_task_id: null, group_id: newGroupId });
                 return;
             }
 
             if (target.type === 'projectNode') {
-                // ProjectNode にドロップ = 新グループ作成 + タスク移動（undo対応）
-                onPromoteTaskToGroup?.(draggedTask.id);
+                // ProjectNode にドロップ = ルートタスクに昇格
+                const isAlreadyRoot = groups.some(g => g.id === draggedTask.id);
+                if (isAlreadyRoot) return;
+                onUpdateTask?.(draggedTask.id, { parent_task_id: null, project_id: project?.id ?? null });
                 return;
             }
         }
+    }, [groups, onUpdateTask, onReorderTask, onReorderGroup, getTaskById, isDescendant, getDropInfo, clearDropTargetDOM, project?.id]);
 
-        // ====== Group ノードのドラッグ ======
-        if (node.type === 'groupNode') {
-            if (target.type === 'groupNode') {
-                if (node.id === target.id) return;
-                if (position === 'as-child') {
-                    // マージ: 確認ダイアログ付き
-                    const draggedLabel = (node.data as any)?.label || 'グループ';
-                    const targetLabel = (target.data as any)?.label || 'グループ';
-                    const confirmed = window.confirm(
-                        `「${draggedLabel}」の全タスクを「${targetLabel}」に移動しますか？\n空になったグループは削除されます。`
-                    );
-                    if (confirmed) {
-                        const tasksToMove = tasks.filter(t => t.group_id === node.id && !t.parent_task_id);
-                        for (const task of tasksToMove) {
-                            onUpdateTask?.(task.id, { group_id: target.id });
-                        }
-                        // 子タスクも一括移動
-                        const childTasks = tasks.filter(t => t.group_id === node.id && t.parent_task_id);
-                        for (const task of childTasks) {
-                            onUpdateTask?.(task.id, { group_id: target.id });
-                        }
-                        onDeleteGroup?.(node.id);
-                    }
-                } else {
-                    // above/below: グループ順序変更
-                    onReorderGroup?.(node.id, target.id, position);
-                }
-                return;
-            }
+    // Selection drag handlers for multi-node move
+    const handleSelectionDragStart = useCallback((_: React.MouseEvent, nodes: Node[]) => {
+        isDraggingRef.current = true;
+    }, []);
 
-            // Group → Task: タスクの所属グループの位置にリオーダー
+    const handleSelectionDragStop = useCallback((_: React.MouseEvent, nodes: Node[]) => {
+        isDraggingRef.current = false;
+        clearDropTargetDOM();
+
+        // Filter out project nodes from selection
+        const draggedNodes = nodes.filter(n => n.type !== 'projectNode');
+        if (draggedNodes.length === 0) return;
+
+        // Use the first node as the primary drag target to determine drop location
+        const primaryNode = draggedNodes[0];
+        const info = getDropInfo(primaryNode);
+        if (!info) return;
+
+        const { node: target, position } = info;
+
+        // Single node: use existing logic
+        if (draggedNodes.length === 1) {
+            const draggedTask = getTaskById(primaryNode.id);
+            if (!draggedTask) return;
+
             if (target.type === 'taskNode') {
                 const targetTask = getTaskById(target.id);
-                if (targetTask && targetTask.group_id !== node.id) {
-                    const reorderPos = position === 'as-child' ? 'below' : position;
-                    onReorderGroup?.(node.id, targetTask.group_id, reorderPos);
+                if (!targetTask) return;
+                if (isDescendant(primaryNode.id, target.id)) return;
+
+                if (position === 'as-child') {
+                    const newParentId = targetTask.id;
+                    if (newParentId !== draggedTask.parent_task_id) {
+                        setCollapsedTaskIds(prev => {
+                            if (!prev.has(newParentId)) return prev;
+                            const next = new Set(prev);
+                            next.delete(newParentId);
+                            return next;
+                        });
+                        onUpdateTask?.(draggedTask.id, { parent_task_id: newParentId });
+                    }
+                } else {
+                    const isRootDragged = groups.some(g => g.id === primaryNode.id);
+                    const isRootTarget = groups.some(g => g.id === target.id);
+                    if (isRootDragged && isRootTarget) {
+                        onReorderGroup?.(draggedTask.id, targetTask.id, position);
+                    } else {
+                        onReorderTask?.(draggedTask.id, targetTask.id, position);
+                    }
                 }
-            }
-        }
-    }, [onUpdateTask, onDeleteGroup, onPromoteTaskToGroup, onReorderTask, onReorderGroup, getTaskById, isDescendant, getDropInfo, clearDropTargetDOM, tasks]);
-
-    const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
-        markUserAction();
-        // Bulk delete: drag-selection -> Delete/Backspace removes selected nodes (tasks + groups)
-        if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodeIds.size > 0) {
-            const groupById = new Map(groups.map(g => [g.id, g]));
-            const taskById = new Map(tasks.map(t => [t.id, t]));
-
-            const selectedGroupIds = Array.from(selectedNodeIds).filter(id => groupById.has(id));
-            const selectedTaskIds = Array.from(selectedNodeIds).filter(id => taskById.has(id));
-
-            // Skip tasks that belong to a selected group (cascade delete handles them)
-            const groupIdsToDelete = new Set(selectedGroupIds);
-            const taskIdsToDelete = selectedTaskIds.filter(id => {
-                const task = taskById.get(id);
-                return task && !groupIdsToDelete.has(task.group_id);
-            });
-
-            // Also skip tasks whose ancestor is already selected (cascade delete handles them)
-            const taskIdsToDeleteSet = new Set(taskIdsToDelete);
-            const filteredTaskIds = taskIdsToDelete.filter(id => {
-                let cur = taskById.get(id);
-                const visited = new Set<string>();
-                while (cur?.parent_task_id && !visited.has(cur.parent_task_id)) {
-                    if (taskIdsToDeleteSet.has(cur.parent_task_id)) return false;
-                    visited.add(cur.parent_task_id);
-                    cur = taskById.get(cur.parent_task_id);
-                }
-                return true;
-            });
-
-            const totalCount = selectedGroupIds.length + filteredTaskIds.length;
-            if (totalCount === 0) return;
-
-            event.preventDefault();
-
-            if (typeof window === 'undefined') return;
-            const anyHasChildren = filteredTaskIds.some(id => hasChildren(id));
-            const parts: string[] = [];
-            if (selectedGroupIds.length > 0) parts.push(`${selectedGroupIds.length}件のグループ`);
-            if (filteredTaskIds.length > 0) parts.push(`${filteredTaskIds.length}件のタスク`);
-            const msg = anyHasChildren
-                ? `${parts.join('と')}を削除しますか？\n子タスクがあるものは子タスクも削除されます。`
-                : `${parts.join('と')}を削除しますか？`;
-            if (!window.confirm(msg)) return;
-
-            // Optimistic: clear selection immediately
-            applySelection(new Set(), null, 'user');
-
-            // Fire bulk delete as single undo action
-            if (onBulkDelete) {
-                onBulkDelete(selectedGroupIds, filteredTaskIds);
-            } else {
-                // Fallback: individual deletes
-                for (const groupId of selectedGroupIds) {
-                    onDeleteGroup?.(groupId);
-                }
-                for (const taskId of filteredTaskIds) {
-                    onDeleteTask?.(taskId);
+            } else if (target.type === 'projectNode') {
+                const isAlreadyRoot = groups.some(g => g.id === draggedTask.id);
+                if (!isAlreadyRoot) {
+                    onUpdateTask?.(draggedTask.id, { parent_task_id: null, project_id: project?.id ?? null });
                 }
             }
             return;
         }
 
-        if (!selectedNodeId) return;
-        const isGroupNode = groups.some(g => g.id === selectedNodeId);
-        if (!isGroupNode) return;
+        // Multiple nodes: move all to the same parent (as-child) or same level (above/below)
+        if (target.type === 'taskNode') {
+            const targetTask = getTaskById(target.id);
+            if (!targetTask) return;
 
-        if (event.key === 'Tab') {
-            event.preventDefault();
-            if (onCreateTask) {
-                const newTask = await onCreateTask(selectedNodeId, "", null);
-                if (newTask) {
-                    setPendingEditNodeId(newTask.id);
-                    applySelection(new Set([newTask.id]), newTask.id, 'user');
-                    focusNodeWithPollingV2(newTask.id);
+            // Filter out descendants of target (can't move parent into its child)
+            const validNodes = draggedNodes.filter(n => !isDescendant(n.id, target.id));
+            if (validNodes.length === 0) return;
+
+            if (position === 'as-child') {
+                // Move all selected nodes as children of target
+                const newParentId = targetTask.id;
+                setCollapsedTaskIds(prev => {
+                    if (!prev.has(newParentId)) return prev;
+                    const next = new Set(prev);
+                    next.delete(newParentId);
+                    return next;
+                });
+                for (const node of validNodes) {
+                    const task = getTaskById(node.id);
+                    if (task && task.parent_task_id !== newParentId) {
+                        onUpdateTask?.(node.id, { parent_task_id: newParentId });
+                    }
+                }
+            } else {
+                // Move all selected nodes as siblings of target (same parent as target)
+                const newParentId = targetTask.parent_task_id;
+                for (const node of validNodes) {
+                    const task = getTaskById(node.id);
+                    if (task && task.parent_task_id !== newParentId) {
+                        const isRootTask = groups.some(g => g.id === node.id);
+                        if (newParentId === null && !isRootTask) {
+                            // Moving to root level
+                            onUpdateTask?.(node.id, { parent_task_id: null, project_id: project?.id ?? null });
+                        } else if (newParentId !== null) {
+                            onUpdateTask?.(node.id, { parent_task_id: newParentId });
+                        }
+                    }
                 }
             }
-        } else if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-            // Create new group when Enter is pressed on a group node
-            event.preventDefault();
-            await createGroupAndFocus("New Group");
+        } else if (target.type === 'projectNode') {
+            // Move all selected nodes to root level
+            for (const node of draggedNodes) {
+                const isAlreadyRoot = groups.some(g => g.id === node.id);
+                if (!isAlreadyRoot) {
+                    onUpdateTask?.(node.id, { parent_task_id: null, project_id: project?.id ?? null });
+                }
             }
-    }, [selectedNodeId, selectedNodeIds, tasks, groups, hasChildren, onDeleteTask, onDeleteGroup, onCreateTask, createGroupAndFocus, markUserAction, focusNodeWithPollingV2, applySelection]);
+        }
+    }, [groups, onUpdateTask, onReorderTask, onReorderGroup, getTaskById, isDescendant, getDropInfo, clearDropTargetDOM, project?.id]);
+
+    const handleSelectionDrag = useCallback((_: React.MouseEvent, nodes: Node[]) => {
+        const primaryNode = nodes.find(n => n.type !== 'projectNode');
+        if (!primaryNode) return;
+
+        const info = getDropInfo(primaryNode);
+        const prev = dropInfoRef.current;
+        const newNodeId = info?.node.id ?? null;
+        const newPosition = info?.position ?? null;
+
+        if (prev?.nodeId === newNodeId && prev?.position === newPosition) return;
+
+        clearDropTargetDOM();
+        if (newNodeId && newPosition) {
+            applyDropTargetDOM(newNodeId, newPosition);
+            dropInfoRef.current = { nodeId: newNodeId, position: newPosition };
+        }
+    }, [getDropInfo, clearDropTargetDOM, applyDropTargetDOM]);
+
+    const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
+        markUserAction();
+        // Bulk delete: drag-selection -> Delete/Backspace removes selected nodes
+        if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodeIds.size > 0) {
+            const allTasksById = new Map([...groups, ...tasks].map(t => [t.id, t]));
+            const selectedIds = Array.from(selectedNodeIds).filter(id => allTasksById.has(id));
+
+            // 祖先が既に選択されているタスクをスキップ（cascade delete で処理される）
+            const selectedSet = new Set(selectedIds);
+            const filteredIds = selectedIds.filter(id => {
+                let cur = allTasksById.get(id);
+                const visited = new Set<string>();
+                while (cur?.parent_task_id && !visited.has(cur.parent_task_id)) {
+                    if (selectedSet.has(cur.parent_task_id)) return false;
+                    visited.add(cur.parent_task_id);
+                    cur = allTasksById.get(cur.parent_task_id);
+                }
+                return true;
+            });
+
+            if (filteredIds.length === 0) return;
+            event.preventDefault();
+
+            if (typeof window === 'undefined') return;
+            const anyHasChildren = filteredIds.some(id => hasChildren(id));
+            const msg = anyHasChildren
+                ? `${filteredIds.length}件のタスクを削除しますか？\n子タスクがあるものは子タスクも削除されます。`
+                : `${filteredIds.length}件のタスクを削除しますか？`;
+            if (!window.confirm(msg)) return;
+
+            applySelection(new Set(), null, 'user');
+
+            // ルートタスクと子タスクを分離してbulkDeleteに渡す
+            const rootGroupIds = filteredIds.filter(id => groups.some(g => g.id === id));
+            const childTaskIds = filteredIds.filter(id => !groups.some(g => g.id === id));
+
+            if (onBulkDelete) {
+                onBulkDelete(rootGroupIds, childTaskIds);
+            } else {
+                for (const id of rootGroupIds) { onDeleteGroup?.(id); }
+                for (const id of childTaskIds) { onDeleteTask?.(id); }
+            }
+            return;
+        }
+        // ルートタスクもTaskNodeなのでノード内でキーボードを処理 → コンテナ追加処理不要
+    }, [selectedNodeIds, tasks, groups, hasChildren, isDescendant, onDeleteTask, onDeleteGroup, onBulkDelete, markUserAction, applySelection]);
 
     return (
         <div
@@ -2486,6 +2038,9 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 onNodeDragStart={handleNodeDragStart}
                 onNodeDrag={handleNodeDrag}
                 onNodeDragStop={handleNodeDragStop}
+                onSelectionDragStart={handleSelectionDragStart}
+                onSelectionDrag={handleSelectionDrag}
+                onSelectionDragStop={handleSelectionDragStop}
                 onPaneClick={handlePaneClick}
                 onSelectionChange={handleSelectionChange}
                 onWheel={handlePaneWheel}
@@ -2501,6 +2056,8 @@ function MindMapContent({ project, groups, tasks, onUpdateGroupTitle, onUpdateGr
                 zoomOnScroll={false}
                 minZoom={0.5}
                 maxZoom={1.5}
+                selectNodesOnDrag={true}
+                multiSelectionKeyCode="Shift"
             >
                 <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255, 255, 255, 0.15)" />
                 <Controls showInteractive={false} />

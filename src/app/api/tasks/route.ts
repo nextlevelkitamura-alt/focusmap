@@ -31,73 +31,33 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, group_id, parent_task_id, title, order_index } = body;
+    const { id, group_id, project_id, parent_task_id, title, order_index } = body;
     const titleValue = (typeof title === 'string' && title.trim()) || 'New Task';
 
-    if (!group_id) {
+    // parent_task_id のバリデーション（必須）
+    if (!parent_task_id) {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'group_id is required'
+            message: 'parent_task_id is required'
           }
         },
         { status: 400 }
       );
     }
 
-    // group_id が実際に存在するか確認
-    const { data: group, error: groupError } = await supabase
-      .from('task_groups')
-      .select('id')
-      .eq('id', group_id)
-      .eq('user_id', user.id)
-      .single();
-
-    if (groupError || !group) {
-      console.error('[tasks/create] Group not found:', { group_id, error: groupError });
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'GROUP_NOT_FOUND',
-            message: `Task group not found: ${group_id}`
-          }
-        },
-        { status: 404 }
-      );
-    }
-
-    // parent_task_id が指定されていて存在しない場合はエラー
-    if (parent_task_id) {
-      const { data: parentTask, error: parentError } = await supabase
-        .from('tasks')
-        .select('id')
-        .eq('id', parent_task_id)
-        .eq('user_id', user.id)
-        .single();
-
-      if (parentError || !parentTask) {
-        console.error('[tasks/create] Parent task not found:', { parent_task_id, error: parentError });
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'PARENT_NOT_FOUND',
-              message: `Parent task not found: ${parent_task_id}`
-            }
-          },
-          { status: 404 }
-        );
-      }
-    }
+    // Note: 親タスクの存在チェックはDB制約に委任
+    // 楽観的UIで作成された親タスクがまだDB未同期の場合があるため、
+    // ここでの厳格なチェックは行わない
 
     // INSERT
     const insertPayload: Record<string, unknown> = {
       user_id: user.id,
-      group_id,
-      parent_task_id: parent_task_id || null,
+      group_id: group_id || null, // 後方互換性のため残す（Phase 3で削除）
+      project_id: project_id || null,
+      parent_task_id,
       title: titleValue,
       status: 'todo',
       order_index: order_index ?? 0,

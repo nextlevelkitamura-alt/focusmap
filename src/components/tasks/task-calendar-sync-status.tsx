@@ -37,7 +37,7 @@ export function TaskCalendarSyncStatus({
 
       {status === 'error' && (
         <div className="flex items-center gap-0.5">
-          <span title={error?.message || "同期エラー"}>
+          <span title={error?.message || "同期に失敗しました"}>
             <AlertCircle className="w-3 h-3 text-destructive" />
           </span>
           <Button

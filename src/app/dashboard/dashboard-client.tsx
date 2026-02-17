@@ -70,15 +70,49 @@ export function DashboardClient({
 
     // --- MindMap Sync Hook ---
     // STABLE reference for initial groups using useMemo with string dep
-    const projectGroupsInitial = useMemo(() =>
-        initialGroups.filter(g => g.project_id === selectedProjectId),
-        [initialGroups, selectedProjectId]
-    )
+    // 旧スキーマ (task_groups) + 新スキーマ (tasks の is_group=true) を統合
+    const projectGroupsInitial = useMemo(() => {
+        const oldGroups = initialGroups.filter(g => g.project_id === selectedProjectId)
+        const oldGroupIds = new Set(oldGroups.map(g => g.id))
+        // 新スキーマ: tasks テーブルに is_group=true で作成されたグループも含める
+        const newGroupsFromTasks = initialTasks
+            .filter(t => t.is_group === true && t.project_id === selectedProjectId && !oldGroupIds.has(t.id))
+            .map(t => ({
+                id: t.id,
+                user_id: t.user_id,
+                project_id: t.project_id!,
+                title: t.title,
+                order_index: t.order_index,
+                priority: t.priority,
+                scheduled_at: t.scheduled_at,
+                estimated_time: t.estimated_time,
+                created_at: t.created_at,
+            } as TaskGroup))
+        return [...oldGroups, ...newGroupsFromTasks]
+    }, [initialGroups, initialTasks, selectedProjectId])
 
     // STABLE reference for initial tasks - useMemo
+    // 新スキーマ: group_id (旧) または parent_task_id (新) でプロジェクトのタスクを取得
     const projectTasksInitial = useMemo(() => {
         const groupIds = new Set(projectGroupsInitial.map(g => g.id))
-        return initialTasks.filter(t => groupIds.has(t.group_id))
+        // BFS: グループの全子孫タスクを取得
+        const result: Task[] = []
+        const taskIds = new Set<string>()
+        const queue = [...groupIds]
+        while (queue.length > 0) {
+            const parentId = queue.shift()!
+            for (const t of initialTasks) {
+                if (taskIds.has(t.id)) continue
+                // is_group=true のタスクはグループとして既に処理済み → スキップ
+                if (t.is_group === true) continue
+                if (t.group_id === parentId || t.parent_task_id === parentId) {
+                    result.push(t)
+                    taskIds.add(t.id)
+                    queue.push(t.id) // 子タスクの子も探索
+                }
+            }
+        }
+        return result
     }, [initialTasks, projectGroupsInitial])
 
     const {
@@ -123,10 +157,6 @@ export function DashboardClient({
             await updateProjectTitle(projectId, newTitle)
         }
     }, [updateProjectTitle])
-
-    const handleUpdateGroupTitle = useCallback(async (groupId: string, newTitle: string) => {
-        await updateGroupTitle(groupId, newTitle)
-    }, [updateGroupTitle])
 
     const handleDeleteGroup = useCallback(async (groupId: string) => {
         await deleteGroup(groupId)
@@ -340,7 +370,6 @@ export function DashboardClient({
                     <div className="flex-1 md:hidden overflow-hidden">
                         <TodayView
                             allTasks={allTasksMerged}
-                            allGroups={initialGroups}
                             onUpdateTask={updateTask}
                         />
                     </div>
@@ -407,19 +436,15 @@ export function DashboardClient({
                         project={selectedProject}
                         groups={currentGroups}
                         tasks={currentTasks}
-                        onUpdateGroupTitle={handleUpdateGroupTitle}
-                        onUpdateGroup={updateGroup}
                         onUpdateProject={handleUpdateProjectTitle}
                         onCreateGroup={handleCreateGroup}
                         onDeleteGroup={handleDeleteGroup}
                         onCreateTask={createTask}
                         onUpdateTask={updateTask}
                         onDeleteTask={handleDeleteTask}
-                        onMoveTask={moveTask}
                         onBulkDelete={bulkDelete}
                         onReorderTask={reorderTask}
                         onReorderGroup={reorderGroup}
-                        onPromoteTaskToGroup={promoteTaskToGroup}
                         onRefreshCalendar={handleRefreshCalendar}
                     />
                 </div>

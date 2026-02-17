@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Task, TaskGroup, Project } from "@/types/database"
+import { Task, Project } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { MoreHorizontal, Play, Check, ChevronRight, ChevronDown, Plus, Trash2, Pause, Timer, GripVertical, Calendar as CalendarIcon, X, Target, Clock, Maximize2, Minimize2 } from "lucide-react"
@@ -81,21 +81,17 @@ function getGroupAutoMinutes(index: TaskIndex): number {
 
 interface CenterPaneProps {
     project?: Project
-    groups: TaskGroup[]
+    groups: Task[]
     tasks: Task[]
-    onUpdateGroupTitle?: (groupId: string, newTitle: string) => void
-    onUpdateGroup?: (groupId: string, updates: Partial<TaskGroup>) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
-    onCreateGroup?: (title: string) => Promise<TaskGroup | null>
+    onCreateGroup?: (title: string) => Promise<Task | null>
     onDeleteGroup?: (groupId: string) => void
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
-    onMoveTask?: (taskId: string, newGroupId: string) => Promise<void>
     onBulkDelete?: (groupIds: string[], taskIds: string[]) => Promise<void>
     onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
     onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
-    onPromoteTaskToGroup?: (taskId: string) => Promise<void>
     onRefreshCalendar?: () => Promise<void>
 }
 
@@ -208,6 +204,7 @@ function TaskItem({
         estimated_time: task.estimated_time,
         calendar_id: task.calendar_id,
         google_event_id: task.google_event_id,
+        enabled: !task.is_group, // グループは同期しない
         onSyncSuccess: async () => {
             // カレンダーを更新
             await onRefreshCalendar?.()
@@ -656,19 +653,15 @@ export function CenterPane({
     project,
     groups,
     tasks,
-    onUpdateGroupTitle,
-    onUpdateGroup,
     onUpdateProject,
     onCreateGroup,
     onDeleteGroup,
     onCreateTask,
     onUpdateTask,
     onDeleteTask,
-    onMoveTask,
     onBulkDelete,
     onReorderTask,
     onReorderGroup,
-    onPromoteTaskToGroup,
     onRefreshCalendar
 }: CenterPaneProps) {
     // Splitter State
@@ -711,11 +704,11 @@ export function CenterPane({
         setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }))
     }
 
-    // Build indices for estimated-time aggregation (by group)
+    // 新スキーマ: parent_task_id でグループに属するタスクを取得
     const taskIndexByGroupId = useMemo(() => {
         const map = new Map<string, TaskIndex>()
         for (const g of groups) {
-            const groupTasks = tasks.filter(t => t.group_id === g.id)
+            const groupTasks = tasks.filter(t => t.parent_task_id === g.id)
             map.set(g.id, buildTaskIndex(groupTasks))
         }
         return map
@@ -740,8 +733,9 @@ export function CenterPane({
         if (source.index === destination.index && source.droppableId === destination.droppableId) return;
 
         const groupId = destination.droppableId;
+        // 新スキーマ: parent_task_id = groupId でグループ直下のタスクを取得
         const groupTasks = tasks
-            .filter(t => t.group_id === groupId && !t.parent_task_id)
+            .filter(t => t.parent_task_id === groupId)
             .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
         // Calculate new order_index
@@ -819,19 +813,16 @@ export function CenterPane({
                         project={project}
                         groups={groups}
                         tasks={tasks}
-                        onUpdateGroupTitle={onUpdateGroupTitle || (() => { })}
-                        onUpdateGroup={onUpdateGroup}
                         onUpdateProject={onUpdateProject}
                         onCreateGroup={onCreateGroup}
                         onDeleteGroup={onDeleteGroup}
                         onCreateTask={onCreateTask}
                         onUpdateTask={onUpdateTask}
                         onDeleteTask={onDeleteTask}
-                        onMoveTask={onMoveTask}
                         onBulkDelete={onBulkDelete}
                         onReorderTask={onReorderTask}
                         onReorderGroup={onReorderGroup}
-                        onPromoteTaskToGroup={onPromoteTaskToGroup}
+                        onRefreshCalendar={onRefreshCalendar}
                     />
                     <Button
                         variant="outline"
@@ -849,17 +840,15 @@ export function CenterPane({
                             project={project}
                             groups={groups}
                             tasks={tasks}
-                            onUpdateGroupTitle={onUpdateGroupTitle || (() => { })}
-                            onUpdateGroup={onUpdateGroup}
                             onUpdateProject={onUpdateProject}
                             onCreateGroup={onCreateGroup}
                             onDeleteGroup={onDeleteGroup}
                             onCreateTask={onCreateTask}
                             onUpdateTask={onUpdateTask}
                             onDeleteTask={onDeleteTask}
-                            onMoveTask={onMoveTask}
                             onReorderTask={onReorderTask}
                             onReorderGroup={onReorderGroup}
+                            onRefreshCalendar={onRefreshCalendar}
                         />
                         <Button
                             variant="ghost"
@@ -907,16 +896,16 @@ export function CenterPane({
                     <ScrollArea className="flex-1 h-full overflow-y-auto">
                         <div className="space-y-3 p-2 pb-20">
                             {groups.map((group) => {
-                                // Get only parent tasks (no parent_task_id)
+                                // 新スキーマ: parent_task_id = group.id でグループ直下のタスクを取得
                                 const parentTasks = tasks
-                                    .filter(t => t.group_id === group.id && !t.parent_task_id)
+                                    .filter(t => t.parent_task_id === group.id)
                                     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
 
-                                // Get all tasks in this group for progress calculation
-                                const allGroupTasks = tasks.filter(t => t.group_id === group.id)
+                                // グループに属する全タスクを取得（進捗計算用）
+                                const allGroupTasks = tasks.filter(t => t.parent_task_id === group.id)
                                 const groupIndex = taskIndexByGroupId.get(group.id) ?? buildTaskIndex(allGroupTasks)
                                 const groupAutoMinutes = getGroupAutoMinutes(groupIndex)
-                                const groupIsOverridden = group.estimated_time != null
+                                const groupIsOverridden = (group.estimated_time ?? 0) > 0
                                 const groupDisplayMinutes = groupIsOverridden ? (group.estimated_time ?? 0) : groupAutoMinutes
                                 const completedCount = allGroupTasks.filter(t => t.status === 'done').length
                                 const isCollapsed = collapsedGroups[group.id]
@@ -969,7 +958,7 @@ export function CenterPane({
                                                 defaultValue={group.title}
                                                 onBlur={(e) => {
                                                     if (e.target.value !== group.title) {
-                                                        onUpdateGroupTitle?.(group.id, e.target.value)
+                                                        onUpdateTask?.(group.id, { title: e.target.value })
                                                     }
                                                 }}
                                                 onKeyDown={(e) => {
@@ -1000,10 +989,10 @@ export function CenterPane({
                                                         <div className="group/estimated flex items-center gap-0.5">
                                                             <EstimatedTimePopover
                                                                 valueMinutes={groupDisplayMinutes}
-                                                                onChangeMinutes={(minutes) => onUpdateGroup?.(group.id, { estimated_time: minutes })}
+                                                                onChangeMinutes={(minutes) => onUpdateTask?.(group.id, { estimated_time: minutes })}
                                                                 isOverridden={groupIsOverridden}
                                                                 autoMinutes={groupAutoMinutes}
-                                                                onResetAuto={() => onUpdateGroup?.(group.id, { estimated_time: null })}
+                                                                onResetAuto={() => onUpdateTask?.(group.id, { estimated_time: 0 })}
                                                                 trigger={
                                                                     <span
                                                                         className="cursor-pointer"
@@ -1027,7 +1016,7 @@ export function CenterPane({
                                                                     className="h-4 w-4 p-0 opacity-0 group-hover/estimated:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
                                                                     onClick={(e) => {
                                                                         e.stopPropagation()
-                                                                        onUpdateGroup?.(group.id, { estimated_time: null })
+                                                                        onUpdateTask?.(group.id, { estimated_time: 0 })
                                                                     }}
                                                                     title="自動集計に戻す"
                                                                 >
@@ -1038,7 +1027,7 @@ export function CenterPane({
                                                     ) : (
                                                         <EstimatedTimePopover
                                                             valueMinutes={0}
-                                                            onChangeMinutes={(minutes) => onUpdateGroup?.(group.id, { estimated_time: minutes })}
+                                                            onChangeMinutes={(minutes) => onUpdateTask?.(group.id, { estimated_time: minutes })}
                                                             isOverridden={false}
                                                             autoMinutes={groupAutoMinutes}
                                                             trigger={
@@ -1046,7 +1035,7 @@ export function CenterPane({
                                                                     variant="ghost"
                                                                     size="icon"
                                                                     className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
-                                                                    title="見積もり（グループ上書き）"
+                                                                    title="見積もり（ルートタスク上書き）"
                                                                     onClick={(e) => e.stopPropagation()}
                                                                 >
                                                                     <Clock className="w-4 h-4" />
@@ -1062,7 +1051,7 @@ export function CenterPane({
                                                         <>
                                                             <PriorityPopover
                                                                 value={group.priority as Priority}
-                                                                onChange={(priority) => onUpdateGroup?.(group.id, { priority } as any)}
+                                                                onChange={(priority) => onUpdateTask?.(group.id, { priority })}
                                                                 trigger={
                                                                     <span className="cursor-pointer">
                                                                         <PriorityBadge value={group.priority as Priority} />
@@ -1075,7 +1064,7 @@ export function CenterPane({
                                                                 className="h-4 w-4 text-zinc-500 hover:text-red-400 transition-colors"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation()
-                                                                    onUpdateGroup?.(group.id, { priority: undefined } as any)
+                                                                    onUpdateTask?.(group.id, { priority: undefined as any })
                                                                 }}
                                                                 title="優先度を削除"
                                                             >
@@ -1085,7 +1074,7 @@ export function CenterPane({
                                                     ) : (
                                                         <PriorityPopover
                                                             value={3}
-                                                            onChange={(priority) => onUpdateGroup?.(group.id, { priority } as any)}
+                                                            onChange={(priority) => onUpdateTask?.(group.id, { priority })}
                                                             trigger={
                                                                 <Button
                                                                     variant="ghost"
@@ -1104,7 +1093,7 @@ export function CenterPane({
                                                 <div className="flex items-center gap-1">
                                                     <DateTimePicker
                                                         date={group.scheduled_at ? new Date(group.scheduled_at) : undefined}
-                                                        setDate={(date) => onUpdateGroup?.(group.id, { scheduled_at: date ? date.toISOString() : null } as any)}
+                                                        setDate={(date) => onUpdateTask?.(group.id, { scheduled_at: date ? date.toISOString() : null })}
                                                         trigger={
                                                             group.scheduled_at ? (
                                                                 <div className="flex items-center gap-1">
@@ -1117,7 +1106,7 @@ export function CenterPane({
                                                                         className="h-4 w-4 text-zinc-500 hover:text-red-400 transition-colors"
                                                                         onClick={(e) => {
                                                                             e.stopPropagation()
-                                                                            onUpdateGroup?.(group.id, { scheduled_at: null } as any)
+                                                                            onUpdateTask?.(group.id, { scheduled_at: null })
                                                                         }}
                                                                         title="日時設定を削除"
                                                                     >
@@ -1137,6 +1126,13 @@ export function CenterPane({
                                                         }
                                                     />
                                                 </div>
+
+                                                {/* Calendar Selection */}
+                                                <TaskCalendarSelect
+                                                    value={group.calendar_id ?? null}
+                                                    onChange={(calendarId) => onUpdateTask?.(group.id, { calendar_id: calendarId })}
+                                                    className={group.calendar_id ? "" : "opacity-0 group-hover:opacity-100"}
+                                                />
 
                                                 {/* Add Task Button */}
                                                 <Button
@@ -1220,10 +1216,10 @@ export function CenterPane({
                             <Button
                                 variant="outline"
                                 className="w-full border-dashed text-muted-foreground"
-                                onClick={() => onCreateGroup?.("New Group")}
+                                onClick={() => onCreateGroup?.("New Task")}
                             >
                                 <Plus className="w-4 h-4 mr-2" />
-                                新しいグループを追加
+                                新しいタスクを追加
                             </Button>
                         </div>
                     </ScrollArea>

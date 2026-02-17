@@ -6,6 +6,8 @@ interface UseTaskCalendarSyncOptions {
   estimated_time: number
   calendar_id: string | null
   google_event_id: string | null
+  /** 同期を有効にするかどうか（グループの場合は false） */
+  enabled?: boolean
   onSyncSuccess?: () => void
   onSyncError?: (error: Error) => void
   /** 同期成功時に google_event_id をローカルステートに反映するコールバック */
@@ -20,6 +22,7 @@ export function useTaskCalendarSync({
   estimated_time,
   calendar_id,
   google_event_id,
+  enabled = true,
   onSyncSuccess,
   onSyncError,
   onGoogleEventIdChange
@@ -166,8 +169,14 @@ export function useTaskCalendarSync({
 
   // タスクの変更を監視
   useEffect(() => {
+    // 新スキーマ: グループの場合は同期をスキップ
+    if (!enabled) {
+      return
+    }
+
     const prev = prevRef.current
-    const hasAllFields = scheduled_at && estimated_time && calendar_id
+    // 3つの条件を厳密にチェック（estimated_time は 0 より大きい必要がある）
+    const hasAllFields = !!(scheduled_at && calendar_id && estimated_time && estimated_time > 0)
 
     // 3つのフィールドが揃った瞬間（新規作成）
     if (hasAllFields && !prev.google_event_id && !google_event_id) {
@@ -210,7 +219,7 @@ export function useTaskCalendarSync({
       calendar_id,
       google_event_id
     }
-  }, [taskId, scheduled_at, estimated_time, calendar_id, google_event_id])
+  }, [taskId, scheduled_at, estimated_time, calendar_id, google_event_id, enabled])
 
   return {
     status,
