@@ -140,6 +140,10 @@ export interface Database {
                     last_started_at: string | null
                     is_timer_running: boolean
                     created_at: string
+                    // Habit columns
+                    is_habit: boolean
+                    habit_frequency: string | null
+                    habit_icon: string | null
                 }
                 Insert: {
                     id?: string
@@ -163,6 +167,10 @@ export interface Database {
                     last_started_at?: string | null
                     is_timer_running?: boolean
                     created_at?: string
+                    // Habit columns
+                    is_habit?: boolean
+                    habit_frequency?: string | null
+                    habit_icon?: string | null
                 }
                 Update: {
                     id?: string
@@ -186,6 +194,39 @@ export interface Database {
                     last_started_at?: string | null
                     is_timer_running?: boolean
                     created_at?: string
+                    // Habit columns
+                    is_habit?: boolean
+                    habit_frequency?: string | null
+                    habit_icon?: string | null
+                }
+            }
+            habit_completions: {
+                Row: {
+                    id: string
+                    habit_id: string
+                    user_id: string
+                    completed_date: string
+                    child_task_ids: string[] | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    habit_id: string
+                    user_id: string
+                    completed_date: string
+                    child_task_ids?: string[] | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    habit_id?: string
+                    user_id?: string
+                    completed_date?: string
+                    child_task_ids?: string[] | null
+                    created_at?: string
+                    updated_at?: string
                 }
             }
             ai_suggestions: {

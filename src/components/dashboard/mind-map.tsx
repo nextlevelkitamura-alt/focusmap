@@ -26,6 +26,7 @@ import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } f
 import { useDrag } from "@/contexts/DragContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
 import { DateTimePicker } from "@/lib/dynamic-imports";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
@@ -816,6 +817,54 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                 className="w-full h-8 justify-start"
                             />
                         </div>
+
+                        {/* Habit Settings */}
+                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">習慣</div>
+                        <div className="px-2 pb-2 space-y-2">
+                            {/* Habit Toggle */}
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs">習慣として設定</span>
+                                <Switch
+                                    checked={data?.is_habit ?? false}
+                                    onCheckedChange={(checked) => {
+                                        data?.onUpdateHabit?.({ is_habit: checked });
+                                    }}
+                                />
+                            </div>
+
+                            {/* Habit Frequency (only show when is_habit is true) */}
+                            {data?.is_habit && (
+                                <>
+                                    <div className="text-xs text-muted-foreground">頻度</div>
+                                    <div className="flex gap-1">
+                                        <Button
+                                            variant={data?.habit_frequency === 'daily' ? 'default' : 'outline'}
+                                            size="sm"
+                                            className="flex-1 h-7 text-xs"
+                                            onClick={() => data?.onUpdateHabit?.({ habit_frequency: 'daily' })}
+                                        >
+                                            毎日
+                                        </Button>
+                                        <Button
+                                            variant={data?.habit_frequency === 'weekdays' ? 'default' : 'outline'}
+                                            size="sm"
+                                            className="flex-1 h-7 text-xs"
+                                            onClick={() => data?.onUpdateHabit?.({ habit_frequency: 'weekdays' })}
+                                        >
+                                            平日
+                                        </Button>
+                                        <Button
+                                            variant={data?.habit_frequency === 'custom' ? 'default' : 'outline'}
+                                            size="sm"
+                                            className="flex-1 h-7 text-xs"
+                                            onClick={() => data?.onUpdateHabit?.({ habit_frequency: 'custom' })}
+                                        >
+                                            カスタム
+                                        </Button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
@@ -1450,6 +1499,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         created_at: string; priority: number | null;
         scheduled_at: string | null; estimated_time: number | null;
         calendar_id: string | null; google_event_id: string | null;
+        is_habit: boolean; habit_frequency: string | null; habit_icon: string | null;
     };
 
     const { structureNodes, edges, taskDataMap } = useMemo(() => {
@@ -1639,6 +1689,10 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onUpdatePriority: (p: number) => cbs.updateTaskPriority(taskId, p),
                     onUpdateEstimatedTime: (m: number) => cbs.updateTaskEstimatedTime(taskId, m),
                     onUpdateCalendar: (calendarId: string | null) => cbs.onUpdateTask?.(taskId, { calendar_id: calendarId }),
+                    is_habit: taskData?.is_habit ?? false,
+                    habit_frequency: taskData?.habit_frequency ?? null,
+                    habit_icon: taskData?.habit_icon ?? null,
+                    onUpdateHabit: (habitUpdates: Partial<Pick<ParsedTask, 'is_habit' | 'habit_frequency' | 'habit_icon'>>) => cbs.onUpdateTask?.(taskId, habitUpdates),
                     onAddChild: () => cbs.addChildTask(taskId),
                     onAddSibling: () => cbs.addSiblingTask(taskId),
                     onPromote: () => cbs.promoteTask(taskId),

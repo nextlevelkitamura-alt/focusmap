@@ -479,19 +479,18 @@ src/app/dashboard/
 - [x] `TodayTimelineCards` から未スケジュールタスクセクション削除
 - [x] 未スケジュールタスク用のD&D処理を削除
 
-### Phase 3: 習慣機能 - DB + マイグレーション（1日）⭐修正
-- [ ] `tasks` テーブルに習慣カラム追加（`is_habit`, `habit_frequency`, `habit_icon`）
-- [ ] `habit_completions` テーブル作成
-- [ ] RLS ポリシー設定
-- [ ] `src/types/database.ts` の型定義更新
+### Phase 3: 習慣機能 - DB + マイグレーション（1日）⭐修正 ✅
+- [x] マイグレーション SQL 作成（`supabase/migrations/20260217_add_habit_support.sql`）
+- [x] `src/types/database.ts` 型定義更新
+- [x] ビルド確認
 
 ### Phase 4: マインドマップ - 習慣設定UI（1-2日）⭐新規
-- [ ] `mind-map.tsx` のタスクメニューに「習慣」セクション追加
-- [ ] 習慣トグル（`is_habit`）の実装
-- [ ] 頻度選択UI（毎日/平日/カスタム）の実装
+- [x] `mind-map.tsx` のタスクメニューに「習慣」セクション追加
+- [x] 習慣トグル（`is_habit`）の実装
+- [x] 頻度選択UI（毎日/平日/カスタム）の実装
 - [ ] アイコン選択UI（絵文字ピッカー）の実装
 - [ ] 習慣タスクのバッジ表示（マインドマップ上）
-- [ ] `useMindMapSync` での習慣フィールド更新対応
+- [x] `useMindMapSync` での習慣フィールド更新対応
 
 ### Phase 5: 習慣API + Hook（1-2日）⭐修正
 - [ ] 習慣完了記録API（`/api/habits/completions`）
