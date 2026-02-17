@@ -8,13 +8,15 @@ import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
 import { useEventCompletions } from "@/hooks/useEventCompletions"
 import {
-    Square, CheckSquare, Target, ChevronDown, ChevronUp, LayoutGrid, List, Flame
+    Square, CheckSquare, Target, ChevronDown, ChevronUp, LayoutGrid, List, Flame,
+    Play, Pause, RefreshCw, Check
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
 import { DragItem } from "@/hooks/useTouchDrag"
+import { useTimer, formatTime } from "@/contexts/TimerContext"
 
 // --- Types ---
 
@@ -49,9 +51,11 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
     const { selectedCalendarIds, calendars } = useCalendars()
     const { todayHabits, toggleCompletion, isLoading: habitsLoading } = useHabits()
     const { completedEventIds, toggleEventCompletion } = useEventCompletions()
+    const timer = useTimer()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
     const [timelineMode, setTimelineMode] = useState<TimelineMode>('calendar')
     const [habitsExpanded, setHabitsExpanded] = useState(false)
+    const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
@@ -74,11 +78,15 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
     }, [today])
 
     // Fetch calendar events for today
-    const { events: calendarEvents, isLoading: eventsLoading, error: eventsError } = useCalendarEvents({
+    const { events: fetchedCalendarEvents, isLoading: eventsLoading, error: eventsError } = useCalendarEvents({
         timeMin: today,
         timeMax: tomorrow,
         calendarIds: selectedCalendarIds,
     })
+    const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEvents)
+    useEffect(() => { setLocalCalendarEvents(fetchedCalendarEvents) }, [fetchedCalendarEvents])
+    // Use localCalendarEvents for rendering (supports optimistic D&D updates)
+    const calendarEvents = localCalendarEvents
 
     // Habit task IDs (filter out from timeline)
     const habitGroupIds = useMemo(() => {
@@ -201,33 +209,44 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
         [calendars]
     )
 
-    // Handle drag & drop time change
+    // Handle drag & drop time change (optimistic UI + sync indicator)
     const handleDragDrop = useCallback(async (item: DragItem, newStartTime: Date, newEndTime: Date) => {
+        // Optimistic UI update FIRST
         if (item.type === 'task') {
-            // Update task scheduled_at
-            await onUpdateTask(item.id, {
-                scheduled_at: newStartTime.toISOString(),
-            })
-            // Optimistic local update
             setLocalTasks(prev => prev.map(t =>
                 t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
             ))
         } else {
-            // Find the calendar event to get google_event_id and calendar_id
-            const event = calendarEvents.find(e => e.id === item.id)
-            if (!event) return
+            setLocalCalendarEvents(prev => prev.map(e =>
+                e.id === item.id ? { ...e, start_time: newStartTime.toISOString(), end_time: newEndTime.toISOString() } : e
+            ))
+        }
 
-            await fetch(`/api/calendar/events/${item.id}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    title: event.title,
-                    start_time: newStartTime.toISOString(),
-                    end_time: newEndTime.toISOString(),
-                    googleEventId: event.google_event_id,
-                    calendarId: event.calendar_id,
-                }),
-            })
+        // Show sync indicator
+        setSyncState('syncing')
+
+        try {
+            if (item.type === 'task') {
+                await onUpdateTask(item.id, { scheduled_at: newStartTime.toISOString() })
+            } else {
+                const event = calendarEvents.find(e => e.id === item.id)
+                if (!event) return
+                await fetch(`/api/calendar/events/${item.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: event.title,
+                        start_time: newStartTime.toISOString(),
+                        end_time: newEndTime.toISOString(),
+                        googleEventId: event.google_event_id,
+                        calendarId: event.calendar_id,
+                    }),
+                })
+            }
+            setSyncState('done')
+            setTimeout(() => setSyncState('idle'), 1500)
+        } catch {
+            setSyncState('idle')
         }
     }, [onUpdateTask, calendarEvents])
 
@@ -270,7 +289,17 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                             {todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
                         </p>
                     </div>
-                    {/* Timeline mode toggle */}
+                    {/* Sync indicator + Timeline mode toggle */}
+                    <div className="flex items-center gap-2">
+                    {syncState !== 'idle' && (
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            {syncState === 'syncing' ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                            ) : (
+                                <Check className="w-3.5 h-3.5 text-green-500" />
+                            )}
+                        </div>
+                    )}
                     <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
                         <button
                             onClick={() => setTimelineMode('calendar')}
@@ -294,6 +323,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                         >
                             <List className="w-4 h-4" />
                         </button>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -354,104 +384,58 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                         </div>
                     </div>
 
-                    {/* Expanded Habit Detail */}
+                    {/* Expanded: Child tasks only (no duplicate title, no week dots) */}
                     {habitsExpanded && (
-                        <div className="px-4 pb-3 space-y-2 animate-in slide-in-from-top-2 duration-200">
-                            {/* Week day header */}
-                            <div className="flex items-center gap-2 pl-8">
-                                <div className="flex gap-1.5 ml-auto">
-                                    {weekDayLabels.map((label, i) => (
-                                        <span
-                                            key={i}
-                                            className={cn(
-                                                "w-5 text-center text-[9px] font-medium",
-                                                i === 6 ? "text-primary" : "text-muted-foreground/60"
-                                            )}
-                                        >
-                                            {label}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Habit rows */}
-                            {todayHabits.map(item => {
-                                const weekDots = getWeekDots(item.completions, today)
-                                return (
-                                    <div key={item.habit.id} className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            {/* Toggle button */}
-                                            <button
-                                                onClick={() => toggleCompletion(item.habit.id)}
-                                                className="flex items-center gap-1.5 flex-1 min-w-0 py-1 rounded-md active:bg-muted/50"
-                                            >
-                                                <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
-                                                <span className={cn(
-                                                    "text-xs font-medium truncate",
-                                                    item.isCompletedToday ? "text-primary" : "text-foreground"
-                                                )}>
-                                                    {item.habit.title}
-                                                </span>
-                                            </button>
-
-                                            {/* Week dots */}
-                                            <div className="flex gap-1.5 flex-shrink-0">
-                                                {weekDots.map((done, i) => (
-                                                    <div
-                                                        key={i}
-                                                        className={cn(
-                                                            "w-5 h-5 rounded-full flex items-center justify-center transition-colors",
-                                                            i === 6
-                                                                ? done
-                                                                    ? "bg-primary text-primary-foreground"
-                                                                    : "border-2 border-primary/40"
-                                                                : done
-                                                                    ? "bg-primary/30"
-                                                                    : "bg-muted/40"
-                                                        )}
-                                                    >
-                                                        {i === 6 && done && <CheckSquare className="w-2.5 h-2.5" />}
-                                                    </div>
-                                                ))}
-                                            </div>
-
-                                            {/* Streak */}
-                                            {item.streak > 0 && (
-                                                <div className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium flex-shrink-0 w-10 justify-end">
-                                                    <Flame className="w-3 h-3" />
-                                                    {item.streak}
-                                                </div>
-                                            )}
-                                            {item.streak === 0 && <div className="w-10 flex-shrink-0" />}
-                                        </div>
-
-                                        {/* Child tasks (always visible in expanded view) */}
-                                        {item.childTasks.length > 0 && (
-                                            <div className="pl-7 space-y-0.5">
-                                                {item.childTasks.map(child => (
+                        <div className="px-4 pb-3 space-y-1.5 animate-in slide-in-from-top-2 duration-200">
+                            {todayHabits.map(item => (
+                                item.childTasks.length > 0 && (
+                                    <div key={item.habit.id} className="space-y-0.5">
+                                        {item.childTasks.map(child => {
+                                            const isRunning = timer.runningTaskId === child.id
+                                            return (
+                                                <div
+                                                    key={child.id}
+                                                    className={cn(
+                                                        "flex items-center gap-2 py-1.5 px-2 rounded-lg",
+                                                        isRunning && "bg-primary/10"
+                                                    )}
+                                                >
                                                     <button
-                                                        key={child.id}
-                                                        className="w-full flex items-center gap-2 py-1 px-1.5 rounded active:bg-muted/50 text-left"
+                                                        className="flex-shrink-0"
                                                         onClick={() => toggleChildTask(child.id, child.status || 'todo')}
                                                     >
                                                         {child.status === 'done' ? (
-                                                            <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                                            <CheckSquare className="w-3.5 h-3.5 text-primary" />
                                                         ) : (
-                                                            <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+                                                            <Square className="w-3.5 h-3.5 text-muted-foreground/50" />
                                                         )}
-                                                        <span className={cn(
-                                                            "text-[11px]",
-                                                            child.status === 'done' ? "line-through text-muted-foreground" : "text-foreground"
-                                                        )}>
-                                                            {child.title}
-                                                        </span>
                                                     </button>
-                                                ))}
-                                            </div>
-                                        )}
+                                                    <span className={cn(
+                                                        "text-xs flex-1 truncate",
+                                                        child.status === 'done' ? "line-through text-muted-foreground" : "text-foreground"
+                                                    )}>
+                                                        {child.title}
+                                                    </span>
+                                                    {isRunning && (
+                                                        <span className="text-[10px] font-mono text-primary flex-shrink-0">
+                                                            {formatTime(timer.currentElapsedSeconds)}
+                                                        </span>
+                                                    )}
+                                                    <button
+                                                        className={cn(
+                                                            "p-1 rounded-full flex-shrink-0",
+                                                            isRunning ? "text-primary bg-primary/10" : "text-muted-foreground/50 active:bg-muted/50"
+                                                        )}
+                                                        onClick={() => isRunning ? timer.pauseTimer() : timer.startTimer(child)}
+                                                    >
+                                                        {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                                                    </button>
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 )
-                            })}
+                            ))}
                         </div>
                     )}
                 </div>

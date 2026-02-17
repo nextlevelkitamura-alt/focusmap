@@ -232,7 +232,7 @@ export function TodayTimelineCalendar({
                 {/* Main Grid */}
                 <div
                     ref={gridRef}
-                    className="flex-1 overflow-y-auto overflow-x-hidden"
+                    className={cn("flex-1 overflow-y-auto overflow-x-hidden", dragState.isDragging && "select-none")}
                     onScroll={handleGridScroll}
                 >
                     <div className="relative" style={{ height: TOTAL_HEIGHT }}>
@@ -291,7 +291,7 @@ export function TodayTimelineCalendar({
                                 <div
                                     key={`${item.type}-${id}`}
                                     className={cn(
-                                        "absolute z-20 touch-none",
+                                        "absolute z-20 touch-none select-none",
                                         isDragTarget && "opacity-30"
                                     )}
                                     style={{
