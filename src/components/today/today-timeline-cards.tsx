@@ -22,6 +22,9 @@ interface TodayTimelineCardsProps {
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
+    completedEventIds: Set<string>
+    onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
+    onItemTap?: (item: TimelineItem) => void
 }
 
 export function TodayTimelineCards({
@@ -30,6 +33,9 @@ export function TodayTimelineCards({
     eventsLoading,
     currentTime,
     onToggleTask,
+    completedEventIds,
+    onToggleEventCompletion,
+    onItemTap,
 }: TodayTimelineCardsProps) {
     const timer = useTimer()
 
@@ -101,18 +107,40 @@ export function TodayTimelineCards({
             {/* All-day Events */}
             {allDayEvents.length > 0 && (
                 <div className="px-4 mt-3">
-                    {allDayEvents.map(event => (
-                        <div
-                            key={event.id}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 mb-1.5"
-                        >
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                            <span className="text-xs font-medium text-blue-700 dark:text-blue-300 truncate">
-                                {event.title}
-                            </span>
-                            <span className="text-[10px] text-blue-500 dark:text-blue-400 flex-shrink-0">終日</span>
-                        </div>
-                    ))}
+                    {allDayEvents.map(event => {
+                        const isEventCompleted = completedEventIds.has(event.google_event_id)
+                        return (
+                            <div
+                                key={event.id}
+                                className={cn(
+                                    "flex items-center gap-2 px-3 py-1.5 rounded-lg border mb-1.5",
+                                    isEventCompleted
+                                        ? "bg-muted/30 border-border opacity-50"
+                                        : "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800"
+                                )}
+                            >
+                                <button
+                                    onClick={() => onToggleEventCompletion(event.google_event_id, event.calendar_id)}
+                                    className="flex-shrink-0 focus:outline-none"
+                                >
+                                    {isEventCompleted ? (
+                                        <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                                    ) : (
+                                        <Square className="w-3.5 h-3.5 text-blue-400" />
+                                    )}
+                                </button>
+                                <span className={cn(
+                                    "text-xs font-medium truncate",
+                                    isEventCompleted
+                                        ? "line-through text-muted-foreground"
+                                        : "text-blue-700 dark:text-blue-300"
+                                )}>
+                                    {event.title}
+                                </span>
+                                <span className="text-[10px] text-blue-500 dark:text-blue-400 flex-shrink-0">終日</span>
+                            </div>
+                        )
+                    })}
                 </div>
             )}
 
@@ -146,6 +174,10 @@ export function TodayTimelineCards({
                                 item={item}
                                 currentTime={currentTime}
                                 timer={timer}
+                                completedEventIds={completedEventIds}
+                                onToggleEventCompletion={onToggleEventCompletion}
+                                onToggleTask={onToggleTask}
+                                onTap={onItemTap ? () => onItemTap(item) : undefined}
                             />
                             {/* Free time slot after this item */}
                             {freeTimeSlots.find(slot =>
@@ -176,10 +208,18 @@ function TimelineCard({
     item,
     currentTime,
     timer,
+    completedEventIds,
+    onToggleEventCompletion,
+    onToggleTask,
+    onTap,
 }: {
     item: TimelineItem
     currentTime: Date
     timer: ReturnType<typeof useTimer>
+    completedEventIds: Set<string>
+    onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
+    onToggleTask: (taskId: string) => void
+    onTap?: () => void
 }) {
     const startStr = item.startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
     const endStr = item.endTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
@@ -188,25 +228,48 @@ function TimelineCard({
 
     if (item.type === 'event') {
         const event = item.data as CalendarEvent
+        const isEventCompleted = completedEventIds.has(event.google_event_id)
         return (
-            <div className={cn(
+            <div
+                onClick={onTap}
+                className={cn(
                 "relative flex gap-3 p-3 rounded-xl border transition-colors",
-                isNow ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30" : "border-border",
-                isPast && "opacity-50"
+                onTap ? "cursor-pointer active:opacity-80" : "",
+                isEventCompleted
+                    ? "border-border opacity-50"
+                    : isNow
+                        ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30"
+                        : "border-border",
+                isPast && !isEventCompleted && "opacity-50"
             )}>
-                {isNow && (
+                {isNow && !isEventCompleted && (
                     <>
                         <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-blue-400 animate-pulse" />
                         <span className="absolute -top-2 left-3 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-blue-500 text-white rounded-full">Now</span>
                     </>
                 )}
+                <button
+                    onClick={(e) => { e.stopPropagation(); onToggleEventCompletion(event.google_event_id, event.calendar_id) }}
+                    className="flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                >
+                    {isEventCompleted ? (
+                        <CheckSquare className="w-4 h-4 text-primary" />
+                    ) : (
+                        <Square className="w-4 h-4 text-blue-400" />
+                    )}
+                </button>
                 <div className="flex-shrink-0 w-12 pt-0.5">
                     <div className="text-xs font-semibold">{startStr}</div>
                     <div className="text-[10px] text-muted-foreground">{endStr}</div>
                 </div>
                 <div className="w-0.5 rounded-full bg-blue-400 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{event.title}</div>
+                    <div className={cn(
+                        "text-sm font-medium truncate",
+                        isEventCompleted && "line-through text-muted-foreground"
+                    )}>
+                        {event.title}
+                    </div>
                     {event.location && (
                         <div className="text-[10px] text-muted-foreground truncate mt-0.5">
                             📍 {event.location}
@@ -220,30 +283,51 @@ function TimelineCard({
     // Task card
     const task = item.data as Task
     const isRunning = timer.runningTaskId === task.id
+    const isDone = task.status === 'done'
 
     return (
-        <div className={cn(
+        <div
+            onClick={onTap}
+            className={cn(
             "relative flex gap-3 p-3 rounded-xl border transition-colors",
-            isRunning
-                ? "border-primary/60 bg-primary/10 dark:border-primary/50 dark:bg-primary/10"
-                : isNow
-                    ? "border-green-300 bg-green-50/50 dark:border-green-700 dark:bg-green-950/30"
-                    : "border-border",
-            isPast && !isRunning && "opacity-50"
+            onTap ? "cursor-pointer active:opacity-80" : "",
+            isDone
+                ? "border-border opacity-50"
+                : isRunning
+                    ? "border-primary/60 bg-primary/10 dark:border-primary/50 dark:bg-primary/10"
+                    : isNow
+                        ? "border-green-300 bg-green-50/50 dark:border-green-700 dark:bg-green-950/30"
+                        : "border-border",
+            isPast && !isRunning && !isDone && "opacity-50"
         )}>
-            {isNow && !isRunning && (
+            {isNow && !isRunning && !isDone && (
                 <>
                     <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-green-400 animate-pulse" />
                     <span className="absolute -top-2 left-3 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-green-500 text-white rounded-full">Now</span>
                 </>
             )}
+            <button
+                onClick={(e) => { e.stopPropagation(); onToggleTask(task.id) }}
+                className="flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+            >
+                {isDone ? (
+                    <CheckSquare className="w-4 h-4 text-primary" />
+                ) : (
+                    <Square className="w-4 h-4 text-green-500" />
+                )}
+            </button>
             <div className="flex-shrink-0 w-12 pt-0.5">
                 <div className="text-xs font-semibold">{startStr}</div>
                 <div className="text-[10px] text-muted-foreground">{endStr}</div>
             </div>
             <div className="w-0.5 rounded-full bg-green-400 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{task.title}</div>
+                <div className={cn(
+                    "text-sm font-medium truncate",
+                    isDone && "line-through text-muted-foreground"
+                )}>
+                    {task.title}
+                </div>
                 {task.estimated_time > 0 && (
                     <div className="text-[10px] text-muted-foreground mt-0.5">
                         ⏱ {task.estimated_time}分
@@ -258,7 +342,7 @@ function TimelineCard({
             <div className="flex-shrink-0 flex items-center">
                 {isRunning ? (
                     <button
-                        onClick={() => timer.pauseTimer()}
+                        onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                         aria-label="タイマーを一時停止"
                         className="p-2 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                     >
@@ -266,7 +350,7 @@ function TimelineCard({
                     </button>
                 ) : (
                     <button
-                        onClick={() => timer.startTimer(task)}
+                        onClick={(e) => { e.stopPropagation(); timer.startTimer(task) }}
                         aria-label={`${task.title}のタイマーを開始`}
                         className="p-2 rounded-full hover:bg-muted active:bg-muted text-muted-foreground hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                     >

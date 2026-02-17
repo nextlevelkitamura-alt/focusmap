@@ -10,14 +10,18 @@ interface ViewContextType {
 }
 
 const ViewContext = createContext<ViewContextType>({
-    activeView: 'today',
+    activeView: 'map',
     setActiveView: () => {},
 })
 
 export const useView = () => useContext(ViewContext)
 
 export function ViewProvider({ children }: { children: React.ReactNode }) {
-    const [activeView, setActiveView] = useState<DashboardView>('today')
+    // Mobile defaults to 'today', desktop defaults to 'map'
+    const [activeView, setActiveView] = useState<DashboardView>(() => {
+        if (typeof window !== 'undefined' && window.innerWidth < 768) return 'today'
+        return 'map'
+    })
     return (
         <ViewContext.Provider value={{ activeView, setActiveView }}>
             {children}

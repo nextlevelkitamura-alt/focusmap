@@ -144,6 +144,8 @@ export interface Database {
                     is_habit: boolean
                     habit_frequency: string | null
                     habit_icon: string | null
+                    habit_start_date: string | null
+                    habit_end_date: string | null
                 }
                 Insert: {
                     id?: string
@@ -171,6 +173,8 @@ export interface Database {
                     is_habit?: boolean
                     habit_frequency?: string | null
                     habit_icon?: string | null
+                    habit_start_date?: string | null
+                    habit_end_date?: string | null
                 }
                 Update: {
                     id?: string
@@ -198,6 +202,8 @@ export interface Database {
                     is_habit?: boolean
                     habit_frequency?: string | null
                     habit_icon?: string | null
+                    habit_start_date?: string | null
+                    habit_end_date?: string | null
                 }
             }
             habit_completions: {
@@ -206,7 +212,6 @@ export interface Database {
                     habit_id: string
                     user_id: string
                     completed_date: string
-                    child_task_ids: string[] | null
                     created_at: string
                     updated_at: string
                 }
@@ -215,7 +220,6 @@ export interface Database {
                     habit_id: string
                     user_id: string
                     completed_date: string
-                    child_task_ids?: string[] | null
                     created_at?: string
                     updated_at?: string
                 }
@@ -224,9 +228,34 @@ export interface Database {
                     habit_id?: string
                     user_id?: string
                     completed_date?: string
-                    child_task_ids?: string[] | null
                     created_at?: string
                     updated_at?: string
+                }
+            }
+            event_completions: {
+                Row: {
+                    id: string
+                    user_id: string
+                    google_event_id: string
+                    calendar_id: string
+                    completed_date: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    google_event_id: string
+                    calendar_id: string
+                    completed_date: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    google_event_id?: string
+                    calendar_id?: string
+                    completed_date?: string
+                    created_at?: string
                 }
             }
             ai_suggestions: {
@@ -495,3 +524,9 @@ export type ProjectUpdate = Database['public']['Tables']['projects']['Update']
 export type Space = Database['public']['Tables']['spaces']['Row']
 export type SpaceInsert = Database['public']['Tables']['spaces']['Insert']
 export type SpaceUpdate = Database['public']['Tables']['spaces']['Update']
+
+export type HabitCompletion = Database['public']['Tables']['habit_completions']['Row']
+export type HabitCompletionInsert = Database['public']['Tables']['habit_completions']['Insert']
+
+export type EventCompletion = Database['public']['Tables']['event_completions']['Row']
+export type EventCompletionInsert = Database['public']['Tables']['event_completions']['Insert']

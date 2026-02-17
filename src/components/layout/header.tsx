@@ -13,8 +13,10 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check } from "lucide-react"
+import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target } from "lucide-react"
 import { Space } from "@/types/database"
+import { useView, DashboardView } from "@/contexts/ViewContext"
+import { cn } from "@/lib/utils"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -87,8 +89,15 @@ export function Header({
         setRenameTitle("")
     }
 
+    const { activeView, setActiveView } = useView()
+
     const selectedSpace = spaces.find(s => s.id === selectedSpaceId)
     const displayName = selectedSpaceId === null ? "全体" : (selectedSpace?.title || "Space")
+
+    const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
+        { id: 'map', label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
+        { id: 'habits', label: '習慣', icon: <Target className="h-3.5 w-3.5" /> },
+    ]
 
     return (
         <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
@@ -221,15 +230,25 @@ export function Header({
                 </DropdownMenu>
             </div>
 
-            {/* Center: Navigation */}
-            <div className="hidden md:flex items-center gap-1 absolute left-1/2 -translate-x-1/2">
-                <Button
-                    variant="secondary"
-                    size="sm"
-                    className="gap-2"
-                >
-                    Dashboard
-                </Button>
+            {/* Center: View Tabs */}
+            <div className="hidden md:flex items-center gap-1 absolute left-1/2 -translate-x-1/2 bg-muted/50 rounded-lg p-0.5">
+                {viewTabs.map(tab => (
+                    <Button
+                        key={tab.id}
+                        variant={activeView === tab.id ? "secondary" : "ghost"}
+                        size="sm"
+                        className={cn(
+                            "gap-1.5 h-7 px-3 text-xs font-medium transition-all",
+                            activeView === tab.id
+                                ? "bg-background shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                        )}
+                        onClick={() => setActiveView(tab.id)}
+                    >
+                        {tab.icon}
+                        {tab.label}
+                    </Button>
+                ))}
             </div>
 
             {/* Right: User Profile & Settings */}

@@ -492,27 +492,42 @@ src/app/dashboard/
 - [x] 習慣タスクのバッジ表示（マインドマップ上）
 - [x] `useMindMapSync` での習慣フィールド更新対応
 
+### Phase 4b: マインドマップ - 期間設定UI（0.5日）⭐新規
+- [ ] DB マイグレーション: `habit_start_date DATE`, `habit_end_date DATE` を tasks テーブルに追加
+- [ ] `src/types/database.ts` 型定義更新
+- [ ] マインドマップのタスクメニューに期間設定UI追加（DatePicker × 2）
+- [ ] `useMindMapSync` で `habit_start_date`, `habit_end_date` の更新対応
+
 ### Phase 5: 習慣API + Hook（1-2日）⭐修正
 - [ ] 習慣完了記録API（`/api/habits/completions`）
-- [ ] 習慣一覧取得API（`/api/habits`、頻度フィルタ付き）
-- [ ] `useHabits` Hook 作成（習慣取得 + 完了記録 + ストリーク計算）
+  - POST: 習慣完了を記録（habit_id + completed_date）
+  - DELETE: 完了記録の取消
+- [ ] 習慣一覧取得API（`/api/habits`）
+  - 頻度フィルタ: 今日該当する習慣のみ（曜日判定）
+  - 期間フィルタ: `habit_start_date <= today <= habit_end_date`
+  - 子タスクも含めて返す
+- [ ] `useHabits` Hook 作成
+  - 習慣取得（今日該当するもの）
+  - 完了記録の CRUD
+  - ストリーク計算（連続達成日数）
 - [ ] 頻度判定ロジック（今日該当する習慣か？）
+  - 'daily' → 毎日
+  - 'weekdays' → 月〜金
+  - 'custom:1,3,5' → 月・水・金
 
-### Phase 6: 「今日」ビュー - 習慣バー強化（2-3日）⭐修正
-- [ ] モック習慣データを削除、DBから習慣タスク取得
-- [ ] 習慣の子タスク（習慣項目）を取得・表示
-- [ ] 習慣展開時に子タスクのチェックボックス表示
-- [ ] 子タスク完了状態の更新（`status = 'done'`）
-- [ ] 全子タスク完了 → `habit_completions` に記録
-- [ ] ストリーク計算・表示（🔥アイコン）
-- [ ] 週間達成状況（7日分のドット）の表示
+### Phase 6: 「今日」ビュー - 習慣バー強化（1-2日）⭐修正
+- [ ] モック習慣データを削除、`useHabits` から DB 取得に切替
+- [ ] 習慣の子タスク（デイリータスク）を取得・表示
+- [ ] 習慣タップ → 子タスクのチェックボックスリスト展開
+- [ ] 子タスク完了状態の更新（`status = 'done'` → 翌日リセット）
+- [ ] 全子タスク完了 → `habit_completions` に自動記録
+- [ ] ストリーク計算・表示（🔥 3日連続 等）
+- [ ] 週間達成状況（7日分のドット ☑☐☐☑☑☐☐）
 
 ### Phase 7: 習慣ビュー（別ページ）（2-3日）⭐修正
-- [ ] `habits-view.tsx` - 習慣管理ビュー（全習慣一覧）
-- [ ] `habit-card.tsx` - 習慣カード（展開で子タスク表示）
+- [ ] `habits-view.tsx` - 習慣管理ビュー（全習慣一覧 + 達成状況）
+- [ ] `habit-card.tsx` - 習慣カード（展開で子タスク表示 + ストリーク）
 - [ ] `habit-week-calendar.tsx` - 週カレンダー（スワイプ対応）
-- [ ] `habit-form.tsx` - 習慣作成/編集フォーム
-- [ ] `habit-frequency-select.tsx` - 頻度選択UI
 - [ ] `/dashboard/habits` ページの実装
 
 ### Phase 8: PC版統合（2-3日）
@@ -567,19 +582,16 @@ Phase 3 → Phase 5 → Phase 6 → Phase 8
 
 ## 推奨実装順序
 
-### クイックスタート: Phase 2（未スケジュールタスク削除）
+### 現在の状態
+- Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅
 
-→ **Phase 2 から /impl で着手**（最も簡単、即効性あり）
+### 次に実装するもの（優先順）
 
-Phase 2 は既存コードから不要な部分を削除するだけなので、すぐに完了できます。
-「今日」ビューをシンプルにしてから、習慣機能の実装に進みましょう。
-
-### 本格実装: Phase 3〜8
-
-Phase 3（DB）→ Phase 4（マインドマップ）→ Phase 5（API）→ Phase 6（今日ビュー）→ Phase 7（習慣ビュー）→ Phase 8（PC版）
-
-**Phase 3 は `/tdd` 推奨**（DB設計は慎重に）
-**Phase 4-8 は `/impl` 推奨**（UI実装がメイン）
+1. **Phase 4b**（期間設定UI）→ `/impl`（DB + UI 追加、0.5日）
+2. **Phase 5**（習慣API + Hook）→ `/tdd`（API + ロジック、1-2日）
+3. **Phase 6**（今日ビュー習慣バー強化）→ `/impl`（UI、1-2日）
+4. **Phase 7**（習慣ビュー）→ `/impl`（新ページ、2-3日）
+5. **Phase 8**（PC版統合）→ `/impl`（レスポンシブ、2-3日）
 
 ### 段階的リリース案
 

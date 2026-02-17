@@ -25,6 +25,7 @@ import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { useDrag } from "@/contexts/DragContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
@@ -314,6 +315,123 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
 });
 ProjectNode.displayName = 'ProjectNode';
 
+// HABIT SETTINGS PANEL - local state for instant UI, saves via ref on popover close
+const HABIT_DAYS = [
+    { key: 'mon', label: '月' }, { key: 'tue', label: '火' }, { key: 'wed', label: '水' },
+    { key: 'thu', label: '木' }, { key: 'fri', label: '金' }, { key: 'sat', label: '土' }, { key: 'sun', label: '日' },
+] as const;
+
+function HabitSettingsPanel({ data }: { data: any }) {
+    const [isHabit, setIsHabit] = useState<boolean>(data?.is_habit ?? false);
+    const [frequency, setFrequency] = useState<string>(data?.habit_frequency ?? '');
+    const [startDate, setStartDate] = useState<string>(data?.habit_start_date ?? '');
+    const [endDate, setEndDate] = useState<string>(data?.habit_end_date ?? '');
+
+    // Save immediately on any change via stable ref to onUpdateHabit
+    const onUpdateHabitRef = useRef(data?.onUpdateHabit);
+    onUpdateHabitRef.current = data?.onUpdateHabit;
+
+    const saveNow = useCallback((updates: {
+        isHabit: boolean; frequency: string; startDate: string; endDate: string;
+    }) => {
+        console.log('[Habit] Saving immediately:', updates)
+        onUpdateHabitRef.current?.({
+            is_habit: updates.isHabit,
+            habit_frequency: updates.frequency || null,
+            habit_icon: null,
+            habit_start_date: updates.startDate || null,
+            habit_end_date: updates.endDate || null,
+        });
+    }, []);
+
+    const handleToggle = useCallback(() => {
+        setIsHabit(prev => {
+            const next = !prev;
+            saveNow({ isHabit: next, frequency, startDate, endDate });
+            return next;
+        });
+    }, [saveNow, frequency, startDate, endDate]);
+
+    const selectedDays = new Set(frequency.split(',').filter(Boolean));
+    const toggleDay = (key: string) => {
+        const next = new Set(selectedDays);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        const newFreq = HABIT_DAYS.map(d => d.key).filter(k => next.has(k)).join(',');
+        setFrequency(newFreq);
+        saveNow({ isHabit, frequency: newFreq, startDate, endDate });
+    };
+
+    const handlePreset = (val: string) => {
+        setFrequency(val);
+        saveNow({ isHabit, frequency: val, startDate, endDate });
+    };
+
+    const handleStartDate = (val: string) => {
+        setStartDate(val);
+        saveNow({ isHabit, frequency, startDate: val, endDate });
+    };
+
+    const handleEndDate = (val: string) => {
+        setEndDate(val);
+        saveNow({ isHabit, frequency, startDate, endDate: val });
+    };
+
+    return (
+        <>
+            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">習慣</div>
+            <div className="nodrag nopan px-2 pb-2 space-y-2">
+                {/* Toggle */}
+                <button type="button" className="flex items-center justify-between w-full"
+                    onClick={(e) => { e.stopPropagation(); handleToggle(); }}
+                    onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                    <span className="text-xs">習慣として設定</span>
+                    <div className={cn("inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-xs transition-colors", isHabit ? "bg-primary" : "bg-input")}>
+                        <span className={cn("pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform", isHabit ? "translate-x-4" : "translate-x-0")} />
+                    </div>
+                </button>
+
+                {isHabit && (
+                    <>
+                        {/* Day-of-week + presets in compact layout */}
+                        <div className="text-xs text-muted-foreground">曜日</div>
+                        <div className="flex gap-0.5">
+                            {HABIT_DAYS.map(({ key, label }) => (
+                                <button key={key} type="button"
+                                    className={cn("flex-1 h-6 text-[11px] rounded font-medium transition-colors",
+                                        selectedDays.has(key) ? "bg-primary text-primary-foreground" : "bg-muted/50 text-muted-foreground hover:bg-muted")}
+                                    onClick={(e) => { e.stopPropagation(); toggleDay(key); }}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex gap-1">
+                            {[{ label: '毎日', val: 'mon,tue,wed,thu,fri,sat,sun' }, { label: '平日', val: 'mon,tue,wed,thu,fri' }, { label: '土日', val: 'sat,sun' }].map(p => (
+                                <button key={p.val} type="button"
+                                    className={cn("flex-1 h-5 text-[10px] rounded transition-colors", frequency === p.val ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-muted/50")}
+                                    onClick={(e) => { e.stopPropagation(); handlePreset(p.val); }}>
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Period - compact horizontal */}
+                        <div className="text-xs text-muted-foreground">期間</div>
+                        <div className="flex items-center gap-1">
+                            <input type="date" className="flex-1 h-6 px-1 text-[11px] border rounded bg-background min-w-0"
+                                value={startDate} onChange={(e) => { e.stopPropagation(); handleStartDate(e.target.value); }}
+                                onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} />
+                            <span className="text-[10px] text-muted-foreground shrink-0">〜</span>
+                            <input type="date" className="flex-1 h-6 px-1 text-[11px] border rounded bg-background min-w-0"
+                                value={endDate} onChange={(e) => { e.stopPropagation(); handleEndDate(e.target.value); }}
+                                onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} />
+                        </div>
+                    </>
+                )}
+            </div>
+        </>
+    );
+}
+
 // TASK NODE
 const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     const inputRef = useRef<HTMLInputElement>(null);
@@ -322,6 +440,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     const [editValue, setEditValue] = useState<string>(data?.label ?? '');
     const [showCaret, setShowCaret] = useState<boolean>(false);
     const [showScheduleMenu, setShowScheduleMenu] = useState<boolean>(false);
+
 
     // Flag to prevent double-save when exiting via keyboard (Enter/Tab/Escape)
     const isSavingViaKeyboardRef = useRef(false);
@@ -680,7 +799,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             className={cn(
                 "relative w-[225px] px-2 py-1.5 rounded bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all outline-none min-h-[30px] group",
                 !isEditing && "cursor-grab active:cursor-grabbing",
-                (selected || data?.isSelected) && "ring-2 ring-white ring-offset-2 ring-offset-background",
+                (data?.is_habit || data?.parentIsHabit) && "border-blue-400",
+                (selected || data?.isSelected) && (data?.is_habit || data?.parentIsHabit)
+                    ? "ring-2 ring-blue-400 ring-offset-2 ring-offset-background"
+                    : (selected || data?.isSelected) && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
             )}
             tabIndex={0}
@@ -778,8 +900,8 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                 )}
 
                 {/* Quick Action Menu */}
-                <DropdownMenu open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
-                    <DropdownMenuTrigger asChild>
+                <Popover open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
+                    <PopoverTrigger asChild>
                         <button
                             type="button"
                             className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0 ml-0.5"
@@ -792,8 +914,15 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                 <rect x="1" y="8.8" width="10" height="1.2" rx="0.6"/>
                             </svg>
                         </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="nodrag nopan w-56">
+                    </PopoverTrigger>
+                    <PopoverContent
+                        align="end"
+                        className="nodrag nopan w-56 p-1 max-h-[70vh] overflow-y-auto"
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                        onPointerDownOutside={(e) => e.preventDefault()}
+                        onFocusOutside={(e) => e.preventDefault()}
+                        onInteractOutside={(e) => e.preventDefault()}
+                    >
                         {/* Priority */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">優先度</div>
                         <div className="px-2 pb-2">
@@ -868,92 +997,16 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                             />
                         </div>
 
-                        {/* Habit Settings */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">習慣</div>
-                        <div className="nodrag nopan px-2 pb-2 space-y-2">
-                            {/* Habit Toggle */}
-                            <div
-                                className="flex items-center justify-between"
-                                onClick={(e) => e.stopPropagation()}
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => e.stopPropagation()}
-                            >
-                                <span className="text-xs">習慣として設定</span>
-                                <Switch
-                                    checked={data?.is_habit ?? false}
-                                    onCheckedChange={(checked) => {
-                                        data?.onUpdateHabit?.({ is_habit: checked });
-                                    }}
-                                    onPointerDown={(e) => e.stopPropagation()}
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                />
-                            </div>
-
-                            {/* Habit Frequency (only show when is_habit is true) */}
-                            {data?.is_habit && (
-                                <>
-                                    <div className="text-xs text-muted-foreground">頻度</div>
-                                    <div className="flex gap-1">
-                                        <Button
-                                            variant={data?.habit_frequency === 'daily' ? 'default' : 'outline'}
-                                            size="sm"
-                                            className="flex-1 h-7 text-xs"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                data?.onUpdateHabit?.({ habit_frequency: 'daily' });
-                                            }}
-                                        >
-                                            毎日
-                                        </Button>
-                                        <Button
-                                            variant={data?.habit_frequency === 'weekdays' ? 'default' : 'outline'}
-                                            size="sm"
-                                            className="flex-1 h-7 text-xs"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                data?.onUpdateHabit?.({ habit_frequency: 'weekdays' });
-                                            }}
-                                        >
-                                            平日
-                                        </Button>
-                                        <Button
-                                            variant={data?.habit_frequency === 'custom' ? 'default' : 'outline'}
-                                            size="sm"
-                                            className="flex-1 h-7 text-xs"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                data?.onUpdateHabit?.({ habit_frequency: 'custom' });
-                                            }}
-                                        >
-                                            カスタム
-                                        </Button>
-                                    </div>
-
-                                    {/* Habit Icon Selection */}
-                                    <div className="text-xs text-muted-foreground">アイコン</div>
-                                    <div className="grid grid-cols-6 gap-1">
-                                        {['🏃', '💪', '📚', '🧘', '🎯', '✍️', '🌱', '💧', '🍎', '😴', '🧹', '💰'].map((icon) => (
-                                            <button
-                                                key={icon}
-                                                type="button"
-                                                className={cn(
-                                                    "h-8 rounded text-lg hover:bg-muted transition-colors",
-                                                    data?.habit_icon === icon ? "bg-primary/20 ring-1 ring-primary" : ""
-                                                )}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    data?.onUpdateHabit?.({ habit_icon: icon });
-                                                }}
-                                            >
-                                                {icon}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
+                        {/* Habit Settings - uses HabitSettingsPanel */}
+                        <HabitSettingsPanel data={data} />
+                        {/* 閉じるボタン */}
+                        <div className="px-2 pb-2">
+                            <Button size="sm" className="w-full h-7 text-xs" onClick={(e) => { e.stopPropagation(); setShowScheduleMenu(false); }}>
+                                閉じる
+                            </Button>
                         </div>
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                    </PopoverContent>
+                </Popover>
             </div>
 
             {/* Row 2: メタデータ（値が設定されている場合のみ表示） */}
@@ -1106,6 +1159,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         estimated_time: g?.estimated_time ?? null,
         calendar_id: g?.calendar_id ?? null,
         google_event_id: g?.google_event_id ?? null,
+        // Habit fields
+        is_habit: g?.is_habit ?? false,
+        habit_frequency: g?.habit_frequency ?? null,
+        habit_icon: g?.habit_icon ?? null,
+        habit_start_date: g?.habit_start_date ?? null,
+        habit_end_date: g?.habit_end_date ?? null,
     })) ?? []);
     const tasksJson = JSON.stringify(tasks?.map(t => ({
         id: t?.id,
@@ -1120,6 +1179,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         calendar_id: t?.calendar_id,
         priority: (t as any)?.priority, // Include priority (no default value)
         estimated_time: t?.estimated_time ?? 0,
+        // Habit fields
+        is_habit: t?.is_habit ?? false,
+        habit_frequency: t?.habit_frequency ?? null,
+        habit_icon: t?.habit_icon ?? null,
+        habit_start_date: t?.habit_start_date ?? null,
+        habit_end_date: t?.habit_end_date ?? null,
     })) ?? []);
 
     // STATE
@@ -1589,6 +1654,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         scheduled_at: string | null; estimated_time: number | null;
         calendar_id: string | null; google_event_id: string | null;
         is_habit: boolean; habit_frequency: string | null; habit_icon: string | null;
+        habit_start_date: string | null; habit_end_date: string | null;
     };
 
     const { structureNodes, edges, taskDataMap } = useMemo(() => {
@@ -1779,9 +1845,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onUpdateEstimatedTime: (m: number) => cbs.updateTaskEstimatedTime(taskId, m),
                     onUpdateCalendar: (calendarId: string | null) => cbs.onUpdateTask?.(taskId, { calendar_id: calendarId }),
                     is_habit: taskData?.is_habit ?? false,
+                    parentIsHabit: taskData?.parent_task_id ? (taskDataMap.get(taskData.parent_task_id)?.is_habit ?? false) : false,
                     habit_frequency: taskData?.habit_frequency ?? null,
                     habit_icon: taskData?.habit_icon ?? null,
-                    onUpdateHabit: (habitUpdates: Partial<Pick<ParsedTask, 'is_habit' | 'habit_frequency' | 'habit_icon'>>) => cbs.onUpdateTask?.(taskId, habitUpdates),
+                    habit_start_date: taskData?.habit_start_date ?? null,
+                    habit_end_date: taskData?.habit_end_date ?? null,
+                    onUpdateHabit: (habitUpdates: Partial<Pick<ParsedTask, 'is_habit' | 'habit_frequency' | 'habit_icon' | 'habit_start_date' | 'habit_end_date'>>) => cbs.onUpdateTask?.(taskId, habitUpdates),
                     onAddChild: () => cbs.addChildTask(taskId),
                     onAddSibling: () => cbs.addSiblingTask(taskId),
                     onPromote: () => cbs.promoteTask(taskId),

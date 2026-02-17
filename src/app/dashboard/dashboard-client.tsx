@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
 import { TodayView } from "@/components/today/today-view"
+import { HabitsView } from "@/components/habits/habits-view"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -36,12 +37,31 @@ export function DashboardClient({
     const [projects, setProjects] = useState<Project[]>(initialProjects)
 
     // Selection State — null means "全体" (all spaces)
-    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(
-        initialSpaces.length > 0 ? initialSpaces[0].id : null
-    )
-    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-        initialProjects.length > 0 ? initialProjects[0].id : null
-    )
+    // Restore last selected space/project from localStorage
+    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('shikumika:lastSpaceId')
+            if (saved && initialSpaces.some(s => s.id === saved)) return saved
+        }
+        return initialSpaces.length > 0 ? initialSpaces[0].id : null
+    })
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('shikumika:lastProjectId')
+            if (saved && initialProjects.some(p => p.id === saved)) return saved
+        }
+        return initialProjects.length > 0 ? initialProjects[0].id : null
+    })
+
+    // Persist selection to localStorage
+    useEffect(() => {
+        if (selectedSpaceId) localStorage.setItem('shikumika:lastSpaceId', selectedSpaceId)
+        else localStorage.removeItem('shikumika:lastSpaceId')
+    }, [selectedSpaceId])
+    useEffect(() => {
+        if (selectedProjectId) localStorage.setItem('shikumika:lastProjectId', selectedProjectId)
+        else localStorage.removeItem('shikumika:lastProjectId')
+    }, [selectedProjectId])
 
     // STABLE reference for filtered projects using useMemo
     const filteredProjects = useMemo(() =>
@@ -87,7 +107,13 @@ export function DashboardClient({
                 scheduled_at: t.scheduled_at,
                 estimated_time: t.estimated_time,
                 created_at: t.created_at,
-            } as TaskGroup))
+                // Preserve habit fields for tasks used as groups
+                is_habit: t.is_habit,
+                habit_frequency: t.habit_frequency,
+                habit_icon: t.habit_icon,
+                habit_start_date: t.habit_start_date,
+                habit_end_date: t.habit_end_date,
+            } as TaskGroup & { is_habit?: boolean; habit_frequency?: string | null; habit_icon?: string | null; habit_start_date?: string | null; habit_end_date?: string | null }))
         return [...oldGroups, ...newGroupsFromTasks]
     }, [initialGroups, initialTasks, selectedProjectId])
 
@@ -375,13 +401,10 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {/* === Mobile: Habits View (placeholder) === */}
+                {/* === Mobile: Habits View === */}
                 {activeView === 'habits' && (
-                    <div className="flex-1 md:hidden overflow-hidden flex items-center justify-center">
-                        <div className="text-center text-muted-foreground">
-                            <Target className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">習慣ビューは準備中です</p>
-                        </div>
+                    <div className="flex-1 md:hidden overflow-hidden">
+                        <HabitsView onUpdateTask={updateTask} />
                     </div>
                 )}
 
@@ -430,23 +453,27 @@ export function DashboardClient({
                     />
                 </div>
 
-                {/* Pane 2: Center (MindMap + Lists) */}
+                {/* Pane 2: Center (MindMap + Lists / Habits) */}
                 <div className="flex-1 min-w-0 overflow-hidden h-full w-full" style={{ minWidth: 0 }}>
-                    <CenterPane
-                        project={selectedProject}
-                        groups={currentGroups}
-                        tasks={currentTasks}
-                        onUpdateProject={handleUpdateProjectTitle}
-                        onCreateGroup={handleCreateGroup}
-                        onDeleteGroup={handleDeleteGroup}
-                        onCreateTask={createTask}
-                        onUpdateTask={updateTask}
-                        onDeleteTask={handleDeleteTask}
-                        onBulkDelete={bulkDelete}
-                        onReorderTask={reorderTask}
-                        onReorderGroup={reorderGroup}
-                        onRefreshCalendar={handleRefreshCalendar}
-                    />
+                    {activeView === 'habits' ? (
+                        <HabitsView onUpdateTask={updateTask} />
+                    ) : (
+                        <CenterPane
+                            project={selectedProject}
+                            groups={currentGroups}
+                            tasks={currentTasks}
+                            onUpdateProject={handleUpdateProjectTitle}
+                            onCreateGroup={handleCreateGroup}
+                            onDeleteGroup={handleDeleteGroup}
+                            onCreateTask={createTask}
+                            onUpdateTask={updateTask}
+                            onDeleteTask={handleDeleteTask}
+                            onBulkDelete={bulkDelete}
+                            onReorderTask={reorderTask}
+                            onReorderGroup={reorderGroup}
+                            onRefreshCalendar={handleRefreshCalendar}
+                        />
+                    )}
                 </div>
 
                 {/* Right Resize Handle */}

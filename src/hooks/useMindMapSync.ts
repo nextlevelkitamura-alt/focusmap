@@ -79,28 +79,31 @@ export function useMindMapSync({
     }, [allTasks])
 
     // 初期データの更新時に統合（楽観的タスクを保護するマージ方式）
+    // 楽観的タスクは現在のprojectIdに属するもののみ保持（プロジェクト切替時に前のデータが残るのを防止）
     useEffect(() => {
         setAllTasks(prev => {
             const allInitialIds = new Set([
                 ...initialGroups.map(g => g.id),
                 ...initialTasks.map(t => t.id)
             ]);
-            const optimisticItems = prev.filter(t => !allInitialIds.has(t.id));
+            const optimisticItems = prev.filter(t =>
+                !allInitialIds.has(t.id) && t.project_id === projectId
+            );
             return [
                 ...initialGroups.map(g => ({ ...g, is_group: true, group_id: null, project_id: g.project_id } as Task)),
                 ...initialTasks,
                 ...optimisticItems
             ];
         });
-    }, [initialGroups, initialTasks])
+    }, [initialGroups, initialTasks, projectId])
 
-    // Watchdog: 楽観的タスクが state から消えた場合に再追加
+    // Watchdog: 楽観的タスクが state から消えた場合に再追加（現プロジェクトのみ）
     useEffect(() => {
         if (pendingOptimisticTasks.current.size === 0) return
         const currentIds = new Set(allTasks.map(t => t.id))
         const missingTasks: Task[] = []
         for (const [, task] of pendingOptimisticTasks.current) {
-            if (!currentIds.has(task.id)) {
+            if (!currentIds.has(task.id) && task.project_id === projectId) {
                 missingTasks.push(task)
             }
         }
@@ -115,8 +118,12 @@ export function useMindMapSync({
         }
     }, [allTasks])
 
-    // プロジェクト切替時にundo/redoスタックをクリア
-    useEffect(() => { clear() }, [projectId, clear])
+    // プロジェクト切替時にundo/redoスタックと楽観的タスクをクリア
+    useEffect(() => {
+        clear()
+        pendingOptimisticTasks.current.clear()
+        pendingInserts.current.clear()
+    }, [projectId, clear])
 
     // --- ルートタスク操作（旧Group操作 - 後方互換ラッパー） ---
 
@@ -480,11 +487,16 @@ export function useMindMapSync({
     }, [userId, projectId, supabase, pushAction]);
 
     const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        console.log('[Sync] updateTask called:', taskId.slice(0, 8), updates)
         const currentAll = allTasksRef.current;
         const beforeTask = currentAll.find(t => t.id === taskId)
+        if (!beforeTask) {
+            console.error('[Sync] updateTask: task not found in state:', taskId)
+            return
+        }
         const beforeValues: Partial<Task> = {}
         for (const key of Object.keys(updates) as (keyof Task)[]) {
-            if (beforeTask) (beforeValues as any)[key] = beforeTask[key]
+            (beforeValues as any)[key] = beforeTask[key]
         }
 
         let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
@@ -492,7 +504,14 @@ export function useMindMapSync({
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
 
         try {
-            await supabase.from('tasks').update(updates).eq('id', taskId)
+            const { error: updateError, data: updateData } = await supabase.from('tasks').update(updates).eq('id', taskId).select()
+            if (updateError) {
+                console.error('[Sync] updateTask DB error:', updateError)
+                // Rollback optimistic update
+                setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+                return
+            }
+            console.log('[Sync] updateTask DB success:', taskId.slice(0, 8), updateData)
 
             // AUTO-COMPLETE PARENT
             if (updates.status === 'done') {
@@ -512,7 +531,14 @@ export function useMindMapSync({
                         setAllTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'done' } : t
                         ));
-                        await supabase.from('tasks').update({ status: 'done' }).eq('id', task.parent_task_id);
+                        const { error: parentDoneError } = await supabase.from('tasks').update({ status: 'done' }).eq('id', task.parent_task_id);
+                        if (parentDoneError) {
+                            console.error('[Sync] auto-complete parent DB error:', parentDoneError)
+                            setAllTasks(prev => prev.map(t =>
+                                t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                            ))
+                            parentAutoCompleteUndo = null
+                        }
                     }
                 }
             }
@@ -527,7 +553,14 @@ export function useMindMapSync({
                         setAllTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'todo' } : t
                         ));
-                        await supabase.from('tasks').update({ status: 'todo' }).eq('id', task.parent_task_id);
+                        const { error: parentUndoneError } = await supabase.from('tasks').update({ status: 'todo' }).eq('id', task.parent_task_id);
+                        if (parentUndoneError) {
+                            console.error('[Sync] auto-uncomplete parent DB error:', parentUndoneError)
+                            setAllTasks(prev => prev.map(t =>
+                                t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                            ))
+                            parentAutoCompleteUndo = null
+                        }
                     }
                 }
             }

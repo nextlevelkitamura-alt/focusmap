@@ -1,16 +1,20 @@
 "use client"
 
 import { useState, useMemo, useEffect, useCallback } from "react"
-import { Task } from "@/types/database"
+import { Task, HabitCompletion } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
+import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
+import { useEventCompletions } from "@/hooks/useEventCompletions"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, LayoutGrid, List, Flame
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
+import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
+import { DragItem } from "@/hooks/useTouchDrag"
 
 // --- Types ---
 
@@ -25,34 +29,31 @@ interface TodayViewProps {
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
 }
 
-// --- Mock habits data (will be replaced with real DB data later) ---
-interface MockHabit {
-    id: string
-    title: string
-    icon: string
-    color: string
-    streak: number
-    weekDots: boolean[] // last 7 days, [6]=today
-    completedToday: boolean
-}
+// --- Helper: compute week dots from completions ---
 
-const MOCK_HABITS: MockHabit[] = [
-    { id: 'h1', title: '水を飲む', icon: '💧', color: '#3b82f6', streak: 12, weekDots: [true, true, true, false, true, true, false], completedToday: false },
-    { id: 'h2', title: '読書 30分', icon: '📖', color: '#8b5cf6', streak: 3, weekDots: [true, true, false, true, false, false, false], completedToday: false },
-    { id: 'h3', title: '運動', icon: '🏃', color: '#10b981', streak: 0, weekDots: [false, true, false, true, false, false, false], completedToday: false },
-    { id: 'h4', title: '瞑想 5分', icon: '🧘', color: '#f59e0b', streak: 5, weekDots: [true, true, true, true, true, false, false], completedToday: false },
-]
+function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
+    const completedDates = new Set(completions.map(c => c.completed_date))
+    const dots: boolean[] = []
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(today)
+        d.setDate(d.getDate() - i)
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        dots.push(completedDates.has(dateStr))
+    }
+    return dots
+}
 
 // --- Main Component ---
 
 export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
     const { selectedCalendarIds, calendars } = useCalendars()
+    const { todayHabits, toggleCompletion, isLoading: habitsLoading } = useHabits()
+    const { completedEventIds, toggleEventCompletion } = useEventCompletions()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
     const [timelineMode, setTimelineMode] = useState<TimelineMode>('calendar')
     const [habitsExpanded, setHabitsExpanded] = useState(false)
-
-    // Mock habits state
-    const [habits, setHabits] = useState<MockHabit[]>(MOCK_HABITS)
+    const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
     // Sync local tasks with prop changes
     useEffect(() => {
@@ -79,11 +80,11 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
         calendarIds: selectedCalendarIds,
     })
 
-    // Habit groups: root tasks with "習慣" in title (legacy, kept for backward compat)
+    // Habit task IDs (filter out from timeline)
     const habitGroupIds = useMemo(() => {
         const ids = new Set<string>()
         for (const t of localTasks) {
-            if (t.parent_task_id === null && t.title.includes('習慣')) ids.add(t.id)
+            if (t.is_habit) ids.add(t.id)
         }
         return ids
     }, [localTasks])
@@ -143,21 +144,92 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
         await onUpdateTask(taskId, { status: newStatus })
     }, [localTasks, onUpdateTask])
 
-    // Toggle mock habit
-    const toggleHabit = useCallback((habitId: string) => {
-        setHabits(prev => prev.map(h => {
-            if (h.id !== habitId) return h
-            const newCompleted = !h.completedToday
-            const newWeekDots = [...h.weekDots]
-            newWeekDots[6] = newCompleted
-            return {
-                ...h,
-                completedToday: newCompleted,
-                weekDots: newWeekDots,
-                streak: newCompleted ? h.streak + 1 : Math.max(0, h.streak - 1),
-            }
-        }))
+    // Toggle child task status
+    const toggleChildTask = useCallback(async (taskId: string, currentStatus: string) => {
+        const newStatus = currentStatus === 'done' ? 'todo' : 'done'
+        await onUpdateTask(taskId, { status: newStatus })
+    }, [onUpdateTask])
+
+    // Handle item tap (open edit modal)
+    const handleItemTap = useCallback((item: EditTarget) => {
+        setEditTarget(item)
+        setIsEditModalOpen(true)
     }, [])
+
+    const handleCloseEditModal = useCallback(() => {
+        setIsEditModalOpen(false)
+        setEditTarget(null)
+    }, [])
+
+    // Save task via existing onUpdateTask
+    const handleSaveTask = useCallback(async (taskId: string, updates: {
+        title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string
+    }) => {
+        await onUpdateTask(taskId, updates)
+    }, [onUpdateTask])
+
+    // Save event via PATCH /api/calendar/events/[eventId]
+    const handleSaveEvent = useCallback(async (eventId: string, updates: {
+        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string
+    }) => {
+        const res = await fetch(`/api/calendar/events/${eventId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: updates.title,
+                start_time: updates.start_time,
+                end_time: updates.end_time,
+                googleEventId: updates.googleEventId,
+                calendarId: updates.calendarId,
+            }),
+        })
+        if (!res.ok) {
+            const data = await res.json()
+            throw new Error(data.error?.message || 'Failed to update event')
+        }
+    }, [])
+
+    // Writable calendars for the edit modal
+    const writableCalendars = useMemo(() =>
+        calendars
+            .filter(c => c.access_level === 'owner' || c.access_level === 'writer')
+            .map(c => ({
+                id: c.google_calendar_id,
+                name: c.name,
+                background_color: c.background_color || undefined,
+            })),
+        [calendars]
+    )
+
+    // Handle drag & drop time change
+    const handleDragDrop = useCallback(async (item: DragItem, newStartTime: Date, newEndTime: Date) => {
+        if (item.type === 'task') {
+            // Update task scheduled_at
+            await onUpdateTask(item.id, {
+                scheduled_at: newStartTime.toISOString(),
+            })
+            // Optimistic local update
+            setLocalTasks(prev => prev.map(t =>
+                t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
+            ))
+        } else {
+            // Find the calendar event to get google_event_id and calendar_id
+            const event = calendarEvents.find(e => e.id === item.id)
+            if (!event) return
+
+            await fetch(`/api/calendar/events/${item.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: event.title,
+                    start_time: newStartTime.toISOString(),
+                    end_time: newEndTime.toISOString(),
+                    googleEventId: event.google_event_id,
+                    calendarId: event.calendar_id,
+                }),
+            })
+        }
+    }, [onUpdateTask, calendarEvents])
 
     // Date header
     const dateStr = today.toLocaleDateString('ja-JP', {
@@ -173,7 +245,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
         return () => clearInterval(interval)
     }, [])
 
-    const doneHabitCount = habits.filter(h => h.completedToday).length
+    const doneHabitCount = todayHabits.filter(h => h.isCompletedToday).length
 
     // Week day labels for expanded habits
     const weekDayLabels = useMemo(() => {
@@ -195,7 +267,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                         <h1 className="text-xl font-bold">{dateStr}</h1>
                         <p className="text-xs text-muted-foreground mt-0.5">
                             {timelineItems.length}件のスケジュール
-                            {habits.length > 0 && ` · ${doneHabitCount}/${habits.length} 習慣完了`}
+                            {todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
                         </p>
                     </div>
                     {/* Timeline mode toggle */}
@@ -227,40 +299,60 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
             </div>
 
             {/* Habit Bar (fixed) + Expandable Detail */}
-            {habits.length > 0 && (
+            {!habitsLoading && todayHabits.length > 0 && (
                 <div className="flex-shrink-0 border-b">
                     {/* Compact Habit Bar */}
-                    <button
-                        onClick={() => setHabitsExpanded(prev => !prev)}
-                        className="w-full px-4 py-2.5 flex items-center gap-3 active:bg-muted/30 transition-colors"
-                    >
-                        <Target className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                        <div className="flex gap-1.5 flex-1 overflow-x-auto no-scrollbar">
-                            {habits.map(habit => (
-                                <span
-                                    key={habit.id}
+                    <div className="px-4 py-2">
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <Target className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                            <span className="text-xs font-medium text-muted-foreground flex-1">今日の習慣</span>
+                            <button
+                                onClick={() => setHabitsExpanded(prev => !prev)}
+                                className="p-1 rounded-md hover:bg-muted/50 transition-colors"
+                            >
+                                {habitsExpanded ? (
+                                    <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                                ) : (
+                                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                                )}
+                            </button>
+                        </div>
+                        <div className="space-y-1">
+                            {todayHabits.map(item => (
+                                <button
+                                    key={item.habit.id}
+                                    onClick={() => toggleCompletion(item.habit.id)}
                                     className={cn(
-                                        "flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all",
-                                        habit.completedToday
-                                            ? "bg-primary/10 text-primary border-primary/30 dark:bg-primary/20 dark:border-primary/40"
-                                            : "bg-background text-muted-foreground border-border"
+                                        "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all active:scale-[0.98]",
+                                        item.isCompletedToday
+                                            ? "bg-primary/8 dark:bg-primary/15"
+                                            : "hover:bg-muted/40 active:bg-muted/60"
                                     )}
                                 >
-                                    <span>{habit.icon}</span>
-                                    {habit.completedToday ? (
-                                        <CheckSquare className="w-3 h-3" />
+                                    {item.isCompletedToday ? (
+                                        <CheckSquare className="w-4 h-4 text-primary flex-shrink-0" />
                                     ) : (
-                                        <Square className="w-3 h-3" />
+                                        <Square className="w-4 h-4 text-muted-foreground/40 flex-shrink-0" />
                                     )}
-                                </span>
+                                    <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
+                                    <span className={cn(
+                                        "text-xs truncate flex-1 text-left",
+                                        item.isCompletedToday
+                                            ? "text-primary font-medium line-through"
+                                            : "text-foreground"
+                                    )}>
+                                        {item.habit.title}
+                                    </span>
+                                    {item.streak > 0 && (
+                                        <span className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium flex-shrink-0">
+                                            <Flame className="w-3 h-3" />
+                                            {item.streak}
+                                        </span>
+                                    )}
+                                </button>
                             ))}
                         </div>
-                        {habitsExpanded ? (
-                            <ChevronUp className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        ) : (
-                            <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        )}
-                    </button>
+                    </div>
 
                     {/* Expanded Habit Detail */}
                     {habitsExpanded && (
@@ -283,53 +375,83 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                             </div>
 
                             {/* Habit rows */}
-                            {habits.map(habit => (
-                                <div key={habit.id} className="flex items-center gap-2">
-                                    {/* Toggle button */}
-                                    <button
-                                        onClick={() => toggleHabit(habit.id)}
-                                        className="flex items-center gap-1.5 flex-1 min-w-0 py-1 rounded-md active:bg-muted/50"
-                                    >
-                                        <span className="text-sm flex-shrink-0">{habit.icon}</span>
-                                        <span className={cn(
-                                            "text-xs font-medium truncate",
-                                            habit.completedToday ? "text-primary" : "text-foreground"
-                                        )}>
-                                            {habit.title}
-                                        </span>
-                                    </button>
-
-                                    {/* Week dots */}
-                                    <div className="flex gap-1.5 flex-shrink-0">
-                                        {habit.weekDots.map((done, i) => (
-                                            <div
-                                                key={i}
-                                                className={cn(
-                                                    "w-5 h-5 rounded-full flex items-center justify-center transition-colors",
-                                                    i === 6
-                                                        ? done
-                                                            ? "bg-primary text-primary-foreground"
-                                                            : "border-2 border-primary/40"
-                                                        : done
-                                                            ? "bg-primary/30"
-                                                            : "bg-muted/40"
-                                                )}
+                            {todayHabits.map(item => {
+                                const weekDots = getWeekDots(item.completions, today)
+                                return (
+                                    <div key={item.habit.id} className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                            {/* Toggle button */}
+                                            <button
+                                                onClick={() => toggleCompletion(item.habit.id)}
+                                                className="flex items-center gap-1.5 flex-1 min-w-0 py-1 rounded-md active:bg-muted/50"
                                             >
-                                                {i === 6 && done && <CheckSquare className="w-2.5 h-2.5" />}
-                                            </div>
-                                        ))}
-                                    </div>
+                                                <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
+                                                <span className={cn(
+                                                    "text-xs font-medium truncate",
+                                                    item.isCompletedToday ? "text-primary" : "text-foreground"
+                                                )}>
+                                                    {item.habit.title}
+                                                </span>
+                                            </button>
 
-                                    {/* Streak */}
-                                    {habit.streak > 0 && (
-                                        <div className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium flex-shrink-0 w-10 justify-end">
-                                            <Flame className="w-3 h-3" />
-                                            {habit.streak}
+                                            {/* Week dots */}
+                                            <div className="flex gap-1.5 flex-shrink-0">
+                                                {weekDots.map((done, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className={cn(
+                                                            "w-5 h-5 rounded-full flex items-center justify-center transition-colors",
+                                                            i === 6
+                                                                ? done
+                                                                    ? "bg-primary text-primary-foreground"
+                                                                    : "border-2 border-primary/40"
+                                                                : done
+                                                                    ? "bg-primary/30"
+                                                                    : "bg-muted/40"
+                                                        )}
+                                                    >
+                                                        {i === 6 && done && <CheckSquare className="w-2.5 h-2.5" />}
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            {/* Streak */}
+                                            {item.streak > 0 && (
+                                                <div className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium flex-shrink-0 w-10 justify-end">
+                                                    <Flame className="w-3 h-3" />
+                                                    {item.streak}
+                                                </div>
+                                            )}
+                                            {item.streak === 0 && <div className="w-10 flex-shrink-0" />}
                                         </div>
-                                    )}
-                                    {habit.streak === 0 && <div className="w-10 flex-shrink-0" />}
-                                </div>
-                            ))}
+
+                                        {/* Child tasks (always visible in expanded view) */}
+                                        {item.childTasks.length > 0 && (
+                                            <div className="pl-7 space-y-0.5">
+                                                {item.childTasks.map(child => (
+                                                    <button
+                                                        key={child.id}
+                                                        className="w-full flex items-center gap-2 py-1 px-1.5 rounded active:bg-muted/50 text-left"
+                                                        onClick={() => toggleChildTask(child.id, child.status || 'todo')}
+                                                    >
+                                                        {child.status === 'done' ? (
+                                                            <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                                        ) : (
+                                                            <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+                                                        )}
+                                                        <span className={cn(
+                                                            "text-[11px]",
+                                                            child.status === 'done' ? "line-through text-muted-foreground" : "text-foreground"
+                                                        )}>
+                                                            {child.title}
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })}
                         </div>
                     )}
                 </div>
@@ -398,6 +520,10 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                         eventsLoading={eventsLoading}
                         currentTime={currentTime}
                         onToggleTask={toggleTask}
+                        completedEventIds={completedEventIds}
+                        onToggleEventCompletion={toggleEventCompletion}
+                        onItemTap={handleItemTap}
+                        onDragDrop={handleDragDrop}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -407,11 +533,24 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                             eventsLoading={eventsLoading}
                             currentTime={currentTime}
                             onToggleTask={toggleTask}
+                            completedEventIds={completedEventIds}
+                            onToggleEventCompletion={toggleEventCompletion}
+                            onItemTap={handleItemTap}
                         />
                         <div className="h-4" />
                     </div>
                 )}
             </div>
+
+            {/* Edit Modal */}
+            <MobileEventEditModal
+                target={editTarget}
+                isOpen={isEditModalOpen}
+                onClose={handleCloseEditModal}
+                onSaveTask={handleSaveTask}
+                onSaveEvent={handleSaveEvent}
+                availableCalendars={writableCalendars}
+            />
         </div>
     )
 }

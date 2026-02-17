@@ -106,15 +106,20 @@
 
 #### 機能拡張
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
+- ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
 - 🔧 **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
   - Phase 1: DB移行 ✅ | Phase 2: コード変更 ✅ | Phase 3: 旧テーブル削除 ○
-- 🔧 **マインドマップ操作感改善**（XMind風の操作体系） → [計画](plans/features/mindmap-ux-improvement.md)
 - 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
-- 🔧 **習慣機能強化 + モバイルUI改善**（タスク統合型習慣トラッカー、マインドマップ連携） → [計画](plans/features/mobile-ui-redesign.md)
+- 🔧 **習慣機能強化 + モバイルUI改善** → [計画](plans/features/mobile-ui-redesign.md)
   - Phase 2: 未スケジュールタスク削除 ✅
-  - Phase 3-6: 習慣機能（DB、マインドマップ、今日ビュー） ○
-  - Phase 7: 習慣ビュー ○
-  - Phase 8: PC版統合 ○
+  - Phase 3: 習慣DB ✅ | Phase 4: マインドマップ習慣設定UI ✅
+  - Phase 5: 習慣API + Hook ✅
+  - Phase 6: 今日ビュー習慣バー強化 ✅
+  - Phase 7-8: 習慣ビュー + PC版統合 ✅（基本実装）
+- 🔧 **モバイル今日ビュー強化**（D&D時間変更、タップ編集、全アイテムチェックボックス、イベント完了DB） → [仕様](specs/mobile-today-view-enhancement.md) | [計画](plans/features/mobile-today-view-enhancement.md)
+  - Phase 1: イベント完了DB + チェックボックス ○
+  - Phase 2: タップ編集モーダル ○
+  - Phase 3: モバイルD&D時間変更 ○
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -123,23 +128,23 @@
 
 ## 完了履歴
 
-- 2026-02-17: **マインドマップのドラッグ感度とキーボード操作改善** 完了（ドラッグ閾値15px、Returnキー修正）
-- 2026-02-17: **習慣機能強化 Phase 2** 完了（未スケジュールタスク削除）
+- 2026-02-17: **今日ビュー習慣バー強化 (Phase 6)** 完了（モックデータ→useHabits Hook、週間ドット実データ、子タスクチェックボックス）
+- 2026-02-17: **習慣API + Hook (Phase 5)** 完了（habit_completions テーブル、API、useHabits Hook、ストリーク計算）
+- 2026-02-17: **PC版習慣ビュー + ヘッダータブ** 完了（habits-view.tsx、ヘッダーにマップ/習慣タブ）
+- 2026-02-17: **習慣トグル・設定UIの修正** 完了（groupsJson修正、saveRefパターン、Popover安定化、コンパクトUI）
+- 2026-02-17: **マインドマップ操作感改善** 完了（ドラッグ閾値15px、Returnキー修正）
+- 2026-02-17: **習慣機能強化 Phase 2-4** 完了（未スケジュールタスク削除、習慣DB、マインドマップ習慣UI）
 - 2026-02-16: **グループとタスクの統合 Phase 1-2** 完了（GroupNode廃止、全ノードTaskNode化）
 - 2026-02-15: **カレンダーイベント編集UI** 完了
-- 2026-02-13: **タスク削除時にGoogleカレンダー予定も自動削除** 完了
 - 2026-02-13: **Cloud Run 本番デプロイ** 完了
-- 2026-02-12: **Cloud Run デプロイ対応** 完了
-- 2026-02-12: **カレンダードラッグ&ドロップ時間変更** 完了
 - 2026-02-08: **タスク⇄Googleカレンダー自動同期** 完了
-- 2026-02-06: **Googleカレンダー風UI** 完了（日/週/月ビュー、ミニカレンダー、重複イベント対応）
+- 2026-02-06: **Googleカレンダー風UI** 完了
 
 ---
 
 ## 現在進行中のタスク
 
-- 🔧 **グループとタスクの統合** → [引き継ぎ](plans/features/group-task-unification-handover.md)
-  - Phase 1-2 完了（GroupNode廃止、全ノードTaskNode化、ビルド成功）
-  - **Phase 3 未着手**: 旧テーブル（task_groups）削除
-- 🔧 マインドマップ操作感改善（XMind風） → [計画](plans/features/mindmap-ux-improvement.md)
+- 🔧 **モバイル今日ビュー強化** → Phase 1 から開始
+- 🔧 **習慣機能強化** → Phase 6 完了、習慣ビュー強化が次の対象
+- 🔧 **グループとタスクの統合** Phase 3（旧テーブル削除）
 - 🔧 スペース機能 + 左サイドバー再設計 → [計画](plans/features/space-sidebar-redesign.md)

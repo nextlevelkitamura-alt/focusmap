@@ -1,10 +1,11 @@
 "use client"
 
-import { useRef, useEffect, useState, useMemo } from "react"
+import { useRef, useEffect, useState, useMemo, useCallback } from "react"
 import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
-import { Play, Pause, Check, Square, CheckSquare } from "lucide-react"
+import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
+import { Play, Pause, Check, Square, CheckSquare, GripVertical } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // --- Constants ---
@@ -24,6 +25,10 @@ interface TodayTimelineCalendarProps {
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
+    completedEventIds: Set<string>
+    onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
+    onItemTap?: (item: TimelineItem) => void
+    onDragDrop?: (item: DragItem, newStartTime: Date, newEndTime: Date) => void
 }
 
 // --- Helpers ---
@@ -47,10 +52,25 @@ export function TodayTimelineCalendar({
     eventsLoading,
     currentTime,
     onToggleTask,
+    completedEventIds,
+    onToggleEventCompletion,
+    onItemTap,
+    onDragDrop,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
     const timeLabelRef = useRef<HTMLDivElement>(null)
+
+    // Touch drag & drop
+    const handleDrop = useCallback((item: DragItem, newStart: Date, newEnd: Date) => {
+        onDragDrop?.(item, newStart, newEnd)
+    }, [onDragDrop])
+
+    const { dragState, createItemTouchHandlers } = useTouchDrag({
+        gridRef,
+        onDrop: handleDrop,
+        enabled: !!onDragDrop,
+    })
 
     // Scroll to default hour on mount
     useEffect(() => {
@@ -121,17 +141,39 @@ export function TodayTimelineCalendar({
             {allDayEvents.length > 0 && (
                 <div className="px-2 py-1.5 border-b bg-muted/20 flex-shrink-0">
                     <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-                        {allDayEvents.map(event => (
-                            <div
-                                key={event.id}
-                                className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800"
-                            >
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                                <span className="text-[11px] font-medium text-blue-700 dark:text-blue-300 truncate max-w-32">
-                                    {event.title}
-                                </span>
-                            </div>
-                        ))}
+                        {allDayEvents.map(event => {
+                            const isEventCompleted = completedEventIds.has(event.google_event_id)
+                            return (
+                                <div
+                                    key={event.id}
+                                    className={cn(
+                                        "flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-md border",
+                                        isEventCompleted
+                                            ? "bg-muted/30 border-border opacity-50"
+                                            : "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800"
+                                    )}
+                                >
+                                    <button
+                                        onClick={() => onToggleEventCompletion(event.google_event_id, event.calendar_id)}
+                                        className="flex-shrink-0 focus:outline-none"
+                                    >
+                                        {isEventCompleted ? (
+                                            <CheckSquare className="w-3 h-3 text-primary" />
+                                        ) : (
+                                            <Square className="w-3 h-3 text-blue-400" />
+                                        )}
+                                    </button>
+                                    <span className={cn(
+                                        "text-[11px] font-medium truncate max-w-32",
+                                        isEventCompleted
+                                            ? "line-through text-muted-foreground"
+                                            : "text-blue-700 dark:text-blue-300"
+                                    )}>
+                                        {event.title}
+                                    </span>
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
             )}
@@ -231,22 +273,46 @@ export function TodayTimelineCalendar({
                             const leftPercent = (item.column / item.totalColumns) * 100
                             const widthPercent = (1 / item.totalColumns) * 100
 
+                            // Build drag item for touch handlers
+                            const durationMinutes = Math.round(
+                                (item.endTime.getTime() - item.startTime.getTime()) / 60000
+                            )
+                            const dragItem: DragItem = {
+                                type: item.type,
+                                id,
+                                startTime: item.startTime,
+                                endTime: item.endTime,
+                                durationMinutes,
+                            }
+                            const touchHandlers = createItemTouchHandlers(dragItem, item.top)
+                            const isDragTarget = dragState.isDragging && dragState.dragItem?.id === id
+
                             return (
                                 <div
                                     key={`${item.type}-${id}`}
-                                    className="absolute z-20"
+                                    className={cn(
+                                        "absolute z-20 touch-none",
+                                        isDragTarget && "opacity-30"
+                                    )}
                                     style={{
                                         top: item.top,
                                         height: item.height,
                                         left: `calc(${leftPercent}% + 2px)`,
                                         width: `calc(${widthPercent}% - 4px)`,
                                     }}
+                                    {...touchHandlers}
                                 >
                                     {isEvent ? (
                                         <EventBlock
                                             event={item.data as CalendarEvent}
                                             currentTime={currentTime}
                                             height={item.height}
+                                            isCompleted={completedEventIds.has((item.data as CalendarEvent).google_event_id)}
+                                            onToggleCompletion={() => onToggleEventCompletion(
+                                                (item.data as CalendarEvent).google_event_id,
+                                                (item.data as CalendarEvent).calendar_id
+                                            )}
+                                            onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     ) : (
                                         <TaskBlock
@@ -257,11 +323,20 @@ export function TodayTimelineCalendar({
                                             height={item.height}
                                             timer={timer}
                                             onToggle={onToggleTask}
+                                            onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     )}
                                 </div>
                             )
                         })}
+
+                        {/* Drag Preview Ghost */}
+                        {dragState.isDragging && dragState.dragItem && dragState.previewStartTime && (
+                            <DragPreview
+                                dragState={dragState}
+                                item={dragState.dragItem}
+                            />
+                        )}
 
                         {/* Loading indicator */}
                         {eventsLoading && layoutItems.length === 0 && (
@@ -281,10 +356,16 @@ function EventBlock({
     event,
     currentTime,
     height,
+    isCompleted,
+    onToggleCompletion,
+    onTap,
 }: {
     event: CalendarEvent
     currentTime: Date
     height: number
+    isCompleted: boolean
+    onToggleCompletion: () => void
+    onTap?: () => void
 }) {
     const startTime = new Date(event.start_time)
     const endTime = new Date(event.end_time)
@@ -295,25 +376,60 @@ function EventBlock({
     const startStr = startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
 
     return (
-        <div className={cn(
-            "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden cursor-default transition-colors",
-            "bg-blue-50 dark:bg-blue-950/40 border-blue-400",
-            isNow && "ring-1 ring-blue-400/50 bg-blue-100/80 dark:bg-blue-900/50",
-            isPast && "opacity-40"
+        <div
+            onClick={onTap}
+            className={cn(
+            "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+            onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
+            isCompleted
+                ? "bg-muted/30 border-muted-foreground/30"
+                : "bg-blue-50 dark:bg-blue-950/40 border-blue-400",
+            isNow && !isCompleted && "ring-1 ring-blue-400/50 bg-blue-100/80 dark:bg-blue-900/50",
+            (isPast || isCompleted) && "opacity-40"
         )}>
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onToggleCompletion() }}
+                        className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                    >
+                        {isCompleted ? (
+                            <CheckSquare className="w-3 h-3 text-primary" />
+                        ) : (
+                            <Square className="w-3 h-3 text-blue-400" />
+                        )}
+                    </button>
                     <span className="text-[10px] text-blue-600 dark:text-blue-300 font-medium">{startStr}</span>
-                    <span className="text-[11px] font-medium text-blue-800 dark:text-blue-200 truncate">{event.title}</span>
+                    <span className={cn(
+                        "text-[11px] font-medium truncate",
+                        isCompleted ? "line-through text-muted-foreground" : "text-blue-800 dark:text-blue-200"
+                    )}>
+                        {event.title}
+                    </span>
                 </div>
             ) : (
                 <>
-                    <div className="text-[10px] text-blue-600 dark:text-blue-300 font-medium">{startStr}</div>
-                    <div className="text-[11px] font-medium text-blue-800 dark:text-blue-200 truncate leading-tight mt-0.5">
-                        {event.title}
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onToggleCompletion() }}
+                            className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                        >
+                            {isCompleted ? (
+                                <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                            ) : (
+                                <Square className="w-3.5 h-3.5 text-blue-400" />
+                            )}
+                        </button>
+                        <span className={cn(
+                            "text-[11px] font-medium truncate leading-tight",
+                            isCompleted ? "line-through text-muted-foreground" : "text-blue-800 dark:text-blue-200"
+                        )}>
+                            {event.title}
+                        </span>
                     </div>
+                    <div className="text-[10px] text-blue-600 dark:text-blue-300 font-medium mt-0.5 pl-5">{startStr}</div>
                     {event.location && height > 55 && (
-                        <div className="text-[9px] text-blue-500 dark:text-blue-400 truncate mt-0.5">
+                        <div className="text-[9px] text-blue-500 dark:text-blue-400 truncate mt-0.5 pl-5">
                             📍 {event.location}
                         </div>
                     )}
@@ -332,6 +448,7 @@ function TaskBlock({
     height,
     timer,
     onToggle,
+    onTap,
 }: {
     task: Task
     currentTime: Date
@@ -340,6 +457,7 @@ function TaskBlock({
     height: number
     timer: ReturnType<typeof useTimer>
     onToggle: (taskId: string) => void
+    onTap?: () => void
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
     const isPast = currentTime >= endTime
@@ -350,8 +468,11 @@ function TaskBlock({
     const startStr = startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
 
     return (
-        <div className={cn(
+        <div
+            onClick={onTap}
+            className={cn(
             "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+            onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
             isRunning
                 ? "bg-primary/15 dark:bg-primary/10 border-primary ring-1 ring-primary/40 dark:ring-primary/30"
                 : isDone
@@ -363,7 +484,7 @@ function TaskBlock({
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
                     <button
-                        onClick={() => onToggle(task.id)}
+                        onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
                         aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
                         className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                     >
@@ -382,7 +503,7 @@ function TaskBlock({
                     <div className="ml-auto flex-shrink-0">
                         {isRunning ? (
                             <button
-                                onClick={() => timer.pauseTimer()}
+                                onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                                 aria-label="タイマーを一時停止"
                                 className="p-0.5 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                             >
@@ -390,7 +511,7 @@ function TaskBlock({
                             </button>
                         ) : (
                             <button
-                                onClick={() => timer.startTimer(task)}
+                                onClick={(e) => { e.stopPropagation(); timer.startTimer(task) }}
                                 aria-label={`${task.title}のタイマーを開始`}
                                 className="p-0.5 text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                             >
@@ -404,7 +525,7 @@ function TaskBlock({
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
                             <button
-                                onClick={() => onToggle(task.id)}
+                                onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
                                 aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
                                 className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                             >
@@ -424,7 +545,7 @@ function TaskBlock({
                         <div className="flex-shrink-0 ml-1">
                             {isRunning ? (
                                 <button
-                                    onClick={() => timer.pauseTimer()}
+                                    onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                                     aria-label="タイマーを一時停止"
                                     className="p-1 rounded-full bg-primary/10 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
                                 >
@@ -432,7 +553,7 @@ function TaskBlock({
                                 </button>
                             ) : (
                                 <button
-                                    onClick={() => timer.startTimer(task)}
+                                    onClick={(e) => { e.stopPropagation(); timer.startTimer(task) }}
                                     aria-label={`${task.title}のタイマーを開始`}
                                     className="p-1 rounded-full active:bg-muted text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
                                 >
@@ -454,6 +575,51 @@ function TaskBlock({
                     )}
                 </>
             )}
+        </div>
+    )
+}
+
+// --- Drag Preview Ghost ---
+function DragPreview({
+    dragState,
+    item,
+}: {
+    dragState: { previewTop: number; previewStartTime: Date | null; previewEndTime: Date | null }
+    item: DragItem
+}) {
+    if (!dragState.previewStartTime || !dragState.previewEndTime) return null
+
+    const startStr = dragState.previewStartTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const endStr = dragState.previewEndTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const heightPx = (item.durationMinutes / (24 * 60)) * TOTAL_HEIGHT
+
+    const isTask = item.type === 'task'
+
+    return (
+        <div
+            className="absolute z-40 left-[2px] right-[2px] pointer-events-none"
+            style={{
+                top: dragState.previewTop,
+                height: Math.max(heightPx, HOUR_HEIGHT * 0.4),
+            }}
+        >
+            {/* Preview block */}
+            <div className={cn(
+                "h-full rounded-md border-2 border-dashed px-2 py-1 overflow-hidden",
+                isTask
+                    ? "bg-green-100/80 dark:bg-green-900/40 border-green-500"
+                    : "bg-blue-100/80 dark:bg-blue-900/40 border-blue-500"
+            )}>
+                <div className="flex items-center gap-1.5">
+                    <GripVertical className="w-3 h-3 text-muted-foreground" />
+                    <span className={cn(
+                        "text-[11px] font-bold",
+                        isTask ? "text-green-700 dark:text-green-300" : "text-blue-700 dark:text-blue-300"
+                    )}>
+                        {startStr} - {endStr}
+                    </span>
+                </div>
+            </div>
         </div>
     )
 }
