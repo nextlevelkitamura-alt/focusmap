@@ -15,7 +15,8 @@ import 'reactflow/dist/style.css'
 import dagre from 'dagre'
 import { Task, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb } from "lucide-react"
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
@@ -177,8 +178,25 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     const [isEditing, setIsEditing] = useState(false)
     const [editValue, setEditValue] = useState(data?.label ?? '')
     const inputRef = useRef<HTMLInputElement>(null)
+    const wasSelectedRef = useRef(false)
 
     useEffect(() => { setEditValue(data?.label ?? '') }, [data?.label])
+
+    // Single tap → edit mode (detect selected transition)
+    useEffect(() => {
+        if (selected && !wasSelectedRef.current) {
+            setIsEditing(true)
+        }
+        if (!selected && wasSelectedRef.current) {
+            // Deselected → save & exit edit mode
+            if (inputRef.current) {
+                const val = inputRef.current.value
+                if (val !== data?.label) data?.onSave?.(val)
+            }
+            setIsEditing(false)
+        }
+        wasSelectedRef.current = !!selected
+    }, [selected, data?.label, data?.onSave])
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -188,10 +206,10 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     }, [isEditing])
 
     const handleSave = useCallback(async () => {
-        setIsEditing(false)
         if (editValue !== data?.label) {
             await data?.onSave?.(editValue)
         }
+        // Don't exit edit mode - keyboard stays open
     }, [editValue, data])
 
     return (
@@ -200,7 +218,6 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
                 "w-[260px] h-[56px] rounded-xl bg-primary text-primary-foreground px-4 flex items-center shadow-md transition-all",
                 selected && "ring-2 ring-white ring-offset-2"
             )}
-            onDoubleClick={() => setIsEditing(true)}
         >
             <Handle type="source" position={Position.Right} className="!bg-primary-foreground !w-2 !h-2" />
             {isEditing ? (
@@ -209,7 +226,8 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
                     className="w-full bg-transparent border-none text-base font-semibold focus:outline-none"
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
-                    onBlur={handleSave}
+                    onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
+                    enterKeyHint="return"
                     onKeyDown={(e) => {
                         if (e.nativeEvent.isComposing) return
                         if (e.key === 'Enter') { e.preventDefault(); handleSave() }
@@ -230,21 +248,35 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     const [editValue, setEditValue] = useState(data?.label ?? '')
     const [showMenu, setShowMenu] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
+    const wasSelectedRef = useRef(false)
+    const justSavedRef = useRef(false)
 
     useEffect(() => { setEditValue(data?.label ?? '') }, [data?.label])
+
+    // Single tap → edit mode (detect selected transition)
+    useEffect(() => {
+        if (selected && !wasSelectedRef.current) {
+            setIsEditing(true)
+            justSavedRef.current = false
+        }
+        if (!selected && wasSelectedRef.current) {
+            // Deselected → save & exit edit mode
+            if (inputRef.current) {
+                const val = inputRef.current.value
+                if (val !== data?.label) data?.onSave?.(val)
+            }
+            setIsEditing(false)
+            justSavedRef.current = false
+        }
+        wasSelectedRef.current = !!selected
+    }, [selected, data?.label, data?.onSave])
+
     useEffect(() => {
         if (isEditing && inputRef.current) {
             inputRef.current.focus()
             inputRef.current.select()
         }
     }, [isEditing])
-
-    const handleSave = useCallback(async () => {
-        setIsEditing(false)
-        if (editValue !== data?.label) {
-            await data?.onSave?.(editValue)
-        }
-    }, [editValue, data])
 
     const isHabit = data?.is_habit || data?.parentIsHabit
     const isDone = data?.status === 'done'
@@ -261,7 +293,6 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                 selected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
                 selected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
             )}
-            onDoubleClick={() => setIsEditing(true)}
         >
             <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
 
@@ -291,11 +322,29 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         ref={inputRef}
                         className="nodrag nopan flex-1 bg-transparent border-none text-sm focus:outline-none min-w-0"
                         value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onBlur={handleSave}
+                        onChange={(e) => { setEditValue(e.target.value); justSavedRef.current = false }}
+                        onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
+                        enterKeyHint="return"
                         onKeyDown={(e) => {
                             if (e.nativeEvent.isComposing) return
-                            if (e.key === 'Enter') { e.preventDefault(); handleSave() }
+                            if (e.key === 'Enter') {
+                                e.preventDefault()
+                                if (!justSavedRef.current) {
+                                    // First Enter: save text, keep keyboard open
+                                    if (editValue !== data?.label) data?.onSave?.(editValue)
+                                    justSavedRef.current = true
+                                } else {
+                                    // Second Enter: create sibling task
+                                    justSavedRef.current = false
+                                    data?.onAddSibling?.()
+                                }
+                            }
+                            if (e.key === 'Tab') {
+                                e.preventDefault()
+                                // Tab: create child task
+                                if (editValue !== data?.label) data?.onSave?.(editValue)
+                                data?.onAddChildAndFocus?.()
+                            }
                             if (e.key === 'Escape') { setEditValue(data?.label ?? ''); setIsEditing(false) }
                         }}
                     />
@@ -460,6 +509,14 @@ interface MobileMindMapProps {
     onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
 }
 
+// --- Utility: find root group ID ---
+function findRootGroupIdUtil(taskId: string, taskMap: Map<string, Task>): string {
+    const t = taskMap.get(taskId)
+    if (!t) return taskId
+    if (!t.parent_task_id) return t.id
+    return findRootGroupIdUtil(t.parent_task_id, taskMap)
+}
+
 function MobileMindMapContent({
     project, groups, tasks,
     onCreateGroup, onDeleteGroup, onUpdateProject,
@@ -468,6 +525,7 @@ function MobileMindMapContent({
     const reactFlow = useReactFlow()
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+    const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight()
 
     // Build task maps
     const { taskMap, childrenMap } = useMemo(() => {
@@ -558,9 +616,24 @@ function MobileMindMapContent({
                         else await onDeleteTask?.(task.id)
                     },
                     onAddChild: async () => {
-                        const rootGroupId = findRootGroupId(task.id)
+                        const rootGroupId = findRootGroupIdUtil(task.id, taskMap)
                         await onCreateTask?.(rootGroupId, '', task.id)
                         setCollapsedTaskIds(prev => { const n = new Set(prev); n.delete(task.id); return n })
+                    },
+                    // Enter2回目: 兄弟ノード作成（キーボード維持）
+                    onAddSibling: async () => {
+                        const rootGroupId = findRootGroupIdUtil(task.id, taskMap)
+                        const newTask = await onCreateTask?.(rootGroupId, '', task.parent_task_id || undefined)
+                        if (newTask) setSelectedNodeId(newTask.id)
+                    },
+                    // Tab/子ノードボタン: 子ノード作成してフォーカス
+                    onAddChildAndFocus: async () => {
+                        const rootGroupId = findRootGroupIdUtil(task.id, taskMap)
+                        const newTask = await onCreateTask?.(rootGroupId, '', task.id)
+                        if (newTask) {
+                            setCollapsedTaskIds(prev => { const n = new Set(prev); n.delete(task.id); return n })
+                            setSelectedNodeId(newTask.id)
+                        }
                     },
                     onUpdatePriority: (priority: number) => onUpdateTask?.(task.id, { priority }),
                     onUpdateEstimatedTime: (minutes: number) => onUpdateTask?.(task.id, { estimated_time: minutes }),
@@ -590,13 +663,6 @@ function MobileMindMapContent({
             }
         }
 
-        const findRootGroupId = (taskId: string): string => {
-            const t = taskMap.get(taskId)
-            if (!t) return taskId
-            if (!t.parent_task_id) return t.id
-            return findRootGroupId(t.parent_task_id)
-        }
-
         const sortedGroups = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
         for (const group of sortedGroups) {
             addTaskNodes(group, projectId)
@@ -612,6 +678,41 @@ function MobileMindMapContent({
 
     const handlePaneClick = useCallback(() => {
         setSelectedNodeId(null)
+        // 背景タップ → キーボード収納
+        if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur()
+        }
+    }, [])
+
+    // Keyboard accessory bar callbacks for the selected node
+    const selectedTask = selectedNodeId ? taskMap.get(selectedNodeId) : null
+    const handleAccessoryAddChild = useCallback(() => {
+        if (!selectedNodeId) return
+        const task = taskMap.get(selectedNodeId)
+        if (!task) return
+        const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
+        onCreateTask?.(rootGroupId, '', selectedNodeId).then(newTask => {
+            if (newTask) {
+                setCollapsedTaskIds(prev => { const n = new Set(prev); n.delete(selectedNodeId); return n })
+                setSelectedNodeId(newTask.id)
+            }
+        })
+    }, [selectedNodeId, taskMap, onCreateTask])
+
+    const handleAccessoryDelete = useCallback(() => {
+        if (!selectedNodeId) return
+        const task = taskMap.get(selectedNodeId)
+        if (!task) return
+        if (!task.parent_task_id) onDeleteGroup?.(selectedNodeId)
+        else onDeleteTask?.(selectedNodeId)
+        setSelectedNodeId(null)
+    }, [selectedNodeId, taskMap, onDeleteGroup, onDeleteTask])
+
+    const handleAccessoryDismiss = useCallback(() => {
+        setSelectedNodeId(null)
+        if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur()
+        }
     }, [])
 
     return (
@@ -633,7 +734,7 @@ function MobileMindMapContent({
                 panOnScroll={false}
                 zoomOnScroll={false}
                 zoomOnPinch={true}
-                zoomOnDoubleClick={true}
+                zoomOnDoubleClick={false}
                 preventScrolling={true}
                 minZoom={0.2}
                 maxZoom={2.0}
@@ -642,6 +743,51 @@ function MobileMindMapContent({
             >
                 {/* No controls or background on mobile to save space */}
             </ReactFlow>
+
+            {/* Keyboard Accessory Bar - マインドマップ編集用 */}
+            {selectedNodeId && isKeyboardOpen && (
+                <div
+                    className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
+                    style={{ bottom: `${keyboardHeight}px` }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onTouchStart={(e) => e.preventDefault()}
+                >
+                    <div className="flex items-center justify-between px-2 py-1.5 safe-area-inset-bottom">
+                        <div className="flex items-center gap-0.5">
+                            {/* 子ノード作成（Tab相当） */}
+                            <button
+                                onClick={handleAccessoryAddChild}
+                                className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
+                                title="子ノード追加"
+                            >
+                                <CornerDownRight className="w-5 h-5" />
+                                <span className="text-xs">子追加</span>
+                            </button>
+
+                            {/* セパレータ */}
+                            <div className="w-px h-5 bg-border mx-1" />
+
+                            {/* 削除 */}
+                            <button
+                                onClick={handleAccessoryDelete}
+                                className="flex items-center justify-center w-10 h-9 rounded-md text-destructive active:bg-destructive/10 transition-colors"
+                                title="削除"
+                            >
+                                <Trash2 className="w-4.5 h-4.5" />
+                            </button>
+                        </div>
+
+                        {/* キーボード閉じる */}
+                        <button
+                            onClick={handleAccessoryDismiss}
+                            className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-muted-foreground active:bg-muted transition-colors"
+                        >
+                            <span className="text-xs">閉じる</span>
+                            <ChevronDownKb className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

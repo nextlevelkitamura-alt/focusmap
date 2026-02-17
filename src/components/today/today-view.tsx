@@ -370,7 +370,7 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                                 )}
                             </button>
                         </div>
-                        <div className="space-y-1">
+                        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
                             {todayHabits.map(item => {
                                 const hasChildren = item.childTasks.length > 0
                                 return (
@@ -380,23 +380,23 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                                             if (!hasChildren) toggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
-                                            "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all",
+                                            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all flex-shrink-0 border",
                                             !hasChildren && "active:scale-[0.98]",
                                             item.isCompletedToday
-                                                ? "bg-primary/8 dark:bg-primary/15"
+                                                ? "bg-primary/10 border-primary/30 dark:bg-primary/15"
                                                 : !hasChildren
-                                                    ? "hover:bg-muted/40 active:bg-muted/60"
-                                                    : ""
+                                                    ? "border-border hover:bg-muted/40 active:bg-muted/60"
+                                                    : "border-border"
                                         )}
                                     >
                                         {item.isCompletedToday ? (
-                                            <CheckSquare className={cn("w-4 h-4 flex-shrink-0", hasChildren ? "text-primary/50" : "text-primary")} />
+                                            <CheckSquare className={cn("w-3.5 h-3.5 flex-shrink-0", hasChildren ? "text-primary/50" : "text-primary")} />
                                         ) : (
-                                            <Square className={cn("w-4 h-4 flex-shrink-0", hasChildren ? "text-muted-foreground/20" : "text-muted-foreground/40")} />
+                                            <Square className={cn("w-3.5 h-3.5 flex-shrink-0", hasChildren ? "text-muted-foreground/20" : "text-muted-foreground/40")} />
                                         )}
                                         <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
                                         <span className={cn(
-                                            "text-xs truncate flex-1 text-left",
+                                            "text-xs whitespace-nowrap",
                                             item.isCompletedToday
                                                 ? "text-primary font-medium line-through"
                                                 : "text-foreground"
