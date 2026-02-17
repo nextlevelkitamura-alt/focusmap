@@ -758,7 +758,7 @@ function MobileMindMapContent({
             {selectedNodeId && isKeyboardOpen && (
                 <div
                     className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
-                    style={{ bottom: `${keyboardHeight + 44}px` }}
+                    style={{ bottom: `${keyboardHeight + 88}px` }}
                     onMouseDown={(e) => e.preventDefault()}
                     onTouchStart={(e) => e.preventDefault()}
                 >
