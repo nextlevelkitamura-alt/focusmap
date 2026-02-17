@@ -827,9 +827,9 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
 
                         {/* Habit Settings */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">習慣</div>
-                        <div className="px-2 pb-2 space-y-2">
+                        <div className="nodrag nopan px-2 pb-2 space-y-2">
                             {/* Habit Toggle */}
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
                                 <span className="text-xs">習慣として設定</span>
                                 <Switch
                                     checked={data?.is_habit ?? false}
@@ -848,7 +848,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                             variant={data?.habit_frequency === 'daily' ? 'default' : 'outline'}
                                             size="sm"
                                             className="flex-1 h-7 text-xs"
-                                            onClick={() => data?.onUpdateHabit?.({ habit_frequency: 'daily' })}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                data?.onUpdateHabit?.({ habit_frequency: 'daily' });
+                                            }}
                                         >
                                             毎日
                                         </Button>
@@ -856,7 +859,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                             variant={data?.habit_frequency === 'weekdays' ? 'default' : 'outline'}
                                             size="sm"
                                             className="flex-1 h-7 text-xs"
-                                            onClick={() => data?.onUpdateHabit?.({ habit_frequency: 'weekdays' })}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                data?.onUpdateHabit?.({ habit_frequency: 'weekdays' });
+                                            }}
                                         >
                                             平日
                                         </Button>
@@ -864,7 +870,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                             variant={data?.habit_frequency === 'custom' ? 'default' : 'outline'}
                                             size="sm"
                                             className="flex-1 h-7 text-xs"
-                                            onClick={() => data?.onUpdateHabit?.({ habit_frequency: 'custom' })}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                data?.onUpdateHabit?.({ habit_frequency: 'custom' });
+                                            }}
                                         >
                                             カスタム
                                         </Button>
@@ -881,7 +890,10 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                                     "h-8 rounded text-lg hover:bg-muted transition-colors",
                                                     data?.habit_icon === icon ? "bg-primary/20 ring-1 ring-primary" : ""
                                                 )}
-                                                onClick={() => data?.onUpdateHabit?.({ habit_icon: icon })}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    data?.onUpdateHabit?.({ habit_icon: icon });
+                                                }}
                                             >
                                                 {icon}
                                             </button>
