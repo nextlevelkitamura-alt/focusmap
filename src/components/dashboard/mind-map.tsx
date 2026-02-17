@@ -333,7 +333,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     // Drag sensitivity: prevent accidental drag on click
     const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
     const [isDraggable, setIsDraggable] = useState<boolean>(false);
-    const DRAG_THRESHOLD = 15; // 15px threshold (prevents accidental drag)
+    const DRAG_THRESHOLD = 25; // 25px threshold (prevents accidental drag)
 
     // Trigger edit from external
     useEffect(() => {
@@ -623,6 +623,12 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             return
         }
 
+        // CRITICAL: Prevent drag if threshold not exceeded
+        if (!isDraggable) {
+            e.preventDefault()
+            return
+        }
+
         // タスクIDをドラッグデータに設定
         const taskId = (data as any)?.taskId || (data as any)?.id
         if (taskId) {
@@ -653,7 +659,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             ;(data as any)?.onDragStart?.(taskId, editValue || 'タスク')
 
         }
-    }, [isEditing, data, editValue])
+    }, [isEditing, isDraggable, data, editValue])
 
     // ドラッグ終了時の処理
     const handleDragEnd = useCallback(() => {
@@ -787,7 +793,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                             </svg>
                         </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuContent align="end" className="nodrag nopan w-56">
                         {/* Priority */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">優先度</div>
                         <div className="px-2 pb-2">
@@ -866,13 +872,20 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">習慣</div>
                         <div className="nodrag nopan px-2 pb-2 space-y-2">
                             {/* Habit Toggle */}
-                            <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+                            <div
+                                className="flex items-center justify-between"
+                                onClick={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                            >
                                 <span className="text-xs">習慣として設定</span>
                                 <Switch
                                     checked={data?.is_habit ?? false}
                                     onCheckedChange={(checked) => {
                                         data?.onUpdateHabit?.({ is_habit: checked });
                                     }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                 />
                             </div>
 
@@ -1116,6 +1129,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set());
     const dropInfoRef = useRef<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
     const dragPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+    const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null);
+    const NODE_DRAG_THRESHOLD = 30; // 30px minimum drag distance to trigger drop
     const lastUserActionAtRef = useRef<number>(0);
     const selectedNodeIdRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
@@ -1874,10 +1889,23 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         if (node.type === 'projectNode') return;
         isDraggingRef.current = true;
         dragPositionsRef.current[node.id] = node.position;
+        // Save initial position to calculate drag distance later
+        dragStartPositionRef.current = { x: node.position.x, y: node.position.y };
     }, []);
 
     const handleNodeDrag = useCallback((_: React.MouseEvent, node: Node) => {
         if (node.type === 'projectNode') return;
+
+        // Don't show drop targets until drag distance exceeds threshold
+        const startPos = dragStartPositionRef.current;
+        if (startPos) {
+            const dist = Math.sqrt(Math.pow(node.position.x - startPos.x, 2) + Math.pow(node.position.y - startPos.y, 2));
+            if (dist < NODE_DRAG_THRESHOLD) {
+                clearDropTargetDOM();
+                dragPositionsRef.current[node.id] = node.position;
+                return;
+            }
+        }
 
         const info = getDropInfo(node);
         const prev = dropInfoRef.current;
@@ -1906,9 +1934,20 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         isDraggingRef.current = false;
         if (node.type === 'projectNode') return;
 
+        // Calculate drag distance from start position
+        const startPos = dragStartPositionRef.current;
+        const dragDistance = startPos
+            ? Math.sqrt(Math.pow(node.position.x - startPos.x, 2) + Math.pow(node.position.y - startPos.y, 2))
+            : 0;
+        dragStartPositionRef.current = null;
+
         const info = getDropInfo(node);
         clearDropTargetDOM();
         delete dragPositionsRef.current[node.id];
+
+        // CRITICAL: Ignore drop if drag distance is too small (prevents accidental drops on click)
+        if (dragDistance < NODE_DRAG_THRESHOLD) return;
+
         if (!info) return;
 
         const { node: target, position } = info;
