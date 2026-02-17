@@ -46,7 +46,7 @@ const MOCK_HABITS: MockHabit[] = [
 // --- Main Component ---
 
 export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
-    const { selectedCalendarIds } = useCalendars()
+    const { selectedCalendarIds, calendars } = useCalendars()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
     const [timelineMode, setTimelineMode] = useState<TimelineMode>('calendar')
     const [habitsExpanded, setHabitsExpanded] = useState(false)
@@ -346,15 +346,57 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
 
             {/* Timeline Content */}
             <div className="flex-1 overflow-hidden flex flex-col">
+                {/* Calendar Connection Required */}
+                {!eventsLoading && calendars.length === 0 && (
+                    <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+                        <div className="flex items-start gap-2">
+                            <div className="flex-1">
+                                <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                                    カレンダーに接続されていません
+                                </p>
+                                <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                                    Googleカレンダーと連携すると、予定を自動で表示できます
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-3">
+                            <button
+                                onClick={() => window.location.href = '/api/calendar/connect'}
+                                className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                            >
+                                カレンダーを接続
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* Calendar Events Error */}
-                {eventsError && (
-                    <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
-                        <p className="text-sm text-red-700 dark:text-red-300">
-                            カレンダーイベントの取得に失敗しました
-                        </p>
-                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                            {eventsError.message}
-                        </p>
+                {eventsError && calendars.length > 0 && (
+                    <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                        <div className="flex items-start gap-2">
+                            <div className="flex-1">
+                                <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                                    カレンダーデータの取得に失敗しました
+                                </p>
+                                <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                                    {eventsError.message}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                            <button
+                                onClick={() => window.location.reload()}
+                                className="px-3 py-1.5 text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                            >
+                                再読み込み
+                            </button>
+                            <button
+                                onClick={() => window.location.href = '/api/calendar/connect'}
+                                className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-md hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                            >
+                                再接続
+                            </button>
+                        </div>
                     </div>
                 )}
 
