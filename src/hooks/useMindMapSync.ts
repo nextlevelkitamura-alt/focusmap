@@ -317,6 +317,9 @@ export function useMindMapSync({
             total_elapsed_seconds: 0,
             last_started_at: null,
             is_timer_running: false,
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
             created_at: now,
         };
 
@@ -344,10 +347,13 @@ export function useMindMapSync({
         // Background sync: 親INSERT待機 → 直接INSERT → 失敗時APIルートフォールバック
         const insertPromise = (async () => {
             try {
+                // 親タスクの INSERT 完了を待機
                 if (effectiveParentId) {
                     const parentPending = pendingInserts.current.get(effectiveParentId);
                     if (parentPending) {
+                        console.log('[Sync] Waiting for parent INSERT:', effectiveParentId);
                         await parentPending;
+                        console.log('[Sync] Parent INSERT completed:', effectiveParentId);
                     }
                 }
 
@@ -365,11 +371,22 @@ export function useMindMapSync({
                 });
 
                 if (!insertError) {
+                    console.log('[Sync] INSERT success:', optimisticId);
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
 
                 console.warn('[Sync] Direct INSERT failed, trying API route:', insertError.message);
+
+                // API route を呼ぶ前に、親タスクの INSERT 完了を再度確認
+                if (effectiveParentId) {
+                    const parentPending = pendingInserts.current.get(effectiveParentId);
+                    if (parentPending) {
+                        console.log('[Sync] Waiting for parent INSERT before API call:', effectiveParentId);
+                        await parentPending;
+                        console.log('[Sync] Parent INSERT completed before API call:', effectiveParentId);
+                    }
+                }
 
                 const response = await fetch('/api/tasks', {
                     method: 'POST',
@@ -384,6 +401,7 @@ export function useMindMapSync({
                 });
 
                 if (response.ok) {
+                    console.log('[Sync] API INSERT success:', optimisticId);
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
@@ -398,6 +416,8 @@ export function useMindMapSync({
             }
         })();
 
+        // CRITICAL: pendingInserts に先に登録してから INSERT を開始
+        // これにより、子タスクが親の INSERT 完了を確実に待つことができる
         pendingInserts.current.set(optimisticId, insertPromise);
         insertPromise.finally(() => {
             pendingInserts.current.delete(optimisticId);
