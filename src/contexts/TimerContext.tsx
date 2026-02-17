@@ -45,11 +45,17 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
     const [isLoading, setIsLoading] = useState(false);
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Find the running task from tasks array
+    // Local tracking for timer data (works even when task is not in `tasks` prop)
+    const localTimerDataRef = useRef<{
+        lastStartedAt: string | null;
+        baseElapsedSeconds: number;
+        taskTitle: string;
+    }>({ lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '' });
+
+    // Find the running task from tasks array (may be null for habit child tasks)
     const runningTask = tasks.find(t => t.id === runningTaskId) ?? null;
 
     // Initialize: find any running timer on mount
-    // IMPORTANT: If multiple timers are running (data inconsistency), keep only the most recent one
     useEffect(() => {
         const runningTasks = tasks.filter(t => t.is_timer_running === true);
 
@@ -58,23 +64,29 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
         }
 
         if (runningTasks.length === 1) {
-            // Normal case: exactly one timer running
             setRunningTaskId(runningTasks[0].id);
+            localTimerDataRef.current = {
+                lastStartedAt: runningTasks[0].last_started_at || null,
+                baseElapsedSeconds: runningTasks[0].total_elapsed_seconds ?? 0,
+                taskTitle: runningTasks[0].title,
+            };
         } else {
-            // Data inconsistency: multiple timers running
-            // Keep the most recently started one, stop others
             console.warn('[TimerContext] Multiple running timers detected:', runningTasks.length);
 
             const sorted = runningTasks.sort((a, b) => {
                 const aTime = new Date(a.last_started_at || 0).getTime();
                 const bTime = new Date(b.last_started_at || 0).getTime();
-                return bTime - aTime; // Most recent first
+                return bTime - aTime;
             });
 
             const keepTask = sorted[0];
             setRunningTaskId(keepTask.id);
+            localTimerDataRef.current = {
+                lastStartedAt: keepTask.last_started_at || null,
+                baseElapsedSeconds: keepTask.total_elapsed_seconds ?? 0,
+                taskTitle: keepTask.title,
+            };
 
-            // Stop other timers (async, fire-and-forget for initialization)
             sorted.slice(1).forEach(async (task) => {
                 console.log('[TimerContext] Stopping orphan timer:', task.id);
                 await onUpdateTask(task.id, {
@@ -83,14 +95,16 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 });
             });
         }
-    }, []); // Run only on mount, not on every tasks change
+    }, []); // Run only on mount
 
     // Update elapsed time every second when timer is running
+    // Uses localTimerDataRef so it works even when runningTask is null
     useEffect(() => {
-        if (runningTask && runningTask.is_timer_running && runningTask.last_started_at) {
-            // Calculate initial elapsed
-            const startTime = new Date(runningTask.last_started_at).getTime();
-            const baseSeconds = runningTask.total_elapsed_seconds ?? 0;
+        const localData = localTimerDataRef.current;
+
+        if (runningTaskId && localData.lastStartedAt) {
+            const startTime = new Date(localData.lastStartedAt).getTime();
+            const baseSeconds = localData.baseElapsedSeconds;
 
             const updateElapsed = () => {
                 const now = Date.now();
@@ -98,8 +112,7 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 setCurrentElapsedSeconds(baseSeconds + additionalSeconds);
             };
 
-            updateElapsed(); // Initial update
-
+            updateElapsed();
             intervalRef.current = setInterval(updateElapsed, 1000);
 
             return () => {
@@ -107,35 +120,29 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                     clearInterval(intervalRef.current);
                 }
             };
-        } else if (runningTask) {
-            // Timer exists but not running - show stored time
-            setCurrentElapsedSeconds(runningTask.total_elapsed_seconds ?? 0);
+        } else if (runningTaskId) {
+            setCurrentElapsedSeconds(localData.baseElapsedSeconds);
         } else {
             setCurrentElapsedSeconds(0);
         }
-    }, [runningTask]);
-
-    // Calculate current elapsed for a specific task (for display)
-    const getTaskElapsed = useCallback((task: Task): number => {
-        if (task.is_timer_running && task.last_started_at) {
-            const startTime = new Date(task.last_started_at).getTime();
-            const additionalSeconds = Math.floor((Date.now() - startTime) / 1000);
-            return (task.total_elapsed_seconds ?? 0) + additionalSeconds;
-        }
-        return task.total_elapsed_seconds ?? 0;
-    }, []);
+    }, [runningTaskId, runningTask]);
 
     // Stop any currently running timer (internal helper)
+    // Works even when runningTask is null by using localTimerDataRef
     const stopCurrentTimer = useCallback(async () => {
-        if (!runningTaskId || !runningTask) return;
+        if (!runningTaskId) return;
 
-        // Calculate final elapsed time
-        let finalSeconds = runningTask.total_elapsed_seconds ?? 0;
-        if (runningTask.last_started_at) {
-            const startTime = new Date(runningTask.last_started_at).getTime();
+        const localData = localTimerDataRef.current;
+
+        // Calculate final elapsed time using local tracking data
+        let finalSeconds = localData.baseElapsedSeconds;
+        if (localData.lastStartedAt) {
+            const startTime = new Date(localData.lastStartedAt).getTime();
             const additionalSeconds = Math.floor((Date.now() - startTime) / 1000);
             finalSeconds += additionalSeconds;
         }
+
+        console.log('[TimerContext] Stopping timer:', runningTaskId.slice(0, 8), 'elapsed:', finalSeconds, 's');
 
         // Update task in database
         await onUpdateTask(runningTaskId, {
@@ -145,34 +152,40 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
             actual_time_minutes: Math.floor(finalSeconds / 60)
         });
 
+        // Reset local state
+        localTimerDataRef.current = { lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '' };
         setRunningTaskId(null);
         setCurrentElapsedSeconds(0);
-    }, [runningTaskId, runningTask, onUpdateTask]);
+    }, [runningTaskId, onUpdateTask]);
 
     // Start timer for a task
     const startTimer = useCallback(async (task: Task): Promise<boolean> => {
         // EXCLUSIVE CONTROL: Check if another timer is running
         if (runningTaskId && runningTaskId !== task.id) {
-            // Get the currently running task's title for the confirmation message
-            const runningTaskTitle = runningTask?.title || '別のタスク';
+            const runningTaskTitle = runningTask?.title || localTimerDataRef.current.taskTitle || '別のタスク';
 
-            // Require explicit user confirmation before switching
             const confirmed = window.confirm(
                 `「${runningTaskTitle}」でタイマーが実行中です。\n\n停止して「${task.title || 'このタスク'}」を開始しますか？`
             );
 
             if (!confirmed) {
-                return false; // User cancelled - do not switch
+                return false;
             }
 
-            // User confirmed - stop current timer first
             await stopCurrentTimer();
         }
 
         setIsLoading(true);
         try {
-            // Start the new timer
             const now = new Date().toISOString();
+
+            // Store timer data locally BEFORE the DB call
+            localTimerDataRef.current = {
+                lastStartedAt: now,
+                baseElapsedSeconds: task.total_elapsed_seconds ?? 0,
+                taskTitle: task.title,
+            };
+
             await onUpdateTask(task.id, {
                 is_timer_running: true,
                 last_started_at: now
@@ -197,19 +210,19 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
 
     // Complete timer (stop and mark task as done)
     const completeTimer = useCallback(async () => {
-        if (!runningTaskId || !runningTask) return;
+        if (!runningTaskId) return;
 
         setIsLoading(true);
         try {
-            // Calculate final elapsed time
-            let finalSeconds = runningTask.total_elapsed_seconds ?? 0;
-            if (runningTask.last_started_at) {
-                const startTime = new Date(runningTask.last_started_at).getTime();
+            const localData = localTimerDataRef.current;
+
+            let finalSeconds = localData.baseElapsedSeconds;
+            if (localData.lastStartedAt) {
+                const startTime = new Date(localData.lastStartedAt).getTime();
                 const additionalSeconds = Math.floor((Date.now() - startTime) / 1000);
                 finalSeconds += additionalSeconds;
             }
 
-            // Update task: stop timer AND mark as done
             await onUpdateTask(runningTaskId, {
                 is_timer_running: false,
                 last_started_at: null,
@@ -218,14 +231,15 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 status: 'done'
             });
 
+            localTimerDataRef.current = { lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '' };
             setRunningTaskId(null);
             setCurrentElapsedSeconds(0);
         } finally {
             setIsLoading(false);
         }
-    }, [runningTaskId, runningTask, onUpdateTask]);
+    }, [runningTaskId, onUpdateTask]);
 
-    // Interrupt timer (same as pause, but UI indicates "returning to list")
+    // Interrupt timer (same as pause)
     const interruptTimer = useCallback(async () => {
         await pauseTimer();
     }, [pauseTimer]);

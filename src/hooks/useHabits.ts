@@ -199,6 +199,19 @@ export function useHabits() {
         }
     }, [fetchHabits])
 
+    // Optimistic update for child task status (used by TodayView)
+    const updateChildTaskStatus = useCallback((habitId: string, taskId: string, newStatus: string) => {
+        setHabits(prev => prev.map(h => {
+            if (h.habit.id !== habitId) return h
+            return {
+                ...h,
+                childTasks: h.childTasks.map(c =>
+                    c.id === taskId ? { ...c, status: newStatus } : c
+                ),
+            }
+        }))
+    }, [])
+
     // Split habits
     const todayHabits = useMemo(() => habits.filter(h => h.isTodayHabit), [habits])
     const otherHabits = useMemo(() => habits.filter(h => !h.isTodayHabit), [habits])
@@ -215,6 +228,7 @@ export function useHabits() {
         isLoading,
         error,
         toggleCompletion,
+        updateChildTaskStatus,
         removeHabit,
         refetch: fetchHabits,
     }
