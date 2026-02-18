@@ -183,11 +183,12 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     useEffect(() => { setEditValue(data?.label ?? '') }, [data?.label])
 
     // Single tap → edit mode (detect selected transition)
+    const isNodeSelected = data?.isSelected ?? false
     useEffect(() => {
-        if (selected && !wasSelectedRef.current) {
+        if (isNodeSelected && !wasSelectedRef.current) {
             setIsEditing(true)
         }
-        if (!selected && wasSelectedRef.current) {
+        if (!isNodeSelected && wasSelectedRef.current) {
             // Deselected → save & exit edit mode
             if (inputRef.current) {
                 const val = inputRef.current.value
@@ -195,8 +196,8 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
             }
             setIsEditing(false)
         }
-        wasSelectedRef.current = !!selected
-    }, [selected, data?.label, data?.onSave])
+        wasSelectedRef.current = isNodeSelected
+    }, [isNodeSelected, data?.label, data?.onSave])
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -216,7 +217,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
         <div
             className={cn(
                 "w-[260px] h-[56px] rounded-xl bg-primary text-primary-foreground px-4 flex items-center shadow-md transition-all",
-                selected && "ring-2 ring-white ring-offset-2"
+                isNodeSelected && "ring-2 ring-white ring-offset-2"
             )}
         >
             <Handle type="source" position={Position.Right} className="!bg-primary-foreground !w-2 !h-2" />
@@ -253,13 +254,14 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
 
     useEffect(() => { setEditValue(data?.label ?? '') }, [data?.label])
 
-    // Single tap → edit mode (detect selected transition)
+    // Single tap → edit mode (detect isSelected transition)
+    const isNodeSelected = data?.isSelected ?? false
     useEffect(() => {
-        if (selected && !wasSelectedRef.current) {
+        if (isNodeSelected && !wasSelectedRef.current) {
             setIsEditing(true)
             justSavedRef.current = false
         }
-        if (!selected && wasSelectedRef.current) {
+        if (!isNodeSelected && wasSelectedRef.current) {
             // Deselected → save & exit edit mode
             if (inputRef.current) {
                 const val = inputRef.current.value
@@ -268,8 +270,8 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
             setIsEditing(false)
             justSavedRef.current = false
         }
-        wasSelectedRef.current = !!selected
-    }, [selected, data?.label, data?.onSave])
+        wasSelectedRef.current = isNodeSelected
+    }, [isNodeSelected, data?.label, data?.onSave])
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -290,8 +292,8 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
             className={cn(
                 "relative w-[240px] px-3 py-2 rounded-lg bg-background border text-sm shadow-sm flex flex-col gap-1 transition-all min-h-[44px]",
                 isHabit && "border-blue-400 bg-blue-50 dark:bg-blue-950/30",
-                selected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
-                selected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                isNodeSelected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
+                isNodeSelected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
             )}
         >
             <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
@@ -557,6 +559,7 @@ function MobileMindMapContent({
             position: { x: 0, y: 0 },
             data: {
                 label: project?.title ?? 'Project',
+                isSelected: selectedNodeId === projectId,
                 onSave: async (newTitle: string) => onUpdateProject?.(projectId, newTitle),
                 onAddChild: async () => onCreateGroup?.('新しいグループ'),
             },
@@ -622,17 +625,47 @@ function MobileMindMapContent({
                     },
                     // Enter2回目: 兄弟ノード作成（キーボード維持）
                     onAddSibling: async () => {
-                        const rootGroupId = findRootGroupIdUtil(task.id, taskMap)
-                        const newTask = await onCreateTask?.(rootGroupId, '', task.parent_task_id || undefined)
-                        if (newTask) setSelectedNodeId(newTask.id)
+                        // テキストを先に保存
+                        const activeInput = document.activeElement as HTMLInputElement
+                        if (activeInput?.tagName === 'INPUT') {
+                            const currentText = activeInput.value
+                            if (currentText !== task.title) {
+                                onUpdateTask?.(task.id, { title: currentText })
+                            }
+                        }
+
+                        if (!task.parent_task_id) {
+                            const newTask = await onCreateGroup?.('')
+                            if (newTask) {
+                                setSelectedNodeId(newTask.id)
+                                focusNewNode(newTask.id)
+                            }
+                        } else {
+                            const rootGroupId = findRootGroupIdUtil(task.id, taskMap)
+                            const newTask = await onCreateTask?.(rootGroupId, '', task.parent_task_id)
+                            if (newTask) {
+                                setSelectedNodeId(newTask.id)
+                                focusNewNode(newTask.id)
+                            }
+                        }
                     },
                     // Tab/子ノードボタン: 子ノード作成してフォーカス
                     onAddChildAndFocus: async () => {
+                        // テキストを先に保存
+                        const activeInput = document.activeElement as HTMLInputElement
+                        if (activeInput?.tagName === 'INPUT') {
+                            const currentText = activeInput.value
+                            if (currentText !== task.title) {
+                                onUpdateTask?.(task.id, { title: currentText })
+                            }
+                        }
+
                         const rootGroupId = findRootGroupIdUtil(task.id, taskMap)
                         const newTask = await onCreateTask?.(rootGroupId, '', task.id)
                         if (newTask) {
                             setCollapsedTaskIds(prev => { const n = new Set(prev); n.delete(task.id); return n })
                             setSelectedNodeId(newTask.id)
+                            focusNewNode(newTask.id)
                         }
                     },
                     onUpdatePriority: (priority: number) => onUpdateTask?.(task.id, { priority }),
@@ -690,24 +723,59 @@ function MobileMindMapContent({
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
+
+        // テキストを先に保存
+        const activeInput = document.activeElement as HTMLInputElement
+        if (activeInput?.tagName === 'INPUT') {
+            const currentText = activeInput.value
+            if (currentText !== task.title) {
+                onUpdateTask?.(selectedNodeId, { title: currentText })
+            }
+        }
+
         const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
         onCreateTask?.(rootGroupId, '', selectedNodeId).then(newTask => {
             if (newTask) {
                 setCollapsedTaskIds(prev => { const n = new Set(prev); n.delete(selectedNodeId); return n })
                 setSelectedNodeId(newTask.id)
+                focusNewNode(newTask.id)
             }
         })
-    }, [selectedNodeId, taskMap, onCreateTask])
+    }, [selectedNodeId, taskMap, onCreateTask, onUpdateTask, focusNewNode])
 
     const handleAccessoryAddSibling = useCallback(() => {
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
-        const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
-        onCreateTask?.(rootGroupId, '', task.parent_task_id || undefined).then(newTask => {
-            if (newTask) setSelectedNodeId(newTask.id)
-        })
-    }, [selectedNodeId, taskMap, onCreateTask])
+
+        // テキストを先に保存
+        const activeInput = document.activeElement as HTMLInputElement
+        if (activeInput?.tagName === 'INPUT') {
+            const currentText = activeInput.value
+            if (currentText !== task.title) {
+                onUpdateTask?.(selectedNodeId, { title: currentText })
+            }
+        }
+
+        if (!task.parent_task_id) {
+            // ルートグループ → 新しいルートグループを作成
+            onCreateGroup?.('').then(newTask => {
+                if (newTask) {
+                    setSelectedNodeId(newTask.id)
+                    focusNewNode(newTask.id)
+                }
+            })
+        } else {
+            // 通常タスク → 同じ親の下に兄弟を作成
+            const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
+            onCreateTask?.(rootGroupId, '', task.parent_task_id).then(newTask => {
+                if (newTask) {
+                    setSelectedNodeId(newTask.id)
+                    focusNewNode(newTask.id)
+                }
+            })
+        }
+    }, [selectedNodeId, taskMap, onCreateTask, onCreateGroup, onUpdateTask, focusNewNode])
 
     const handleAccessoryDelete = useCallback(() => {
         if (!selectedNodeId) return
@@ -723,6 +791,25 @@ function MobileMindMapContent({
         if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur()
         }
+    }, [])
+
+    const focusNewNode = useCallback((nodeId: string) => {
+        const startTime = Date.now()
+        const timer = setInterval(() => {
+            if (Date.now() - startTime > 1000) {
+                clearInterval(timer)
+                return
+            }
+            const nodeEl = document.querySelector(`[data-id="${nodeId}"]`)
+            if (nodeEl) {
+                const input = nodeEl.querySelector('input') as HTMLInputElement
+                if (input) {
+                    input.focus()
+                    input.select()
+                    clearInterval(timer)
+                }
+            }
+        }, 30)
     }, [])
 
     return (
@@ -755,16 +842,16 @@ function MobileMindMapContent({
             </ReactFlow>
 
             {/* Keyboard Accessory Bar - XMind風レイアウト */}
-            {selectedNodeId && isKeyboardOpen && (
+            {selectedNodeId && (
                 <div
                     className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
-                    style={{ bottom: `${keyboardHeight + 88}px` }}
+                    style={{ bottom: isKeyboardOpen ? `${keyboardHeight + 132}px` : '56px' }}
                     onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
                 >
                     <div className="flex items-center justify-between px-2 py-1.5 safe-area-inset-bottom">
                         {/* 左: 閉じる */}
                         <button
+                            onPointerDown={(e) => e.preventDefault()}
                             onClick={handleAccessoryDismiss}
                             className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-muted-foreground active:bg-muted transition-colors"
                         >
@@ -776,6 +863,7 @@ function MobileMindMapContent({
                         <div className="flex items-center gap-0.5">
                             {/* 兄弟ノード追加 */}
                             <button
+                                onPointerDown={(e) => e.preventDefault()}
                                 onClick={handleAccessoryAddSibling}
                                 className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
                                 title="兄弟ノード追加"
@@ -789,6 +877,7 @@ function MobileMindMapContent({
 
                             {/* 子ノード作成 */}
                             <button
+                                onPointerDown={(e) => e.preventDefault()}
                                 onClick={handleAccessoryAddChild}
                                 className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
                                 title="子ノード追加"
@@ -802,6 +891,7 @@ function MobileMindMapContent({
 
                             {/* 削除 */}
                             <button
+                                onPointerDown={(e) => e.preventDefault()}
                                 onClick={handleAccessoryDelete}
                                 className="flex items-center justify-center w-10 h-9 rounded-md text-destructive active:bg-destructive/10 transition-colors"
                                 title="削除"
