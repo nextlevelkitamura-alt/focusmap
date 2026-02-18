@@ -147,6 +147,10 @@
 
 ## 完了履歴
 
+- 2026-02-18: **API エラーハンドリング強化** 完了 (C, /quality error-handling, 4ファイル7ハンドラ)
+- 2026-02-18: **projects API テスト追加** 完了 (C, /test, 12テスト Pass)
+- 2026-02-18: **useCalendarEvents.ts テスト追加** 完了 (C, /test, 11テスト Pass)
+- 2026-02-18: **useTaskCalendarSync.ts テスト追加** 完了 (C, /test, 13テスト Pass)
 - 2026-02-18: **useMindMapSync.ts テスト追加** 完了 (C, /test, 25テスト Pass)
 - 2026-02-17: **今日ビュー習慣バー強化 (Phase 6)** 完了（モックデータ→useHabits Hook、週間ドット実データ、子タスクチェックボックス）
 - 2026-02-17: **習慣API + Hook (Phase 5)** 完了（habit_completions テーブル、API、useHabits Hook、ストリーク計算）

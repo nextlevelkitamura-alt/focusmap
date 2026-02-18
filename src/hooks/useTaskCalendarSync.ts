@@ -29,7 +29,7 @@ export function useTaskCalendarSync({
 }: UseTaskCalendarSyncOptions) {
   const [status, setStatus] = useState<SyncStatus>('idle')
   const [error, setError] = useState<Error | null>(null)
-  const [retryCount, setRetryCount] = useState(0)
+  const retryCountRef = useRef(0)
   const maxRetries = 3
 
   // 前回の値を保存
@@ -73,8 +73,9 @@ export function useTaskCalendarSync({
 
         // 404 エラーはリトライしない（リソースが見つからないため）
         if (response.status === 404) {
-          setStatus('idle')  // 404 はリトライせず、idle に戻す
-          throw new Error(errorData.error || `Sync failed: ${response.statusText}`)
+          setStatus('idle')
+          retryCountRef.current = 0
+          return
         }
 
         throw new Error(errorData.error || `Sync failed: ${response.statusText}`)
@@ -89,21 +90,23 @@ export function useTaskCalendarSync({
       }
 
       setStatus('success')
-      setRetryCount(0)
+      retryCountRef.current = 0
       onSyncSuccess?.()
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error')
 
       // リトライ可能なエラーの場合
-      if (retryCount < maxRetries) {
-        setRetryCount(prev => prev + 1)
+      if (retryCountRef.current < maxRetries) {
+        const delay = Math.pow(2, retryCountRef.current) * 1000
+        retryCountRef.current += 1
         // 指数バックオフ: 1秒, 2秒, 4秒
         setTimeout(() => {
           syncToCalendar(method)
-        }, Math.pow(2, retryCount) * 1000)
+        }, delay)
       } else {
         setStatus('error')
         setError(error)
+        retryCountRef.current = 0
         onSyncError?.(error)
       }
     }
@@ -157,7 +160,7 @@ export function useTaskCalendarSync({
 
   // リトライ関数（UI から呼び出す用）
   const retry = () => {
-    setRetryCount(0)
+    retryCountRef.current = 0
     const hasAllFields = scheduled_at && estimated_time && calendar_id
 
     if (hasAllFields && !google_event_id) {
