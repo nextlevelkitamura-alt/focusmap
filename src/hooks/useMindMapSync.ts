@@ -321,6 +321,7 @@ export function useMindMapSync({
 
     // --- タスク操作 ---
     const createTask = useCallback(async (groupId: string, title: string = "New Task", parentTaskId: string | null = null): Promise<Task | null> => {
+        console.log('[Sync] createTask called:', { groupId: groupId?.slice(0, 8), title, parentTaskId: parentTaskId?.slice(0, 8) });
         const optimisticId = crypto.randomUUID();
         const now = new Date().toISOString();
 
@@ -379,19 +380,21 @@ export function useMindMapSync({
         // Background sync: 親INSERT待機 → 直接INSERT → 失敗時APIルートフォールバック（リトライあり）
         const insertPromise = (async () => {
             try {
+                console.log('[Sync] createTask starting INSERT:', { optimisticId: optimisticId.slice(0, 8), parentTaskId: effectiveParentId?.slice(0, 8), title, groupId });
+
                 // 親タスクの INSERT 完了を待機
                 if (effectiveParentId) {
                     const parentPending = pendingInserts.current.get(effectiveParentId);
                     if (parentPending) {
-                        console.log('[Sync] Waiting for parent INSERT:', effectiveParentId);
+                        console.log('[Sync] Waiting for parent INSERT:', effectiveParentId.slice(0, 8));
                         await parentPending;
-                        console.log('[Sync] Parent INSERT completed:', effectiveParentId);
+                        console.log('[Sync] Parent INSERT completed:', effectiveParentId.slice(0, 8));
                     }
 
                     // 親タスクが DB に存在することを確認（最大 3 回試行、500ms 間隔）
                     let parentExists = false;
                     for (let attempt = 0; attempt < 3; attempt++) {
-                        const { data: parentTask } = await supabase
+                        const { data: parentTask, error: parentError } = await supabase
                             .from('tasks')
                             .select('id')
                             .eq('id', effectiveParentId)
@@ -399,12 +402,12 @@ export function useMindMapSync({
 
                         if (parentTask) {
                             parentExists = true;
-                            console.log('[Sync] Parent task exists in DB:', effectiveParentId);
+                            console.log('[Sync] Parent task exists in DB:', effectiveParentId.slice(0, 8));
                             break;
                         }
 
+                        console.log(`[Sync] Parent task not found (attempt ${attempt + 1}/3):`, parentError?.message);
                         if (attempt < 2) {
-                            console.log(`[Sync] Parent task not found, retrying (${attempt + 1}/3)...`);
                             await new Promise(resolve => setTimeout(resolve, 500));
                         }
                     }
@@ -415,34 +418,37 @@ export function useMindMapSync({
                     }
                 }
 
+                // 全フィールドを含むINSERT（createGroupと同等の完全性）
                 const { error: insertError } = await supabase.from('tasks').insert({
                     id: optimisticId,
                     user_id: userId,
                     project_id: projectId,
                     parent_task_id: effectiveParentId,
                     is_group: false,
-                    title,
+                    title: title || '',
                     status: 'todo',
                     order_index: maxOrder,
                     actual_time_minutes: 0,
                     estimated_time: 0,
+                    is_habit: false,
+                    habit_frequency: null,
+                    habit_icon: null,
                 });
 
                 if (!insertError) {
-                    console.log('[Sync] INSERT success:', optimisticId);
+                    console.log('[Sync] INSERT success:', optimisticId.slice(0, 8));
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
 
-                console.warn('[Sync] Direct INSERT failed, trying API route:', insertError.message);
+                console.warn('[Sync] Direct INSERT failed:', { code: insertError.code, message: insertError.message, details: insertError.details, hint: insertError.hint });
 
                 // API route を呼ぶ前に、親タスクの INSERT 完了を再度確認
                 if (effectiveParentId) {
                     const parentPending = pendingInserts.current.get(effectiveParentId);
                     if (parentPending) {
-                        console.log('[Sync] Waiting for parent INSERT before API call:', effectiveParentId);
+                        console.log('[Sync] Waiting for parent INSERT before API call:', effectiveParentId.slice(0, 8));
                         await parentPending;
-                        console.log('[Sync] Parent INSERT completed before API call:', effectiveParentId);
                     }
                 }
 
@@ -459,14 +465,14 @@ export function useMindMapSync({
                 });
 
                 if (response.ok) {
-                    console.log('[Sync] API INSERT success:', optimisticId);
+                    console.log('[Sync] API INSERT success:', optimisticId.slice(0, 8));
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
 
                 const errorText = await response.text();
                 console.error('[Sync] API INSERT failed:', errorText);
-                console.error('[Sync] createTask ROLLBACK:', optimisticId);
+                console.error('[Sync] createTask ROLLBACK:', optimisticId.slice(0, 8));
                 pendingOptimisticTasks.current.delete(optimisticId);
                 setAllTasks(prev => prev.filter(t => t.id !== optimisticId));
             } catch (e) {
