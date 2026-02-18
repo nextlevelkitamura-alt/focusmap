@@ -336,26 +336,36 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
 
                 {/* Title */}
                 {isEditing ? (
-                    <input
-                        ref={inputRef}
-                        className="nodrag nopan flex-1 bg-transparent border-none text-base focus:outline-none min-w-0"
-                        value={editValue}
-                        onChange={(e) => { setEditValue(e.target.value) }}
-                        onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
-                        onFocus={(e) => { e.target.scrollIntoView = () => {} }}
-                        enterKeyHint="done"
-                        onKeyDown={(e) => {
-                            if (e.nativeEvent.isComposing) return
-                            if (e.key === 'Enter') {
-                                e.preventDefault()
-                                // Enter: テキスト保存 + キーボード閉じる + 選択解除
-                                if (editValue !== data?.label) data?.onSave?.(editValue)
-                                inputRef.current?.blur()
-                                setIsEditing(false)
-                            }
-                            if (e.key === 'Escape') { setEditValue(data?.label ?? ''); setIsEditing(false) }
-                        }}
-                    />
+                    data?.isProxyTarget ? (
+                        // Proxy mode: bridge input captures keystrokes, display here with fake cursor
+                        <div className="nodrag nopan flex-1 text-base min-w-0 flex items-center">
+                            <span>{data.proxyText}</span>
+                            <span
+                                className="inline-block w-0.5 h-[1.1em] bg-foreground/80 ml-px"
+                                style={{ animation: 'proxy-caret 1s step-end infinite' }}
+                            />
+                        </div>
+                    ) : (
+                        <input
+                            ref={inputRef}
+                            className="nodrag nopan flex-1 bg-transparent border-none text-base focus:outline-none min-w-0"
+                            value={editValue}
+                            onChange={(e) => { setEditValue(e.target.value) }}
+                            onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
+                            onFocus={(e) => { e.target.scrollIntoView = () => {} }}
+                            enterKeyHint="done"
+                            onKeyDown={(e) => {
+                                if (e.nativeEvent.isComposing) return
+                                if (e.key === 'Enter') {
+                                    e.preventDefault()
+                                    if (editValue !== data?.label) data?.onSave?.(editValue)
+                                    inputRef.current?.blur()
+                                    setIsEditing(false)
+                                }
+                                if (e.key === 'Escape') { setEditValue(data?.label ?? ''); setIsEditing(false) }
+                            }}
+                        />
+                    )
                 ) : (
                     <span className={cn("flex-1 text-sm truncate", isDone && "line-through text-muted-foreground")}>
                         {data?.label || ''}
@@ -538,6 +548,10 @@ function MobileMindMapContent({
     // Hidden bridge input to maintain keyboard during node transitions
     const bridgeInputRef = useRef<HTMLInputElement>(null)
 
+    // Text proxy: bridge captures keystrokes and forwards to new node display
+    const [proxyTargetId, setProxyTargetId] = useState<string | null>(null)
+    const [proxyText, setProxyText] = useState('')
+
     // Build task maps
     const { taskMap, childrenMap } = useMemo(() => {
         const all = [...groups, ...tasks]
@@ -714,17 +728,38 @@ function MobileMindMapContent({
         return { layoutNodes: layouted, edges: layoutedEdges }
     }, [project, groups, tasks, childrenMap, taskMap, collapsedTaskIds, selectedNodeId, onUpdateProject, onCreateGroup, onUpdateTask, onDeleteTask, onDeleteGroup, onCreateTask])
 
+    // Proxy text augmentation (Dagre 再計算を避けるため layout useMemo とは分離)
+    const augmentedNodes = useMemo(() => {
+        if (!proxyTargetId) return layoutNodes
+        return layoutNodes.map(node => {
+            if (node.id === proxyTargetId) {
+                return { ...node, data: { ...node.data, proxyText, isProxyTarget: true } }
+            }
+            return node
+        })
+    }, [layoutNodes, proxyTargetId, proxyText])
+
     const handleNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+        if (proxyTargetId) {
+            if (proxyText) onUpdateTask?.(proxyTargetId, { title: proxyText })
+            setProxyTargetId(null)
+            setProxyText('')
+        }
         setSelectedNodeId(node.id)
-    }, [])
+    }, [proxyTargetId, proxyText, onUpdateTask])
 
     const handlePaneClick = useCallback(() => {
+        if (proxyTargetId) {
+            if (proxyText) onUpdateTask?.(proxyTargetId, { title: proxyText })
+            setProxyTargetId(null)
+            setProxyText('')
+        }
         setSelectedNodeId(null)
         // 背景タップ → キーボード収納
         if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur()
         }
-    }, [])
+    }, [proxyTargetId, proxyText, onUpdateTask])
 
     // --- focusNewNode (must be defined BEFORE handleAccessoryAddChild/Sibling) ---
     const focusNewNode = useCallback((nodeId: string, useBridge = false) => {
@@ -763,10 +798,22 @@ function MobileMindMapContent({
 
     // Keyboard accessory bar callbacks for the selected node
     const selectedTask = selectedNodeId ? taskMap.get(selectedNodeId) : null
+    // --- Proxy 終了ヘルパー ---
+    const endProxy = useCallback((save = true) => {
+        if (proxyTargetId && save && proxyText) {
+            onUpdateTask?.(proxyTargetId, { title: proxyText })
+        }
+        setProxyTargetId(null)
+        setProxyText('')
+    }, [proxyTargetId, proxyText, onUpdateTask])
+
     const handleAccessoryAddChild = useCallback(() => {
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
+
+        // 進行中の proxy を保存終了
+        endProxy()
 
         // テキストを先に保存
         const activeInput = document.activeElement as HTMLInputElement
@@ -777,7 +824,7 @@ function MobileMindMapContent({
             }
         }
 
-        // ブリッジ input にフォーカスしてキーボード維持
+        // ブリッジ input にフォーカスしてキーボード維持（ジェスチャーコンテキスト内）
         bridgeInputRef.current?.focus()
 
         const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
@@ -785,15 +832,20 @@ function MobileMindMapContent({
             if (newTask) {
                 setCollapsedTaskIds(prev => { const n = new Set(prev); n.delete(selectedNodeId); return n })
                 setSelectedNodeId(newTask.id)
-                focusNewNode(newTask.id)
+                // proxy モード開始: bridge がテキストを受け取り、ノードに表示
+                setProxyTargetId(newTask.id)
+                setProxyText('')
             }
         })
-    }, [selectedNodeId, taskMap, onCreateTask, onUpdateTask, focusNewNode])
+    }, [selectedNodeId, taskMap, onCreateTask, onUpdateTask, endProxy])
 
     const handleAccessoryAddSibling = useCallback(() => {
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
+
+        // 進行中の proxy を保存終了
+        endProxy()
 
         // テキストを先に保存
         const activeInput = document.activeElement as HTMLInputElement
@@ -804,33 +856,41 @@ function MobileMindMapContent({
             }
         }
 
-        // ブリッジ input にフォーカスしてキーボード維持
+        // ブリッジ input にフォーカスしてキーボード維持（ジェスチャーコンテキスト内）
         bridgeInputRef.current?.focus()
 
         if (!task.parent_task_id) {
-            // ルートグループ → 新しいルートグループを作成
             onCreateGroup?.('').then(newTask => {
                 if (newTask) {
                     setSelectedNodeId(newTask.id)
-                    focusNewNode(newTask.id)
+                    setProxyTargetId(newTask.id)
+                    setProxyText('')
                 }
             })
         } else {
-            // 通常タスク → 同じ親の下に兄弟を作成
             const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
             onCreateTask?.(rootGroupId, '', task.parent_task_id).then(newTask => {
                 if (newTask) {
                     setSelectedNodeId(newTask.id)
-                    focusNewNode(newTask.id)
+                    setProxyTargetId(newTask.id)
+                    setProxyText('')
                 }
             })
         }
-    }, [selectedNodeId, taskMap, onCreateTask, onCreateGroup, onUpdateTask, focusNewNode])
+    }, [selectedNodeId, taskMap, onCreateTask, onCreateGroup, onUpdateTask, endProxy])
 
     const handleAccessoryDelete = useCallback(() => {
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
+
+        // proxy をクリア（削除対象ノードのため保存不要）
+        if (proxyTargetId === selectedNodeId) {
+            setProxyTargetId(null)
+            setProxyText('')
+        } else {
+            endProxy()
+        }
 
         // 削除前に次のフォーカス先を決定
         let nextNodeId: string | null = null
@@ -838,43 +898,35 @@ function MobileMindMapContent({
             const siblings = childrenMap.get(task.parent_task_id) ?? []
             const currentIndex = siblings.findIndex(s => s.id === selectedNodeId)
             if (currentIndex >= 0) {
-                if (currentIndex + 1 < siblings.length) {
-                    // 次の兄弟ノード
-                    nextNodeId = siblings[currentIndex + 1].id
-                } else if (currentIndex - 1 >= 0) {
-                    // 前の兄弟ノード
-                    nextNodeId = siblings[currentIndex - 1].id
-                } else {
-                    // 兄弟がない → 親ノード
-                    nextNodeId = task.parent_task_id
-                }
+                if (currentIndex + 1 < siblings.length) nextNodeId = siblings[currentIndex + 1].id
+                else if (currentIndex - 1 >= 0) nextNodeId = siblings[currentIndex - 1].id
+                else nextNodeId = task.parent_task_id
             }
         }
 
         // 次のノードがある場合、ブリッジ input でキーボード維持
-        if (nextNodeId) {
-            bridgeInputRef.current?.focus()
-        }
+        if (nextNodeId) bridgeInputRef.current?.focus()
 
         // 削除実行
         if (!task.parent_task_id) onDeleteGroup?.(selectedNodeId)
         else onDeleteTask?.(selectedNodeId)
 
-        // 次のノードを選択してフォーカス
+        // 次のノードを選択
         if (nextNodeId) {
             setSelectedNodeId(nextNodeId)
             focusNewNode(nextNodeId)
         } else {
             setSelectedNodeId(null)
         }
-    }, [selectedNodeId, taskMap, childrenMap, onDeleteGroup, onDeleteTask, focusNewNode])
+    }, [selectedNodeId, taskMap, childrenMap, onDeleteGroup, onDeleteTask, focusNewNode, proxyTargetId, endProxy])
 
     const handleAccessoryDismiss = useCallback(() => {
+        endProxy()
         setSelectedNodeId(null)
         if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur()
         }
-    }, [])
+    }, [endProxy])
 
     // マインドマップ表示中はbodyのスクロールを防止
     useEffect(() => {
@@ -892,12 +944,30 @@ function MobileMindMapContent({
 
     return (
         <div className="w-full h-full" style={{ touchAction: 'none', overflow: 'hidden', overscrollBehavior: 'none' }}>
-            {/* ノード切替時にキーボードを維持するためのブリッジ input */}
-            {/* iOS: 画面内に配置 + 非readOnly でキーボードを維持する */}
+            {/* Proxy caret blink animation */}
+            <style>{`@keyframes proxy-caret{0%,49%{opacity:1}50%,100%{opacity:0}}`}</style>
+            {/* ブリッジ input: キーボード維持 + proxy テキスト入力用 */}
             <input
                 ref={bridgeInputRef}
-                value=""
-                onChange={() => {}}
+                value={proxyTargetId ? proxyText : ''}
+                onChange={(e) => { if (proxyTargetId) setProxyText(e.target.value) }}
+                onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return
+                    if (e.key === 'Enter' && proxyTargetId) {
+                        e.preventDefault()
+                        if (proxyText) onUpdateTask?.(proxyTargetId, { title: proxyText })
+                        setProxyTargetId(null)
+                        setProxyText('')
+                        bridgeInputRef.current?.blur()
+                    }
+                }}
+                onBlur={() => {
+                    if (proxyTargetId) {
+                        if (proxyText) onUpdateTask?.(proxyTargetId, { title: proxyText })
+                        setProxyTargetId(null)
+                        setProxyText('')
+                    }
+                }}
                 style={{
                     position: 'fixed',
                     bottom: '50%',
@@ -919,7 +989,7 @@ function MobileMindMapContent({
                 enterKeyHint="done"
             />
             <ReactFlow
-                nodes={layoutNodes}
+                nodes={augmentedNodes}
                 edges={edges}
                 nodeTypes={mobileNodeTypes}
                 defaultViewport={defaultViewport}
