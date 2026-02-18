@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
+import React, { useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react'
 import ReactFlow, {
     Node,
     Edge,
@@ -199,10 +199,18 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
         wasSelectedRef.current = isNodeSelected
     }, [isNodeSelected, data?.label, data?.onSave])
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (isEditing && inputRef.current) {
-            inputRef.current.focus()
-            inputRef.current.select()
+            const input = inputRef.current
+            input.focus()
+            input.select()
+            const timer = setTimeout(() => {
+                if (document.activeElement !== input) {
+                    input.focus()
+                    input.select()
+                }
+            }, 80)
+            return () => clearTimeout(timer)
         }
     }, [isEditing])
 
@@ -273,10 +281,18 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
         wasSelectedRef.current = isNodeSelected
     }, [isNodeSelected, data?.label, data?.onSave])
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (isEditing && inputRef.current) {
-            inputRef.current.focus()
-            inputRef.current.select()
+            const input = inputRef.current
+            input.focus()
+            input.select()
+            const timer = setTimeout(() => {
+                if (document.activeElement !== input) {
+                    input.focus()
+                    input.select()
+                }
+            }, 80)
+            return () => clearTimeout(timer)
         }
     }, [isEditing])
 
@@ -726,9 +742,20 @@ function MobileMindMapContent({
             if (nodeEl) {
                 const input = nodeEl.querySelector('input') as HTMLInputElement
                 if (input) {
+                    // ブリッジからテキスト入力システムを切り離してから新しい input にフォーカス
+                    if (bridgeInputRef.current && document.activeElement === bridgeInputRef.current) {
+                        bridgeInputRef.current.blur()
+                    }
                     input.focus()
                     input.select()
                     clearInterval(timer)
+                    // iOS: フォーカス移行が不完全な場合のリトライ
+                    requestAnimationFrame(() => {
+                        if (document.activeElement !== input) {
+                            input.focus()
+                            input.select()
+                        }
+                    })
                 }
             }
         }, 30)
