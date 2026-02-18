@@ -423,7 +423,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                                     <Button variant="outline" size="sm" className="w-full justify-start text-sm h-9">
                                         <CalendarIcon className="w-4 h-4 mr-2" />
                                         {data?.scheduled_at ? (
-                                            <span>{new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                            <span suppressHydrationWarning>{new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                                         ) : <span className="text-muted-foreground">日時を設定</span>}
                                     </Button>
                                 }
@@ -464,7 +464,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                     {hasEstimatedTime && <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} />}
                     {hasPriority && <PriorityBadge value={data.priority as Priority} />}
                     {hasScheduledAt && (
-                        <span className="text-[11px] text-muted-foreground ml-auto">
+                        <span className="text-[11px] text-muted-foreground ml-auto" suppressHydrationWarning>
                             {new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         </span>
                     )}
@@ -717,6 +717,26 @@ function MobileMindMapContent({
         }
     }, [])
 
+    // --- focusNewNode (must be defined BEFORE handleAccessoryAddChild/Sibling) ---
+    const focusNewNode = useCallback((nodeId: string) => {
+        const startTime = Date.now()
+        const timer = setInterval(() => {
+            if (Date.now() - startTime > 1000) {
+                clearInterval(timer)
+                return
+            }
+            const nodeEl = document.querySelector(`[data-id="${nodeId}"]`)
+            if (nodeEl) {
+                const input = nodeEl.querySelector('input') as HTMLInputElement
+                if (input) {
+                    input.focus()
+                    input.select()
+                    clearInterval(timer)
+                }
+            }
+        }, 30)
+    }, [])
+
     // Keyboard accessory bar callbacks for the selected node
     const selectedTask = selectedNodeId ? taskMap.get(selectedNodeId) : null
     const handleAccessoryAddChild = useCallback(() => {
@@ -791,25 +811,6 @@ function MobileMindMapContent({
         if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur()
         }
-    }, [])
-
-    const focusNewNode = useCallback((nodeId: string) => {
-        const startTime = Date.now()
-        const timer = setInterval(() => {
-            if (Date.now() - startTime > 1000) {
-                clearInterval(timer)
-                return
-            }
-            const nodeEl = document.querySelector(`[data-id="${nodeId}"]`)
-            if (nodeEl) {
-                const input = nodeEl.querySelector('input') as HTMLInputElement
-                if (input) {
-                    input.focus()
-                    input.select()
-                    clearInterval(timer)
-                }
-            }
-        }, 30)
     }, [])
 
     return (
