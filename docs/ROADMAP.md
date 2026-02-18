@@ -104,6 +104,25 @@
   - 環境変数テンプレート整備
 - ❌ **Renderへのデプロイ対応** → キャンセル（Vercel継続使用）
 
+#### 品質基盤（2〜3年後の成長に備えた基盤整備）
+- 🔥 **テスト基盤整備** → [計画](plans/features/quality-improvement.md)
+  - Phase 1: E2Eテスト導入（Playwright）○
+    - ログイン、タスク作成、カレンダー同期、タイマー、設定の5フロー
+  - Phase 1: Unitテスト導入（Vitest）○
+    - useMindMapSync、useTaskCalendarSync、useCalendarEvents の主要3 Hooks
+  - 目標カバレッジ: 60%以上
+- 🔥 **CI/CD強化** → [計画](plans/features/quality-improvement.md)
+  - Phase 2: GitHub Actions パイプライン構築 ○
+    - Lint + Type Check → Unit Test → E2E Test → Build → Deploy
+  - PRマージ前の自動テスト強制実行
+- ⚡ **エラーハンドリング統一** → [計画](plans/features/quality-improvement.md)
+  - Phase 3: 共通エラーハンドラー導入 ○
+  - 全APIルート（28ファイル）+ 全Hooks（16ファイル）に適用
+  - エラーログ構造化、ユーザーメッセージ統一
+- ⚡ **巨大コンポーネント分割** → [計画](plans/features/quality-improvement.md)
+  - Phase 4: mind-map.tsx（2,328行）を10ファイルに分割 ○
+  - レイアウトロジック、ノードコンポーネント、Hooks の責務分離
+
 #### 機能拡張
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
@@ -128,6 +147,7 @@
 
 ## 完了履歴
 
+- 2026-02-18: **useMindMapSync.ts テスト追加** 完了 (C, /test, 25テスト Pass)
 - 2026-02-17: **今日ビュー習慣バー強化 (Phase 6)** 完了（モックデータ→useHabits Hook、週間ドット実データ、子タスクチェックボックス）
 - 2026-02-17: **習慣API + Hook (Phase 5)** 完了（habit_completions テーブル、API、useHabits Hook、ストリーク計算）
 - 2026-02-17: **PC版習慣ビュー + ヘッダータブ** 完了（habits-view.tsx、ヘッダーにマップ/習慣タブ）
@@ -144,6 +164,9 @@
 
 ## 現在進行中のタスク
 
+- 🔥 **品質基盤整備** → [計画](plans/features/quality-improvement.md)
+  - 優先度: 最高（今後の開発に必須）
+  - 新スキル `/test`, `/quality` の開発と並行
 - 🔧 **モバイル今日ビュー強化** → Phase 1 から開始
 - 🔧 **習慣機能強化** → Phase 6 完了、習慣ビュー強化が次の対象
 - 🔧 **グループとタスクの統合** Phase 3（旧テーブル削除）
