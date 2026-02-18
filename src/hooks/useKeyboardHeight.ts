@@ -2,13 +2,19 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-interface UseKeyboardHeightReturn {
+interface KeyboardState {
     keyboardHeight: number
     isKeyboardOpen: boolean
+    /** 可視領域の下端位置（CSS top 座標）。アクセサリーバーの配置に使用 */
+    viewportBottom: number
 }
 
-export function useKeyboardHeight(): UseKeyboardHeightReturn {
-    const [keyboardHeight, setKeyboardHeight] = useState(0)
+export function useKeyboardHeight(): KeyboardState {
+    const [state, setState] = useState<KeyboardState>({
+        keyboardHeight: 0,
+        isKeyboardOpen: false,
+        viewportBottom: typeof window !== 'undefined' ? window.innerHeight : 0,
+    })
     const rafRef = useRef<number>(0)
 
     const updateHeight = useCallback(() => {
@@ -20,8 +26,15 @@ export function useKeyboardHeight(): UseKeyboardHeightReturn {
             const vv = window.visualViewport
             // キーボードの高さ = ウィンドウ全体の高さ - visualViewport の高さ - offsetTop
             const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-            // 小さい差分はキーボードではない（アドレスバー等の変動）
-            setKeyboardHeight(height > 50 ? Math.round(height) : 0)
+            const isOpen = height > 50
+            // 可視領域の下端 = offsetTop + height（CSS top 座標系で確実な位置）
+            const bottom = Math.round(vv.offsetTop + vv.height)
+
+            setState({
+                keyboardHeight: isOpen ? Math.round(height) : 0,
+                isKeyboardOpen: isOpen,
+                viewportBottom: bottom,
+            })
         })
     }, [])
 
@@ -31,6 +44,8 @@ export function useKeyboardHeight(): UseKeyboardHeightReturn {
         const vv = window.visualViewport
         vv.addEventListener('resize', updateHeight)
         vv.addEventListener('scroll', updateHeight)
+        // 初期値を設定
+        updateHeight()
 
         return () => {
             vv.removeEventListener('resize', updateHeight)
@@ -39,8 +54,5 @@ export function useKeyboardHeight(): UseKeyboardHeightReturn {
         }
     }, [updateHeight])
 
-    return {
-        keyboardHeight,
-        isKeyboardOpen: keyboardHeight > 50,
-    }
+    return state
 }

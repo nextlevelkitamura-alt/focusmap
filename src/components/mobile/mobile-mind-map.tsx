@@ -517,7 +517,7 @@ function MobileMindMapContent({
     const reactFlow = useReactFlow()
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-    const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight()
+    const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight()
 
     // Hidden bridge input to maintain keyboard during node transitions
     const bridgeInputRef = useRef<HTMLInputElement>(null)
@@ -922,17 +922,16 @@ function MobileMindMapContent({
             {isKeyboardOpen && selectedNodeId && (
                 <div
                     className="fixed left-0 right-0 bottom-0 z-[55] bg-background md:hidden"
-                    style={{ height: `${keyboardHeight}px` }}
+                    style={{ top: `${viewportBottom}px` }}
                 />
             )}
 
-            {/* Keyboard Accessory Bar - XMind風レイアウト */}
+            {/* Keyboard Accessory Bar - top ベース配置で確実に可視領域の下端に表示 */}
             {selectedNodeId && (
                 <div
                     className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
                     style={{
-                        bottom: isKeyboardOpen ? `${keyboardHeight}px` : '64px',
-                        transition: 'bottom 0.15s ease-out',
+                        top: `${isKeyboardOpen ? viewportBottom - 48 : viewportBottom - 48 - 64}px`,
                     }}
                     onTouchStart={(e) => e.preventDefault()}
                     onMouseDown={(e) => e.preventDefault()}
