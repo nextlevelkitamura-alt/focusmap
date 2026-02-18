@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 interface UseKeyboardHeightReturn {
     keyboardHeight: number
@@ -9,15 +9,20 @@ interface UseKeyboardHeightReturn {
 
 export function useKeyboardHeight(): UseKeyboardHeightReturn {
     const [keyboardHeight, setKeyboardHeight] = useState(0)
+    const rafRef = useRef<number>(0)
 
     const updateHeight = useCallback(() => {
-        if (typeof window === 'undefined' || !window.visualViewport) return
+        // rAF でバッチング: 1フレームに1回だけ更新して安定化
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        rafRef.current = requestAnimationFrame(() => {
+            if (typeof window === 'undefined' || !window.visualViewport) return
 
-        const vv = window.visualViewport
-        // キーボードの高さ = ウィンドウ全体の高さ - visualViewport の高さ - offsetTop
-        const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-        // 小さい差分はキーボードではない（アドレスバー等の変動）
-        setKeyboardHeight(height > 50 ? Math.round(height) : 0)
+            const vv = window.visualViewport
+            // キーボードの高さ = ウィンドウ全体の高さ - visualViewport の高さ - offsetTop
+            const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+            // 小さい差分はキーボードではない（アドレスバー等の変動）
+            setKeyboardHeight(height > 50 ? Math.round(height) : 0)
+        })
     }, [])
 
     useEffect(() => {
@@ -30,6 +35,7 @@ export function useKeyboardHeight(): UseKeyboardHeightReturn {
         return () => {
             vv.removeEventListener('resize', updateHeight)
             vv.removeEventListener('scroll', updateHeight)
+            if (rafRef.current) cancelAnimationFrame(rafRef.current)
         }
     }, [updateHeight])
 

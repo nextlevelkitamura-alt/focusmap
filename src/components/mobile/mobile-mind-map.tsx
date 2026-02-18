@@ -519,6 +519,9 @@ function MobileMindMapContent({
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight()
 
+    // Hidden bridge input to maintain keyboard during node transitions
+    const bridgeInputRef = useRef<HTMLInputElement>(null)
+
     // Build task maps
     const { taskMap, childrenMap } = useMemo(() => {
         const all = [...groups, ...tasks]
@@ -708,7 +711,11 @@ function MobileMindMapContent({
     }, [])
 
     // --- focusNewNode (must be defined BEFORE handleAccessoryAddChild/Sibling) ---
-    const focusNewNode = useCallback((nodeId: string) => {
+    const focusNewNode = useCallback((nodeId: string, useBridge = false) => {
+        // ブリッジ input にフォーカスしてキーボードを維持
+        if (useBridge) {
+            bridgeInputRef.current?.focus()
+        }
         const startTime = Date.now()
         const timer = setInterval(() => {
             if (Date.now() - startTime > 1000) {
@@ -743,6 +750,9 @@ function MobileMindMapContent({
             }
         }
 
+        // ブリッジ input にフォーカスしてキーボード維持
+        bridgeInputRef.current?.focus()
+
         const rootGroupId = findRootGroupIdUtil(selectedNodeId, taskMap)
         onCreateTask?.(rootGroupId, '', selectedNodeId).then(newTask => {
             if (newTask) {
@@ -766,6 +776,9 @@ function MobileMindMapContent({
                 onUpdateTask?.(selectedNodeId, { title: currentText })
             }
         }
+
+        // ブリッジ input にフォーカスしてキーボード維持
+        bridgeInputRef.current?.focus()
 
         if (!task.parent_task_id) {
             // ルートグループ → 新しいルートグループを作成
@@ -791,10 +804,43 @@ function MobileMindMapContent({
         if (!selectedNodeId) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
+
+        // 削除前に次のフォーカス先を決定
+        let nextNodeId: string | null = null
+        if (task.parent_task_id) {
+            const siblings = childrenMap.get(task.parent_task_id) ?? []
+            const currentIndex = siblings.findIndex(s => s.id === selectedNodeId)
+            if (currentIndex >= 0) {
+                if (currentIndex + 1 < siblings.length) {
+                    // 次の兄弟ノード
+                    nextNodeId = siblings[currentIndex + 1].id
+                } else if (currentIndex - 1 >= 0) {
+                    // 前の兄弟ノード
+                    nextNodeId = siblings[currentIndex - 1].id
+                } else {
+                    // 兄弟がない → 親ノード
+                    nextNodeId = task.parent_task_id
+                }
+            }
+        }
+
+        // 次のノードがある場合、ブリッジ input でキーボード維持
+        if (nextNodeId) {
+            bridgeInputRef.current?.focus()
+        }
+
+        // 削除実行
         if (!task.parent_task_id) onDeleteGroup?.(selectedNodeId)
         else onDeleteTask?.(selectedNodeId)
-        setSelectedNodeId(null)
-    }, [selectedNodeId, taskMap, onDeleteGroup, onDeleteTask])
+
+        // 次のノードを選択してフォーカス
+        if (nextNodeId) {
+            setSelectedNodeId(nextNodeId)
+            focusNewNode(nextNodeId)
+        } else {
+            setSelectedNodeId(null)
+        }
+    }, [selectedNodeId, taskMap, childrenMap, onDeleteGroup, onDeleteTask, focusNewNode])
 
     const handleAccessoryDismiss = useCallback(() => {
         setSelectedNodeId(null)
@@ -819,6 +865,32 @@ function MobileMindMapContent({
 
     return (
         <div className="w-full h-full" style={{ touchAction: 'none', overflow: 'hidden', overscrollBehavior: 'none' }}>
+            {/* ノード切替時にキーボードを維持するためのブリッジ input */}
+            {/* iOS: 画面内に配置 + 非readOnly でキーボードを維持する */}
+            <input
+                ref={bridgeInputRef}
+                value=""
+                onChange={() => {}}
+                style={{
+                    position: 'fixed',
+                    bottom: '50%',
+                    left: '50%',
+                    opacity: 0,
+                    width: '1px',
+                    height: '1px',
+                    fontSize: '16px',
+                    pointerEvents: 'none',
+                    border: 'none',
+                    outline: 'none',
+                    padding: 0,
+                    margin: 0,
+                    caretColor: 'transparent',
+                    zIndex: -1,
+                }}
+                tabIndex={-1}
+                aria-hidden="true"
+                enterKeyHint="done"
+            />
             <ReactFlow
                 nodes={layoutNodes}
                 edges={edges}
@@ -846,11 +918,22 @@ function MobileMindMapContent({
                 {/* No controls or background on mobile to save space */}
             </ReactFlow>
 
+            {/* キーボード表示時に BottomNav をカバーして干渉を防ぐ */}
+            {isKeyboardOpen && selectedNodeId && (
+                <div
+                    className="fixed left-0 right-0 bottom-0 z-[55] bg-background md:hidden"
+                    style={{ height: `${keyboardHeight}px` }}
+                />
+            )}
+
             {/* Keyboard Accessory Bar - XMind風レイアウト */}
             {selectedNodeId && (
                 <div
                     className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
-                    style={{ bottom: isKeyboardOpen ? `${keyboardHeight + 132}px` : '56px' }}
+                    style={{
+                        bottom: isKeyboardOpen ? `${keyboardHeight}px` : '64px',
+                        transition: 'bottom 0.15s ease-out',
+                    }}
                     onTouchStart={(e) => e.preventDefault()}
                     onMouseDown={(e) => e.preventDefault()}
                 >
