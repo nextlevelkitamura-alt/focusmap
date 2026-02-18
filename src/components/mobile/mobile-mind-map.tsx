@@ -324,28 +324,18 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         ref={inputRef}
                         className="nodrag nopan flex-1 bg-transparent border-none text-base focus:outline-none min-w-0"
                         value={editValue}
-                        onChange={(e) => { setEditValue(e.target.value); justSavedRef.current = false }}
+                        onChange={(e) => { setEditValue(e.target.value) }}
                         onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
-                        enterKeyHint="enter"
+                        onFocus={(e) => { e.target.scrollIntoView = () => {} }}
+                        enterKeyHint="done"
                         onKeyDown={(e) => {
                             if (e.nativeEvent.isComposing) return
                             if (e.key === 'Enter') {
                                 e.preventDefault()
-                                if (!justSavedRef.current) {
-                                    // First Enter: save text, keep keyboard open
-                                    if (editValue !== data?.label) data?.onSave?.(editValue)
-                                    justSavedRef.current = true
-                                } else {
-                                    // Second Enter: create sibling task
-                                    justSavedRef.current = false
-                                    data?.onAddSibling?.()
-                                }
-                            }
-                            if (e.key === 'Tab') {
-                                e.preventDefault()
-                                // Tab: create child task
+                                // Enter: テキスト保存 + キーボード閉じる + 選択解除
                                 if (editValue !== data?.label) data?.onSave?.(editValue)
-                                data?.onAddChildAndFocus?.()
+                                inputRef.current?.blur()
+                                setIsEditing(false)
                             }
                             if (e.key === 'Escape') { setEditValue(data?.label ?? ''); setIsEditing(false) }
                         }}
@@ -813,8 +803,22 @@ function MobileMindMapContent({
         }
     }, [])
 
+    // マインドマップ表示中はbodyのスクロールを防止
+    useEffect(() => {
+        document.body.style.overflow = 'hidden'
+        document.body.style.position = 'fixed'
+        document.body.style.width = '100%'
+        document.body.style.height = '100%'
+        return () => {
+            document.body.style.overflow = ''
+            document.body.style.position = ''
+            document.body.style.width = ''
+            document.body.style.height = ''
+        }
+    }, [])
+
     return (
-        <div className="w-full h-full" style={{ touchAction: 'none' }}>
+        <div className="w-full h-full" style={{ touchAction: 'none', overflow: 'hidden', overscrollBehavior: 'none' }}>
             <ReactFlow
                 nodes={layoutNodes}
                 edges={edges}
