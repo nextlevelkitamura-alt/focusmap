@@ -60,6 +60,20 @@ export function MobileEventEditModal({
     const sheetRef = useRef<HTMLDivElement>(null)
     const dragStartY = useRef(0)
     const currentTranslateY = useRef(0)
+    const openedAtRef = useRef(0)
+
+    // モーダルが開いた瞬間を記録（ゴーストクリック防止）
+    useEffect(() => {
+        if (isOpen) {
+            openedAtRef.current = Date.now()
+        }
+    }, [isOpen])
+
+    // ゴーストクリック防止付きclose
+    const safeClose = useCallback(() => {
+        if (Date.now() - openedAtRef.current < 400) return
+        onClose()
+    }, [onClose])
 
     // Initialize form when target changes
     useEffect(() => {
@@ -105,13 +119,13 @@ export function MobileEventEditModal({
     const handleTouchEnd = useCallback(() => {
         if (sheetRef.current) {
             if (currentTranslateY.current > 100) {
-                onClose()
+                safeClose()
             } else {
                 sheetRef.current.style.transform = 'translateY(0)'
             }
             currentTranslateY.current = 0
         }
-    }, [onClose])
+    }, [safeClose])
 
     // Save handler
     const handleSave = async () => {
@@ -183,7 +197,7 @@ export function MobileEventEditModal({
             {/* Overlay */}
             <div
                 className="fixed inset-0 z-50 bg-black/40 animate-in fade-in duration-200"
-                onClick={onClose}
+                onClick={safeClose}
             />
 
             {/* Bottom Sheet */}
