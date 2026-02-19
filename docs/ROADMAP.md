@@ -150,6 +150,7 @@
 
 ## 完了履歴
 
+- 2026-02-19: **useCalendars / useHabits / useEventCompletions / useMultiTaskCalendarSync テスト追加** 完了 (C, /test, 47テスト追加 → 計109テスト)
 - 2026-02-18: **API エラーハンドリング強化** 完了 (C, /quality error-handling, 4ファイル7ハンドラ)
 - 2026-02-18: **projects API テスト追加** 完了 (C, /test, 12テスト Pass)
 - 2026-02-18: **useCalendarEvents.ts テスト追加** 完了 (C, /test, 11テスト Pass)
