@@ -31,24 +31,25 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, group_id, project_id, parent_task_id, title, order_index } = body;
+    const { id, group_id, project_id, parent_task_id, title, order_index, scheduled_at, estimated_time, calendar_id, priority } = body;
     const titleValue = (typeof title === 'string' && title.trim()) || 'New Task';
 
-    // parent_task_id のバリデーション（必須）
-    if (!parent_task_id) {
+    // title バリデーション
+    if (!title || (typeof title === 'string' && !title.trim())) {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'parent_task_id is required'
+            message: 'title is required'
           }
         },
         { status: 400 }
       );
     }
 
-    // Note: 親タスクの存在チェックはDB制約に委任
+    // Note: parent_task_id は null 可（クイックタスク＝ルートレベル）
+    // 親タスクの存在チェックはDB制約に委任
     // 楽観的UIで作成された親タスクがまだDB未同期の場合があるため、
     // ここでの厳格なチェックは行わない
 
@@ -57,12 +58,15 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       group_id: group_id || null, // 後方互換性のため残す（Phase 3で削除）
       project_id: project_id || null,
-      parent_task_id,
+      parent_task_id: parent_task_id || null,
       title: titleValue,
       status: 'todo',
       order_index: order_index ?? 0,
       actual_time_minutes: 0,
-      estimated_time: 0,
+      estimated_time: estimated_time ?? 0,
+      scheduled_at: scheduled_at || null,
+      calendar_id: calendar_id || null,
+      priority: priority ?? null,
     };
 
     // クライアントが ID を指定した場合はそれを使用（楽観的UI用）

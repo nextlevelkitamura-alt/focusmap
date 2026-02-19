@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect, useCallback } from "react"
-import { Task, HabitCompletion } from "@/types/database"
+import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
@@ -17,6 +17,7 @@ import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
 import { DragItem } from "@/hooks/useTouchDrag"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
+import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 
 // --- Types ---
 
@@ -29,6 +30,8 @@ type TimelineMode = 'calendar' | 'cards'
 interface TodayViewProps {
     allTasks: Task[]
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
+    projects?: Project[]
+    onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
 }
 
 // --- Helper: compute week dots from completions ---
@@ -47,7 +50,7 @@ function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
 
 // --- Main Component ---
 
-export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
+export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask }: TodayViewProps) {
     const { selectedCalendarIds, calendars } = useCalendars()
     const { todayHabits, toggleCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
     const { completedEventIds, toggleEventCompletion } = useEventCompletions()
@@ -582,6 +585,15 @@ export function TodayView({ allTasks, onUpdateTask }: TodayViewProps) {
                 onSaveEvent={handleSaveEvent}
                 availableCalendars={writableCalendars}
             />
+
+            {/* Quick Task FAB */}
+            {onCreateQuickTask && (
+                <QuickTaskFab
+                    projects={projects}
+                    calendars={writableCalendars}
+                    onCreateTask={onCreateQuickTask}
+                />
+            )}
         </div>
     )
 }

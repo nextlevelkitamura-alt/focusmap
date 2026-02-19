@@ -264,14 +264,86 @@ export function DashboardClient({
         await fetch(`/api/spaces/${spaceId}`, { method: 'DELETE' })
     }, [selectedSpaceId])
 
+    // --- Quick Task Creation (for TodayView FAB) ---
+    const [quickTasks, setQuickTasks] = useState<Task[]>([])
+
+    const handleCreateQuickTask = useCallback(async (taskData: {
+        title: string
+        project_id: string | null
+        scheduled_at: string | null
+        estimated_time: number
+        calendar_id: string | null
+        priority: number
+    }) => {
+        const optimisticId = crypto.randomUUID()
+        const optimisticTask: Task = {
+            id: optimisticId,
+            user_id: userId,
+            group_id: null,
+            project_id: taskData.project_id,
+            parent_task_id: null,
+            is_group: false,
+            title: taskData.title,
+            status: 'todo',
+            priority: taskData.priority,
+            order_index: 0,
+            scheduled_at: taskData.scheduled_at,
+            estimated_time: taskData.estimated_time,
+            actual_time_minutes: 0,
+            google_event_id: null,
+            calendar_event_id: null,
+            calendar_id: taskData.calendar_id,
+            total_elapsed_seconds: 0,
+            last_started_at: null,
+            is_timer_running: false,
+            created_at: new Date().toISOString(),
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
+        }
+
+        // Optimistic update
+        setQuickTasks(prev => [...prev, optimisticTask])
+
+        // API call
+        const res = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: optimisticId,
+                project_id: taskData.project_id,
+                parent_task_id: null,
+                title: taskData.title,
+                scheduled_at: taskData.scheduled_at,
+                estimated_time: taskData.estimated_time,
+                calendar_id: taskData.calendar_id,
+                priority: taskData.priority,
+            }),
+        })
+
+        if (!res.ok) {
+            // Rollback on failure
+            setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+            console.error('[QuickTask] Failed to create task')
+        }
+    }, [userId])
+
     // --- View State ---
     const { activeView } = useView()
 
-    // Merge all tasks: current project (latest state) + other projects (initial state)
+    // Merge all tasks: current project (latest state) + other projects (initial state) + quick tasks
     const allTasksMerged = useMemo(() => {
         const currentMap = new Map(currentTasks.map(t => [t.id, t]))
-        return initialTasks.map(t => currentMap.get(t.id) || t)
-    }, [initialTasks, currentTasks])
+        const merged = initialTasks.map(t => currentMap.get(t.id) || t)
+        // Add quick tasks that aren't already in the list
+        const existingIds = new Set(merged.map(t => t.id))
+        for (const qt of quickTasks) {
+            if (!existingIds.has(qt.id)) merged.push(qt)
+        }
+        return merged
+    }, [initialTasks, currentTasks, quickTasks])
 
     // --- Undo/Redo Keyboard Listener ---
     const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
@@ -398,6 +470,8 @@ export function DashboardClient({
                         <TodayView
                             allTasks={allTasksMerged}
                             onUpdateTask={updateTask}
+                            projects={projects}
+                            onCreateQuickTask={handleCreateQuickTask}
                         />
                     </div>
                 )}
