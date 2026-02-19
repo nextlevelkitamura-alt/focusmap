@@ -104,13 +104,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Today's scheduled tasks (excluding habits)
     const todayScheduledTasks = useMemo(() => {
-        const todayStr = today.toISOString().split('T')[0]
         return localTasks.filter(t => {
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
             if (!t.scheduled_at) return false
-            return t.scheduled_at.startsWith(todayStr)
+            const scheduled = new Date(t.scheduled_at)
+            return scheduled >= today && scheduled < tomorrow
         })
-    }, [localTasks, habitGroupIds, today])
+    }, [localTasks, habitGroupIds, today, tomorrow])
 
     // Unscheduled tasks (no scheduled_at, no project_id, not habit children, not done)
     const unscheduledTasks = useMemo(() =>

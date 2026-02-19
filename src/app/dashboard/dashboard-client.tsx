@@ -319,8 +319,11 @@ export function DashboardClient({
             habit_end_date: null,
         }
 
-        // 楽観的更新 → 即座にカレンダーに表示 & シートを閉じる
-        setQuickTasks(prev => [...prev, optimisticTask])
+        // カレンダー選択ありの場合のみ今日ビューに即表示
+        const showOnTimeline = !!taskData.calendar_id
+        if (showOnTimeline) {
+            setQuickTasks(prev => [...prev, optimisticTask])
+        }
 
         // バックグラウンドで API 保存 + カレンダー同期（await しない）
         ;(async () => {
@@ -341,12 +344,10 @@ export function DashboardClient({
                 })
 
                 if (!res.ok) {
-                    setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                    if (showOnTimeline) setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
                     setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
                     return
                 }
-
-                setQuickTaskToast({ type: 'success', message: `「${taskData.title}」を追加しました` })
 
                 // Google Calendar 同期
                 if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
@@ -370,17 +371,19 @@ export function DashboardClient({
                             ))
                             debouncedRefreshCalendar()
                         }
+                        setQuickTaskToast({ type: 'success', message: `Googleカレンダーに登録しました` })
                     } else {
-                        setQuickTaskToast({ type: 'info', message: 'タスクは追加されましたが、カレンダー同期に失敗しました' })
+                        setQuickTaskToast({ type: 'info', message: 'タスクは保存しましたが、カレンダー同期に失敗しました' })
                     }
+                } else {
+                    setQuickTaskToast({ type: 'success', message: `「${taskData.title}」を保存しました` })
                 }
             } catch (err) {
                 console.error('[QuickTask] Background save failed:', err)
-                setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                if (showOnTimeline) setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
                 setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
             }
         })()
-        // ↑ await しない → 即座に return → シートが閉じる + カレンダーに表示
     }, [userId, debouncedRefreshCalendar])
 
     // Quick task 編集時に quickTasks state も同期するラッパー
