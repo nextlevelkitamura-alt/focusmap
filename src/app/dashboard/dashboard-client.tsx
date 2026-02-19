@@ -327,6 +327,36 @@ export function DashboardClient({
             // Rollback on failure
             setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
             console.error('[QuickTask] Failed to create task')
+            return
+        }
+
+        // Google Calendar 同期: scheduled_at + estimated_time > 0 + calendar_id が揃っている場合
+        if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
+            try {
+                const syncRes = await fetch('/api/calendar/sync-task', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        taskId: optimisticId,
+                        scheduled_at: taskData.scheduled_at,
+                        estimated_time: taskData.estimated_time,
+                        calendar_id: taskData.calendar_id,
+                    }),
+                })
+                if (syncRes.ok) {
+                    const syncData = await syncRes.json()
+                    if (syncData.googleEventId) {
+                        // google_event_id をローカルステートに反映
+                        setQuickTasks(prev => prev.map(t =>
+                            t.id === optimisticId
+                                ? { ...t, google_event_id: syncData.googleEventId }
+                                : t
+                        ))
+                    }
+                }
+            } catch (err) {
+                console.error('[QuickTask] Calendar sync failed:', err)
+            }
         }
     }, [userId])
 
