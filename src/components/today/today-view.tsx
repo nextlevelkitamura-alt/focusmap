@@ -110,6 +110,18 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         })
     }, [localTasks, habitGroupIds, today])
 
+    // Unscheduled tasks (no scheduled_at, no project_id, not habit children, not done)
+    const unscheduledTasks = useMemo(() =>
+        localTasks.filter(t =>
+            !t.scheduled_at &&
+            !t.project_id &&
+            !t.parent_task_id &&
+            !t.is_habit &&
+            t.status !== 'done'
+        ),
+        [localTasks]
+    )
+
 
     // Merge calendar events + scheduled tasks into timeline
     const timelineItems = useMemo(() => {
@@ -575,6 +587,26 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
                 )}
             </div>
+
+            {/* Unscheduled Tasks */}
+            {unscheduledTasks.length > 0 && (
+                <div className="flex-shrink-0 border-t px-4 py-2">
+                    <p className="text-xs font-medium text-muted-foreground mb-1.5">未スケジュール</p>
+                    <div className="max-h-32 overflow-y-auto space-y-0.5">
+                        {unscheduledTasks.map(task => (
+                            <div key={task.id} className="flex items-center gap-2 py-1.5 px-1 rounded-md active:bg-muted/50 transition-colors">
+                                <button
+                                    className="flex-shrink-0"
+                                    onClick={() => toggleTask(task.id)}
+                                >
+                                    <Square className="w-4 h-4 text-muted-foreground/40" />
+                                </button>
+                                <span className="text-sm truncate flex-1">{task.title}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Edit Modal */}
             <MobileEventEditModal

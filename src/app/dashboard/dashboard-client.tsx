@@ -266,6 +266,21 @@ export function DashboardClient({
 
     // --- Quick Task Creation (for TodayView FAB) ---
     const [quickTasks, setQuickTasks] = useState<Task[]>([])
+    const [quickTaskToast, setQuickTaskToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
+
+    // Debounced calendar refresh (2s after last call)
+    const calendarRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const debouncedRefreshCalendar = useCallback(() => {
+        if (calendarRefreshTimerRef.current) clearTimeout(calendarRefreshTimerRef.current)
+        calendarRefreshTimerRef.current = setTimeout(async () => {
+            await rightSidebarRef.current?.refreshCalendar()
+            calendarRefreshTimerRef.current = null
+        }, 2000)
+    }, [])
+
+    useEffect(() => {
+        return () => { if (calendarRefreshTimerRef.current) clearTimeout(calendarRefreshTimerRef.current) }
+    }, [])
 
     const handleCreateQuickTask = useCallback(async (taskData: {
         title: string
@@ -326,9 +341,11 @@ export function DashboardClient({
         if (!res.ok) {
             // Rollback on failure
             setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
-            console.error('[QuickTask] Failed to create task')
+            setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
             return
         }
+
+        setQuickTaskToast({ type: 'success', message: `「${taskData.title}」を追加しました` })
 
         // Google Calendar 同期: scheduled_at + estimated_time > 0 + calendar_id が揃っている場合
         if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
@@ -346,19 +363,32 @@ export function DashboardClient({
                 if (syncRes.ok) {
                     const syncData = await syncRes.json()
                     if (syncData.googleEventId) {
-                        // google_event_id をローカルステートに反映
                         setQuickTasks(prev => prev.map(t =>
                             t.id === optimisticId
                                 ? { ...t, google_event_id: syncData.googleEventId }
                                 : t
                         ))
+                        // PC カレンダーをデバウンス付きでリフレッシュ
+                        debouncedRefreshCalendar()
                     }
+                } else {
+                    setQuickTaskToast({ type: 'info', message: 'タスクは追加されましたが、カレンダー同期に失敗しました' })
                 }
             } catch (err) {
                 console.error('[QuickTask] Calendar sync failed:', err)
+                setQuickTaskToast({ type: 'info', message: 'タスクは追加されましたが、カレンダー同期に失敗しました' })
             }
         }
-    }, [userId])
+    }, [userId, debouncedRefreshCalendar])
+
+    // Quick task 編集時に quickTasks state も同期するラッパー
+    const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        await updateTask(taskId, updates)
+        setQuickTasks(prev => {
+            if (!prev.some(t => t.id === taskId)) return prev
+            return prev.map(t => t.id === taskId ? { ...t, ...updates } : t)
+        })
+    }, [updateTask])
 
     // --- View State ---
     const { activeView } = useView()
@@ -474,7 +504,7 @@ export function DashboardClient({
 
     return (
         <DragProvider>
-            <TimerProvider tasks={allTasksMerged} onUpdateTask={updateTask}>
+            <TimerProvider tasks={allTasksMerged} onUpdateTask={handleUpdateTaskWithQuickSync}>
                 {/* Header with Space Switcher */}
                 <Header
                     spaces={spaces}
@@ -494,12 +524,21 @@ export function DashboardClient({
                         onClose={() => setUndoToast(null)}
                     />
                 )}
+                {/* Quick Task Toast */}
+                {quickTaskToast && (
+                    <CalendarToast
+                        type={quickTaskToast.type}
+                        message={quickTaskToast.message}
+                        duration={3000}
+                        onClose={() => setQuickTaskToast(null)}
+                    />
+                )}
                 {/* === Mobile: Today View === */}
                 {activeView === 'today' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <TodayView
                             allTasks={allTasksMerged}
-                            onUpdateTask={updateTask}
+                            onUpdateTask={handleUpdateTaskWithQuickSync}
                             projects={projects}
                             onCreateQuickTask={handleCreateQuickTask}
                         />
