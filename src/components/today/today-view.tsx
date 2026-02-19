@@ -97,6 +97,12 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         return d
     }, [selectedDate])
 
+    const previousDay = useMemo(() => {
+        const d = new Date(selectedDate)
+        d.setDate(d.getDate() - 1)
+        return d
+    }, [selectedDate])
+
     // Date navigation
     const goToPrevDay = useCallback(() => {
         setSlideDirection('right')
@@ -174,6 +180,22 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         })
     }, [localTasks, habitGroupIds, today, tomorrow])
 
+    // Previous day's tasks that overflow into current day (繰り越しタスク)
+    const overflowTasks = useMemo(() => {
+        return localTasks.filter(t => {
+            if (t.is_group) return false
+            if (habitGroupIds.has(t.parent_task_id ?? '')) return false
+            if (!t.scheduled_at) return false
+            const scheduled = new Date(t.scheduled_at)
+            // Only tasks from previous day
+            if (!(scheduled >= previousDay && scheduled < today)) return false
+            // Check if task extends past midnight into today
+            const estimatedMin = t.estimated_time || 30
+            const endTime = new Date(scheduled.getTime() + estimatedMin * 60 * 1000)
+            return endTime > today
+        })
+    }, [localTasks, habitGroupIds, previousDay, today])
+
     // Unscheduled tasks (no scheduled_at, no project_id, not habit children, not done)
     const unscheduledTasks = useMemo(() =>
         localTasks.filter(t =>
@@ -225,24 +247,38 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             if (event.is_all_day) continue
             // Skip calendar events that have a matching task (task takes priority)
             if (taskGoogleIds.has(event.google_event_id)) continue
-            items.push({
-                type: 'event',
-                data: event,
-                startTime: new Date(event.start_time),
-                endTime: new Date(event.end_time),
-            })
+
+            let startTime = new Date(event.start_time)
+            let endTime = new Date(event.end_time)
+            // 前日からの繰り越し: startTimeを0:00にクランプ
+            if (startTime < today) startTime = new Date(today)
+            // 日付をまたぐ場合: endTimeを24:00にクランプ
+            if (endTime > tomorrow) endTime = new Date(tomorrow)
+
+            items.push({ type: 'event', data: event, startTime, endTime })
         }
 
         for (const task of todayScheduledTasks) {
             if (!task.scheduled_at) continue
             const start = new Date(task.scheduled_at)
             const end = new Date(start.getTime() + (task.estimated_time || 30) * 60 * 1000)
-            items.push({ type: 'task', data: task, startTime: start, endTime: end })
+            // 日付をまたぐ場合: endTimeを24:00にクランプ
+            const clampedEnd = end > tomorrow ? new Date(tomorrow) : end
+            items.push({ type: 'task', data: task, startTime: start, endTime: clampedEnd })
+        }
+
+        // 前日からの繰り越しタスク（0:00から残り時間分を表示）
+        for (const task of overflowTasks) {
+            const originalStart = new Date(task.scheduled_at!)
+            const originalEnd = new Date(originalStart.getTime() + (task.estimated_time || 30) * 60 * 1000)
+            const adjustedStart = new Date(today)
+            const adjustedEnd = new Date(Math.min(originalEnd.getTime(), tomorrow.getTime()))
+            items.push({ type: 'task', data: task, startTime: adjustedStart, endTime: adjustedEnd })
         }
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         return items
-    }, [calendarEvents, todayScheduledTasks])
+    }, [calendarEvents, todayScheduledTasks, overflowTasks, today, tomorrow])
 
     // All-day events
     const allDayEvents = useMemo(() =>

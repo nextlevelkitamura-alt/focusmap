@@ -108,11 +108,15 @@ export function TodayTimelineCalendar({
 
     // Calculate event layout (handle overlapping)
     const layoutItems = useMemo(() => {
-        const items = timelineItems.map(item => ({
-            ...item,
-            top: getTopPx(item.startTime),
-            height: getHeightPx(item.startTime, item.endTime),
-        }))
+        const items = timelineItems.map(item => {
+            const top = getTopPx(item.startTime)
+            let height = getHeightPx(item.startTime, item.endTime)
+            // 24:00（TOTAL_HEIGHT）を超えないようにクランプ
+            if (top + height > TOTAL_HEIGHT) {
+                height = Math.max(TOTAL_HEIGHT - top, HOUR_HEIGHT * 0.4)
+            }
+            return { ...item, top, height }
+        })
 
         // Simple overlap detection: assign columns
         const result: (typeof items[number] & { column: number; totalColumns: number })[] = []
@@ -145,15 +149,7 @@ export function TodayTimelineCalendar({
         return result
     }, [timelineItems])
 
-    // 日付をまたぐアイテムに対応してグリッド高さを拡張
-    const extendedHeight = useMemo(() => {
-        let maxBottom = TOTAL_HEIGHT
-        for (const item of layoutItems) {
-            const bottom = item.top + item.height
-            if (bottom > maxBottom) maxBottom = bottom
-        }
-        return maxBottom
-    }, [layoutItems])
+    // 日付をまたぐアイテムは today-view.tsx 側でクランプ済み
 
     return (
         <div className="flex flex-col flex-1 overflow-hidden">
@@ -240,7 +236,7 @@ export function TodayTimelineCalendar({
                     ref={timeLabelRef}
                     className="w-12 flex-shrink-0 overflow-hidden"
                 >
-                    <div className="relative" style={{ height: extendedHeight }}>
+                    <div className="relative" style={{ height: TOTAL_HEIGHT }}>
                         {HOURS.map((hour) => (
                             <div
                                 key={hour}
@@ -259,7 +255,7 @@ export function TodayTimelineCalendar({
                     className={cn("flex-1 overflow-y-auto overflow-x-hidden", dragState.isDragging && "select-none")}
                     onScroll={handleGridScroll}
                 >
-                    <div className="relative" style={{ height: extendedHeight }}>
+                    <div className="relative" style={{ height: TOTAL_HEIGHT }}>
                         {/* Hour Grid Lines */}
                         {HOURS.map((hour) => (
                             <div
@@ -467,7 +463,7 @@ function EventBlock({
                             <Square className="w-3 h-3" style={{ color: eventHex }} />
                         )}
                     </button>
-                    <span className="text-[10px] font-medium" style={{ color: isCompleted ? undefined : eventHex }}>{startStr}</span>
+                    <span className={cn("text-[10px] font-medium", isCompleted ? "text-muted-foreground" : "text-muted-foreground")}>{startStr}</span>
                     <span className={cn(
                         "text-[11px] font-medium truncate",
                         isCompleted ? "line-through text-muted-foreground" : "text-foreground"
@@ -495,9 +491,9 @@ function EventBlock({
                             {event.title}
                         </span>
                     </div>
-                    <div className="text-[10px] font-medium mt-0.5 pl-5" style={{ color: isCompleted ? undefined : eventHex }}>{startStr}</div>
+                    <div className={cn("text-[10px] font-medium mt-0.5 pl-5", isCompleted ? "text-muted-foreground" : "text-muted-foreground")}>{startStr}</div>
                     {event.location && height > 55 && (
-                        <div className="text-[9px] truncate mt-0.5 pl-5" style={{ color: isCompleted ? undefined : eventHex, opacity: 0.7 }}>
+                        <div className="text-[9px] truncate mt-0.5 pl-5 text-muted-foreground/70">
                             📍 {event.location}
                         </div>
                     )}
@@ -693,7 +689,7 @@ function TaskBlock({
                         </div>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] font-medium" style={{ color: TASK_HEX }}>{startStr}</span>
+                        <span className="text-[10px] font-medium text-muted-foreground">{startStr}</span>
                         {task.estimated_time > 0 && (
                             <span className="text-[9px] text-muted-foreground">⏱ {task.estimated_time}分</span>
                         )}
