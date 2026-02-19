@@ -5,8 +5,9 @@ import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
-import { Play, Pause, Check, Square, CheckSquare, GripVertical } from "lucide-react"
+import { Play, Pause, Check, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SubTaskSection } from "./sub-task-list"
 
 // --- Constants ---
 const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
@@ -29,6 +30,9 @@ interface TodayTimelineCalendarProps {
     onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
     onItemTap?: (item: TimelineItem) => void
     onDragDrop?: (item: DragItem, newStartTime: Date, newEndTime: Date) => void
+    childTasksMap?: Map<string, Task[]>
+    onCreateSubTask?: (parentTaskId: string, title: string) => void
+    onDeleteSubTask?: (taskId: string) => void
 }
 
 // --- Helpers ---
@@ -56,10 +60,14 @@ export function TodayTimelineCalendar({
     onToggleEventCompletion,
     onItemTap,
     onDragDrop,
+    childTasksMap,
+    onCreateSubTask,
+    onDeleteSubTask,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
     const timeLabelRef = useRef<HTMLDivElement>(null)
+    const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
 
     // Touch drag & drop
     const handleDrop = useCallback((item: DragItem, newStart: Date, newEnd: Date) => {
@@ -286,13 +294,16 @@ export function TodayTimelineCalendar({
                             }
                             const touchHandlers = createItemTouchHandlers(dragItem, item.top)
                             const isDragTarget = dragState.isDragging && dragState.dragItem?.id === id
+                            const isExpanded = !isEvent && expandedTaskId === id
+                            const taskChildTasks = !isEvent ? childTasksMap?.get(id) : undefined
 
                             return (
                                 <div
                                     key={`${item.type}-${id}`}
                                     className={cn(
-                                        "absolute z-20 touch-none select-none",
-                                        isDragTarget && "opacity-30"
+                                        "absolute touch-none select-none",
+                                        isDragTarget && "opacity-30",
+                                        isExpanded ? "z-30" : "z-20"
                                     )}
                                     style={{
                                         top: item.top,
@@ -315,16 +326,33 @@ export function TodayTimelineCalendar({
                                             onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     ) : (
-                                        <TaskBlock
-                                            task={item.data as Task}
-                                            currentTime={currentTime}
-                                            startTime={item.startTime}
-                                            endTime={item.endTime}
-                                            height={item.height}
-                                            timer={timer}
-                                            onToggle={onToggleTask}
-                                            onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
-                                        />
+                                        <>
+                                            <TaskBlock
+                                                task={item.data as Task}
+                                                currentTime={currentTime}
+                                                startTime={item.startTime}
+                                                endTime={item.endTime}
+                                                height={item.height}
+                                                timer={timer}
+                                                onToggle={onToggleTask}
+                                                onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
+                                                childTaskCount={taskChildTasks?.length ?? 0}
+                                                childDoneCount={taskChildTasks?.filter(t => t.status === 'done').length ?? 0}
+                                                isExpanded={isExpanded}
+                                                onToggleExpand={onCreateSubTask ? () => setExpandedTaskId(prev => prev === id ? null : id) : undefined}
+                                            />
+                                            {isExpanded && onCreateSubTask && (
+                                                <div className="relative z-40">
+                                                    <SubTaskSection
+                                                        parentTaskId={id}
+                                                        childTasks={taskChildTasks || []}
+                                                        onCreateSubTask={onCreateSubTask}
+                                                        onToggleSubTask={onToggleTask}
+                                                        onDeleteSubTask={onDeleteSubTask}
+                                                    />
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                 </div>
                             )
@@ -449,6 +477,10 @@ function TaskBlock({
     timer,
     onToggle,
     onTap,
+    childTaskCount = 0,
+    childDoneCount = 0,
+    isExpanded = false,
+    onToggleExpand,
 }: {
     task: Task
     currentTime: Date
@@ -458,6 +490,10 @@ function TaskBlock({
     timer: ReturnType<typeof useTimer>
     onToggle: (taskId: string) => void
     onTap?: () => void
+    childTaskCount?: number
+    childDoneCount?: number
+    isExpanded?: boolean
+    onToggleExpand?: () => void
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
     const isPast = currentTime >= endTime
@@ -500,12 +536,12 @@ function TaskBlock({
                     )}>
                         {task.title}
                     </span>
-                    <div className="ml-auto flex-shrink-0">
+                    <div className="ml-auto flex-shrink-0 flex items-center gap-0.5">
                         {isRunning ? (
                             <button
                                 onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                                 aria-label="タイマーを一時停止"
-                                className="p-0.5 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                                className="p-0.5 text-primary focus:outline-none rounded"
                             >
                                 <Pause className="w-3 h-3" />
                             </button>
@@ -513,9 +549,28 @@ function TaskBlock({
                             <button
                                 onClick={(e) => { e.stopPropagation(); timer.startTimer(task) }}
                                 aria-label={`${task.title}のタイマーを開始`}
-                                className="p-0.5 text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                                className="p-0.5 text-muted-foreground focus:outline-none rounded"
                             >
                                 <Play className="w-3 h-3" />
+                            </button>
+                        )}
+                        {onToggleExpand && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onToggleExpand() }}
+                                aria-label={childTaskCount > 0 ? "サブタスクを展開" : "サブタスクを追加"}
+                                className={cn(
+                                    "p-0.5 rounded focus:outline-none flex items-center gap-0.5",
+                                    isExpanded ? "text-primary" : "text-muted-foreground/60"
+                                )}
+                            >
+                                {childTaskCount > 0 ? (
+                                    <>
+                                        <span className="text-[9px] tabular-nums">{childDoneCount}/{childTaskCount}</span>
+                                        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                    </>
+                                ) : (
+                                    <Plus className="w-3 h-3" />
+                                )}
                             </button>
                         )}
                     </div>
@@ -542,12 +597,12 @@ function TaskBlock({
                                 {task.title}
                             </span>
                         </div>
-                        <div className="flex-shrink-0 ml-1">
+                        <div className="flex-shrink-0 ml-1 flex items-center gap-0.5">
                             {isRunning ? (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                                     aria-label="タイマーを一時停止"
-                                    className="p-1 rounded-full bg-primary/10 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+                                    className="p-1 rounded-full bg-primary/10 text-primary focus:outline-none"
                                 >
                                     <Pause className="w-3.5 h-3.5" />
                                 </button>
@@ -555,9 +610,30 @@ function TaskBlock({
                                 <button
                                     onClick={(e) => { e.stopPropagation(); timer.startTimer(task) }}
                                     aria-label={`${task.title}のタイマーを開始`}
-                                    className="p-1 rounded-full active:bg-muted text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+                                    className="p-1 rounded-full active:bg-muted text-muted-foreground focus:outline-none"
                                 >
                                     <Play className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                            {onToggleExpand && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onToggleExpand() }}
+                                    aria-label={childTaskCount > 0 ? "サブタスクを展開" : "サブタスクを追加"}
+                                    className={cn(
+                                        "p-1 rounded-full focus:outline-none flex items-center gap-0.5",
+                                        isExpanded
+                                            ? "bg-primary/10 text-primary"
+                                            : "active:bg-muted text-muted-foreground/60"
+                                    )}
+                                >
+                                    {childTaskCount > 0 ? (
+                                        <>
+                                            <span className="text-[9px] tabular-nums">{childDoneCount}/{childTaskCount}</span>
+                                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                        </>
+                                    ) : (
+                                        <Plus className="w-3.5 h-3.5" />
+                                    )}
                                 </button>
                             )}
                         </div>

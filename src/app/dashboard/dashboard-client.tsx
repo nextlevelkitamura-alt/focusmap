@@ -38,28 +38,36 @@ export function DashboardClient({
     const [projects, setProjects] = useState<Project[]>(initialProjects)
 
     // Selection State — null means "全体" (all spaces)
-    // Restore last selected space/project from localStorage
-    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('shikumika:lastSpaceId')
-            if (saved && initialSpaces.some(s => s.id === saved)) return saved
-        }
-        return initialSpaces.length > 0 ? initialSpaces[0].id : null
-    })
-    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('shikumika:lastProjectId')
-            if (saved && initialProjects.some(p => p.id === saved)) return saved
-        }
-        return initialProjects.length > 0 ? initialProjects[0].id : null
-    })
+    // Use consistent defaults for SSR/client to avoid hydration mismatch (#418)
+    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(
+        initialSpaces.length > 0 ? initialSpaces[0].id : null
+    )
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+        initialProjects.length > 0 ? initialProjects[0].id : null
+    )
 
-    // Persist selection to localStorage
+    // Restore from localStorage after mount (client-only)
+    const selectionRestoredRef = useRef(false)
     useEffect(() => {
+        const savedSpace = localStorage.getItem('shikumika:lastSpaceId')
+        if (savedSpace && initialSpaces.some(s => s.id === savedSpace)) {
+            setSelectedSpaceId(savedSpace)
+        }
+        const savedProject = localStorage.getItem('shikumika:lastProjectId')
+        if (savedProject && initialProjects.some(p => p.id === savedProject)) {
+            setSelectedProjectId(savedProject)
+        }
+        selectionRestoredRef.current = true
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Persist selection to localStorage (only after restore to avoid overwriting saved values)
+    useEffect(() => {
+        if (!selectionRestoredRef.current) return
         if (selectedSpaceId) localStorage.setItem('shikumika:lastSpaceId', selectedSpaceId)
         else localStorage.removeItem('shikumika:lastSpaceId')
     }, [selectedSpaceId])
     useEffect(() => {
+        if (!selectionRestoredRef.current) return
         if (selectedProjectId) localStorage.setItem('shikumika:lastProjectId', selectedProjectId)
         else localStorage.removeItem('shikumika:lastProjectId')
     }, [selectedProjectId])
@@ -405,7 +413,8 @@ export function DashboardClient({
     }, [updateTask])
 
     // --- View State ---
-    const { activeView } = useView()
+    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
+    const { activeView, isViewReady } = useView()
 
     // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
     const allTasksMerged = useMemo(() => {
@@ -551,8 +560,8 @@ export function DashboardClient({
                         onClose={() => setQuickTaskToast(null)}
                     />
                 )}
-                {/* === Mobile: Today View === */}
-                {activeView === 'today' && (
+                {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
+                {isViewReady && activeView === 'today' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <TodayView
                             allTasks={allTasksMerged}
@@ -563,15 +572,13 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {/* === Mobile: Habits View === */}
-                {activeView === 'habits' && (
+                {isViewReady && activeView === 'habits' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <HabitsView onUpdateTask={updateTask} />
                     </div>
                 )}
 
-                {/* === Mobile: Map View (Outline) === */}
-                {activeView === 'map' && (
+                {isViewReady && activeView === 'map' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <OutlineView
                             project={selectedProject}

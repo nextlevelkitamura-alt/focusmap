@@ -15,7 +15,7 @@ export interface MindMapDisplaySettings {
   showCollapseButton: boolean; // > 折りたたみボタン
 }
 
-const DEFAULT_SETTINGS: MindMapDisplaySettings = {
+export const DEFAULT_SETTINGS: MindMapDisplaySettings = {
   showStatus: true,
   showPriority: true,
   showScheduledAt: false,

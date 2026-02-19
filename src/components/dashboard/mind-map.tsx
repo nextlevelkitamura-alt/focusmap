@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, X, Target, Clock, GripVertical } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
-import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
+import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
 import { useDrag } from "@/contexts/DragContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -1138,8 +1138,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // DragContext - MindMapContentで使用してTaskNodeに渡す
     const { startDrag, endDrag } = useDrag()
 
-    // MindMap Display Settings
-    const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
+    // MindMap Display Settings (consistent default for SSR, restore from localStorage after mount)
+    const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(DEFAULT_SETTINGS);
+    useEffect(() => { setDisplaySettings(loadSettings()) }, []);
 
     // カレンダー同期（マインドマップのタスク全体）
     useMultiTaskCalendarSync({

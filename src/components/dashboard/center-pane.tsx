@@ -689,11 +689,11 @@ export function CenterPane({
     const [newlyCreatedTaskId, setNewlyCreatedTaskId] = useState<string | null>(null)
 
     // Onboarding tooltip state - localStorageに保存
-    const [showDragHint, setShowDragHint] = useState(() => {
-        if (typeof window === 'undefined') return true
+    const [showDragHint, setShowDragHint] = useState(true)
+    useEffect(() => {
         const dismissed = localStorage.getItem('drag-hint-dismissed')
-        return !dismissed
-    })
+        if (dismissed) setShowDragHint(false)
+    }, [])
 
     const handleDismissHint = useCallback(() => {
         setShowDragHint(false)

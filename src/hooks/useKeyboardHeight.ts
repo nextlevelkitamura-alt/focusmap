@@ -13,7 +13,7 @@ export function useKeyboardHeight(): KeyboardState {
     const [state, setState] = useState<KeyboardState>({
         keyboardHeight: 0,
         isKeyboardOpen: false,
-        viewportBottom: typeof window !== 'undefined' ? window.innerHeight : 0,
+        viewportBottom: 0,
     })
     const rafRef = useRef<number>(0)
 

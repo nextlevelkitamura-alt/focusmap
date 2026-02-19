@@ -1,29 +1,48 @@
 "use client"
 
-import React, { createContext, useContext, useState } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
 export type DashboardView = 'today' | 'map' | 'habits'
+
+const STORAGE_KEY = 'shikumika:activeView'
 
 interface ViewContextType {
     activeView: DashboardView
     setActiveView: (view: DashboardView) => void
+    isViewReady: boolean
 }
 
 const ViewContext = createContext<ViewContextType>({
     activeView: 'map',
     setActiveView: () => {},
+    isViewReady: false,
 })
 
 export const useView = () => useContext(ViewContext)
 
 export function ViewProvider({ children }: { children: React.ReactNode }) {
-    // Mobile defaults to 'today', desktop defaults to 'map'
-    const [activeView, setActiveView] = useState<DashboardView>(() => {
-        if (typeof window !== 'undefined' && window.innerWidth < 768) return 'today'
-        return 'map'
-    })
+    // Use consistent default for SSR and client initial render to avoid hydration mismatch
+    const [activeView, setActiveViewState] = useState<DashboardView>('map')
+    const [isViewReady, setIsViewReady] = useState(false)
+
+    // Read localStorage after mount (client-only)
+    useEffect(() => {
+        const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
+        if (saved && ['today', 'map', 'habits'].includes(saved)) {
+            setActiveViewState(saved)
+        } else if (window.innerWidth < 768) {
+            setActiveViewState('today')
+        }
+        setIsViewReady(true)
+    }, [])
+
+    const setActiveView = useCallback((view: DashboardView) => {
+        setActiveViewState(view)
+        try { localStorage.setItem(STORAGE_KEY, view) } catch {}
+    }, [])
+
     return (
-        <ViewContext.Provider value={{ activeView, setActiveView }}>
+        <ViewContext.Provider value={{ activeView, setActiveView, isViewReady }}>
             {children}
         </ViewContext.Provider>
     )

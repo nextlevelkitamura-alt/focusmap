@@ -54,7 +54,7 @@ function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
 // --- Main Component ---
 
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask }: TodayViewProps) {
-    const { selectedCalendarIds, calendars } = useCalendars()
+    const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
     const { todayHabits, toggleCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
     const { completedEventIds, toggleEventCompletion } = useEventCompletions()
     const timer = useTimer()
@@ -184,6 +184,19 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         [localTasks]
     )
 
+    // Child tasks grouped by parent (for subtask display)
+    const childTasksMap = useMemo(() => {
+        const map = new Map<string, Task[]>()
+        for (const task of localTasks) {
+            if (task.parent_task_id && !task.is_habit) {
+                const children = map.get(task.parent_task_id) || []
+                children.push(task)
+                map.set(task.parent_task_id, children)
+            }
+        }
+        return map
+    }, [localTasks])
+
 
     // Merge calendar events + scheduled tasks into timeline
     // When a task has a matching google_event_id, prefer showing it as a task (green, with timer)
@@ -265,6 +278,61 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             }
         }
     }, [onUpdateTask, toggleCompletion, updateChildTaskStatus])
+
+    // Create subtask (optimistic UI + background API)
+    const handleCreateSubTask = useCallback(async (parentTaskId: string, title: string) => {
+        const parentTask = localTasks.find(t => t.id === parentTaskId)
+        const optimisticId = crypto.randomUUID()
+        const optimisticTask: Task = {
+            id: optimisticId,
+            user_id: '',
+            group_id: null,
+            project_id: parentTask?.project_id ?? null,
+            parent_task_id: parentTaskId,
+            is_group: false,
+            title,
+            status: 'todo',
+            priority: null,
+            order_index: 0,
+            scheduled_at: null,
+            estimated_time: 0,
+            actual_time_minutes: 0,
+            google_event_id: null,
+            calendar_event_id: null,
+            calendar_id: null,
+            total_elapsed_seconds: 0,
+            last_started_at: null,
+            is_timer_running: false,
+            created_at: new Date().toISOString(),
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
+        }
+
+        // Optimistic update
+        setLocalTasks(prev => [...prev, optimisticTask])
+
+        // Background API call
+        try {
+            const res = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: optimisticId,
+                    parent_task_id: parentTaskId,
+                    project_id: parentTask?.project_id ?? null,
+                    title,
+                }),
+            })
+            if (!res.ok) {
+                setLocalTasks(prev => prev.filter(t => t.id !== optimisticId))
+            }
+        } catch {
+            setLocalTasks(prev => prev.filter(t => t.id !== optimisticId))
+        }
+    }, [localTasks])
 
     // Handle item tap (open edit modal)
     const handleItemTap = useCallback((item: EditTarget) => {
@@ -649,7 +717,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 onAnimationEnd={() => setSlideDirection(null)}
               >
                 {/* Calendar Connection Required */}
-                {!eventsLoading && calendars.length === 0 && (
+                {!eventsLoading && !calendarsLoading && calendars.length === 0 && (
                     <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
                         <div className="flex items-start gap-2">
                             <div className="flex-1">
@@ -713,6 +781,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         onToggleEventCompletion={toggleEventCompletion}
                         onItemTap={handleItemTap}
                         onDragDrop={handleDragDrop}
+                        childTasksMap={childTasksMap}
+                        onCreateSubTask={handleCreateSubTask}
+                        onDeleteSubTask={handleDeleteTask}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">
