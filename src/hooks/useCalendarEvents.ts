@@ -177,13 +177,10 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     }
   }, [options.timeMin, options.timeMax, options.calendarIds]);
 
-  // Initial fetch + calendarIds change detection
+  // Initial fetch + calendarIds/timeMin/timeMax change detection
   useEffect(() => {
-    if (prevCalendarIdsRef.current !== calendarIdsKey) {
-      prevCalendarIdsRef.current = calendarIdsKey;
-      fetchEvents(false); // Use cache first
-    }
-  }, [calendarIdsKey, fetchEvents]);
+    fetchEvents(false); // Use cache first
+  }, [fetchEvents]);
 
   // Auto-sync (10 minutes interval by default)
   useEffect(() => {

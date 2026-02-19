@@ -250,10 +250,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             let startTime = new Date(event.start_time)
             let endTime = new Date(event.end_time)
-            // 前日からの繰り越し: startTimeを0:00にクランプ
-            if (startTime < today) startTime = new Date(today)
+            // 前日からの繰り越し: startTimeを0:00にクランプ（当日0:00より前の場合のみ）
+            if (startTime.getTime() < today.getTime()) startTime = new Date(today)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
-            if (endTime > tomorrow) endTime = new Date(tomorrow)
+            if (endTime.getTime() > tomorrow.getTime()) endTime = new Date(tomorrow)
 
             items.push({ type: 'event', data: event, startTime, endTime })
         }
