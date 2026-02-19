@@ -54,7 +54,7 @@ export function OutlineView({
     onUpdateGroup,
     onUpdateProject,
 }: OutlineViewProps) {
-    const [activeTab, setActiveTab] = useState<MobileMapTab>('outline')
+    const [activeTab, setActiveTab] = useState<MobileMapTab>('mindmap')
 
     return (
         <div className="flex flex-col h-full bg-background">
@@ -75,18 +75,6 @@ export function OutlineView({
                 {/* タブバー */}
                 <div className="flex px-3 gap-1 pb-2">
                     <button
-                        onClick={() => setActiveTab('outline')}
-                        className={cn(
-                            "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
-                            activeTab === 'outline'
-                                ? "bg-primary text-primary-foreground"
-                                : "text-muted-foreground active:bg-muted"
-                        )}
-                    >
-                        <List className="w-3.5 h-3.5" />
-                        アウトライン
-                    </button>
-                    <button
                         onClick={() => setActiveTab('mindmap')}
                         className={cn(
                             "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
@@ -97,6 +85,18 @@ export function OutlineView({
                     >
                         <GitBranch className="w-3.5 h-3.5" />
                         マインドマップ
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('outline')}
+                        className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                            activeTab === 'outline'
+                                ? "bg-primary text-primary-foreground"
+                                : "text-muted-foreground active:bg-muted"
+                        )}
+                    >
+                        <List className="w-3.5 h-3.5" />
+                        アウトライン
                     </button>
                 </div>
             </div>
