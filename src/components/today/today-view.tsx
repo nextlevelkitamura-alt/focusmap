@@ -245,6 +245,21 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         }
     }, [])
 
+    // Delete event via DELETE /api/calendar/events/[eventId]
+    const handleDeleteEvent = useCallback(async (eventId: string, googleEventId: string, calendarId: string) => {
+        const res = await fetch(`/api/calendar/events/${eventId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ googleEventId, calendarId }),
+        })
+        if (!res.ok) {
+            const data = await res.json()
+            throw new Error(data.error?.message || 'Failed to delete event')
+        }
+        // Remove from local state
+        setLocalCalendarEvents(prev => prev.filter(e => e.id !== eventId))
+    }, [])
+
     // Writable calendars for the edit modal
     const writableCalendars = useMemo(() =>
         calendars
@@ -625,6 +640,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 onClose={handleCloseEditModal}
                 onSaveTask={handleSaveTask}
                 onSaveEvent={handleSaveEvent}
+                onDeleteEvent={handleDeleteEvent}
                 availableCalendars={writableCalendars}
             />
 

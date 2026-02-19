@@ -34,9 +34,21 @@ export async function DELETE(
 
   console.log('[events/delete] User authenticated:', user.id);
 
+  // Try query params first, then body
   const searchParams = request.nextUrl.searchParams;
-  const googleEventId = searchParams.get('googleEventId');
-  const calendarId = searchParams.get('calendarId') || 'primary';
+  let googleEventId = searchParams.get('googleEventId');
+  let calendarId = searchParams.get('calendarId') || 'primary';
+
+  // If not in query params, try request body
+  if (!googleEventId) {
+    try {
+      const body = await request.json();
+      googleEventId = body.googleEventId;
+      calendarId = body.calendarId || 'primary';
+    } catch {
+      // No body or parse error
+    }
+  }
 
   if (!googleEventId) {
     return NextResponse.json(

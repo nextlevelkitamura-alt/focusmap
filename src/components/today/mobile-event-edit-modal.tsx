@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { UserCalendar } from "@/hooks/useCalendars"
-import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer } from "lucide-react"
+import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 
@@ -20,6 +20,7 @@ interface MobileEventEditModalProps {
     onClose: () => void
     onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string }) => Promise<void>
     onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string }) => Promise<void>
+    onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => Promise<void>
     availableCalendars: { id: string; name: string; background_color?: string }[]
 }
 
@@ -46,6 +47,7 @@ export function MobileEventEditModal({
     onClose,
     onSaveTask,
     onSaveEvent,
+    onDeleteEvent,
     availableCalendars,
 }: MobileEventEditModalProps) {
     const [title, setTitle] = useState('')
@@ -54,6 +56,8 @@ export function MobileEventEditModal({
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
     const [isSaving, setIsSaving] = useState(false)
+    const [isDeleting, setIsDeleting] = useState(false)
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
 
     const timer = useTimer()
@@ -184,6 +188,22 @@ export function MobileEventEditModal({
             const newStart = parseTimeToDate(base, startTime)
             const newEnd = new Date(newStart.getTime() + newDuration * 60000)
             setEndTime(toTimeString(newEnd))
+        }
+    }
+
+    // Delete handler (events only)
+    const handleDelete = async () => {
+        if (!target || target.type !== 'event' || !onDeleteEvent) return
+        const event = target.data as CalendarEvent
+        setIsDeleting(true)
+        try {
+            await onDeleteEvent(event.id, event.google_event_id, event.calendar_id)
+            onClose()
+        } catch (err) {
+            console.error('[MobileEventEditModal] Delete error:', err)
+        } finally {
+            setIsDeleting(false)
+            setShowDeleteConfirm(false)
         }
     }
 
@@ -398,20 +418,54 @@ export function MobileEventEditModal({
 
                 </div>
 
-                {/* Save Button (fixed footer) */}
+                {/* Footer (fixed) */}
                 <div className="flex-shrink-0 px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] border-t">
-                    <button
-                        onClick={handleSave}
-                        disabled={isSaving || !title.trim()}
-                        className={cn(
-                            "w-full py-3 text-sm font-medium rounded-lg transition-colors",
-                            isSaving || !title.trim()
-                                ? "bg-muted text-muted-foreground cursor-not-allowed"
-                                : "bg-primary text-primary-foreground active:bg-primary/90"
-                        )}
-                    >
-                        {isSaving ? '保存中...' : '保存'}
-                    </button>
+                    {/* Delete confirmation (events only) */}
+                    {!isTask && showDeleteConfirm && onDeleteEvent ? (
+                        <div className="space-y-2">
+                            <p className="text-sm text-center text-muted-foreground">この予定を削除しますか？</p>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setShowDeleteConfirm(false)}
+                                    className="flex-1 py-2.5 text-sm font-medium rounded-lg border bg-background hover:bg-muted transition-colors"
+                                >
+                                    キャンセル
+                                </button>
+                                <button
+                                    onClick={handleDelete}
+                                    disabled={isDeleting}
+                                    className="flex-1 py-2.5 text-sm font-medium rounded-lg bg-destructive text-destructive-foreground active:bg-destructive/90 transition-colors"
+                                >
+                                    {isDeleting ? '削除中...' : '削除する'}
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex gap-2">
+                            {/* Save button */}
+                            <button
+                                onClick={handleSave}
+                                disabled={isSaving || !title.trim()}
+                                className={cn(
+                                    "flex-1 py-3 text-sm font-medium rounded-lg transition-colors",
+                                    isSaving || !title.trim()
+                                        ? "bg-muted text-muted-foreground cursor-not-allowed"
+                                        : "bg-primary text-primary-foreground active:bg-primary/90"
+                                )}
+                            >
+                                {isSaving ? '保存中...' : '保存'}
+                            </button>
+                            {/* Delete button (events only) */}
+                            {!isTask && onDeleteEvent && (
+                                <button
+                                    onClick={() => setShowDeleteConfirm(true)}
+                                    className="px-4 py-3 text-sm font-medium rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 active:bg-destructive/20 transition-colors"
+                                >
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         </>
