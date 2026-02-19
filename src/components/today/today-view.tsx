@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect, useCallback } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
@@ -19,6 +19,7 @@ import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { DragItem } from "@/hooks/useTouchDrag"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
+import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 
 // --- Types ---
@@ -65,6 +66,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [calendarOpen, setCalendarOpen] = useState(false)
     const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
+    const timelineContainerRef = useRef<HTMLDivElement>(null)
 
     // Sync local tasks with prop changes (render-time sync for instant updates)
     const [prevAllTasks, setPrevAllTasks] = useState(allTasks)
@@ -127,6 +129,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         setSelectedDate(normalized)
         setCalendarOpen(false)
     }, [])
+
+    // Swipe left/right to change date
+    useSwipeNavigation({
+        containerRef: timelineContainerRef,
+        onSwipeLeft: goToNextDay,
+        onSwipeRight: goToPrevDay,
+    })
 
     // Fetch calendar events for today
     const { events: fetchedCalendarEvents, isLoading: eventsLoading, error: eventsError } = useCalendarEvents({
@@ -623,8 +632,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 </div>
             )}
 
-            {/* Timeline Content */}
-            <div className="flex-1 overflow-hidden flex flex-col">
+            {/* Timeline Content (swipeable) */}
+            <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
                 {/* Calendar Connection Required */}
                 {!eventsLoading && calendars.length === 0 && (
                     <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
