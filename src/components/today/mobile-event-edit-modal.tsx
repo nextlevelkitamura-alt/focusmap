@@ -144,7 +144,7 @@ export function MobileEventEditModal({
             const newStart = parseTimeToDate(baseDate, startTime)
 
             onSaveTask(task.id, {
-                title: title !== task.title ? title : undefined,
+                title,
                 scheduled_at: newStart.toISOString(),
                 estimated_time: duration,
                 calendar_id: calendarId || undefined,
