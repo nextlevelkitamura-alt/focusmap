@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useRef, useEffect } from "react"
 import { Plus, Clock, Timer, Calendar, Star } from "lucide-react"
+import { format } from "date-fns"
+import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import {
     Sheet,
@@ -14,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { PRIORITY_OPTIONS, type Priority } from "@/components/ui/priority-select"
 import { ESTIMATED_TIME_OPTIONS, formatEstimatedTime } from "@/components/ui/estimated-time-select"
+import { DateTimePicker } from "@/components/ui/date-time-picker"
 import type { Project } from "@/types/database"
 
 export interface QuickTaskData {
@@ -44,7 +47,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
     // Form state
     const [title, setTitle] = useState("")
     const [projectId, setProjectId] = useState<string | null>(null)
-    const [startTime, setStartTime] = useState("")
+    const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [estimatedTime, setEstimatedTime] = useState(0)
     const [calendarId, setCalendarId] = useState<string | null>(null)
     const [priority, setPriority] = useState<Priority>(3)
@@ -61,7 +64,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
     const resetForm = useCallback(() => {
         setTitle("")
         setProjectId(null)
-        setStartTime("")
+        setScheduledDate(undefined)
         setEstimatedTime(0)
         setCalendarId(null)
         setPriority(3)
@@ -72,19 +75,10 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
 
         setIsSubmitting(true)
         try {
-            // Build scheduled_at from startTime (HH:mm)
-            let scheduledAt: string | null = null
-            if (startTime) {
-                const today = new Date()
-                const [hours, minutes] = startTime.split(":").map(Number)
-                today.setHours(hours, minutes, 0, 0)
-                scheduledAt = today.toISOString()
-            }
-
             await onCreateTask({
                 title: title.trim(),
                 project_id: projectId,
-                scheduled_at: scheduledAt,
+                scheduled_at: scheduledDate ? scheduledDate.toISOString() : null,
                 estimated_time: estimatedTime,
                 calendar_id: calendarId,
                 priority,
@@ -95,7 +89,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
         } finally {
             setIsSubmitting(false)
         }
-    }, [title, projectId, startTime, estimatedTime, calendarId, priority, isSubmitting, onCreateTask, resetForm])
+    }, [title, projectId, scheduledDate, estimatedTime, calendarId, priority, isSubmitting, onCreateTask, resetForm])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey && title.trim()) {
@@ -167,44 +161,56 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
                             </select>
                         </div>
 
-                        {/* Start Time + Estimated Time (side by side) */}
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    開始時間
-                                </label>
-                                <input
-                                    type="time"
-                                    value={startTime}
-                                    onChange={(e) => setStartTime(e.target.value)}
-                                    className={cn(
-                                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring"
-                                    )}
-                                />
-                            </div>
-                            <div>
-                                <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                    <Timer className="w-3 h-3" />
-                                    見積もり時間
-                                </label>
-                                <select
-                                    value={estimatedTime}
-                                    onChange={(e) => setEstimatedTime(Number(e.target.value))}
-                                    className={cn(
-                                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring"
-                                    )}
-                                >
-                                    <option value={0}>なし</option>
-                                    {ESTIMATED_TIME_OPTIONS.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                        {/* Start Date/Time */}
+                        <div>
+                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                開始日時
+                            </label>
+                            <DateTimePicker
+                                date={scheduledDate}
+                                setDate={setScheduledDate}
+                                trigger={
+                                    <button
+                                        type="button"
+                                        className={cn(
+                                            "w-full h-10 px-3 rounded-md border border-input bg-background text-sm text-left",
+                                            "focus:outline-none focus:ring-2 focus:ring-ring",
+                                            "flex items-center gap-2",
+                                            !scheduledDate && "text-muted-foreground"
+                                        )}
+                                    >
+                                        <Calendar className="w-4 h-4 flex-shrink-0" />
+                                        {scheduledDate
+                                            ? format(scheduledDate, "M月d日 (E) HH:mm", { locale: ja })
+                                            : "日時を選択"
+                                        }
+                                    </button>
+                                }
+                            />
+                        </div>
+
+                        {/* Estimated Time */}
+                        <div>
+                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                                <Timer className="w-3 h-3" />
+                                見積もり時間
+                            </label>
+                            <select
+                                value={estimatedTime}
+                                onChange={(e) => setEstimatedTime(Number(e.target.value))}
+                                className={cn(
+                                    "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
+                                    "focus:outline-none focus:ring-2 focus:ring-ring"
+                                )}
+                            >
+                                <option value={0}>なし</option>
+                                {ESTIMATED_TIME_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
 
                         {/* Calendar + Priority (side by side) */}
