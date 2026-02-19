@@ -57,7 +57,6 @@ export function MobileEventEditModal({
     const [endTime, setEndTime] = useState('')
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
-    const [isSaving, setIsSaving] = useState(false)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -133,42 +132,40 @@ export function MobileEventEditModal({
         }
     }, [safeClose])
 
-    // Save handler
-    const handleSave = async () => {
+    // Save handler — 即座に閉じ、保存はバックグラウンドで実行
+    const handleSave = () => {
         if (!target) return
-        setIsSaving(true)
 
-        try {
-            if (target.type === 'task') {
-                const task = target.data
-                const baseDate = target.startTime
-                const newStart = parseTimeToDate(baseDate, startTime)
+        onClose()
 
-                await onSaveTask(task.id, {
-                    title: title !== task.title ? title : undefined,
-                    scheduled_at: newStart.toISOString(),
-                    estimated_time: duration,
-                    calendar_id: calendarId || undefined,
-                })
-            } else {
-                const event = target.data
-                const baseDate = target.startTime
-                const newStart = parseTimeToDate(baseDate, startTime)
-                const newEnd = new Date(newStart.getTime() + duration * 60000)
+        if (target.type === 'task') {
+            const task = target.data
+            const baseDate = target.startTime
+            const newStart = parseTimeToDate(baseDate, startTime)
 
-                await onSaveEvent(event.id, {
-                    title,
-                    start_time: newStart.toISOString(),
-                    end_time: newEnd.toISOString(),
-                    googleEventId: event.google_event_id,
-                    calendarId: event.calendar_id,
-                })
-            }
-            onClose()
-        } catch (err) {
-            console.error('[MobileEventEditModal] Save error:', err)
-        } finally {
-            setIsSaving(false)
+            onSaveTask(task.id, {
+                title: title !== task.title ? title : undefined,
+                scheduled_at: newStart.toISOString(),
+                estimated_time: duration,
+                calendar_id: calendarId || undefined,
+            }).catch(err => {
+                console.error('[MobileEventEditModal] Save task error:', err)
+            })
+        } else {
+            const event = target.data
+            const baseDate = target.startTime
+            const newStart = parseTimeToDate(baseDate, startTime)
+            const newEnd = new Date(newStart.getTime() + duration * 60000)
+
+            onSaveEvent(event.id, {
+                title,
+                start_time: newStart.toISOString(),
+                end_time: newEnd.toISOString(),
+                googleEventId: event.google_event_id,
+                calendarId: event.calendar_id,
+            }).catch(err => {
+                console.error('[MobileEventEditModal] Save event error:', err)
+            })
         }
     }
 
@@ -437,16 +434,16 @@ export function MobileEventEditModal({
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={handleSave}
-                                disabled={isSaving || !title.trim()}
+                                disabled={!title.trim()}
                                 className={cn(
                                     "py-3 text-sm font-medium rounded-lg transition-colors",
                                     (onDeleteTask || onDeleteEvent) ? "basis-3/4" : "w-full",
-                                    isSaving || !title.trim()
+                                    !title.trim()
                                         ? "bg-muted text-muted-foreground cursor-not-allowed"
                                         : "bg-primary text-primary-foreground active:bg-primary/90"
                                 )}
                             >
-                                {isSaving ? '保存中...' : '完了'}
+                                完了
                             </button>
                             {(onDeleteTask || onDeleteEvent) && (
                                 <button
