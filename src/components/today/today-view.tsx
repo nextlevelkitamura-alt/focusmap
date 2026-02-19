@@ -643,8 +643,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 key={selectedDate.getTime()}
                 className={cn(
                     "flex-1 flex flex-col overflow-hidden",
-                    slideDirection === 'left' && "animate-in slide-in-from-right-4 fade-in duration-200",
-                    slideDirection === 'right' && "animate-in slide-in-from-left-4 fade-in duration-200"
+                    slideDirection === 'left' && "animate-in slide-in-from-right-12 duration-250",
+                    slideDirection === 'right' && "animate-in slide-in-from-left-12 duration-250"
                 )}
                 onAnimationEnd={() => setSlideDirection(null)}
               >
