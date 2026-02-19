@@ -161,8 +161,8 @@ export function TodayTimelineCalendar({
                                         isEventCompleted && "opacity-50"
                                     )}
                                     style={{
-                                        backgroundColor: isEventCompleted ? 'var(--color-muted)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)` : undefined,
-                                        borderColor: isEventCompleted ? 'var(--color-border)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)` : undefined,
+                                        backgroundColor: isEventCompleted ? 'var(--color-muted)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.20)` : undefined,
+                                        borderColor: isEventCompleted ? 'var(--color-border)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)` : undefined,
                                     }}
                                 >
                                     <button
@@ -421,8 +421,8 @@ function EventBlock({
 
     const eventHex = getEventColor(event)
     const rgb = hexToRgb(eventHex)
-    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)` : undefined
-    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.22)` : undefined
+    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.20)` : undefined
+    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.30)` : undefined
 
     return (
         <div
@@ -439,7 +439,7 @@ function EventBlock({
                 backgroundColor: isCompleted
                     ? 'var(--color-muted)'
                     : isNow ? bgNowRgba : bgRgba,
-                ...(isNow && !isCompleted ? { boxShadow: `0 0 0 1px ${eventHex}40` } : {}),
+                ...(isNow && !isCompleted ? { boxShadow: `0 0 0 1px ${eventHex}60` } : {}),
             }}
         >
             {isCompact ? (
@@ -530,20 +530,32 @@ function TaskBlock({
 
     const startStr = startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
 
+    // EventBlock と完全に同じ rgba 方式でタスク色を定義
+    const TASK_HEX = '#F97316' // orange-500
+    const TASK_RGB = { r: 249, g: 115, b: 22 }
+    const taskBg = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.20)`
+    const taskBgNow = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.30)`
+
     return (
         <div
             onClick={onTap}
             className={cn(
             "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
             onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
-            isRunning
-                ? "bg-primary/15 dark:bg-primary/10 border-primary ring-1 ring-primary/40 dark:ring-primary/30"
-                : isDone
-                    ? "bg-muted/30 border-muted-foreground/30"
-                    : "bg-green-50 dark:bg-green-950/40 border-green-400",
-            isNow && !isRunning && "ring-1 ring-green-400/50 bg-green-100/80 dark:bg-green-900/50",
+            isRunning && "ring-1",
+            isDone && !isRunning && "opacity-40",
+            isNow && !isRunning && "ring-1",
             isPast && !isRunning && "opacity-40"
-        )}>
+            )}
+            style={isRunning
+                ? { borderLeftColor: 'var(--color-primary)', backgroundColor: 'rgba(var(--color-primary-rgb, 59,130,246), 0.15)', boxShadow: '0 0 0 1px rgba(var(--color-primary-rgb, 59,130,246), 0.4)' }
+                : isDone
+                    ? { borderLeftColor: 'var(--color-muted-foreground)', backgroundColor: 'var(--color-muted)' }
+                    : isNow
+                        ? { borderLeftColor: TASK_HEX, backgroundColor: taskBgNow, boxShadow: `0 0 0 1px ${TASK_HEX}60` }
+                        : { borderLeftColor: TASK_HEX, backgroundColor: taskBg }
+            }
+        >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
                     <button
@@ -554,12 +566,12 @@ function TaskBlock({
                         {isDone ? (
                             <CheckSquare className="w-3 h-3 text-primary" />
                         ) : (
-                            <Square className="w-3 h-3 text-green-600 dark:text-green-400" />
+                            <Square className="w-3 h-3" style={{ color: TASK_HEX }} />
                         )}
                     </button>
                     <span className={cn(
                         "text-[11px] font-medium truncate",
-                        isDone ? "line-through text-muted-foreground" : "text-green-800 dark:text-green-200"
+                        isDone ? "line-through text-muted-foreground" : "text-foreground"
                     )}>
                         {task.title}
                     </span>
@@ -614,12 +626,12 @@ function TaskBlock({
                                 {isDone ? (
                                     <CheckSquare className="w-3.5 h-3.5 text-primary" />
                                 ) : (
-                                    <Square className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                                    <Square className="w-3.5 h-3.5" style={{ color: TASK_HEX }} />
                                 )}
                             </button>
                             <span className={cn(
                                 "text-[11px] font-medium truncate",
-                                isDone ? "line-through text-muted-foreground" : "text-green-800 dark:text-green-200"
+                                isDone ? "line-through text-muted-foreground" : "text-foreground"
                             )}>
                                 {task.title}
                             </span>
@@ -666,7 +678,7 @@ function TaskBlock({
                         </div>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-green-600 dark:text-green-300 font-medium">{startStr}</span>
+                        <span className="text-[10px] font-medium" style={{ color: TASK_HEX }}>{startStr}</span>
                         {task.estimated_time > 0 && (
                             <span className="text-[9px] text-muted-foreground">⏱ {task.estimated_time}分</span>
                         )}
