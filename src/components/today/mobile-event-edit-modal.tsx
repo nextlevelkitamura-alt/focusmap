@@ -203,18 +203,18 @@ export function MobileEventEditModal({
             {/* Bottom Sheet */}
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[95vh] overflow-y-auto"
+                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[92vh] flex flex-col"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
             >
-                {/* Drag Handle */}
-                <div className="flex justify-center pt-3 pb-1">
+                {/* Drag Handle (fixed) */}
+                <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
                     <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
                 </div>
 
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-2">
+                {/* Header (fixed) */}
+                <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
                     <h3 className="text-base font-semibold">
                         {isTask ? 'タスクを編集' : '予定を編集'}
                     </h3>
@@ -226,8 +226,8 @@ export function MobileEventEditModal({
                     </button>
                 </div>
 
-                {/* Form */}
-                <div className="px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] space-y-4">
+                {/* Form (scrollable) */}
+                <div className="flex-1 overflow-y-auto px-4 space-y-4 pb-2">
                     {/* Title */}
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -263,22 +263,18 @@ export function MobileEventEditModal({
                             <Clock className="w-3.5 h-3.5" />
                             所要時間
                         </label>
-                        <div className="flex flex-wrap gap-2">
+                        <select
+                            value={duration}
+                            onChange={(e) => handleDurationChange(Number(e.target.value))}
+                            className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none cursor-pointer"
+                            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
+                        >
                             {DURATION_OPTIONS.map(d => (
-                                <button
-                                    key={d}
-                                    onClick={() => handleDurationChange(d)}
-                                    className={cn(
-                                        "px-3 py-1.5 text-sm rounded-lg border transition-colors",
-                                        duration === d
-                                            ? "bg-primary text-primary-foreground border-primary"
-                                            : "bg-background hover:bg-muted border-border"
-                                    )}
-                                >
+                                <option key={d} value={d}>
                                     {d >= 60 ? `${d / 60}時間` : `${d}分`}
-                                </button>
+                                </option>
                             ))}
-                        </div>
+                        </select>
                         <p className="text-[10px] text-muted-foreground">
                             終了: {endTime}
                         </p>
@@ -400,7 +396,10 @@ export function MobileEventEditModal({
                         )
                     })()}
 
-                    {/* Save Button */}
+                </div>
+
+                {/* Save Button (fixed footer) */}
+                <div className="flex-shrink-0 px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] border-t">
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !title.trim()}

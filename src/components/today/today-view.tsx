@@ -126,11 +126,21 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
 
     // Merge calendar events + scheduled tasks into timeline
+    // When a task has a matching google_event_id, prefer showing it as a task (green, with timer)
     const timelineItems = useMemo(() => {
         const items: TimelineItem[] = []
 
+        // Collect google_event_ids from tasks to skip matching calendar events
+        const taskGoogleIds = new Set(
+            todayScheduledTasks
+                .filter(t => t.google_event_id)
+                .map(t => t.google_event_id!)
+        )
+
         for (const event of calendarEvents) {
             if (event.is_all_day) continue
+            // Skip calendar events that have a matching task (task takes priority)
+            if (taskGoogleIds.has(event.google_event_id)) continue
             items.push({
                 type: 'event',
                 data: event,
@@ -139,10 +149,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             })
         }
 
-        const eventGoogleIds = new Set(calendarEvents.map(e => e.google_event_id))
         for (const task of todayScheduledTasks) {
             if (!task.scheduled_at) continue
-            if (task.google_event_id && eventGoogleIds.has(task.google_event_id)) continue
             const start = new Date(task.scheduled_at)
             const end = new Date(start.getTime() + (task.estimated_time || 30) * 60 * 1000)
             items.push({ type: 'task', data: task, startTime: start, endTime: end })
