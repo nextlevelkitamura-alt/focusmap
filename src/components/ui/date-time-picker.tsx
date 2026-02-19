@@ -35,17 +35,17 @@ function TimeWheel({
     const hourScrollRef = React.useRef<HTMLDivElement>(null)
     const minuteScrollRef = React.useRef<HTMLDivElement>(null)
     const isInitialMount = React.useRef(true)
+    const hourTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+    const minuteTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+    const isSnapping = React.useRef(false)
 
-    // scrollTop ベースで中央にスクロール（scrollIntoView はモバイルで親をスクロールするため不使用）
     const scrollToIndex = React.useCallback((container: HTMLDivElement | null, index: number, smooth: boolean) => {
         if (!container) return
-        const paddingTop = VISIBLE_HEIGHT / 2 - ITEM_HEIGHT / 2
         const targetScrollTop = index * ITEM_HEIGHT
         container.scrollTo({
             top: targetScrollTop,
             behavior: smooth ? 'smooth' : 'auto',
         })
-        void paddingTop // used in CSS padding calculation
     }, [])
 
     React.useEffect(() => {
@@ -60,14 +60,33 @@ function TimeWheel({
         }
     }, [selectedDate, scrollToIndex])
 
-    const handleTimeChange = (type: "hour" | "minute", value: number) => {
-        onTimeChange(type, value)
-        if (type === "hour") {
-            scrollToIndex(hourScrollRef.current, value, true)
-        } else {
-            scrollToIndex(minuteScrollRef.current, value / 5, true)
-        }
-    }
+    // スクロール終了検出 → スナップ＋自動選択
+    const handleScrollEnd = React.useCallback((
+        container: HTMLDivElement,
+        type: "hour" | "minute",
+        values: number[],
+        timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
+    ) => {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        timerRef.current = setTimeout(() => {
+            if (isSnapping.current) return
+            const scrollTop = container.scrollTop
+            const snappedIndex = Math.round(scrollTop / ITEM_HEIGHT)
+            const clampedIndex = Math.max(0, Math.min(snappedIndex, values.length - 1))
+            const value = values[clampedIndex]
+
+            // スナップアニメーション
+            isSnapping.current = true
+            container.scrollTo({
+                top: clampedIndex * ITEM_HEIGHT,
+                behavior: 'smooth',
+            })
+            setTimeout(() => { isSnapping.current = false }, 200)
+
+            // 値を自動確定
+            onTimeChange(type, value)
+        }, 80)
+    }, [onTimeChange])
 
     const paddingY = Math.floor(VISIBLE_HEIGHT / 2 - ITEM_HEIGHT / 2)
 
@@ -108,14 +127,18 @@ function TimeWheel({
                         className="h-full flex-1 overflow-y-scroll overscroll-contain no-scrollbar"
                         style={{ WebkitOverflowScrolling: 'touch' }}
                         onTouchMove={(e) => e.stopPropagation()}
+                        onScroll={() => {
+                            if (hourScrollRef.current) {
+                                handleScrollEnd(hourScrollRef.current, "hour", hours, hourTimerRef)
+                            }
+                        }}
                     >
                         <div className="flex flex-col items-center" style={{ paddingTop: paddingY, paddingBottom: paddingY }}>
                             {hours.map((h) => {
                                 const isSelected = selectedDate?.getHours() === h
                                 return (
-                                    <button
+                                    <div
                                         key={h}
-                                        type="button"
                                         className={cn(
                                             "w-8 flex items-center justify-center text-xs font-medium transition-colors shrink-0",
                                             isSelected
@@ -123,10 +146,9 @@ function TimeWheel({
                                                 : "text-muted-foreground"
                                         )}
                                         style={{ height: ITEM_HEIGHT }}
-                                        onClick={() => handleTimeChange("hour", h)}
                                     >
                                         {h.toString().padStart(2, "0")}
-                                    </button>
+                                    </div>
                                 )
                             })}
                         </div>
@@ -140,15 +162,19 @@ function TimeWheel({
                         className="h-full flex-1 overflow-y-scroll overscroll-contain no-scrollbar"
                         style={{ WebkitOverflowScrolling: 'touch' }}
                         onTouchMove={(e) => e.stopPropagation()}
+                        onScroll={() => {
+                            if (minuteScrollRef.current) {
+                                handleScrollEnd(minuteScrollRef.current, "minute", minutes, minuteTimerRef)
+                            }
+                        }}
                     >
                         <div className="flex flex-col items-center" style={{ paddingTop: paddingY, paddingBottom: paddingY }}>
                             {minutes.map((m) => {
                                 const currentMin = selectedDate?.getMinutes() ?? 0
                                 const isSelected = currentMin === m
                                 return (
-                                    <button
+                                    <div
                                         key={m}
-                                        type="button"
                                         className={cn(
                                             "w-8 flex items-center justify-center text-xs font-medium transition-colors shrink-0",
                                             isSelected
@@ -156,10 +182,9 @@ function TimeWheel({
                                                 : "text-muted-foreground"
                                         )}
                                         style={{ height: ITEM_HEIGHT }}
-                                        onClick={() => handleTimeChange("minute", m)}
                                     >
                                         {m.toString().padStart(2, "0")}
-                                    </button>
+                                    </div>
                                 )
                             })}
                         </div>

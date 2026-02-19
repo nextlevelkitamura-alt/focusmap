@@ -145,6 +145,16 @@ export function TodayTimelineCalendar({
         return result
     }, [timelineItems])
 
+    // 日付をまたぐアイテムに対応してグリッド高さを拡張
+    const extendedHeight = useMemo(() => {
+        let maxBottom = TOTAL_HEIGHT
+        for (const item of layoutItems) {
+            const bottom = item.top + item.height
+            if (bottom > maxBottom) maxBottom = bottom
+        }
+        return maxBottom
+    }, [layoutItems])
+
     return (
         <div className="flex flex-col flex-1 overflow-hidden">
             {/* All-day Events Bar */}
@@ -230,7 +240,7 @@ export function TodayTimelineCalendar({
                     ref={timeLabelRef}
                     className="w-12 flex-shrink-0 overflow-hidden"
                 >
-                    <div className="relative" style={{ height: TOTAL_HEIGHT }}>
+                    <div className="relative" style={{ height: extendedHeight }}>
                         {HOURS.map((hour) => (
                             <div
                                 key={hour}
@@ -249,7 +259,7 @@ export function TodayTimelineCalendar({
                     className={cn("flex-1 overflow-y-auto overflow-x-hidden", dragState.isDragging && "select-none")}
                     onScroll={handleGridScroll}
                 >
-                    <div className="relative" style={{ height: TOTAL_HEIGHT }}>
+                    <div className="relative" style={{ height: extendedHeight }}>
                         {/* Hour Grid Lines */}
                         {HOURS.map((hour) => (
                             <div
@@ -538,8 +548,8 @@ function TaskBlock({
     // EventBlock と完全に同じ rgba 方式でタスク色を定義
     const TASK_HEX = '#F97316' // orange-500
     const TASK_RGB = { r: 249, g: 115, b: 22 }
-    const taskBg = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.20)`
-    const taskBgNow = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.30)`
+    const taskBg = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.25)`
+    const taskBgNow = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.35)`
 
     return (
         <div
