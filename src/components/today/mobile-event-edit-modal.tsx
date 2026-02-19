@@ -4,8 +4,9 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { UserCalendar } from "@/hooks/useCalendars"
-import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown } from "lucide-react"
+import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useTimer, formatTime } from "@/contexts/TimerContext"
 
 // --- Types ---
 
@@ -55,6 +56,7 @@ export function MobileEventEditModal({
     const [isSaving, setIsSaving] = useState(false)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
 
+    const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
     const dragStartY = useRef(0)
     const currentTranslateY = useRef(0)
@@ -332,6 +334,57 @@ export function MobileEventEditModal({
                             </div>
                         </div>
                     )}
+
+                    {/* Timer Section (Tasks only) */}
+                    {isTask && (() => {
+                        const task = target.data as Task
+                        const isRunning = timer.runningTaskId === task.id
+                        const elapsedSeconds = isRunning
+                            ? timer.currentElapsedSeconds
+                            : (task.total_elapsed_seconds ?? 0)
+                        const hasElapsed = elapsedSeconds > 0
+
+                        return (
+                            <div className="space-y-1.5">
+                                <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                    <Timer className="w-3.5 h-3.5" />
+                                    記録時間
+                                </label>
+                                <div className="flex items-center gap-3 px-3 py-2.5 border rounded-lg bg-background">
+                                    <span className={cn(
+                                        "font-mono text-lg flex-1",
+                                        isRunning ? "text-primary" : hasElapsed ? "text-foreground" : "text-muted-foreground"
+                                    )}>
+                                        {formatTime(elapsedSeconds)}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={async (e) => {
+                                            e.stopPropagation()
+                                            if (isRunning) {
+                                                await timer.pauseTimer()
+                                            } else {
+                                                await timer.startTimer(task)
+                                            }
+                                        }}
+                                        className={cn(
+                                            "p-2.5 rounded-full transition-colors",
+                                            isRunning
+                                                ? "bg-primary/10 text-primary active:bg-primary/20"
+                                                : "bg-muted text-muted-foreground active:bg-muted/80"
+                                        )}
+                                    >
+                                        {isRunning ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                                    </button>
+                                </div>
+                                {(task.actual_time_minutes ?? 0) > 0 && !isRunning && (
+                                    <p className="text-[10px] text-muted-foreground">
+                                        実績: {task.actual_time_minutes}分
+                                    </p>
+                                )}
+                            </div>
+                        )
+                    })()}
 
                     {/* Save Button */}
                     <button

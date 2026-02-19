@@ -267,6 +267,8 @@ export function DashboardClient({
     // --- Quick Task Creation (for TodayView FAB) ---
     const [quickTasks, setQuickTasks] = useState<Task[]>([])
     const [quickTaskToast, setQuickTaskToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
+    // タスク更新のローカルオーバーライド（タイマー等の変更を即座に反映）
+    const [taskOverrides, setTaskOverrides] = useState<Record<string, Partial<Task>>>({})
 
     // Debounced calendar refresh (2s after last call)
     const calendarRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -386,29 +388,40 @@ export function DashboardClient({
         })()
     }, [userId, debouncedRefreshCalendar])
 
-    // Quick task 編集時に quickTasks state も同期するラッパー
+    // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
     const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
-        await updateTask(taskId, updates)
+        // ローカルオーバーライドを即座に適用（UI即時反映）
+        setTaskOverrides(prev => ({
+            ...prev,
+            [taskId]: { ...(prev[taskId] || {}), ...updates }
+        }))
+        // quickTasks にもあれば同期
         setQuickTasks(prev => {
             if (!prev.some(t => t.id === taskId)) return prev
             return prev.map(t => t.id === taskId ? { ...t, ...updates } : t)
         })
+        // DB保存
+        await updateTask(taskId, updates)
     }, [updateTask])
 
     // --- View State ---
     const { activeView } = useView()
 
-    // Merge all tasks: current project (latest state) + other projects (initial state) + quick tasks
+    // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
     const allTasksMerged = useMemo(() => {
         const currentMap = new Map(currentTasks.map(t => [t.id, t]))
-        const merged = initialTasks.map(t => currentMap.get(t.id) || t)
+        const merged = initialTasks.map(t => {
+            const base = currentMap.get(t.id) || t
+            const override = taskOverrides[base.id]
+            return override ? { ...base, ...override } as Task : base
+        })
         // Add quick tasks that aren't already in the list
         const existingIds = new Set(merged.map(t => t.id))
         for (const qt of quickTasks) {
             if (!existingIds.has(qt.id)) merged.push(qt)
         }
         return merged
-    }, [initialTasks, currentTasks, quickTasks])
+    }, [initialTasks, currentTasks, quickTasks, taskOverrides])
 
     // --- Undo/Redo Keyboard Listener ---
     const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
