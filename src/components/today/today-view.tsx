@@ -62,10 +62,12 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
-    // Sync local tasks with prop changes
-    useEffect(() => {
+    // Sync local tasks with prop changes (render-time sync for instant updates)
+    const [prevAllTasks, setPrevAllTasks] = useState(allTasks)
+    if (allTasks !== prevAllTasks) {
+        setPrevAllTasks(allTasks)
         setLocalTasks(allTasks)
-    }, [allTasks])
+    }
 
     // Today's date range
     const today = useMemo(() => {
