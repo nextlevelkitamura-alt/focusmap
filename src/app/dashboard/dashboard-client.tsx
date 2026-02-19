@@ -319,66 +319,68 @@ export function DashboardClient({
             habit_end_date: null,
         }
 
-        // Optimistic update
+        // 楽観的更新 → 即座にカレンダーに表示 & シートを閉じる
         setQuickTasks(prev => [...prev, optimisticTask])
 
-        // API call
-        const res = await fetch('/api/tasks', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                id: optimisticId,
-                project_id: taskData.project_id,
-                parent_task_id: null,
-                title: taskData.title,
-                scheduled_at: taskData.scheduled_at,
-                estimated_time: taskData.estimated_time,
-                calendar_id: taskData.calendar_id,
-                priority: taskData.priority,
-            }),
-        })
-
-        if (!res.ok) {
-            // Rollback on failure
-            setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
-            setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
-            return
-        }
-
-        setQuickTaskToast({ type: 'success', message: `「${taskData.title}」を追加しました` })
-
-        // Google Calendar 同期: scheduled_at + estimated_time > 0 + calendar_id が揃っている場合
-        if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
+        // バックグラウンドで API 保存 + カレンダー同期（await しない）
+        ;(async () => {
             try {
-                const syncRes = await fetch('/api/calendar/sync-task', {
+                const res = await fetch('/api/tasks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        taskId: optimisticId,
+                        id: optimisticId,
+                        project_id: taskData.project_id,
+                        parent_task_id: null,
+                        title: taskData.title,
                         scheduled_at: taskData.scheduled_at,
                         estimated_time: taskData.estimated_time,
                         calendar_id: taskData.calendar_id,
+                        priority: taskData.priority,
                     }),
                 })
-                if (syncRes.ok) {
-                    const syncData = await syncRes.json()
-                    if (syncData.googleEventId) {
-                        setQuickTasks(prev => prev.map(t =>
-                            t.id === optimisticId
-                                ? { ...t, google_event_id: syncData.googleEventId }
-                                : t
-                        ))
-                        // PC カレンダーをデバウンス付きでリフレッシュ
-                        debouncedRefreshCalendar()
+
+                if (!res.ok) {
+                    setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                    setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
+                    return
+                }
+
+                setQuickTaskToast({ type: 'success', message: `「${taskData.title}」を追加しました` })
+
+                // Google Calendar 同期
+                if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
+                    const syncRes = await fetch('/api/calendar/sync-task', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            taskId: optimisticId,
+                            scheduled_at: taskData.scheduled_at,
+                            estimated_time: taskData.estimated_time,
+                            calendar_id: taskData.calendar_id,
+                        }),
+                    })
+                    if (syncRes.ok) {
+                        const syncData = await syncRes.json()
+                        if (syncData.googleEventId) {
+                            setQuickTasks(prev => prev.map(t =>
+                                t.id === optimisticId
+                                    ? { ...t, google_event_id: syncData.googleEventId }
+                                    : t
+                            ))
+                            debouncedRefreshCalendar()
+                        }
+                    } else {
+                        setQuickTaskToast({ type: 'info', message: 'タスクは追加されましたが、カレンダー同期に失敗しました' })
                     }
-                } else {
-                    setQuickTaskToast({ type: 'info', message: 'タスクは追加されましたが、カレンダー同期に失敗しました' })
                 }
             } catch (err) {
-                console.error('[QuickTask] Calendar sync failed:', err)
-                setQuickTaskToast({ type: 'info', message: 'タスクは追加されましたが、カレンダー同期に失敗しました' })
+                console.error('[QuickTask] Background save failed:', err)
+                setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
             }
-        }
+        })()
+        // ↑ await しない → 即座に return → シートが閉じる + カレンダーに表示
     }, [userId, debouncedRefreshCalendar])
 
     // Quick task 編集時に quickTasks state も同期するラッパー

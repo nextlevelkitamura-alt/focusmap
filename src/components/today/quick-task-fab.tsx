@@ -70,25 +70,24 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
         setPriority(3)
     }, [])
 
-    const handleSubmit = useCallback(async () => {
+    const handleSubmit = useCallback(() => {
         if (!title.trim() || isSubmitting) return
 
         setIsSubmitting(true)
-        try {
-            await onCreateTask({
-                title: title.trim(),
-                project_id: projectId,
-                scheduled_at: scheduledDate ? scheduledDate.toISOString() : null,
-                estimated_time: estimatedTime,
-                calendar_id: calendarId,
-                priority,
-            })
 
-            resetForm()
-            setIsOpen(false)
-        } finally {
-            setIsSubmitting(false)
-        }
+        // 即座にシートを閉じてカレンダーに表示（API保存はバックグラウンド）
+        onCreateTask({
+            title: title.trim(),
+            project_id: projectId,
+            scheduled_at: scheduledDate ? scheduledDate.toISOString() : null,
+            estimated_time: estimatedTime,
+            calendar_id: calendarId,
+            priority,
+        })
+
+        resetForm()
+        setIsOpen(false)
+        setIsSubmitting(false)
     }, [title, projectId, scheduledDate, estimatedTime, calendarId, priority, isSubmitting, onCreateTask, resetForm])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
