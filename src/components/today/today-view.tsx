@@ -67,6 +67,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const [calendarOpen, setCalendarOpen] = useState(false)
     const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
     const timelineContainerRef = useRef<HTMLDivElement>(null)
+    const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
 
     // Sync local tasks with prop changes (render-time sync for instant updates)
     const [prevAllTasks, setPrevAllTasks] = useState(allTasks)
@@ -98,6 +99,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Date navigation
     const goToPrevDay = useCallback(() => {
+        setSlideDirection('right')
         setSelectedDate(prev => {
             const d = new Date(prev)
             d.setDate(d.getDate() - 1)
@@ -106,6 +108,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [])
 
     const goToNextDay = useCallback(() => {
+        setSlideDirection('left')
         setSelectedDate(prev => {
             const d = new Date(prev)
             d.setDate(d.getDate() + 1)
@@ -114,6 +117,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [])
 
     const goToToday = useCallback(() => {
+        setSlideDirection('right')
         const d = new Date()
         d.setHours(0, 0, 0, 0)
         setSelectedDate(d)
@@ -126,9 +130,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         if (!date) return
         const normalized = new Date(date)
         normalized.setHours(0, 0, 0, 0)
+        setSlideDirection(normalized > selectedDate ? 'left' : 'right')
         setSelectedDate(normalized)
         setCalendarOpen(false)
-    }, [])
+    }, [selectedDate])
 
     // Swipe left/right to change date
     useSwipeNavigation({
@@ -634,6 +639,15 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
+              <div
+                key={selectedDate.getTime()}
+                className={cn(
+                    "flex-1 flex flex-col overflow-hidden",
+                    slideDirection === 'left' && "animate-in slide-in-from-right-4 fade-in duration-200",
+                    slideDirection === 'right' && "animate-in slide-in-from-left-4 fade-in duration-200"
+                )}
+                onAnimationEnd={() => setSlideDirection(null)}
+              >
                 {/* Calendar Connection Required */}
                 {!eventsLoading && calendars.length === 0 && (
                     <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
@@ -715,6 +729,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         <div className="h-4" />
                     </div>
                 )}
+              </div>
             </div>
 
             {/* Unscheduled Tasks */}
