@@ -214,14 +214,14 @@ export function MobileEventEditModal({
         <>
             {/* Overlay */}
             <div
-                className="fixed inset-0 z-50 bg-black/40 animate-in fade-in duration-200"
+                className="fixed inset-0 z-[60] bg-black/40 animate-in fade-in duration-200"
                 onClick={safeClose}
             />
 
             {/* Bottom Sheet */}
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[80dvh] flex flex-col overflow-hidden"
+                className="fixed inset-x-0 bottom-0 z-[60] bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[80dvh] flex flex-col overflow-hidden"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
