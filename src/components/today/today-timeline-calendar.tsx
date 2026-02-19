@@ -33,6 +33,7 @@ interface TodayTimelineCalendarProps {
     childTasksMap?: Map<string, Task[]>
     onCreateSubTask?: (parentTaskId: string, title: string) => void
     onDeleteSubTask?: (taskId: string) => void
+    projectNameMap?: Map<string, string>
 }
 
 // --- Helpers ---
@@ -63,6 +64,7 @@ export function TodayTimelineCalendar({
     childTasksMap,
     onCreateSubTask,
     onDeleteSubTask,
+    projectNameMap,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
@@ -161,7 +163,7 @@ export function TodayTimelineCalendar({
                                         isEventCompleted && "opacity-50"
                                     )}
                                     style={{
-                                        backgroundColor: isEventCompleted ? 'var(--color-muted)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.20)` : undefined,
+                                        backgroundColor: isEventCompleted ? 'var(--color-muted)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.25)` : undefined,
                                         borderColor: isEventCompleted ? 'var(--color-border)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)` : undefined,
                                     }}
                                 >
@@ -344,6 +346,7 @@ export function TodayTimelineCalendar({
                                                 childDoneCount={taskChildTasks?.filter(t => t.status === 'done').length ?? 0}
                                                 isExpanded={isExpanded}
                                                 onToggleExpand={onCreateSubTask ? () => setExpandedTaskId(prev => prev === id ? null : id) : undefined}
+                                                projectName={(item.data as Task).project_id ? projectNameMap?.get((item.data as Task).project_id!) : undefined}
                                             />
                                             {isExpanded && onCreateSubTask && (
                                                 <div className="relative z-40">
@@ -421,8 +424,8 @@ function EventBlock({
 
     const eventHex = getEventColor(event)
     const rgb = hexToRgb(eventHex)
-    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.20)` : undefined
-    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.30)` : undefined
+    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.25)` : undefined
+    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)` : undefined
 
     return (
         <div
@@ -508,6 +511,7 @@ function TaskBlock({
     childDoneCount = 0,
     isExpanded = false,
     onToggleExpand,
+    projectName,
 }: {
     task: Task
     currentTime: Date
@@ -521,6 +525,7 @@ function TaskBlock({
     childDoneCount?: number
     isExpanded?: boolean
     onToggleExpand?: () => void
+    projectName?: string
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
     const isPast = currentTime >= endTime
@@ -681,6 +686,11 @@ function TaskBlock({
                         <span className="text-[10px] font-medium" style={{ color: TASK_HEX }}>{startStr}</span>
                         {task.estimated_time > 0 && (
                             <span className="text-[9px] text-muted-foreground">⏱ {task.estimated_time}分</span>
+                        )}
+                        {projectName && (
+                            <span className="text-[9px] text-muted-foreground bg-muted/60 px-1 py-0.5 rounded truncate max-w-20">
+                                {projectName}
+                            </span>
                         )}
                     </div>
                     {isRunning && (

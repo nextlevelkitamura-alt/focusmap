@@ -162,9 +162,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         return ids
     }, [localTasks])
 
-    // Today's scheduled tasks (excluding habits)
+    // Today's scheduled tasks (excluding habits and groups)
+    // NOTE: project_id を持つタスクも scheduled_at が今日なら表示する（MindMap→Today の橋渡し）
     const todayScheduledTasks = useMemo(() => {
         return localTasks.filter(t => {
+            if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
             if (!t.scheduled_at) return false
             const scheduled = new Date(t.scheduled_at)
@@ -183,6 +185,15 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         ),
         [localTasks]
     )
+
+    // Project name map (for displaying project badge on task blocks)
+    const projectNameMap = useMemo(() => {
+        const map = new Map<string, string>()
+        for (const p of projects) {
+            map.set(p.id, p.title)
+        }
+        return map
+    }, [projects])
 
     // Child tasks grouped by parent (for subtask display)
     const childTasksMap = useMemo(() => {
@@ -776,6 +787,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         childTasksMap={childTasksMap}
                         onCreateSubTask={handleCreateSubTask}
                         onDeleteSubTask={handleDeleteTask}
+                        projectNameMap={projectNameMap}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -788,6 +800,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             completedEventIds={completedEventIds}
                             onToggleEventCompletion={toggleEventCompletion}
                             onItemTap={handleItemTap}
+                            projectNameMap={projectNameMap}
                         />
                         <div className="h-4" />
                     </div>

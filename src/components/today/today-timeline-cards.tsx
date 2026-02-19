@@ -25,6 +25,7 @@ interface TodayTimelineCardsProps {
     completedEventIds: Set<string>
     onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
     onItemTap?: (item: TimelineItem) => void
+    projectNameMap?: Map<string, string>
 }
 
 export function TodayTimelineCards({
@@ -36,6 +37,7 @@ export function TodayTimelineCards({
     completedEventIds,
     onToggleEventCompletion,
     onItemTap,
+    projectNameMap,
 }: TodayTimelineCardsProps) {
     const timer = useTimer()
 
@@ -178,6 +180,7 @@ export function TodayTimelineCards({
                                 onToggleEventCompletion={onToggleEventCompletion}
                                 onToggleTask={onToggleTask}
                                 onTap={onItemTap ? () => onItemTap(item) : undefined}
+                                projectNameMap={projectNameMap}
                             />
                             {/* Free time slot after this item */}
                             {freeTimeSlots.find(slot =>
@@ -212,6 +215,7 @@ function TimelineCard({
     onToggleEventCompletion,
     onToggleTask,
     onTap,
+    projectNameMap,
 }: {
     item: TimelineItem
     currentTime: Date
@@ -220,6 +224,7 @@ function TimelineCard({
     onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
     onToggleTask: (taskId: string) => void
     onTap?: () => void
+    projectNameMap?: Map<string, string>
 }) {
     const startStr = item.startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
     const endStr = item.endTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
@@ -284,6 +289,7 @@ function TimelineCard({
     const task = item.data as Task
     const isRunning = timer.runningTaskId === task.id
     const isDone = task.status === 'done'
+    const projectName = task.project_id ? projectNameMap?.get(task.project_id) : undefined
 
     return (
         <div
@@ -328,11 +334,18 @@ function TimelineCard({
                 )}>
                     {task.title}
                 </div>
-                {task.estimated_time > 0 && (
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                        ⏱ {task.estimated_time}分
-                    </div>
-                )}
+                <div className="flex items-center gap-2 mt-0.5">
+                    {task.estimated_time > 0 && (
+                        <span className="text-[10px] text-muted-foreground">
+                            ⏱ {task.estimated_time}分
+                        </span>
+                    )}
+                    {projectName && (
+                        <span className="text-[9px] text-muted-foreground bg-muted/60 px-1 py-0.5 rounded truncate max-w-24">
+                            {projectName}
+                        </span>
+                    )}
+                </div>
                 {isRunning && (
                     <div className="text-xs font-mono text-primary mt-0.5 tabular-nums">
                         {formatTime(timer.currentElapsedSeconds)}
