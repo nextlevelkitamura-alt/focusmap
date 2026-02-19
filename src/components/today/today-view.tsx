@@ -9,12 +9,14 @@ import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
 import { useEventCompletions } from "@/hooks/useEventCompletions"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays
 } from "lucide-react"
+import { isSameDay } from "date-fns"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
+import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { DragItem } from "@/hooks/useTouchDrag"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
@@ -61,6 +63,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+    const [calendarOpen, setCalendarOpen] = useState(false)
+    const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
 
     // Sync local tasks with prop changes (render-time sync for instant updates)
     const [prevAllTasks, setPrevAllTasks] = useState(allTasks)
@@ -78,19 +82,19 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     const today = selectedDate
 
-    const tomorrow = useMemo(() => {
-        const d = new Date(today)
-        d.setDate(d.getDate() + 1)
-        return d
-    }, [today])
-
-    // Date navigation
     const isToday = useMemo(() => {
         const now = new Date()
         now.setHours(0, 0, 0, 0)
         return today.getTime() === now.getTime()
     }, [today])
 
+    const tomorrow = useMemo(() => {
+        const d = new Date(selectedDate)
+        d.setDate(d.getDate() + 1)
+        return d
+    }, [selectedDate])
+
+    // Date navigation
     const goToPrevDay = useCallback(() => {
         setSelectedDate(prev => {
             const d = new Date(prev)
@@ -111,6 +115,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         const d = new Date()
         d.setHours(0, 0, 0, 0)
         setSelectedDate(d)
+        setCalendarMonth(new Date())
+        setCalendarOpen(false)
+    }, [])
+
+    // Calendar panel date selection
+    const handleDateSelect = useCallback((date: Date | undefined) => {
+        if (!date) return
+        const normalized = new Date(date)
+        normalized.setHours(0, 0, 0, 0)
+        setSelectedDate(normalized)
+        setCalendarOpen(false)
     }, [])
 
     // Fetch calendar events for today
@@ -387,6 +402,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         <div>
                             <div className="flex items-center gap-2">
                                 <h1 className="text-xl font-bold">{dateStr}</h1>
+                                <button
+                                    onClick={() => setCalendarOpen(prev => !prev)}
+                                    className={cn(
+                                        "p-1 rounded-md transition-colors",
+                                        calendarOpen
+                                            ? "bg-primary/10 text-primary"
+                                            : "text-muted-foreground hover:bg-muted/50"
+                                    )}
+                                >
+                                    <CalendarDays className="w-4 h-4" />
+                                </button>
                                 {!isToday && (
                                     <button
                                         onClick={goToToday}
@@ -398,7 +424,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 {timelineItems.length}件のスケジュール
-                                {todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
+                                {isToday && todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
                             </p>
                         </div>
                         <button
@@ -447,8 +473,21 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 </div>
             </div>
 
-            {/* Habit Bar (fixed) + Expandable Detail */}
-            {!habitsLoading && todayHabits.length > 0 && (
+            {/* Collapsible Calendar Panel */}
+            {calendarOpen && (
+                <div className="flex-shrink-0 border-b px-4 py-3 animate-in slide-in-from-top-2 duration-200">
+                    <SimpleCalendar
+                        selected={selectedDate}
+                        onSelect={handleDateSelect}
+                        month={calendarMonth}
+                        onMonthChange={setCalendarMonth}
+                        className="w-full"
+                    />
+                </div>
+            )}
+
+            {/* Habit Bar (fixed) + Expandable Detail — only when viewing today */}
+            {isToday && !habitsLoading && todayHabits.length > 0 && (
                 <div className="flex-shrink-0 border-b">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
