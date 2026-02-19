@@ -6,7 +6,7 @@ import { CalendarDays, Network, Target, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navItems: { id: DashboardView | 'settings'; icon: typeof CalendarDays; label: string }[] = [
-    { id: "today", icon: CalendarDays, label: "今日" },
+    { id: "today", icon: CalendarDays, label: "To do" },
     { id: "map", icon: Network, label: "マップ" },
     { id: "habits", icon: Target, label: "習慣" },
     { id: "settings", icon: Settings, label: "設定" },
