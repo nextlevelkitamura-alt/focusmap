@@ -268,11 +268,14 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         }
 
         // 前日からの繰り越しタスク（0:00から残り時間分を表示）
+        //翌日の24:00までクランプ
+        const dayAfterTomorrow = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000)
         for (const task of overflowTasks) {
             const originalStart = new Date(task.scheduled_at!)
             const originalEnd = new Date(originalStart.getTime() + (task.estimated_time || 30) * 60 * 1000)
             const adjustedStart = new Date(today)
-            const adjustedEnd = new Date(Math.min(originalEnd.getTime(), tomorrow.getTime()))
+            // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
+            const adjustedEnd = new Date(Math.min(originalEnd.getTime(), dayAfterTomorrow.getTime()))
             items.push({ type: 'task', data: task, startTime: adjustedStart, endTime: adjustedEnd })
         }
 
