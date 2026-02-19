@@ -20,7 +20,8 @@ interface MobileEventEditModalProps {
     onClose: () => void
     onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string }) => Promise<void>
     onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string }) => Promise<void>
-    onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => Promise<void>
+    onDeleteTask?: (taskId: string) => void
+    onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
     availableCalendars: { id: string; name: string; background_color?: string }[]
 }
 
@@ -47,6 +48,7 @@ export function MobileEventEditModal({
     onClose,
     onSaveTask,
     onSaveEvent,
+    onDeleteTask,
     onDeleteEvent,
     availableCalendars,
 }: MobileEventEditModalProps) {
@@ -56,9 +58,8 @@ export function MobileEventEditModal({
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
     const [isSaving, setIsSaving] = useState(false)
-    const [isDeleting, setIsDeleting] = useState(false)
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
     const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
@@ -66,10 +67,11 @@ export function MobileEventEditModal({
     const currentTranslateY = useRef(0)
     const openedAtRef = useRef(0)
 
-    // モーダルが開いた瞬間を記録（ゴーストクリック防止）
+    // モーダルが開いた瞬間を記録（ゴーストクリック防止）+ 確認リセット
     useEffect(() => {
         if (isOpen) {
             openedAtRef.current = Date.now()
+            setShowDeleteConfirm(false)
         }
     }, [isOpen])
 
@@ -170,6 +172,18 @@ export function MobileEventEditModal({
         }
     }
 
+    // Delete handler
+    const handleDelete = useCallback(() => {
+        if (!target) return
+        if (target.type === 'task') {
+            onDeleteTask?.(target.data.id)
+        } else {
+            const event = target.data
+            onDeleteEvent?.(event.id, event.google_event_id, event.calendar_id)
+        }
+        onClose()
+    }, [target, onDeleteTask, onDeleteEvent, onClose])
+
     // Update end time when start or duration changes
     const handleStartTimeChange = (newTime: string) => {
         setStartTime(newTime)
@@ -191,22 +205,6 @@ export function MobileEventEditModal({
         }
     }
 
-    // Delete handler (events only)
-    const handleDelete = async () => {
-        if (!target || target.type !== 'event' || !onDeleteEvent) return
-        const event = target.data as CalendarEvent
-        setIsDeleting(true)
-        try {
-            await onDeleteEvent(event.id, event.google_event_id, event.calendar_id)
-            onClose()
-        } catch (err) {
-            console.error('[MobileEventEditModal] Delete error:', err)
-        } finally {
-            setIsDeleting(false)
-            setShowDeleteConfirm(false)
-        }
-    }
-
     if (!isOpen || !target) return null
 
     const isTask = target.type === 'task'
@@ -223,7 +221,7 @@ export function MobileEventEditModal({
             {/* Bottom Sheet */}
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[92vh] flex flex-col"
+                className="fixed inset-x-0 bottom-0 z-50 bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[80dvh] flex flex-col overflow-hidden"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
@@ -247,7 +245,7 @@ export function MobileEventEditModal({
                 </div>
 
                 {/* Form (scrollable) */}
-                <div className="flex-1 overflow-y-auto px-4 space-y-4 pb-2">
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 space-y-4 pb-2">
                     {/* Title */}
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -418,48 +416,42 @@ export function MobileEventEditModal({
 
                 </div>
 
-                {/* Footer (fixed) */}
+                {/* Footer: Save + Delete side by side */}
                 <div className="flex-shrink-0 px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] border-t">
-                    {/* Delete confirmation (events only) */}
-                    {!isTask && showDeleteConfirm && onDeleteEvent ? (
-                        <div className="space-y-2">
-                            <p className="text-sm text-center text-muted-foreground">この予定を削除しますか？</p>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => setShowDeleteConfirm(false)}
-                                    className="flex-1 py-2.5 text-sm font-medium rounded-lg border bg-background hover:bg-muted transition-colors"
-                                >
-                                    キャンセル
-                                </button>
-                                <button
-                                    onClick={handleDelete}
-                                    disabled={isDeleting}
-                                    className="flex-1 py-2.5 text-sm font-medium rounded-lg bg-destructive text-destructive-foreground active:bg-destructive/90 transition-colors"
-                                >
-                                    {isDeleting ? '削除中...' : '削除する'}
-                                </button>
-                            </div>
+                    {showDeleteConfirm ? (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleDelete}
+                                className="flex-1 py-3 text-sm font-medium text-white bg-red-600 active:bg-red-700 rounded-lg transition-colors"
+                            >
+                                削除する
+                            </button>
+                            <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                className="flex-1 py-3 text-sm font-medium text-muted-foreground bg-muted rounded-lg transition-colors active:bg-muted/80"
+                            >
+                                キャンセル
+                            </button>
                         </div>
                     ) : (
-                        <div className="flex gap-2">
-                            {/* Save button */}
+                        <div className="flex items-center gap-2">
                             <button
                                 onClick={handleSave}
                                 disabled={isSaving || !title.trim()}
                                 className={cn(
-                                    "flex-1 py-3 text-sm font-medium rounded-lg transition-colors",
+                                    "py-3 text-sm font-medium rounded-lg transition-colors",
+                                    (onDeleteTask || onDeleteEvent) ? "basis-3/4" : "w-full",
                                     isSaving || !title.trim()
                                         ? "bg-muted text-muted-foreground cursor-not-allowed"
                                         : "bg-primary text-primary-foreground active:bg-primary/90"
                                 )}
                             >
-                                {isSaving ? '保存中...' : '保存'}
+                                {isSaving ? '保存中...' : '完了'}
                             </button>
-                            {/* Delete button (events only) */}
-                            {!isTask && onDeleteEvent && (
+                            {(onDeleteTask || onDeleteEvent) && (
                                 <button
                                     onClick={() => setShowDeleteConfirm(true)}
-                                    className="px-4 py-3 text-sm font-medium rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 active:bg-destructive/20 transition-colors"
+                                    className="basis-1/4 flex items-center justify-center gap-1 py-3 text-sm font-medium text-red-500 bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors"
                                 >
                                     <Trash2 className="w-4 h-4" />
                                 </button>

@@ -22,6 +22,11 @@ export function useNotificationSettings(): UseNotificationSettingsReturn {
     try {
       const response = await fetch('/api/notifications/settings');
       if (!response.ok) {
+        // テーブル未作成等の場合はサイレントに空設定で返す
+        if (response.status === 500) {
+          setSettings([]);
+          return;
+        }
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to fetch settings');
       }
@@ -30,7 +35,6 @@ export function useNotificationSettings(): UseNotificationSettingsReturn {
       setSettings(data.settings || []);
     } catch (err) {
       setError(err as Error);
-      console.error('Failed to fetch notification settings:', err);
     } finally {
       setIsLoading(false);
     }

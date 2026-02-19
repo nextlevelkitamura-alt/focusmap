@@ -48,7 +48,6 @@ async function fetchEventsShared(
   // Check backoff
   if (Date.now() < quotaBackoffUntil) {
     const waitTime = Math.ceil((quotaBackoffUntil - Date.now()) / 1000);
-    console.log(`[useCalendarEvents] In backoff period, waiting ${waitTime}s...`);
     throw new Error(`API quota exceeded. Please wait ${waitTime} seconds before retrying.`);
   }
 
@@ -56,7 +55,6 @@ async function fetchEventsShared(
   if (!forceSync) {
     const cached = cache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
-      console.log('[useCalendarEvents] Returning cached events');
       return cached.events;
     }
   }
@@ -64,7 +62,6 @@ async function fetchEventsShared(
   // Deduplicate in-flight requests
   const inflight = inflightRequests.get(cacheKey);
   if (inflight && !forceSync) {
-    console.log('[useCalendarEvents] Returning in-flight request');
     return inflight;
   }
 
@@ -80,7 +77,6 @@ async function fetchEventsShared(
         params.append('calendarId', calendarIds.join(','));
       }
 
-      console.log('[useCalendarEvents] Fetching from API...', { forceSync });
       const response = await fetch(`/api/calendar/events/list?${params}`);
 
       // 503 = トークンリフレッシュ済み、リトライ可能
@@ -136,7 +132,6 @@ async function fetchEventsShared(
         expiresAt: Date.now() + CACHE_TTL
       });
 
-      console.log('[useCalendarEvents] Fetched and cached', events.length, 'events');
       return events;
     } finally {
       inflightRequests.delete(cacheKey);
@@ -185,7 +180,6 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   // Initial fetch + calendarIds change detection
   useEffect(() => {
     if (prevCalendarIdsRef.current !== calendarIdsKey) {
-      console.log('[useCalendarEvents] calendarIds changed, fetching...', calendarIdsKey);
       prevCalendarIdsRef.current = calendarIdsKey;
       fetchEvents(false); // Use cache first
     }
@@ -197,7 +191,6 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
     const interval = setInterval(
       () => {
-        console.log('[useCalendarEvents] Auto-sync triggered');
         fetchEvents(false); // Use cache first, only fetch if expired
       },
       options.syncInterval || 600000 // 10 minutes
@@ -208,7 +201,6 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
   // Manual sync (force refresh)
   const syncNow = useCallback(() => {
-    console.log('[useCalendarEvents] Manual sync');
     return fetchEvents(true);
   }, [fetchEvents]);
 

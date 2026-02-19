@@ -22,6 +22,10 @@ export async function GET(request: NextRequest) {
       .select('*')
       .eq('user_id', user.id);
 
+    // テーブルが存在しない場合は空の設定を返す（マイグレーション未実行）
+    if (error && (error.message?.includes('schema cache') || error.code === '42P01')) {
+      return NextResponse.json({ success: true, settings: [] });
+    }
     if (error) throw error;
 
     // If no settings exist, initialize defaults

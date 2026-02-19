@@ -48,7 +48,6 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
     // CalendarSelector の選択変更を受け取るハンドラー
     const handleVisibleCalendarIdsChange = useCallback((ids: string[]) => {
-        console.log('[SidebarCalendar] Visible calendar IDs changed:', ids)
         setVisibleCalendarIds(ids)
         onSelectionChange?.(ids)
     }, [onSelectionChange])

@@ -20,16 +20,6 @@ interface CalendarSelectorProps {
 export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }: CalendarSelectorProps) {
   const { calendars, isLoading, error, fetchCalendars, toggleCalendar, toggleAll } = useCalendars()
 
-  // デバッグログ
-  useEffect(() => {
-    console.log('[CalendarSelector] State:', {
-      isLoading,
-      error: error?.message,
-      calendarsCount: calendars.length,
-      calendars: calendars.map(c => ({ name: c.name, id: c.google_calendar_id, selected: c.selected }))
-    })
-  }, [isLoading, error, calendars])
-
   // 表示中のカレンダーIDのリストを親に通知
   useEffect(() => {
     const visibleIds = calendars.filter(c => c.selected).map(c => c.google_calendar_id)
