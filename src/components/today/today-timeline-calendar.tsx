@@ -151,15 +151,19 @@ export function TodayTimelineCalendar({
                     <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
                         {allDayEvents.map(event => {
                             const isEventCompleted = completedEventIds.has(event.google_event_id)
+                            const hex = getEventColor(event)
+                            const rgb = hexToRgb(hex)
                             return (
                                 <div
                                     key={event.id}
                                     className={cn(
                                         "flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-md border",
-                                        isEventCompleted
-                                            ? "bg-muted/30 border-border opacity-50"
-                                            : "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800"
+                                        isEventCompleted && "opacity-50"
                                     )}
+                                    style={{
+                                        backgroundColor: isEventCompleted ? 'var(--color-muted)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)` : undefined,
+                                        borderColor: isEventCompleted ? 'var(--color-border)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)` : undefined,
+                                    }}
                                 >
                                     <button
                                         onClick={() => onToggleEventCompletion(event.google_event_id, event.calendar_id)}
@@ -168,15 +172,15 @@ export function TodayTimelineCalendar({
                                         {isEventCompleted ? (
                                             <CheckSquare className="w-3 h-3 text-primary" />
                                         ) : (
-                                            <Square className="w-3 h-3 text-blue-400" />
+                                            <Square className="w-3 h-3" style={{ color: hex }} />
                                         )}
                                     </button>
                                     <span className={cn(
                                         "text-[11px] font-medium truncate max-w-32",
-                                        isEventCompleted
-                                            ? "line-through text-muted-foreground"
-                                            : "text-blue-700 dark:text-blue-300"
-                                    )}>
+                                        isEventCompleted && "line-through text-muted-foreground"
+                                    )}
+                                        style={!isEventCompleted ? { color: hex } : undefined}
+                                    >
                                         {event.title}
                                     </span>
                                 </div>
@@ -379,6 +383,18 @@ export function TodayTimelineCalendar({
     )
 }
 
+// --- Helpers: event color utilities ---
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    const match = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i)
+    if (!match) return null
+    return { r: parseInt(match[1], 16), g: parseInt(match[2], 16), b: parseInt(match[3], 16) }
+}
+
+function getEventColor(event: CalendarEvent) {
+    const hex = event.background_color || event.color || '#039BE5'
+    return hex
+}
+
 // --- Event Block (Calendar event in the grid) ---
 function EventBlock({
     event,
@@ -403,18 +419,29 @@ function EventBlock({
 
     const startStr = startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
 
+    const eventHex = getEventColor(event)
+    const rgb = hexToRgb(eventHex)
+    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.12)` : undefined
+    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.22)` : undefined
+
     return (
         <div
             onClick={onTap}
             className={cn(
-            "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
-            onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
-            isCompleted
-                ? "bg-muted/30 border-muted-foreground/30"
-                : "bg-blue-50 dark:bg-blue-950/40 border-blue-400",
-            isNow && !isCompleted && "ring-1 ring-blue-400/50 bg-blue-100/80 dark:bg-blue-900/50",
-            (isPast || isCompleted) && "opacity-40"
-        )}>
+                "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+                onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
+                isCompleted && "opacity-40",
+                !isCompleted && isNow && "ring-1",
+                isPast && !isCompleted && "opacity-40"
+            )}
+            style={{
+                borderLeftColor: isCompleted ? 'var(--color-muted-foreground)' : eventHex,
+                backgroundColor: isCompleted
+                    ? 'var(--color-muted)'
+                    : isNow ? bgNowRgba : bgRgba,
+                ...(isNow && !isCompleted ? { boxShadow: `0 0 0 1px ${eventHex}40` } : {}),
+            }}
+        >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
                     <button
@@ -424,13 +451,13 @@ function EventBlock({
                         {isCompleted ? (
                             <CheckSquare className="w-3 h-3 text-primary" />
                         ) : (
-                            <Square className="w-3 h-3 text-blue-400" />
+                            <Square className="w-3 h-3" style={{ color: eventHex }} />
                         )}
                     </button>
-                    <span className="text-[10px] text-blue-600 dark:text-blue-300 font-medium">{startStr}</span>
+                    <span className="text-[10px] font-medium" style={{ color: isCompleted ? undefined : eventHex }}>{startStr}</span>
                     <span className={cn(
                         "text-[11px] font-medium truncate",
-                        isCompleted ? "line-through text-muted-foreground" : "text-blue-800 dark:text-blue-200"
+                        isCompleted ? "line-through text-muted-foreground" : "text-foreground"
                     )}>
                         {event.title}
                     </span>
@@ -445,19 +472,19 @@ function EventBlock({
                             {isCompleted ? (
                                 <CheckSquare className="w-3.5 h-3.5 text-primary" />
                             ) : (
-                                <Square className="w-3.5 h-3.5 text-blue-400" />
+                                <Square className="w-3.5 h-3.5" style={{ color: eventHex }} />
                             )}
                         </button>
                         <span className={cn(
                             "text-[11px] font-medium truncate leading-tight",
-                            isCompleted ? "line-through text-muted-foreground" : "text-blue-800 dark:text-blue-200"
+                            isCompleted ? "line-through text-muted-foreground" : "text-foreground"
                         )}>
                             {event.title}
                         </span>
                     </div>
-                    <div className="text-[10px] text-blue-600 dark:text-blue-300 font-medium mt-0.5 pl-5">{startStr}</div>
+                    <div className="text-[10px] font-medium mt-0.5 pl-5" style={{ color: isCompleted ? undefined : eventHex }}>{startStr}</div>
                     {event.location && height > 55 && (
-                        <div className="text-[9px] text-blue-500 dark:text-blue-400 truncate mt-0.5 pl-5">
+                        <div className="text-[9px] truncate mt-0.5 pl-5" style={{ color: isCompleted ? undefined : eventHex, opacity: 0.7 }}>
                             📍 {event.location}
                         </div>
                     )}

@@ -562,7 +562,7 @@ export function DashboardClient({
                 )}
                 {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
                 {isViewReady && activeView === 'today' && (
-                    <div className="flex-1 md:hidden overflow-hidden">
+                    <div className="flex-1 flex flex-col md:hidden overflow-hidden">
                         <TodayView
                             allTasks={allTasksMerged}
                             onUpdateTask={handleUpdateTaskWithQuickSync}

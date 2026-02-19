@@ -470,7 +470,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [today])
 
     return (
-        <div className="flex flex-col h-full bg-background">
+        <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
             {/* Date Header + Mode Toggle */}
             <div className="flex-shrink-0 px-4 py-3 border-b">
                 <div className="flex items-center justify-between">
@@ -493,16 +493,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                             : "text-muted-foreground hover:bg-muted/50"
                                     )}
                                 >
-                                    <CalendarDays className="w-4 h-4" />
+                                    <CalendarDays className="w-5 h-5" />
                                 </button>
-                                {!isToday && (
-                                    <button
-                                        onClick={goToToday}
-                                        className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-primary/10 text-primary active:bg-primary/20 transition-colors"
-                                    >
-                                        今日
-                                    </button>
-                                )}
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 {timelineItems.length}件のスケジュール

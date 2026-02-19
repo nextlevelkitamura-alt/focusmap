@@ -3,10 +3,12 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
-import { UserCalendar } from "@/hooks/useCalendars"
 import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
+import { DateTimePicker } from "@/components/ui/date-time-picker"
+import { format } from "date-fns"
+import { ja } from "date-fns/locale"
 
 // --- Types ---
 
@@ -31,12 +33,6 @@ function toTimeString(date: Date): string {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-function parseTimeToDate(base: Date, timeStr: string): Date {
-    const [h, m] = timeStr.split(':').map(Number)
-    const d = new Date(base)
-    d.setHours(h, m, 0, 0)
-    return d
-}
 
 const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120]
 
@@ -53,8 +49,7 @@ export function MobileEventEditModal({
     availableCalendars,
 }: MobileEventEditModalProps) {
     const [title, setTitle] = useState('')
-    const [startTime, setStartTime] = useState('')
-    const [endTime, setEndTime] = useState('')
+    const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
@@ -87,19 +82,14 @@ export function MobileEventEditModal({
         if (target.type === 'task') {
             const task = target.data
             setTitle(task.title)
-            setStartTime(toTimeString(target.startTime))
+            setScheduledDate(new Date(target.startTime))
             setDuration(task.estimated_time || 60)
             setCalendarId(task.calendar_id || '')
-            // Calculate end time from start + duration
-            const end = new Date(target.startTime.getTime() + (task.estimated_time || 60) * 60000)
-            setEndTime(toTimeString(end))
         } else {
             const event = target.data
             setTitle(event.title)
-            setStartTime(toTimeString(target.startTime))
-            setEndTime(toTimeString(target.endTime))
+            setScheduledDate(new Date(target.startTime))
             setCalendarId(event.calendar_id)
-            // Calculate duration from event times
             const dur = Math.round((target.endTime.getTime() - target.startTime.getTime()) / 60000)
             setDuration(dur)
         }
@@ -134,18 +124,16 @@ export function MobileEventEditModal({
 
     // Save handler — 即座に閉じ、保存はバックグラウンドで実行
     const handleSave = () => {
-        if (!target) return
+        if (!target || !scheduledDate) return
 
         onClose()
 
         if (target.type === 'task') {
             const task = target.data
-            const baseDate = target.startTime
-            const newStart = parseTimeToDate(baseDate, startTime)
 
             onSaveTask(task.id, {
                 title,
-                scheduled_at: newStart.toISOString(),
+                scheduled_at: scheduledDate.toISOString(),
                 estimated_time: duration,
                 calendar_id: calendarId || undefined,
             }).catch(err => {
@@ -153,13 +141,11 @@ export function MobileEventEditModal({
             })
         } else {
             const event = target.data
-            const baseDate = target.startTime
-            const newStart = parseTimeToDate(baseDate, startTime)
-            const newEnd = new Date(newStart.getTime() + duration * 60000)
+            const newEnd = new Date(scheduledDate.getTime() + duration * 60000)
 
             onSaveEvent(event.id, {
                 title,
-                start_time: newStart.toISOString(),
+                start_time: scheduledDate.toISOString(),
                 end_time: newEnd.toISOString(),
                 googleEventId: event.google_event_id,
                 calendarId: event.calendar_id,
@@ -181,26 +167,10 @@ export function MobileEventEditModal({
         onClose()
     }, [target, onDeleteTask, onDeleteEvent, onClose])
 
-    // Update end time when start or duration changes
-    const handleStartTimeChange = (newTime: string) => {
-        setStartTime(newTime)
-        if (target) {
-            const base = target.startTime
-            const newStart = parseTimeToDate(base, newTime)
-            const newEnd = new Date(newStart.getTime() + duration * 60000)
-            setEndTime(toTimeString(newEnd))
-        }
-    }
-
-    const handleDurationChange = (newDuration: number) => {
-        setDuration(newDuration)
-        if (target) {
-            const base = target.startTime
-            const newStart = parseTimeToDate(base, startTime)
-            const newEnd = new Date(newStart.getTime() + newDuration * 60000)
-            setEndTime(toTimeString(newEnd))
-        }
-    }
+    // 終了時刻の計算
+    const endTimeStr = scheduledDate
+        ? toTimeString(new Date(scheduledDate.getTime() + duration * 60000))
+        : '--:--'
 
     if (!isOpen || !target) return null
 
@@ -258,17 +228,27 @@ export function MobileEventEditModal({
                         />
                     </div>
 
-                    {/* Start Time */}
+                    {/* Start Date/Time */}
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                             <Clock className="w-3.5 h-3.5" />
-                            開始時間
+                            開始日時
                         </label>
-                        <input
-                            type="time"
-                            value={startTime}
-                            onChange={(e) => handleStartTimeChange(e.target.value)}
-                            className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        <DateTimePicker
+                            date={scheduledDate}
+                            setDate={setScheduledDate}
+                            trigger={
+                                <button
+                                    type="button"
+                                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm border rounded-lg bg-background text-left focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                                >
+                                    <CalendarIcon className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                                    {scheduledDate
+                                        ? format(scheduledDate, "M月d日 (E) HH:mm", { locale: ja })
+                                        : "日時を選択"
+                                    }
+                                </button>
+                            }
                         />
                     </div>
 
@@ -280,7 +260,7 @@ export function MobileEventEditModal({
                         </label>
                         <select
                             value={duration}
-                            onChange={(e) => handleDurationChange(Number(e.target.value))}
+                            onChange={(e) => setDuration(Number(e.target.value))}
                             className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none cursor-pointer"
                             style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
                         >
@@ -291,7 +271,7 @@ export function MobileEventEditModal({
                             ))}
                         </select>
                         <p className="text-[10px] text-muted-foreground">
-                            終了: {endTime}
+                            終了: {endTimeStr}
                         </p>
                     </div>
 

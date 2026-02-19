@@ -6,13 +6,12 @@ import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 
 import { cn } from "@/lib/utils"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import {
     Popover,
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 
 interface DateTimePickerProps {
@@ -23,7 +22,7 @@ interface DateTimePickerProps {
 
 // ----------------------------------------------------------------------
 // Time Wheel Component (Split Hours / Minutes)
-// - Visual goal: iOS-like wheel with center highlight band + chevrons
+// - Native scroll for reliable mobile touch support
 // ----------------------------------------------------------------------
 function TimeWheel({
     selectedDate,
@@ -34,13 +33,13 @@ function TimeWheel({
 }) {
     const hours = Array.from({ length: 24 }, (_, i) => i)
     const minutes = Array.from({ length: 12 }, (_, i) => i * 5)
-    
-    // Refs for scrolling to selected time
+
+    const hourScrollRef = React.useRef<HTMLDivElement>(null)
+    const minuteScrollRef = React.useRef<HTMLDivElement>(null)
     const hourRefs = React.useRef<(HTMLButtonElement | null)[]>([])
     const minuteRefs = React.useRef<(HTMLButtonElement | null)[]>([])
     const isInitialMount = React.useRef(true)
 
-    // Scroll to center when time changes
     const scrollToCenter = (element: HTMLButtonElement | null, smooth: boolean = true) => {
         if (!element) return
         element.scrollIntoView({
@@ -50,15 +49,13 @@ function TimeWheel({
         })
     }
 
-    // Initial scroll on mount or when selectedDate changes
     React.useEffect(() => {
         if (selectedDate && isInitialMount.current) {
-            // Wait for the next tick to ensure DOM is ready
             setTimeout(() => {
                 const hour = selectedDate.getHours()
                 const minute = selectedDate.getMinutes()
                 const minuteIndex = Math.floor(minute / 5)
-                
+
                 scrollToCenter(hourRefs.current[hour], false)
                 scrollToCenter(minuteRefs.current[minuteIndex], false)
             }, 50)
@@ -68,8 +65,7 @@ function TimeWheel({
 
     const handleTimeChange = (type: "hour" | "minute", value: number) => {
         onTimeChange(type, value)
-        
-        // Scroll to selected time with smooth animation
+
         if (type === "hour") {
             scrollToCenter(hourRefs.current[value], true)
         } else {
@@ -79,38 +75,41 @@ function TimeWheel({
     }
 
     return (
-        <div className="flex flex-col w-[90px] shrink-0 border-l border-zinc-800/80 pl-2 ml-3">
-            <div className="flex items-center justify-around py-2 text-[10px] font-medium text-zinc-400 border-b border-zinc-800/80 select-none">
+        <div className="flex flex-col w-[80px] shrink-0 border-l border-zinc-800/80 pl-1.5 ml-2">
+            <div className="flex items-center justify-around py-1.5 text-[10px] font-medium text-zinc-400 border-b border-zinc-800/80 select-none">
                 <span>時</span>
                 <span>分</span>
             </div>
 
-            <div className="relative h-[240px] overflow-hidden">
+            <div className="relative h-[200px] overflow-hidden">
                 {/* Top chevrons */}
-                <div className="absolute top-2 left-0 right-0 flex justify-around pointer-events-none text-zinc-500/70">
-                    <ChevronUp className="h-4 w-4" />
-                    <ChevronUp className="h-4 w-4" />
+                <div className="absolute top-1 left-0 right-0 flex justify-around pointer-events-none text-zinc-500/70 z-10">
+                    <ChevronUp className="h-3.5 w-3.5" />
+                    <ChevronUp className="h-3.5 w-3.5" />
                 </div>
 
                 {/* Bottom chevrons */}
-                <div className="absolute bottom-2 left-0 right-0 flex justify-around pointer-events-none text-zinc-500/70">
-                    <ChevronDown className="h-4 w-4" />
-                    <ChevronDown className="h-4 w-4" />
+                <div className="absolute bottom-1 left-0 right-0 flex justify-around pointer-events-none text-zinc-500/70 z-10">
+                    <ChevronDown className="h-3.5 w-3.5" />
+                    <ChevronDown className="h-3.5 w-3.5" />
                 </div>
 
-                {/* Center highlight band (across both columns) */}
+                {/* Center highlight band */}
                 <div
-                    className="absolute top-1/2 left-0 right-0 -translate-y-1/2 h-9 rounded-lg pointer-events-none bg-sky-500/15 ring-1 ring-sky-400/25 shadow-[0_0_18px_rgba(56,189,248,0.22)]"
+                    className="absolute top-1/2 left-0 right-0 -translate-y-1/2 h-8 rounded-lg pointer-events-none bg-sky-500/15 ring-1 ring-sky-400/25 shadow-[0_0_18px_rgba(56,189,248,0.22)] z-[1]"
                 />
 
-                {/* Top/Bottom fade (wheel feel) */}
-                <div className="absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-[#18181b] to-transparent pointer-events-none" />
-                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#18181b] to-transparent pointer-events-none" />
+                {/* Top/Bottom fade */}
+                <div className="absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-[#18181b] to-transparent pointer-events-none z-[2]" />
+                <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[#18181b] to-transparent pointer-events-none z-[2]" />
 
                 <div className="flex h-full">
-                    {/* Hours */}
-                    <ScrollArea className="h-full flex-1">
-                        <div className="flex flex-col items-center py-[120px] space-y-1">
+                    {/* Hours - native scroll */}
+                    <div
+                        ref={hourScrollRef}
+                        className="h-full flex-1 overflow-y-auto touch-auto no-scrollbar"
+                    >
+                        <div className="flex flex-col items-center py-[100px] space-y-0.5">
                             {hours.map((h) => {
                                 const isSelected = selectedDate?.getHours() === h
                                 return (
@@ -119,7 +118,7 @@ function TimeWheel({
                                         ref={(el) => { hourRefs.current[h] = el }}
                                         type="button"
                                         className={cn(
-                                            "w-8 h-8 rounded-md text-xs flex items-center justify-center transition-colors font-medium",
+                                            "w-7 h-7 rounded-md text-xs flex items-center justify-center transition-colors font-medium",
                                             isSelected
                                                 ? "text-white"
                                                 : "text-zinc-500 hover:text-zinc-200"
@@ -131,13 +130,16 @@ function TimeWheel({
                                 )
                             })}
                         </div>
-                    </ScrollArea>
+                    </div>
 
-                    <div className="w-px bg-zinc-800/60 mx-1" />
+                    <div className="w-px bg-zinc-800/60 mx-0.5" />
 
-                    {/* Minutes */}
-                    <ScrollArea className="h-full flex-1">
-                        <div className="flex flex-col items-center py-[120px] space-y-1">
+                    {/* Minutes - native scroll */}
+                    <div
+                        ref={minuteScrollRef}
+                        className="h-full flex-1 overflow-y-auto touch-auto no-scrollbar"
+                    >
+                        <div className="flex flex-col items-center py-[100px] space-y-0.5">
                             {minutes.map((m, index) => {
                                 const currentMin = selectedDate?.getMinutes() ?? 0
                                 const isSelected = currentMin === m
@@ -147,7 +149,7 @@ function TimeWheel({
                                         ref={(el) => { minuteRefs.current[index] = el }}
                                         type="button"
                                         className={cn(
-                                            "w-8 h-8 rounded-md text-xs flex items-center justify-center transition-colors font-medium",
+                                            "w-7 h-7 rounded-md text-xs flex items-center justify-center transition-colors font-medium",
                                             isSelected
                                                 ? "text-white"
                                                 : "text-zinc-500 hover:text-zinc-200"
@@ -159,7 +161,7 @@ function TimeWheel({
                                 )
                             })}
                         </div>
-                    </ScrollArea>
+                    </div>
                 </div>
             </div>
         </div>
@@ -252,17 +254,20 @@ export function DateTimePicker({ date, setDate, trigger }: DateTimePickerProps) 
             </PopoverTrigger>
 
             <PopoverContent
-                    className="w-auto p-0 border border-zinc-800 bg-[#18181b] shadow-2xl rounded-xl overflow-hidden"
-                    align="start"
-                >
-                    <div className="flex p-4 pb-2">
-                        {/* LEFT: SIMPLE CALENDAR (react-day-picker 不使用) */}
-                        <SimpleCalendar
-                            selected={tempDate}
-                            onSelect={handleDateSelect}
-                            month={currentMonth}
-                            onMonthChange={setCurrentMonth}
-                        />
+                className="w-auto p-0 border border-zinc-800 bg-[#18181b] shadow-2xl rounded-xl overflow-hidden"
+                align="start"
+                side="top"
+                sideOffset={8}
+            >
+                <div className="flex p-3 pb-1.5">
+                    {/* LEFT: SIMPLE CALENDAR */}
+                    <SimpleCalendar
+                        selected={tempDate}
+                        onSelect={handleDateSelect}
+                        month={currentMonth}
+                        onMonthChange={setCurrentMonth}
+                        className="w-[240px]"
+                    />
 
                     {/* RIGHT: TIME WHEEL */}
                     <TimeWheel selectedDate={tempDate} onTimeChange={handleTimeChange} />
@@ -270,7 +275,7 @@ export function DateTimePicker({ date, setDate, trigger }: DateTimePickerProps) 
 
                 {/* 選択中の日時プレビュー */}
                 {tempDate && (
-                    <div className="px-4 pb-3 pt-1 border-t border-zinc-800/60">
+                    <div className="px-3 pb-2 pt-1 border-t border-zinc-800/60">
                         <div className="text-xs text-zinc-400 flex items-center gap-2">
                             <CalendarIcon className="h-3.5 w-3.5" />
                             {format(tempDate, "M月d日 HH:mm", { locale: ja })}

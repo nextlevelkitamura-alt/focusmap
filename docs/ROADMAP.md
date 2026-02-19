@@ -150,6 +150,9 @@
 
 ## 完了履歴
 
+- 2026-02-19: **tasks/route・tasks/[id]/route テスト追加** 完了 (C, /test, 25テスト追加 → 計203テスト)
+- 2026-02-19: **event-completions・habits・habits/completions route テスト追加** 完了 (C, /test, 41テスト追加 → 計178テスト)
+- 2026-02-19: **sync-task/route テスト追加** 完了 (C, /test, 28テスト追加 → 計137テスト)
 - 2026-02-19: **useCalendars / useHabits / useEventCompletions / useMultiTaskCalendarSync テスト追加** 完了 (C, /test, 47テスト追加 → 計109テスト)
 - 2026-02-18: **API エラーハンドリング強化** 完了 (C, /quality error-handling, 4ファイル7ハンドラ)
 - 2026-02-18: **projects API テスト追加** 完了 (C, /test, 12テスト Pass)
