@@ -155,6 +155,12 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     [options.calendarIds]
   );
 
+  // Stable key for timeMin/timeMax to prevent unnecessary refetches
+  const timeRangeKey = useMemo(() =>
+    `${options.timeMin.toISOString()}-${options.timeMax.toISOString()}`,
+    [options.timeMin, options.timeMax]
+  );
+
   // Fetch events with proper caching
   const fetchEvents = useCallback(async (forceSync = false) => {
     setIsLoading(true);
@@ -175,7 +181,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     } finally {
       setIsLoading(false);
     }
-  }, [options.timeMin, options.timeMax, options.calendarIds]);
+  }, [timeRangeKey, calendarIdsKey]);
 
   // Initial fetch + calendarIds/timeMin/timeMax change detection
   useEffect(() => {
