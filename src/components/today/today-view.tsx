@@ -8,8 +8,8 @@ import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
 import { useEventCompletions } from "@/hooks/useEventCompletions"
 import {
-    Square, CheckSquare, Target, ChevronDown, ChevronUp, LayoutGrid, List, Flame,
-    Play, Pause, RefreshCw, Check
+    Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
@@ -69,18 +69,49 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         setLocalTasks(allTasks)
     }
 
-    // Today's date range
-    const today = useMemo(() => {
+    // Selected date (defaults to today)
+    const [selectedDate, setSelectedDate] = useState(() => {
         const d = new Date()
         d.setHours(0, 0, 0, 0)
         return d
-    }, [])
+    })
+
+    const today = selectedDate
 
     const tomorrow = useMemo(() => {
         const d = new Date(today)
         d.setDate(d.getDate() + 1)
         return d
     }, [today])
+
+    // Date navigation
+    const isToday = useMemo(() => {
+        const now = new Date()
+        now.setHours(0, 0, 0, 0)
+        return today.getTime() === now.getTime()
+    }, [today])
+
+    const goToPrevDay = useCallback(() => {
+        setSelectedDate(prev => {
+            const d = new Date(prev)
+            d.setDate(d.getDate() - 1)
+            return d
+        })
+    }, [])
+
+    const goToNextDay = useCallback(() => {
+        setSelectedDate(prev => {
+            const d = new Date(prev)
+            d.setDate(d.getDate() + 1)
+            return d
+        })
+    }, [])
+
+    const goToToday = useCallback(() => {
+        const d = new Date()
+        d.setHours(0, 0, 0, 0)
+        setSelectedDate(d)
+    }, [])
 
     // Fetch calendar events for today
     const { events: fetchedCalendarEvents, isLoading: eventsLoading, error: eventsError } = useCalendarEvents({
@@ -317,11 +348,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [onUpdateTask, calendarEvents])
 
     // Date header
-    const dateStr = today.toLocaleDateString('ja-JP', {
-        month: 'long',
-        day: 'numeric',
-        weekday: 'short',
-    })
+    const dateStr = isToday
+        ? `今日 · ${today.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })}`
+        : today.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })
 
     // Current time
     const [currentTime, setCurrentTime] = useState(new Date())
@@ -348,12 +377,36 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             {/* Date Header + Mode Toggle */}
             <div className="flex-shrink-0 px-4 py-3 border-b">
                 <div className="flex items-center justify-between">
-                    <div>
-                        <h1 className="text-xl font-bold">{dateStr}</h1>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            {timelineItems.length}件のスケジュール
-                            {todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
-                        </p>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={goToPrevDay}
+                            className="p-1.5 rounded-full active:bg-muted transition-colors text-muted-foreground"
+                        >
+                            <ChevronLeft className="w-5 h-5" />
+                        </button>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h1 className="text-xl font-bold">{dateStr}</h1>
+                                {!isToday && (
+                                    <button
+                                        onClick={goToToday}
+                                        className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-primary/10 text-primary active:bg-primary/20 transition-colors"
+                                    >
+                                        今日
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                {timelineItems.length}件のスケジュール
+                                {todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
+                            </p>
+                        </div>
+                        <button
+                            onClick={goToNextDay}
+                            className="p-1.5 rounded-full active:bg-muted transition-colors text-muted-foreground"
+                        >
+                            <ChevronRight className="w-5 h-5" />
+                        </button>
                     </div>
                     {/* Sync indicator + Timeline mode toggle */}
                     <div className="flex items-center gap-2">
