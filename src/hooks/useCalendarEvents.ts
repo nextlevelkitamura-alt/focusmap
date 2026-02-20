@@ -144,7 +144,7 @@ async function fetchEventsShared(
 
 export function useCalendarEvents(options: UseCalendarEventsOptions) {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 

@@ -329,6 +329,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         [calendarEvents]
     )
 
+    // Gate timeline display: show items only after calendar events finish loading
+    // This prevents the "two-stage render" where tasks appear first, then events pop in
+    const displayItems = eventsLoading ? [] : timelineItems
+    const displayAllDayEvents = eventsLoading ? [] : allDayEvents
+
     // Toggle task completion
     const toggleTask = useCallback(async (taskId: string) => {
         const task = localTasks.find(t => t.id === taskId)
@@ -545,7 +550,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                 </button>
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                                {timelineItems.length}件のスケジュール
+                                {displayItems.length}件のスケジュール
                                 {isToday && todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
                             </p>
                         </div>
@@ -812,8 +817,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
                 {timelineMode === 'calendar' ? (
                     <TodayTimelineCalendar
-                        timelineItems={timelineItems}
-                        allDayEvents={allDayEvents}
+                        timelineItems={displayItems}
+                        allDayEvents={displayAllDayEvents}
                         eventsLoading={eventsLoading}
                         currentTime={currentTime}
                         onToggleTask={toggleTask}
@@ -829,8 +834,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">
                         <TodayTimelineCards
-                            timelineItems={timelineItems}
-                            allDayEvents={allDayEvents}
+                            timelineItems={displayItems}
+                            allDayEvents={displayAllDayEvents}
                             eventsLoading={eventsLoading}
                             currentTime={currentTime}
                             onToggleTask={toggleTask}
