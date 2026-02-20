@@ -186,6 +186,10 @@ export function useMindMapSync({
             habit_start_date: null,
             habit_end_date: null,
             created_at: now,
+            updated_at: now,
+            source: 'manual',
+            deleted_at: null,
+            google_event_fingerprint: null,
         }
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask)
@@ -489,6 +493,10 @@ export function useMindMapSync({
             habit_start_date: null,
             habit_end_date: null,
             created_at: now,
+            updated_at: now,
+            source: 'manual',
+            deleted_at: null,
+            google_event_fingerprint: null,
         };
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask);

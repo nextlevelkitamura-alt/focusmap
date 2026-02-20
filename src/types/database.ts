@@ -141,6 +141,11 @@ export interface Database {
                     last_started_at: string | null
                     is_timer_running: boolean
                     created_at: string
+                    updated_at: string
+                    // Event import columns
+                    source: string  // 'manual' | 'google_event'
+                    deleted_at: string | null
+                    google_event_fingerprint: string | null
                     // Habit columns
                     is_habit: boolean
                     habit_frequency: string | null
@@ -171,6 +176,11 @@ export interface Database {
                     last_started_at?: string | null
                     is_timer_running?: boolean
                     created_at?: string
+                    updated_at?: string
+                    // Event import columns
+                    source?: string  // default: 'manual'
+                    deleted_at?: string | null
+                    google_event_fingerprint?: string | null
                     // Habit columns
                     is_habit?: boolean
                     habit_frequency?: string | null
@@ -201,6 +211,11 @@ export interface Database {
                     last_started_at?: string | null
                     is_timer_running?: boolean
                     created_at?: string
+                    updated_at?: string
+                    // Event import columns
+                    source?: string
+                    deleted_at?: string | null
+                    google_event_fingerprint?: string | null
                     // Habit columns
                     is_habit?: boolean
                     habit_frequency?: string | null
@@ -513,6 +528,7 @@ export interface Database {
 
 // Task stage type
 export type TaskStage = 'plan' | 'scheduled' | 'executing' | 'done' | 'archived'
+export type TaskSource = 'manual' | 'google_event'
 
 // Convenience type aliases for commonly used table rows
 export type Task = Database['public']['Tables']['tasks']['Row']
