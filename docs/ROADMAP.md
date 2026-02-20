@@ -124,6 +124,14 @@
   - レイアウトロジック、ノードコンポーネント、Hooks の責務分離
 
 #### 機能拡張
+- 🔧 **AIメモ機能** → [計画](plans/features/ai-memo-feature.md)
+  - Phase 1: メニューバー追加 + メモ入力UI + テキスト保存 ○
+  - Phase 2: AI統合（分類: カレンダー vs マップ） ○
+  - Phase 3: マップ/カレンダーへの追加処理 ○
+  - Phase 4: 音声入力（Web Speech API / Groq+Whisper） ○
+  - Phase 5: チャット壁打ち + 修正指示UI ○
+  - Phase 6: タスクメモ欄 + MindMap同期 ○
+  - 音声認識: オープンソース/低コスト/高精度を優先
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
 - 🔧 **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
