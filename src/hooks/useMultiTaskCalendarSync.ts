@@ -55,13 +55,11 @@ export function useMultiTaskCalendarSync({
 
       // 同期中の場合はスキップ
       if (syncingTasksRef.current.has(taskId)) {
-        console.log(`[useMultiTaskCalendarSync] Task ${taskId} is already syncing, skipping`)
         return
       }
 
       // 初回レンダリング時: prevがない場合は記録のみ（同期しない）
       if (!prev) {
-        console.log(`[useMultiTaskCalendarSync] First render for task ${taskId}, recording state only`)
         prevTasksRef.current.set(taskId, {
           scheduled_at: task.scheduled_at,
           estimated_time: task.estimated_time,
@@ -74,11 +72,6 @@ export function useMultiTaskCalendarSync({
       // 新規作成: 3つのフィールドが揃った瞬間（prevで揃っていなかった → 今揃った）
       const prevHasAllFields = !!(prev.scheduled_at && prev.calendar_id && prev.estimated_time && prev.estimated_time > 0)
       if (hasAllFields && !prevHasAllFields && !task.google_event_id) {
-        console.log(`[useMultiTaskCalendarSync] NEW event detected for task ${taskId}`, {
-          scheduled_at: task.scheduled_at,
-          estimated_time: task.estimated_time,
-          calendar_id: task.calendar_id,
-        })
         syncToCalendar(taskId, 'POST', task)
       }
       // 更新: 既存イベントがあり、いずれかのフィールドが変更された
@@ -88,30 +81,19 @@ export function useMultiTaskCalendarSync({
           prev.estimated_time !== task.estimated_time ||
           prev.calendar_id !== task.calendar_id
 
-        console.log(`[useMultiTaskCalendarSync] UPDATE check for task ${taskId}:`, {
-          hasChanged,
-          prev: { scheduled_at: prev.scheduled_at, estimated_time: prev.estimated_time, calendar_id: prev.calendar_id },
-          current: { scheduled_at: task.scheduled_at, estimated_time: task.estimated_time, calendar_id: task.calendar_id },
-        })
 
         if (hasChanged) {
           // カレンダーが変更された場合
           if (prev.calendar_id && prev.calendar_id !== task.calendar_id) {
-            console.log(`[useMultiTaskCalendarSync] CALENDAR CHANGE detected for task ${taskId}:`, {
-              old: prev.calendar_id,
-              new: task.calendar_id,
-            })
             handleCalendarChange(taskId, task)
           } else {
             // 同じカレンダー内での更新
-            console.log(`[useMultiTaskCalendarSync] PATCH event for task ${taskId}`)
             syncToCalendar(taskId, 'PATCH', task)
           }
         }
       }
       // 削除: カレンダー選択が解除された（google_event_id がある場合のみ）
       else if (!task.calendar_id && task.google_event_id) {
-        console.log(`[useMultiTaskCalendarSync] DELETE event for task ${taskId}`)
         syncToCalendar(taskId, 'DELETE', task)
       }
 
@@ -142,7 +124,6 @@ export function useMultiTaskCalendarSync({
     task: Task
   ) => {
     syncingTasksRef.current.add(taskId)
-    console.log(`[useMultiTaskCalendarSync] Starting ${method} for task ${taskId}`)
 
     try {
       const body = {
@@ -154,7 +135,6 @@ export function useMultiTaskCalendarSync({
         title: task.title,
       }
 
-      console.log(`[useMultiTaskCalendarSync] ${method} body:`, body)
 
       const response = await fetch('/api/calendar/sync-task', {
         method,
@@ -168,11 +148,9 @@ export function useMultiTaskCalendarSync({
       }
 
       const data = await response.json()
-      console.log(`[useMultiTaskCalendarSync] ${method} success for task ${taskId}:`, data)
 
       // 新規作成時: google_event_id をDBに保存
       if (method === 'POST' && data.googleEventId) {
-        console.log(`[useMultiTaskCalendarSync] Saving google_event_id: ${data.googleEventId}`)
         await onUpdateTask?.(taskId, { google_event_id: data.googleEventId })
         // prevTasksRef を更新
         const prev = prevTasksRef.current.get(taskId)
@@ -186,7 +164,6 @@ export function useMultiTaskCalendarSync({
 
       // 削除時: google_event_id をクリア
       if (method === 'DELETE') {
-        console.log(`[useMultiTaskCalendarSync] Clearing google_event_id`)
         await onUpdateTask?.(taskId, { google_event_id: null })
         const prev = prevTasksRef.current.get(taskId)
         if (prev) {
@@ -198,9 +175,7 @@ export function useMultiTaskCalendarSync({
       }
 
       // カレンダーを更新
-      console.log(`[useMultiTaskCalendarSync] Refreshing calendar`)
       await onRefreshCalendar?.()
-      console.log(`[useMultiTaskCalendarSync] ${method} completed for task ${taskId}`)
     } catch (err) {
       console.error(`[useMultiTaskCalendarSync] ${method} failed for task ${taskId}:`, err)
       // エラーは silent failure（UIには表示しない）
@@ -214,16 +189,11 @@ export function useMultiTaskCalendarSync({
    */
   const handleCalendarChange = async (taskId: string, task: Task) => {
     syncingTasksRef.current.add(taskId)
-    console.log(`[useMultiTaskCalendarSync] Starting calendar change for task ${taskId}`)
 
     try {
       // 1. 旧カレンダーから削除
       if (task.google_event_id) {
         const oldCalendarId = prevTasksRef.current.get(taskId)?.calendar_id
-        console.log(`[useMultiTaskCalendarSync] Deleting from old calendar:`, {
-          google_event_id: task.google_event_id,
-          old_calendar_id: oldCalendarId,
-        })
 
         const deleteResponse = await fetch('/api/calendar/sync-task', {
           method: 'DELETE',
@@ -241,15 +211,9 @@ export function useMultiTaskCalendarSync({
           throw new Error(error.error || 'Failed to delete from old calendar')
         }
 
-        console.log(`[useMultiTaskCalendarSync] DELETE from old calendar success`)
       }
 
       // 2. 新カレンダーに作成
-      console.log(`[useMultiTaskCalendarSync] Creating in new calendar:`, {
-        calendar_id: task.calendar_id,
-        scheduled_at: task.scheduled_at,
-        estimated_time: task.estimated_time,
-      })
       const response = await fetch('/api/calendar/sync-task', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -267,11 +231,9 @@ export function useMultiTaskCalendarSync({
       }
 
       const data = await response.json()
-      console.log(`[useMultiTaskCalendarSync] Calendar change success:`, data)
 
       // 新しい google_event_id を保存
       if (data.googleEventId) {
-        console.log(`[useMultiTaskCalendarSync] Saving new google_event_id: ${data.googleEventId}`)
         await onUpdateTask?.(taskId, { google_event_id: data.googleEventId })
       }
 
@@ -284,7 +246,6 @@ export function useMultiTaskCalendarSync({
       })
 
       await onRefreshCalendar?.()
-      console.log(`[useMultiTaskCalendarSync] Calendar change completed for task ${taskId}`)
     } catch (err) {
       console.error('[useMultiTaskCalendarSync] Calendar change failed:', err)
     } finally {

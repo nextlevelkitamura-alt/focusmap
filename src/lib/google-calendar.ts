@@ -8,7 +8,6 @@ import { CalendarEvent, GoogleCalendarEvent } from '@/types/calendar';
 export async function getCalendarClient(userId: string) {
   const supabase = await createClient();
 
-  console.log('[getCalendarClient] Fetching settings for user:', userId);
 
   // ユーザーのカレンダー設定を取得
   const { data: settings, error } = await supabase
@@ -37,14 +36,6 @@ export async function getCalendarClient(userId: string) {
   }
 
   // Debug logging - トークンの長さも表示
-  console.log('[getCalendarClient] Settings found for user:', userId, {
-    access_token_exists: !!settings.google_access_token,
-    access_token_length: settings.google_access_token?.length || 0,
-    refresh_token_exists: !!settings.google_refresh_token,
-    refresh_token_length: settings.google_refresh_token?.length || 0,
-    expires_at: settings.google_token_expires_at,
-    is_sync_enabled: settings.is_sync_enabled
-  });
 
   if (!settings.google_access_token || !settings.google_refresh_token) {
     console.error('[getCalendarClient] Missing tokens for user:', userId, {

@@ -88,7 +88,6 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
             };
 
             sorted.slice(1).forEach(async (task) => {
-                console.log('[TimerContext] Stopping orphan timer:', task.id);
                 await onUpdateTask(task.id, {
                     is_timer_running: false,
                     last_started_at: null
@@ -142,7 +141,6 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
             finalSeconds += additionalSeconds;
         }
 
-        console.log('[TimerContext] Stopping timer:', runningTaskId.slice(0, 8), 'elapsed:', finalSeconds, 's');
 
         // Update task in database
         await onUpdateTask(runningTaskId, {

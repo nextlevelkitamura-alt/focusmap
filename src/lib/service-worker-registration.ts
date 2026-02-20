@@ -25,7 +25,6 @@ export function register() {
     window.navigator.serviceWorker
       .register(swUrl)
       .then((registration) => {
-        console.log('Service Worker registered successfully:', registration);
 
         // Check for updates periodically
         registration.addEventListener('updatefound', () => {
@@ -34,7 +33,6 @@ export function register() {
             newWorker.addEventListener('statechange', () => {
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
                 // New service worker is available
-                console.log('New Service Worker available');
               }
             });
           }

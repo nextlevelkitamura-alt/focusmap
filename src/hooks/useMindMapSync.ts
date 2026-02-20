@@ -212,7 +212,6 @@ export function useMindMapSync({
         // Background INSERT（APIルート経由 → 直接INSERT フォールバック）
         const insertPromise = (async () => {
             try {
-                console.log('[Sync] Creating root task (group) via API:', optimisticId.slice(0, 8), title);
 
                 // APIルート経由でINSERT（サーバーサイド認証）
                 const response = await fetch('/api/tasks', {
@@ -229,7 +228,6 @@ export function useMindMapSync({
                 });
 
                 if (response.ok) {
-                    console.log('[Sync] createGroup API INSERT success:', optimisticId.slice(0, 8));
                     pendingOptimisticTasks.current.delete(optimisticId)
                     return;
                 }
@@ -238,7 +236,6 @@ export function useMindMapSync({
                 console.warn('[Sync] createGroup API INSERT failed:', errorText);
 
                 // フォールバック: 直接Supabase INSERT
-                console.log('[Sync] createGroup fallback to direct INSERT:', optimisticId.slice(0, 8));
                 const { error } = await supabase.from('tasks').insert({
                     id: optimisticId,
                     user_id: userId,
@@ -258,7 +255,6 @@ export function useMindMapSync({
                     console.error('[Sync] createGroup direct INSERT also failed:', error);
                     throw error;
                 }
-                console.log('[Sync] createGroup direct INSERT success:', optimisticId.slice(0, 8));
                 pendingOptimisticTasks.current.delete(optimisticId)
             } catch (e) {
                 console.error('[Sync] createGroup ROLLBACK:', e)
@@ -313,7 +309,6 @@ export function useMindMapSync({
         })
 
         try {
-            console.log('[Sync] updateGroupTitle via API:', groupId.slice(0, 8), oldTitle, '->', title);
             const response = await fetch(`/api/tasks/${groupId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -326,7 +321,6 @@ export function useMindMapSync({
                 setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, title: oldTitle } : t))
                 return
             }
-            console.log('[Sync] updateGroupTitle API success:', groupId.slice(0, 8));
         } catch (e) {
             console.error('[Sync] updateGroupTitle failed:', e)
             setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, title: oldTitle } : t))
@@ -344,7 +338,6 @@ export function useMindMapSync({
         setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...updates } : t))
 
         try {
-            console.log('[Sync] updateGroup via API:', groupId.slice(0, 8), updates)
             const response = await fetch(`/api/tasks/${groupId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -357,7 +350,6 @@ export function useMindMapSync({
                 setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...beforeValues } : t))
                 return
             }
-            console.log('[Sync] updateGroup API success:', groupId.slice(0, 8))
         } catch (e) {
             console.error('[Sync] updateGroup failed:', e)
             onSyncError?.(`グループの更新に失敗しました: ネットワークエラー`)
@@ -409,7 +401,6 @@ export function useMindMapSync({
         setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
 
         try {
-            console.log('[Sync] deleteGroup via API:', groupId.slice(0, 8))
             const response = await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
             if (!response.ok) {
                 if (response.status === 404) {
@@ -424,7 +415,6 @@ export function useMindMapSync({
                     return
                 }
             }
-            console.log('[Sync] deleteGroup API success:', groupId.slice(0, 8))
         } catch (e) {
             console.error('[Sync] deleteGroup failed:', e)
             onSyncError?.(`グループの削除に失敗しました: ネットワークエラー`)
@@ -457,7 +447,6 @@ export function useMindMapSync({
 
     // --- タスク操作 ---
     const createTask = useCallback(async (groupId: string, title: string = "New Task", parentTaskId: string | null = null): Promise<Task | null> => {
-        console.log('[Sync] createTask called:', { groupId: groupId?.slice(0, 8), title, parentTaskId: parentTaskId?.slice(0, 8) });
         const optimisticId = crypto.randomUUID();
         const now = new Date().toISOString();
 
@@ -523,15 +512,12 @@ export function useMindMapSync({
         // Background sync: 親INSERT待機 → APIルート優先INSERT → 失敗時直接INSERTフォールバック
         const insertPromise = (async () => {
             try {
-                console.log('[Sync] createTask starting INSERT:', { optimisticId: optimisticId.slice(0, 8), parentTaskId: effectiveParentId?.slice(0, 8), title, groupId });
 
                 // 親タスクの INSERT 完了を待機
                 if (effectiveParentId) {
                     const parentPending = pendingInserts.current.get(effectiveParentId);
                     if (parentPending) {
-                        console.log('[Sync] Waiting for parent INSERT:', effectiveParentId.slice(0, 8));
                         await parentPending;
-                        console.log('[Sync] Parent INSERT completed:', effectiveParentId.slice(0, 8));
                     }
                 }
 
@@ -549,7 +535,6 @@ export function useMindMapSync({
                 });
 
                 if (response.ok) {
-                    console.log('[Sync] createTask API INSERT success:', optimisticId.slice(0, 8));
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
@@ -558,7 +543,6 @@ export function useMindMapSync({
                 console.warn('[Sync] createTask API INSERT failed:', errorText);
 
                 // フォールバック: 直接Supabase INSERT
-                console.log('[Sync] createTask fallback to direct INSERT:', optimisticId.slice(0, 8));
                 const { error: insertError } = await supabase.from('tasks').insert({
                     id: optimisticId,
                     user_id: userId,
@@ -576,7 +560,6 @@ export function useMindMapSync({
                 });
 
                 if (!insertError) {
-                    console.log('[Sync] createTask direct INSERT success:', optimisticId.slice(0, 8));
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
@@ -605,7 +588,6 @@ export function useMindMapSync({
     }, [userId, projectId, supabase, pushAction]);
 
     const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
-        console.log('[Sync] updateTask called:', taskId.slice(0, 8), updates)
         const currentAll = allTasksRef.current;
         const beforeTask = currentAll.find(t => t.id === taskId)
 
@@ -616,7 +598,6 @@ export function useMindMapSync({
         if (!beforeTask) {
             // Task not in current project state (e.g. habit child from another project)
             // Still perform DB update via API route
-            console.log('[Sync] updateTask: task not in local state, updating via API:', taskId.slice(0, 8))
             try {
                 const response = await fetch(`/api/tasks/${taskId}`, {
                     method: 'PATCH',
@@ -639,7 +620,6 @@ export function useMindMapSync({
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
 
         try {
-            console.log('[Sync] updateTask via API:', taskId.slice(0, 8))
             const response = await fetch(`/api/tasks/${taskId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -654,7 +634,6 @@ export function useMindMapSync({
                 return
             }
             const result = await response.json()
-            console.log('[Sync] updateTask API success:', taskId.slice(0, 8), result.task?.id)
 
             // AUTO-COMPLETE PARENT
             if (updates.status === 'done') {
@@ -873,7 +852,6 @@ export function useMindMapSync({
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: newGroupId } : t))
 
         try {
-            console.log('[Sync] moveTask via API:', taskId.slice(0, 8), '->', newGroupId.slice(0, 8))
             const response = await fetch(`/api/tasks/${taskId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -886,7 +864,6 @@ export function useMindMapSync({
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: oldParentId } : t))
                 return
             }
-            console.log('[Sync] moveTask API success:', taskId.slice(0, 8))
         } catch (e) {
             console.error('[Sync] moveTask failed:', e)
             onSyncError?.(`タスクの移動に失敗しました: ネットワークエラー`)
@@ -1181,7 +1158,6 @@ export function useMindMapSync({
         })
 
         try {
-            console.log('[Sync] promoteTaskToGroup via API:', taskId.slice(0, 8))
             const response = await fetch(`/api/tasks/${taskId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -1195,7 +1171,6 @@ export function useMindMapSync({
                     t.id === taskId ? { ...t, parent_task_id: beforeParentId, order_index: task.order_index } : t
                 ))
             } else {
-                console.log('[Sync] promoteTaskToGroup API success:', taskId.slice(0, 8))
             }
         } catch (e) {
             console.error('[Sync] promoteTaskToGroup failed:', e)

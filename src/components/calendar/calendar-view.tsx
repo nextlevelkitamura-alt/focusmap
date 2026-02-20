@@ -64,19 +64,16 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
   // イベント編集
   const handleEventEdit = useCallback((eventId: string) => {
     // TODO: イベント編集ダイアログを開く（Phase 1-1-3で実装）
-    console.log('Edit event:', eventId)
   }, [])
 
   // イベント削除
   const handleEventDelete = useCallback((eventId: string) => {
     // TODO: イベント削除確認ダイアログ → 削除実行（Phase 1-1-3で実装）
-    console.log('Delete event:', eventId)
   }, [])
 
   // イベントクリック（月ビュー用）
   const handleEventClick = useCallback((eventId: string) => {
     // TODO: イベント詳細ポップオーバーを表示（Phase 1-1-2で実装）
-    console.log('Event clicked:', eventId)
   }, [])
 
   return (
