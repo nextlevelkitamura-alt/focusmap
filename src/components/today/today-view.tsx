@@ -84,14 +84,14 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
     })
 
-    // 7日間フェッチウィンドウ（-3日〜+4日）- selectedDateとは独立して管理
+    // 1ヶ月間フェッチウィンドウ（-7日〜+30日）- カレンダーイベント自動取り込み用
     const [fetchWindow, setFetchWindow] = useState(() => {
         const now = new Date()
         now.setHours(0, 0, 0, 0)
         const min = new Date(now)
-        min.setDate(min.getDate() - 3)
+        min.setDate(min.getDate() - 7)
         const max = new Date(now)
-        max.setDate(max.getDate() + 4)
+        max.setDate(max.getDate() + 30)
         return { min, max }
     })
 
@@ -99,9 +99,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     useEffect(() => {
         if (selectedDate < fetchWindow.min || selectedDate >= fetchWindow.max) {
             const min = new Date(selectedDate)
-            min.setDate(min.getDate() - 3)
+            min.setDate(min.getDate() - 7)
             const max = new Date(selectedDate)
-            max.setDate(max.getDate() + 4)
+            max.setDate(max.getDate() + 30)
             setFetchWindow({ min, max })
         }
     }, [selectedDate, fetchWindow.min, fetchWindow.max])
@@ -171,7 +171,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onSwipeRight: goToPrevDay,
     })
 
-    // Fetch calendar events (7日分を一括取得、日付切り替え時はクライアントフィルタで即座表示)
+    // Fetch calendar events (1ヶ月分を一括取得、日付切り替え時はクライアントフィルタで即座表示)
     const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow } = useCalendarEvents({
         timeMin: fetchWindow.min,
         timeMax: fetchWindow.max,
