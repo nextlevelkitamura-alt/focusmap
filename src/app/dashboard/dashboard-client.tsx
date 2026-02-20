@@ -700,7 +700,7 @@ export function DashboardClient({
                 {isViewReady && activeView === 'memo' && (
                     <div className="flex-1 overflow-hidden md:flex md:justify-center">
                         <div className="w-full max-w-2xl">
-                            <MemoView />
+                            <MemoView projects={projects} />
                         </div>
                     </div>
                 )}

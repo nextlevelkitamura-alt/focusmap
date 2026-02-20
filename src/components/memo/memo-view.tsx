@@ -2,28 +2,32 @@
 
 import { useState, useCallback, useEffect } from "react"
 import {
-  StickyNote, Send, ChevronDown, ChevronUp, Loader2,
+  StickyNote, Send, Loader2,
   Sparkles, Mic, Square, Calendar, Map, Trash2,
+  Plus, FolderOpen,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { Note, NoteAiAnalysis } from "@/types/note"
+import type { Project } from "@/types/database"
 
 interface MemoViewProps {
   className?: string
+  projects?: Project[]
 }
 
-export function MemoView({ className }: MemoViewProps) {
+export function MemoView({ className, projects = [] }: MemoViewProps) {
   const [content, setContent] = useState("")
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [notes, setNotes] = useState<Note[]>([])
   const [isLoadingNotes, setIsLoadingNotes] = useState(true)
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null)
   const [activeAnalysis, setActiveAnalysis] = useState<{ noteId: string; analysis: NoteAiAnalysis } | null>(null)
+  const [editingProjectNoteId, setEditingProjectNoteId] = useState<string | null>(null)
 
   // 音声入力
   const handleTranscribed = useCallback((text: string) => {
@@ -33,11 +37,8 @@ export function MemoView({ className }: MemoViewProps) {
 
   const { isRecording, isTranscribing, error: voiceError, startRecording, stopRecording } = useVoiceRecorder(handleTranscribed)
 
-  // 音声エラー表示
   useEffect(() => {
-    if (voiceError) {
-      showToast("error", voiceError)
-    }
+    if (voiceError) showToast("error", voiceError)
   }, [voiceError])
 
   // メモ一覧を初回読み込み
@@ -63,6 +64,12 @@ export function MemoView({ className }: MemoViewProps) {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // プロジェクト名を取得
+  const getProjectName = useCallback((projectId: string | null) => {
+    if (!projectId) return null
+    return projects.find(p => p.id === projectId)?.title || null
+  }, [projects])
+
   // メモ保存
   const handleSave = useCallback(async () => {
     if (!content.trim()) return
@@ -75,6 +82,7 @@ export function MemoView({ className }: MemoViewProps) {
         body: JSON.stringify({
           content: content.trim(),
           input_type: isRecording ? "voice" : "text",
+          project_id: selectedProjectId,
         }),
       })
 
@@ -90,7 +98,7 @@ export function MemoView({ className }: MemoViewProps) {
     } finally {
       setIsLoading(false)
     }
-  }, [content, isRecording])
+  }, [content, isRecording, selectedProjectId])
 
   // AI分析
   const handleAnalyze = useCallback(async (noteId: string, noteContent: string) => {
@@ -111,7 +119,6 @@ export function MemoView({ className }: MemoViewProps) {
       const { analysis } = await res.json()
       setActiveAnalysis({ noteId, analysis })
 
-      // ノートの ai_analysis を更新
       setNotes(prev => prev.map(n =>
         n.id === noteId ? { ...n, ai_analysis: analysis, status: 'processed' as const } : n
       ))
@@ -121,6 +128,25 @@ export function MemoView({ className }: MemoViewProps) {
     } finally {
       setIsAnalyzing(false)
     }
+  }, [])
+
+  // メモのプロジェクト更新
+  const handleUpdateProject = useCallback(async (noteId: string, projectId: string | null) => {
+    try {
+      const res = await fetch("/api/notes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: noteId, project_id: projectId }),
+      })
+      if (res.ok) {
+        setNotes(prev => prev.map(n =>
+          n.id === noteId ? { ...n, project_id: projectId } : n
+        ))
+      }
+    } catch (err) {
+      console.error("Update project error:", err)
+    }
+    setEditingProjectNoteId(null)
   }, [])
 
   // メモ削除
@@ -136,6 +162,39 @@ export function MemoView({ className }: MemoViewProps) {
     }
   }, [activeAnalysis])
 
+  // Phase 3: マップに追加
+  const handleAddToMap = useCallback(async () => {
+    if (!activeAnalysis) return
+    const { analysis } = activeAnalysis
+    const projectId = analysis.suggested_project_id
+    const title = notes.find(n => n.id === activeAnalysis.noteId)?.content || ""
+
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.slice(0, 100),
+          project_id: projectId || undefined,
+          parent_task_id: analysis.suggested_node_id || undefined,
+        }),
+      })
+
+      if (!res.ok) throw new Error("Failed to create task")
+
+      showToast("success", "マップにタスクを追加しました")
+      setActiveAnalysis(null)
+
+      // メモのステータスを更新
+      setNotes(prev => prev.map(n =>
+        n.id === activeAnalysis.noteId ? { ...n, status: 'archived' as const } : n
+      ))
+    } catch (error) {
+      console.error("Add to map error:", error)
+      showToast("error", "タスクの追加に失敗しました")
+    }
+  }, [activeAnalysis, notes])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -149,7 +208,7 @@ export function MemoView({ className }: MemoViewProps) {
   return (
     <div className={cn("flex flex-col h-full bg-background", className)}>
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b">
+      <div className="flex items-center gap-2 px-4 py-3 border-b shrink-0">
         <StickyNote className="w-5 h-5 text-primary" />
         <h1 className="text-lg font-semibold">メモ</h1>
       </div>
@@ -158,7 +217,7 @@ export function MemoView({ className }: MemoViewProps) {
       {toast && (
         <div
           className={cn(
-            "mx-4 mt-2 px-3 py-2 rounded-md text-sm transition-opacity",
+            "mx-4 mt-2 px-3 py-2 rounded-md text-sm transition-opacity shrink-0",
             toast.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"
           )}
         >
@@ -167,7 +226,7 @@ export function MemoView({ className }: MemoViewProps) {
       )}
 
       {/* Input Area */}
-      <div className="p-4">
+      <div className="p-4 shrink-0">
         <Card className="p-3">
           <div className="relative">
             <textarea
@@ -175,11 +234,10 @@ export function MemoView({ className }: MemoViewProps) {
               onChange={(e) => setContent(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="アイディアを入力... (Cmd+Enterで保存)"
-              className="min-h-[100px] w-full resize-none border-0 bg-transparent focus:outline-none text-base"
+              className="min-h-[80px] w-full resize-none border-0 bg-transparent focus:outline-none text-base"
               disabled={isLoading || isTranscribing}
             />
 
-            {/* 文字起こし中の表示 */}
             {isTranscribing && (
               <div className="absolute inset-0 flex items-center justify-center bg-background/80 rounded-md">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -190,37 +248,24 @@ export function MemoView({ className }: MemoViewProps) {
             )}
           </div>
 
-          {/* Expand/Collapse Options */}
-          <div className="mt-2 pt-2 border-t">
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {isExpanded ? (
-                <>
-                  <ChevronUp className="w-4 h-4" />
-                  閉じる
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="w-4 h-4" />
-                  オプション
-                </>
-              )}
-            </button>
-
-            {isExpanded && (
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  保存後、メモをAIで分析してカレンダーやマップに追加できます
-                </p>
-              </div>
-            )}
-          </div>
+          {/* Project Select */}
+          {projects.length > 0 && (
+            <div className="mt-2 pt-2 border-t">
+              <select
+                value={selectedProjectId || ""}
+                onChange={(e) => setSelectedProjectId(e.target.value || null)}
+                className="w-full text-sm px-2 py-1.5 rounded-md border bg-background text-foreground"
+              >
+                <option value="">プロジェクト未選択</option>
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.title}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="mt-3 flex items-center justify-between">
-            {/* Voice Input Button */}
             <Button
               variant={isRecording ? "destructive" : "outline"}
               size="sm"
@@ -229,19 +274,12 @@ export function MemoView({ className }: MemoViewProps) {
               className="gap-1"
             >
               {isRecording ? (
-                <>
-                  <Square className="w-3 h-3" />
-                  停止
-                </>
+                <><Square className="w-3 h-3" />停止</>
               ) : (
-                <>
-                  <Mic className="w-4 h-4" />
-                  音声入力
-                </>
+                <><Mic className="w-4 h-4" />音声入力</>
               )}
             </Button>
 
-            {/* Save Button */}
             <Button
               onClick={handleSave}
               disabled={!content.trim() || isLoading || isTranscribing}
@@ -259,9 +297,9 @@ export function MemoView({ className }: MemoViewProps) {
         </Card>
       </div>
 
-      {/* AI Analysis Result */}
+      {/* AI Analysis Result + Actions */}
       {activeAnalysis && (
-        <div className="px-4 pb-2">
+        <div className="px-4 pb-2 shrink-0">
           <Card className="p-3 border-primary/20 bg-primary/5">
             <div className="flex items-center gap-2 mb-2">
               <Sparkles className="w-4 h-4 text-primary" />
@@ -309,13 +347,36 @@ export function MemoView({ className }: MemoViewProps) {
                   ))}
                 </div>
               )}
+
+              {/* Phase 3: 追加ボタン */}
+              <div className="flex gap-2 mt-3 pt-2 border-t">
+                {activeAnalysis.analysis.classification === 'map' && (
+                  <Button size="sm" className="gap-1 flex-1" onClick={handleAddToMap}>
+                    <Plus className="w-3.5 h-3.5" />
+                    マップに追加
+                  </Button>
+                )}
+                {activeAnalysis.analysis.classification === 'calendar' && (
+                  <Button size="sm" variant="outline" className="gap-1 flex-1" disabled>
+                    <Calendar className="w-3.5 h-3.5" />
+                    カレンダーに追加（準備中）
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setActiveAnalysis(null)}
+                >
+                  閉じる
+                </Button>
+              </div>
             </div>
           </Card>
         </div>
       )}
 
-      {/* Notes List */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      {/* Notes List (scrollable) */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-20">
         {isLoadingNotes ? (
           <div className="flex justify-center py-8">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -333,7 +394,9 @@ export function MemoView({ className }: MemoViewProps) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm whitespace-pre-wrap">{note.content}</p>
-                    <div className="flex items-center gap-2 mt-2">
+
+                    {/* メタ情報 */}
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
                       <p className="text-xs text-muted-foreground">
                         {new Date(note.created_at).toLocaleString("ja-JP")}
                       </p>
@@ -347,11 +410,34 @@ export function MemoView({ className }: MemoViewProps) {
                           <Sparkles className="w-3 h-3 inline mr-0.5" />分析済
                         </span>
                       )}
+
+                      {/* プロジェクト表示/選択 */}
+                      {editingProjectNoteId === note.id ? (
+                        <select
+                          value={note.project_id || ""}
+                          onChange={(e) => handleUpdateProject(note.id, e.target.value || null)}
+                          onBlur={() => setEditingProjectNoteId(null)}
+                          autoFocus
+                          className="text-xs px-1.5 py-0.5 rounded border bg-background text-foreground"
+                        >
+                          <option value="">未選択</option>
+                          {projects.map(p => (
+                            <option key={p.id} value={p.id}>{p.title}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => setEditingProjectNoteId(note.id)}
+                          className="text-xs px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground flex items-center gap-0.5"
+                        >
+                          <FolderOpen className="w-3 h-3" />
+                          {getProjectName(note.project_id) || "プロジェクト未設定"}
+                        </button>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    {/* AI分析ボタン */}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -367,7 +453,6 @@ export function MemoView({ className }: MemoViewProps) {
                       )}
                     </Button>
 
-                    {/* 削除ボタン */}
                     <Button
                       variant="ghost"
                       size="sm"
