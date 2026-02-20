@@ -538,7 +538,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     return (
         <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
             {/* Date Header + Mode Toggle */}
-            <div className="flex-shrink-0 px-4 py-3 border-b">
+            <div className="flex-shrink-0 px-4 py-3 border-b" style={{ touchAction: 'none' }}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <button
