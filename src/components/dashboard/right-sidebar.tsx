@@ -4,6 +4,8 @@ import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from "
 import { SidebarCalendar, SidebarCalendarRef } from "@/components/dashboard/sidebar-calendar"
 import { CalendarToast, useCalendarToast } from "@/components/calendar/calendar-toast"
 import { Task } from "@/types/database"
+import { format } from "date-fns"
+import { ja } from "date-fns/locale"
 
 export interface RightSidebarRef {
     refreshCalendar: () => Promise<void>
@@ -40,12 +42,7 @@ export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(funct
                 scheduled_at: dateTime.toISOString(),
             })
 
-            const timeStr = dateTime.toLocaleString('ja-JP', {
-                month: 'numeric',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            })
+            const timeStr = format(dateTime, 'M月d日 HH:mm', { locale: ja })
             showToast('success', `${timeStr}にスケジュール設定しました`)
 
             // カレンダーイベントを再取得

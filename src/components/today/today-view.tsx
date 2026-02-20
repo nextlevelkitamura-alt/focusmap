@@ -514,9 +514,12 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const dateFmt = format(today, 'M月d日(E)', { locale: ja })
     const dateStr = isToday ? `今日 · ${dateFmt}` : dateFmt
 
-    // Current time
-    const [currentTime, setCurrentTime] = useState(new Date())
+    // Current time (SSR-safe: midnight初期値 → マウント後に実時刻に更新)
+    const [currentTime, setCurrentTime] = useState(() => {
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
     useEffect(() => {
+        setCurrentTime(new Date())
         const interval = setInterval(() => setCurrentTime(new Date()), 60000)
         return () => clearInterval(interval)
     }, [])

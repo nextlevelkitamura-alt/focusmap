@@ -31,7 +31,9 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
     ({ onTaskDrop, onSelectionChange, onUpdateTask }, ref) => {
     // Default to 'day' view for sidebar as it's most useful for scheduling
     const [viewMode, setViewMode] = useState<ViewMode>('day')
-    const [currentDate, setCurrentDate] = useState(new Date())
+    const [currentDate, setCurrentDate] = useState(() => {
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
     const [hourHeight, setHourHeight] = useState(HOUR_HEIGHT) // Zoom state
     const [isRefreshing, setIsRefreshing] = useState(false) // 更新ボタン用のローディング状態
 

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink } from "lucide-react"
+import { format } from "date-fns"
+import { ja } from "date-fns/locale"
 
 interface CalendarStatus {
   isConnected: boolean
@@ -189,13 +191,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
         {/* 最終同期時刻 */}
         {status.lastSyncedAt && (
           <p className="text-xs text-muted-foreground px-1">
-            最終同期: {new Date(status.lastSyncedAt).toLocaleString('ja-JP', {
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit',
-              hour: '2-digit',
-              minute: '2-digit'
-            })}
+            最終同期: {format(new Date(status.lastSyncedAt), 'yyyy/MM/dd HH:mm', { locale: ja })}
           </p>
         )}
 

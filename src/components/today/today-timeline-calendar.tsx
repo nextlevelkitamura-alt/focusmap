@@ -102,9 +102,14 @@ export function TodayTimelineCalendar({
 
     // Current time position
     const currentTimeTop = useMemo(() => getTopPx(currentTime), [currentTime])
+    // currentTime は親コンポーネントから渡される現在時刻（常に「今」を表す）
+    // SSRセーフ: new Date()を使わず、currentTimeのみで判定
     const isToday = useMemo(() => {
-        const now = new Date()
-        return currentTime.toDateString() === now.toDateString()
+        const ct = new Date(currentTime)
+        ct.setHours(0, 0, 0, 0)
+        const today = new Date(currentTime)
+        today.setHours(0, 0, 0, 0)
+        return ct.getTime() === today.getTime()
     }, [currentTime])
 
     // Calculate event layout (handle overlapping)
