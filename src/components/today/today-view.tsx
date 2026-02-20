@@ -6,7 +6,7 @@ import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
-import { useEventCompletions } from "@/hooks/useEventCompletions"
+import { useEventImport } from "@/hooks/useEventImport"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
     LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays
@@ -57,7 +57,7 @@ function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask: onCreateSubTaskProp, onDeleteTask: onDeleteTaskProp }: TodayViewProps) {
     const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
     const { todayHabits, toggleCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
-    const { completedEventIds, toggleEventCompletion } = useEventCompletions()
+    const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
     const [timelineMode, setTimelineMode] = useState<TimelineMode>('calendar')
@@ -191,6 +191,15 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEvents)
     useEffect(() => { setLocalCalendarEvents(fetchedCalendarEvents) }, [fetchedCalendarEvents])
 
+    // イベント自動取り込み: カレンダーイベントをタスクとしてDBに保存（バックグラウンド）
+    // 取り込み完了後、次回ロード時にタスクとして allTasks に含まれ dedup でイベント表示が置換される
+    const importDoneRef = useRef(false)
+    useEffect(() => {
+        if (eventsLoading || allFetchedEvents.length === 0 || importDoneRef.current || isImporting) return
+        importDoneRef.current = true
+        importEvents(allFetchedEvents).catch(() => {}) // 次回起動時にリトライ
+    }, [eventsLoading, allFetchedEvents, importEvents, isImporting])
+
     // カレンダー同期（今日のビューのタスク全体）
     useMultiTaskCalendarSync({
         tasks: localTasks,
@@ -259,6 +268,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         return map
     }, [projects])
 
+    // Calendar color map (for imported event tasks)
+    const calendarColorMap = useMemo(() => {
+        const map = new Map<string, string>()
+        for (const cal of calendars) {
+            if (cal.background_color) {
+                map.set(cal.google_calendar_id, cal.background_color)
+            }
+        }
+        return map
+    }, [calendars])
+
     // Child tasks grouped by parent (for subtask display)
     const childTasksMap = useMemo(() => {
         const map = new Map<string, Task[]>()
@@ -301,7 +321,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
         for (const task of todayScheduledTasks) {
             if (!task.scheduled_at) continue
-            const block = taskToTimeBlock(task)
+            // Imported events: use calendar color, manual tasks: use default
+            const color = task.google_event_id && !task.project_id
+                ? calendarColorMap.get(task.calendar_id || '') : undefined
+            const block = taskToTimeBlock(task, color)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
             if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
             items.push(block)
@@ -310,7 +333,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         // 前日からの繰り越しタスク（0:00から残り時間分を表示）
         const dayAfterTomorrow = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000)
         for (const task of overflowTasks) {
-            const block = taskToTimeBlock(task)
+            const color = task.google_event_id && !task.project_id
+                ? calendarColorMap.get(task.calendar_id || '') : undefined
+            const block = taskToTimeBlock(task, color)
             block.startTime = new Date(today)
             // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
             if (block.endTime.getTime() > dayAfterTomorrow.getTime()) {
@@ -822,8 +847,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         eventsLoading={eventsLoading}
                         currentTime={currentTime}
                         onToggleTask={toggleTask}
-                        completedEventIds={completedEventIds}
-                        onToggleEventCompletion={toggleEventCompletion}
                         onItemTap={handleItemTap}
                         onDragDrop={handleDragDrop}
                         childTasksMap={childTasksMap}
@@ -839,8 +862,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             eventsLoading={eventsLoading}
                             currentTime={currentTime}
                             onToggleTask={toggleTask}
-                            completedEventIds={completedEventIds}
-                            onToggleEventCompletion={toggleEventCompletion}
                             onItemTap={handleItemTap}
                             projectNameMap={projectNameMap}
                         />

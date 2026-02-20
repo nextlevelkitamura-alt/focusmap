@@ -22,6 +22,7 @@ export interface ImportEventsResponse {
     updated: number
     softDeleted: number
     skipped: number
+    tasks?: unknown[] // upserted tasks for client-side merge
   }
   error?: { code: string; message: string }
 }
@@ -146,11 +147,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       }
     }
 
-    // UPSERT 実行
+    // UPSERT 実行（.select() で結果を返す）
+    let upsertedTasks: unknown[] = []
     if (toUpsert.length > 0) {
-      const { error: upsertError } = await supabase
+      const { data: upsertData, error: upsertError } = await supabase
         .from('tasks')
         .upsert(toUpsert)
+        .select()
 
       if (upsertError) {
         return NextResponse.json(
@@ -158,6 +161,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
           { status: 500 }
         )
       }
+      upsertedTasks = upsertData || []
     }
 
     // 3. ソフトデリート: 既存にあるが incoming にないもの
@@ -183,7 +187,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
 
     return NextResponse.json({
       success: true,
-      result: { inserted, updated, softDeleted, skipped },
+      result: { inserted, updated, softDeleted, skipped, tasks: upsertedTasks },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'

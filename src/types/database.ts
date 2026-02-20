@@ -250,32 +250,6 @@ export interface Database {
                     updated_at?: string
                 }
             }
-            event_completions: {
-                Row: {
-                    id: string
-                    user_id: string
-                    google_event_id: string
-                    calendar_id: string
-                    completed_date: string
-                    created_at: string
-                }
-                Insert: {
-                    id?: string
-                    user_id: string
-                    google_event_id: string
-                    calendar_id: string
-                    completed_date: string
-                    created_at?: string
-                }
-                Update: {
-                    id?: string
-                    user_id?: string
-                    google_event_id?: string
-                    calendar_id?: string
-                    completed_date?: string
-                    created_at?: string
-                }
-            }
             ai_suggestions: {
                 Row: {
                     id: string
@@ -549,6 +523,3 @@ export type SpaceUpdate = Database['public']['Tables']['spaces']['Update']
 
 export type HabitCompletion = Database['public']['Tables']['habit_completions']['Row']
 export type HabitCompletionInsert = Database['public']['Tables']['habit_completions']['Insert']
-
-export type EventCompletion = Database['public']['Tables']['event_completions']['Row']
-export type EventCompletionInsert = Database['public']['Tables']['event_completions']['Insert']

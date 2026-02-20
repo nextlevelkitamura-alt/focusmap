@@ -81,7 +81,7 @@ beforeEach(() => {
         is: () => Promise.resolve(getSelectResult()),
       }),
     }),
-    upsert: () => Promise.resolve(getUpsertResult()),
+    upsert: () => ({ select: () => Promise.resolve(getUpsertResult()) }),
     update: () => ({
       eq: () => ({
         in: () => Promise.resolve(getUpdateResult()),

@@ -204,6 +204,7 @@ describe('useEventImport', () => {
       updated: 0,
       softDeleted: 0,
       skipped: 0,
+      tasks: [],
     })
     expect(result.current.lastImportedAt).not.toBeNull()
   })
@@ -273,6 +274,7 @@ describe('useEventImport', () => {
       updated: 0,
       softDeleted: 0,
       skipped: 0,
+      tasks: [],
     })
   })
 
@@ -296,6 +298,7 @@ describe('useEventImport', () => {
       updated: 0,
       softDeleted: 0,
       skipped: 0,
+      tasks: [],
     })
   })
 })

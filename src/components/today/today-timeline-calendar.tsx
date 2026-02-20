@@ -25,8 +25,6 @@ interface TodayTimelineCalendarProps {
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
-    completedEventIds: Set<string>
-    onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
     onItemTap?: (item: TimeBlock) => void
     onDragDrop?: (item: DragItem, newStartTime: Date, newEndTime: Date) => void
     childTasksMap?: Map<string, Task[]>
@@ -56,8 +54,6 @@ export function TodayTimelineCalendar({
     eventsLoading,
     currentTime,
     onToggleTask,
-    completedEventIds,
-    onToggleEventCompletion,
     onItemTap,
     onDragDrop,
     childTasksMap,
@@ -162,36 +158,20 @@ export function TodayTimelineCalendar({
                 <div className="px-2 py-1.5 border-b bg-muted/20 flex-shrink-0">
                     <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
                         {allDayEvents.map(event => {
-                            const isEventCompleted = completedEventIds.has(event.google_event_id)
                             const hex = getEventColor(event)
                             const rgb = hexToRgb(hex)
                             return (
                                 <div
                                     key={event.id}
-                                    className={cn(
-                                        "flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-md border",
-                                        isEventCompleted && "opacity-50"
-                                    )}
+                                    className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-md border"
                                     style={{
-                                        backgroundColor: isEventCompleted ? 'var(--color-muted)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.25)` : undefined,
-                                        borderColor: isEventCompleted ? 'var(--color-border)' : rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)` : undefined,
+                                        backgroundColor: rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.25)` : undefined,
+                                        borderColor: rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)` : undefined,
                                     }}
                                 >
-                                    <button
-                                        onClick={() => onToggleEventCompletion(event.google_event_id, event.calendar_id)}
-                                        className="flex-shrink-0 focus:outline-none"
-                                    >
-                                        {isEventCompleted ? (
-                                            <CheckSquare className="w-3 h-3 text-primary" />
-                                        ) : (
-                                            <Square className="w-3 h-3" style={{ color: hex }} />
-                                        )}
-                                    </button>
-                                    <span className={cn(
-                                        "text-[11px] font-medium truncate max-w-32",
-                                        isEventCompleted && "line-through text-muted-foreground"
-                                    )}
-                                        style={!isEventCompleted ? { color: hex } : undefined}
+                                    <span
+                                        className="text-[11px] font-medium truncate max-w-32"
+                                        style={{ color: hex }}
                                     >
                                         {event.title}
                                     </span>
@@ -291,7 +271,7 @@ export function TodayTimelineCalendar({
 
                         {/* Calendar Events & Tasks */}
                         {layoutItems.map((item) => {
-                            const isEvent = item.source === 'google_event'
+                            const isEvent = !!item.originalEvent
                             const id = item.id
 
                             const leftPercent = (item.column / item.totalColumns) * 100
@@ -334,11 +314,6 @@ export function TodayTimelineCalendar({
                                             event={item.originalEvent!}
                                             currentTime={currentTime}
                                             height={item.height}
-                                            isCompleted={completedEventIds.has(item.googleEventId!)}
-                                            onToggleCompletion={() => onToggleEventCompletion(
-                                                item.googleEventId!,
-                                                item.calendarId!
-                                            )}
                                             onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     ) : (
@@ -413,21 +388,16 @@ function EventBlock({
     event,
     currentTime,
     height,
-    isCompleted,
-    onToggleCompletion,
     onTap,
 }: {
     event: CalendarEvent
     currentTime: Date
     height: number
-    isCompleted: boolean
-    onToggleCompletion: () => void
     onTap?: () => void
 }) {
     const startTime = new Date(event.start_time)
     const endTime = new Date(event.end_time)
     const isNow = currentTime >= startTime && currentTime < endTime
-    const isPast = currentTime >= endTime
     const isCompact = height < 40
 
     const startStr = format(startTime, 'HH:mm')
@@ -443,61 +413,32 @@ function EventBlock({
             className={cn(
                 "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
-                isCompleted && "opacity-40",
-                !isCompleted && isNow && "ring-1"
+                isNow && "ring-1"
             )}
             style={{
-                borderLeftColor: isCompleted ? 'var(--color-muted-foreground)' : eventHex,
-                backgroundColor: isCompleted
-                    ? 'var(--color-muted)'
-                    : isNow ? bgNowRgba : bgRgba,
-                ...(isNow && !isCompleted ? { boxShadow: `0 0 0 1px ${eventHex}60` } : {}),
+                borderLeftColor: eventHex,
+                backgroundColor: isNow ? bgNowRgba : bgRgba,
+                ...(isNow ? { boxShadow: `0 0 0 1px ${eventHex}60` } : {}),
             }}
         >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onToggleCompletion() }}
-                        className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
-                    >
-                        {isCompleted ? (
-                            <CheckSquare className="w-4 h-4 text-primary" />
-                        ) : (
-                            <Square className="w-4 h-4" style={{ color: eventHex }} />
-                        )}
-                    </button>
-                    <span className={cn("text-[10px] font-medium", isCompleted ? "text-muted-foreground" : "text-muted-foreground")}>{startStr}</span>
-                    <span className={cn(
-                        "text-[11px] font-medium truncate",
-                        isCompleted ? "line-through text-muted-foreground" : "text-foreground"
-                    )}>
+                    <span className="text-[10px] font-medium text-muted-foreground">{startStr}</span>
+                    <span className="text-[11px] font-medium truncate text-foreground">
                         {event.title}
                     </span>
                 </div>
             ) : (
                 <>
                     <div className="flex items-center gap-1.5">
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onToggleCompletion() }}
-                            className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
-                        >
-                            {isCompleted ? (
-                                <CheckSquare className="w-4.5 h-4.5 text-primary" />
-                            ) : (
-                                <Square className="w-4.5 h-4.5" style={{ color: eventHex }} />
-                            )}
-                        </button>
-                        <span className={cn(
-                            "text-[11px] font-medium truncate leading-tight",
-                            isCompleted ? "line-through text-muted-foreground" : "text-foreground"
-                        )}>
+                        <span className="text-[11px] font-medium truncate leading-tight text-foreground">
                             {event.title}
                         </span>
                     </div>
-                    <div className={cn("text-[10px] font-medium mt-0.5 pl-5", isCompleted ? "text-muted-foreground" : "text-muted-foreground")}>{startStr}</div>
+                    <div className="text-[10px] font-medium mt-0.5 text-muted-foreground">{startStr}</div>
                     {event.location && height > 55 && (
-                        <div className="text-[9px] truncate mt-0.5 pl-5 text-muted-foreground/70">
-                            📍 {event.location}
+                        <div className="text-[9px] truncate mt-0.5 text-muted-foreground/70">
+                            {event.location}
                         </div>
                     )}
                 </>

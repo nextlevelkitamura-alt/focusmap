@@ -49,7 +49,8 @@ const DEFAULT_DURATION_MINUTES = 30
  */
 export function taskToTimeBlock(
   task: Task,
-  projectColor?: string
+  projectColor?: string,
+  calendarColor?: string
 ): TimeBlock {
   const start = new Date(task.scheduled_at!)
   const durationMinutes = task.estimated_time || DEFAULT_DURATION_MINUTES
@@ -60,13 +61,18 @@ export function taskToTimeBlock(
   else if (task.priority === 2) priority = 'medium'
   else if (task.priority === 1) priority = 'low'
 
+  // Imported events use calendar color, manual tasks use project color
+  const color = task.source === 'google_event'
+    ? (calendarColor || DEFAULT_EVENT_COLOR)
+    : (projectColor || DEFAULT_TASK_COLOR)
+
   return {
     id: task.id,
-    source: 'task',
+    source: task.source === 'google_event' ? 'google_event' : 'task',
     title: task.title,
     startTime: start,
     endTime: end,
-    color: projectColor || DEFAULT_TASK_COLOR,
+    color,
     isCompleted: task.status === 'done',
     isTimerRunning: task.is_timer_running,
     taskId: task.id,
@@ -112,7 +118,8 @@ export function eventToTimeBlock(event: CalendarEvent): TimeBlock {
 export function mergeTimeBlocks(
   events: CalendarEvent[],
   tasks: Task[],
-  projectColorMap?: Map<string, string>
+  projectColorMap?: Map<string, string>,
+  calendarColorMap?: Map<string, string>
 ): TimeBlock[] {
   // タスクが持つ google_event_id を集める
   const taskGoogleIds = new Set(
@@ -123,7 +130,11 @@ export function mergeTimeBlocks(
 
   // タスクを TimeBlock に変換
   const taskBlocks = tasks.map((t) =>
-    taskToTimeBlock(t, projectColorMap?.get(t.project_id || ''))
+    taskToTimeBlock(
+      t,
+      projectColorMap?.get(t.project_id || ''),
+      calendarColorMap?.get(t.calendar_id || '')
+    )
   )
 
   // イベントを TimeBlock に変換（タスク重複・終日を除外）

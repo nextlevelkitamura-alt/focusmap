@@ -136,12 +136,16 @@
   - Phase 6: 今日ビュー習慣バー強化 ✅
   - Phase 7-8: 習慣ビュー + PC版統合 ✅（基本実装）
 - 🔧 **モバイル今日ビュー強化**（D&D時間変更、タップ編集、全アイテムチェックボックス、イベント完了DB） → [仕様](specs/mobile-today-view-enhancement.md) | [計画](plans/features/mobile-today-view-enhancement.md)
-  - Phase 1: イベント完了DB + チェックボックス ○
-  - Phase 2: タップ編集モーダル ○
-  - Phase 3: モバイルD&D時間変更 ○
+  - Phase 1: イベント完了DB + チェックボックス ✅
+  - Phase 2: タップ編集モーダル ✅
+  - Phase 3: モバイルD&D時間変更 ✅
 - 🔧 **クイックタスク追加 + サブタスク追加**（FABボタン、プロジェクト選択、カレンダー横+ボタン、チェックリスト） → [計画](plans/features/quick-task-add.md)
-  - Phase 1: FABボタン + タスク追加モーダル ○
+  - Phase 1: FABボタン + タスク追加モーダル ✅
   - Phase 2: サブタスク追加 + チェックリスト表示 ○
+- 🔧 **カレンダーイベント自動取り込み**（イベント→タスク化、タイマー・サブタスク統合、差分同期） → [仕様](specs/event-task-import.md) | [計画](plans/features/event-task-import.md)
+  - Phase 1: DB基盤 + 取り込みHook ○
+  - Phase 2: UI統合 + event_completions移行 ○
+  - Phase 3: 設定画面 + クリーンアップ ○
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -182,3 +186,4 @@
 - 🔧 **習慣機能強化** → Phase 6 完了、習慣ビュー強化が次の対象
 - 🔧 **グループとタスクの統合** Phase 3（旧テーブル削除）
 - 🔧 スペース機能 + 左サイドバー再設計 → [計画](plans/features/space-sidebar-redesign.md)
+- 🔧 **カレンダーイベント自動取り込み** → Phase 1 から開始

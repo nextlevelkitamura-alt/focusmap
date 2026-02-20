@@ -11,6 +11,7 @@ export interface ImportResult {
   updated: number
   softDeleted: number
   skipped: number
+  tasks: Task[]  // upserted tasks for client-side merge
 }
 
 export interface UseEventImportReturn {
@@ -20,7 +21,7 @@ export interface UseEventImportReturn {
   error: Error | null
 }
 
-const EMPTY_RESULT: ImportResult = { inserted: 0, updated: 0, softDeleted: 0, skipped: 0 }
+const EMPTY_RESULT: ImportResult = { inserted: 0, updated: 0, softDeleted: 0, skipped: 0, tasks: [] }
 
 // --- Utility functions ---
 
@@ -105,7 +106,10 @@ export function useEventImport(): UseEventImportReturn {
       }
 
       setLastImportedAt(new Date())
-      return data.result as ImportResult
+      return {
+        ...data.result,
+        tasks: (data.result.tasks || []) as Task[],
+      } as ImportResult
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error')
       setError(error)
