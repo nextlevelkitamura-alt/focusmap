@@ -18,6 +18,7 @@ import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { DragItem } from "@/hooks/useTouchDrag"
+import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
@@ -149,13 +150,21 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     })
 
     // Fetch calendar events for today
-    const { events: fetchedCalendarEvents, isLoading: eventsLoading, error: eventsError } = useCalendarEvents({
+    const { events: fetchedCalendarEvents, isLoading: eventsLoading, error: eventsError, syncNow } = useCalendarEvents({
         timeMin: today,
         timeMax: tomorrow,
         calendarIds: selectedCalendarIds,
     })
     const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEvents)
     useEffect(() => { setLocalCalendarEvents(fetchedCalendarEvents) }, [fetchedCalendarEvents])
+
+    // カレンダー同期（今日のビューのタスク全体）
+    useMultiTaskCalendarSync({
+        tasks: localTasks,
+        onRefreshCalendar: syncNow,
+        onUpdateTask,
+    })
+
     // Use localCalendarEvents for rendering (supports optimistic D&D updates)
     const calendarEvents = localCalendarEvents
 
@@ -395,10 +404,14 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         setEditTarget(null)
     }, [])
 
-    // Save task via existing onUpdateTask
+    // Save task via existing onUpdateTask (with optimistic update for calendar sync)
     const handleSaveTask = useCallback(async (taskId: string, updates: {
         title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string
     }) => {
+        // Optimistic update so useMultiTaskCalendarSync picks up changes immediately
+        setLocalTasks(prev => prev.map(t =>
+            t.id === taskId ? { ...t, ...updates } : t
+        ))
         await onUpdateTask(taskId, updates)
     }, [onUpdateTask])
 
