@@ -20,7 +20,9 @@ interface CalendarViewProps {
 
 export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('3day') // Default to 3day for narrow sidebars? Or keep 'week'? Let's keep 'week' as default or change if requested. detailed spec said "4 views". Default wasn't specified but 'week' is standard.
-  const [currentDate, setCurrentDate] = useState(new Date())
+  const [currentDate, setCurrentDate] = useState(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d
+  })
 
   // ズーム機能用のgridRef
   const zoomGridRef = useRef<HTMLDivElement>(null)

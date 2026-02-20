@@ -180,15 +180,41 @@ export function useMindMapSync({
             },
         })
 
-        // Background INSERT（createTask と同じパターン）
+        // Background INSERT（APIルート経由 → 直接INSERT フォールバック）
         const insertPromise = (async () => {
             try {
-                console.log('[Sync] Creating root task (group):', optimisticId, title);
+                console.log('[Sync] Creating root task (group) via API:', optimisticId.slice(0, 8), title);
+
+                // APIルート経由でINSERT（サーバーサイド認証）
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: optimisticId,
+                        project_id: projectId,
+                        parent_task_id: null,
+                        is_group: true,
+                        title,
+                        order_index: maxOrder,
+                    }),
+                });
+
+                if (response.ok) {
+                    console.log('[Sync] createGroup API INSERT success:', optimisticId.slice(0, 8));
+                    pendingOptimisticTasks.current.delete(optimisticId)
+                    return;
+                }
+
+                const errorText = await response.text();
+                console.warn('[Sync] createGroup API INSERT failed:', errorText);
+
+                // フォールバック: 直接Supabase INSERT
+                console.log('[Sync] createGroup fallback to direct INSERT:', optimisticId.slice(0, 8));
                 const { error } = await supabase.from('tasks').insert({
                     id: optimisticId,
                     user_id: userId,
                     project_id: projectId,
-                    is_group: true, // ルートタスク（グループ）なので true
+                    is_group: true,
                     parent_task_id: null,
                     title,
                     status: 'todo',
@@ -200,15 +226,16 @@ export function useMindMapSync({
                     habit_icon: null,
                 })
                 if (error) {
-                    console.error('[Sync] createGroup INSERT failed:', error);
+                    console.error('[Sync] createGroup direct INSERT also failed:', error);
                     throw error;
                 }
-                console.log('[Sync] createGroup INSERT success:', optimisticId);
+                console.log('[Sync] createGroup direct INSERT success:', optimisticId.slice(0, 8));
                 pendingOptimisticTasks.current.delete(optimisticId)
             } catch (e) {
-                console.error('[Sync] createGroup failed:', e)
+                console.error('[Sync] createGroup ROLLBACK:', e)
                 pendingOptimisticTasks.current.delete(optimisticId)
                 setAllTasks(prev => prev.filter(t => t.id !== optimisticId))
+                onSyncError?.('グループの作成に失敗しました')
             }
         })();
 
@@ -451,7 +478,7 @@ export function useMindMapSync({
             },
         })
 
-        // Background sync: 親INSERT待機 → 直接INSERT → 失敗時APIルートフォールバック（リトライあり）
+        // Background sync: 親INSERT待機 → APIルート優先INSERT → 失敗時直接INSERTフォールバック
         const insertPromise = (async () => {
             try {
                 console.log('[Sync] createTask starting INSERT:', { optimisticId: optimisticId.slice(0, 8), parentTaskId: effectiveParentId?.slice(0, 8), title, groupId });
@@ -464,35 +491,32 @@ export function useMindMapSync({
                         await parentPending;
                         console.log('[Sync] Parent INSERT completed:', effectiveParentId.slice(0, 8));
                     }
-
-                    // 親タスクが DB に存在することを確認（最大 3 回試行、500ms 間隔）
-                    let parentExists = false;
-                    for (let attempt = 0; attempt < 3; attempt++) {
-                        const { data: parentTask, error: parentError } = await supabase
-                            .from('tasks')
-                            .select('id')
-                            .eq('id', effectiveParentId)
-                            .single();
-
-                        if (parentTask) {
-                            parentExists = true;
-                            console.log('[Sync] Parent task exists in DB:', effectiveParentId.slice(0, 8));
-                            break;
-                        }
-
-                        console.log(`[Sync] Parent task not found (attempt ${attempt + 1}/3):`, parentError?.message);
-                        if (attempt < 2) {
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    }
-
-                    if (!parentExists) {
-                        console.error('[Sync] Parent task does not exist in DB after 3 attempts:', effectiveParentId);
-                        throw new Error('Parent task not found in database');
-                    }
                 }
 
-                // 全フィールドを含むINSERT（createGroupと同等の完全性）
+                // APIルート経由でINSERT（サーバーサイド認証）
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: optimisticId,
+                        project_id: projectId,
+                        parent_task_id: effectiveParentId,
+                        title: title || 'New Task',
+                        order_index: maxOrder,
+                    }),
+                });
+
+                if (response.ok) {
+                    console.log('[Sync] createTask API INSERT success:', optimisticId.slice(0, 8));
+                    pendingOptimisticTasks.current.delete(optimisticId);
+                    return;
+                }
+
+                const errorText = await response.text();
+                console.warn('[Sync] createTask API INSERT failed:', errorText);
+
+                // フォールバック: 直接Supabase INSERT
+                console.log('[Sync] createTask fallback to direct INSERT:', optimisticId.slice(0, 8));
                 const { error: insertError } = await supabase.from('tasks').insert({
                     id: optimisticId,
                     user_id: userId,
@@ -510,49 +534,21 @@ export function useMindMapSync({
                 });
 
                 if (!insertError) {
-                    console.log('[Sync] INSERT success:', optimisticId.slice(0, 8));
+                    console.log('[Sync] createTask direct INSERT success:', optimisticId.slice(0, 8));
                     pendingOptimisticTasks.current.delete(optimisticId);
                     return;
                 }
 
-                console.warn('[Sync] Direct INSERT failed:', { code: insertError.code, message: insertError.message, details: insertError.details, hint: insertError.hint });
-
-                // API route を呼ぶ前に、親タスクの INSERT 完了を再度確認
-                if (effectiveParentId) {
-                    const parentPending = pendingInserts.current.get(effectiveParentId);
-                    if (parentPending) {
-                        console.log('[Sync] Waiting for parent INSERT before API call:', effectiveParentId.slice(0, 8));
-                        await parentPending;
-                    }
-                }
-
-                const response = await fetch('/api/tasks', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        id: optimisticId,
-                        project_id: projectId,
-                        parent_task_id: effectiveParentId,
-                        title: title || 'New Task',
-                        order_index: maxOrder,
-                    }),
-                });
-
-                if (response.ok) {
-                    console.log('[Sync] API INSERT success:', optimisticId.slice(0, 8));
-                    pendingOptimisticTasks.current.delete(optimisticId);
-                    return;
-                }
-
-                const errorText = await response.text();
-                console.error('[Sync] API INSERT failed:', errorText);
+                console.error('[Sync] createTask direct INSERT also failed:', insertError);
                 console.error('[Sync] createTask ROLLBACK:', optimisticId.slice(0, 8));
                 pendingOptimisticTasks.current.delete(optimisticId);
                 setAllTasks(prev => prev.filter(t => t.id !== optimisticId));
+                onSyncError?.('タスクの作成に失敗しました')
             } catch (e) {
                 console.error('[Sync] createTask unexpected error:', e);
                 pendingOptimisticTasks.current.delete(optimisticId);
                 setAllTasks(prev => prev.filter(t => t.id !== optimisticId));
+                onSyncError?.('タスクの作成に失敗しました')
             }
         })();
 

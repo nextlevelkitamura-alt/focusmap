@@ -67,7 +67,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [calendarOpen, setCalendarOpen] = useState(false)
-    const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
+    const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
 
