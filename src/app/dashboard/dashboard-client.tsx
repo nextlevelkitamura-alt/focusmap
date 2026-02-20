@@ -399,7 +399,59 @@ export function DashboardClient({
         })()
     }, [userId, debouncedRefreshCalendar])
 
+    // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
+    const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
+        // ローカルオーバーライドを即座に適用（UI即時反映）
+        setTaskOverrides(prev => ({
+            ...prev,
+            [taskId]: { ...(prev[taskId] || {}), ...updates }
+        }))
+        // quickTasks にもあれば同期
+        setQuickTasks(prev => {
+            if (!prev.some(t => t.id === taskId)) return prev
+            return prev.map(t => t.id === taskId ? { ...t, ...updates } : t)
+        })
+        // DB保存
+        await updateTask(taskId, updates)
+    }, [updateTask])
+
+    // --- View State ---
+    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
+    const { activeView, isViewReady } = useView()
+
+    // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
+    const allTasksMerged = useMemo(() => {
+        const currentMap = new Map(currentTasks.map(t => [t.id, t]))
+        const merged = initialTasks.map(t => {
+            const base = currentMap.get(t.id) || t
+            const override = taskOverrides[base.id]
+            return override ? { ...base, ...override } as Task : base
+        })
+        const existingIds = new Set(merged.map(t => t.id))
+        // Add new tasks from mind map (created during session, not in initialTasks)
+        for (const ct of currentTasks) {
+            if (!existingIds.has(ct.id)) {
+                const override = taskOverrides[ct.id]
+                merged.push(override ? { ...ct, ...override } as Task : ct)
+                existingIds.add(ct.id)
+            }
+        }
+        // Add groups from mind map (for completeness)
+        for (const cg of currentGroups) {
+            if (!existingIds.has(cg.id)) {
+                merged.push(cg)
+                existingIds.add(cg.id)
+            }
+        }
+        // Add quick tasks that aren't already in the list
+        for (const qt of quickTasks) {
+            if (!existingIds.has(qt.id)) merged.push(qt)
+        }
+        return merged
+    }, [initialTasks, currentTasks, currentGroups, quickTasks, taskOverrides])
+
     // サブタスク作成（今日のビュー用）— quickTasks に追加して allTasksMerged に反映
+    // ※ allTasksMerged の後に定義しないと TDZ エラーになる
     const handleCreateSubTask = useCallback(async (parentTaskId: string, title: string) => {
         const parentTask = allTasksMerged.find(t => t.id === parentTaskId)
         const optimisticId = crypto.randomUUID()
@@ -470,57 +522,6 @@ export function DashboardClient({
             console.error('[Dashboard] Failed to delete task:', err)
         }
     }, [])
-
-    // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
-    const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
-        // ローカルオーバーライドを即座に適用（UI即時反映）
-        setTaskOverrides(prev => ({
-            ...prev,
-            [taskId]: { ...(prev[taskId] || {}), ...updates }
-        }))
-        // quickTasks にもあれば同期
-        setQuickTasks(prev => {
-            if (!prev.some(t => t.id === taskId)) return prev
-            return prev.map(t => t.id === taskId ? { ...t, ...updates } : t)
-        })
-        // DB保存
-        await updateTask(taskId, updates)
-    }, [updateTask])
-
-    // --- View State ---
-    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
-    const { activeView, isViewReady } = useView()
-
-    // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
-    const allTasksMerged = useMemo(() => {
-        const currentMap = new Map(currentTasks.map(t => [t.id, t]))
-        const merged = initialTasks.map(t => {
-            const base = currentMap.get(t.id) || t
-            const override = taskOverrides[base.id]
-            return override ? { ...base, ...override } as Task : base
-        })
-        const existingIds = new Set(merged.map(t => t.id))
-        // Add new tasks from mind map (created during session, not in initialTasks)
-        for (const ct of currentTasks) {
-            if (!existingIds.has(ct.id)) {
-                const override = taskOverrides[ct.id]
-                merged.push(override ? { ...ct, ...override } as Task : ct)
-                existingIds.add(ct.id)
-            }
-        }
-        // Add groups from mind map (for completeness)
-        for (const cg of currentGroups) {
-            if (!existingIds.has(cg.id)) {
-                merged.push(cg)
-                existingIds.add(cg.id)
-            }
-        }
-        // Add quick tasks that aren't already in the list
-        for (const qt of quickTasks) {
-            if (!existingIds.has(qt.id)) merged.push(qt)
-        }
-        return merged
-    }, [initialTasks, currentTasks, currentGroups, quickTasks, taskOverrides])
 
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
