@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/client'
 import { Task, TaskGroup } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
+import { deriveStageUpdate } from '@/lib/stage-utils'
 
 interface UseMindMapSyncProps {
     projectId: string | null
@@ -57,6 +58,7 @@ export function useMindMapSync({
         parent_task_id: null, // TaskGroup には parent_task_id がないため明示的に null 設定
         project_id: g.project_id,
         status: (g as any).status ?? 'todo',
+        stage: (g as any).stage ?? 'plan',
         actual_time_minutes: (g as any).actual_time_minutes ?? 0,
         total_elapsed_seconds: (g as any).total_elapsed_seconds ?? 0,
         last_started_at: (g as any).last_started_at ?? null,
@@ -166,6 +168,7 @@ export function useMindMapSync({
             parent_task_id: null,
             title,
             status: 'todo',
+            stage: 'plan',
             priority: null,
             order_index: maxOrder,
             scheduled_at: null,
@@ -180,6 +183,8 @@ export function useMindMapSync({
             is_habit: false,
             habit_frequency: null,
             habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
             created_at: now,
         }
 
@@ -466,6 +471,7 @@ export function useMindMapSync({
             parent_task_id: effectiveParentId,
             title,
             status: 'todo',
+            stage: 'plan',
             priority: null,
             order_index: maxOrder,
             scheduled_at: null,
@@ -480,6 +486,8 @@ export function useMindMapSync({
             is_habit: false,
             habit_frequency: null,
             habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
             created_at: now,
         };
 
@@ -592,6 +600,11 @@ export function useMindMapSync({
         console.log('[Sync] updateTask called:', taskId.slice(0, 8), updates)
         const currentAll = allTasksRef.current;
         const beforeTask = currentAll.find(t => t.id === taskId)
+
+        // Stage 自動遷移: updates に stage 影響フィールドが含まれていれば stage も更新
+        const stageUpdate = beforeTask ? deriveStageUpdate(updates, beforeTask) : {}
+        const updatesWithStage = { ...updates, ...stageUpdate }
+
         if (!beforeTask) {
             // Task not in current project state (e.g. habit child from another project)
             // Still perform DB update via API route
@@ -600,7 +613,7 @@ export function useMindMapSync({
                 const response = await fetch(`/api/tasks/${taskId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(updates),
+                    body: JSON.stringify(updatesWithStage),
                 })
                 if (!response.ok) console.error('[Sync] updateTask direct API error:', await response.text())
             } catch (e) {
@@ -609,20 +622,20 @@ export function useMindMapSync({
             return
         }
         const beforeValues: Partial<Task> = {}
-        for (const key of Object.keys(updates) as (keyof Task)[]) {
+        for (const key of Object.keys(updatesWithStage) as (keyof Task)[]) {
             (beforeValues as any)[key] = beforeTask[key]
         }
 
         let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
 
-        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
+        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
 
         try {
             console.log('[Sync] updateTask via API:', taskId.slice(0, 8))
             const response = await fetch(`/api/tasks/${taskId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updates),
+                body: JSON.stringify(updatesWithStage),
             })
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({ message: response.statusText }))

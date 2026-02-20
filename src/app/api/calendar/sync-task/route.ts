@@ -53,11 +53,12 @@ export async function POST(request: NextRequest) {
       }, { status: 404 });
     }
 
-    // タスクに calendar_id を保存
+    // タスクに calendar_id を保存し、stage を 'scheduled' に遷移
     const { error: updateError } = await supabase
       .from('tasks')
       .update({
         calendar_id,
+        stage: task.status === 'done' ? 'done' : 'scheduled',
         updated_at: new Date().toISOString()
       })
       .eq('id', taskId)

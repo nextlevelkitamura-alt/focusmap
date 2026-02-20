@@ -10,22 +10,19 @@ import {
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { useState, useEffect, useMemo } from "react"
+import type { TimeBlock } from "@/lib/time-block"
 
 // --- Types ---
 
-type TimelineItem =
-    | { type: 'event'; data: CalendarEvent; startTime: Date; endTime: Date }
-    | { type: 'task'; data: Task; startTime: Date; endTime: Date }
-
 interface TodayTimelineCardsProps {
-    timelineItems: TimelineItem[]
+    timelineItems: TimeBlock[]
     allDayEvents: CalendarEvent[]
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
     completedEventIds: Set<string>
     onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
-    onItemTap?: (item: TimelineItem) => void
+    onItemTap?: (item: TimeBlock) => void
     projectNameMap?: Map<string, string>
 }
 
@@ -172,7 +169,7 @@ export function TodayTimelineCards({
 
                 <div className="space-y-2">
                     {timelineItems.map((item, index) => (
-                        <div key={item.type === 'event' ? `e-${item.data.id}` : `t-${(item.data as Task).id}`}>
+                        <div key={`${item.source}-${item.id}`}>
                             <TimelineCard
                                 item={item}
                                 currentTime={currentTime}
@@ -218,7 +215,7 @@ function TimelineCard({
     onTap,
     projectNameMap,
 }: {
-    item: TimelineItem
+    item: TimeBlock
     currentTime: Date
     timer: ReturnType<typeof useTimer>
     completedEventIds: Set<string>
@@ -232,9 +229,9 @@ function TimelineCard({
     const isNow = currentTime >= item.startTime && currentTime < item.endTime
     const isPast = currentTime >= item.endTime
 
-    if (item.type === 'event') {
-        const event = item.data as CalendarEvent
-        const isEventCompleted = completedEventIds.has(event.google_event_id)
+    if (item.source === 'google_event') {
+        const event = item.originalEvent!
+        const isEventCompleted = completedEventIds.has(item.googleEventId!)
         return (
             <div
                 onClick={onTap}
@@ -245,8 +242,7 @@ function TimelineCard({
                     ? "border-border opacity-50"
                     : isNow
                         ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30"
-                        : "border-border",
-                isPast && !isEventCompleted && "opacity-50"
+                        : "border-border"
             )}>
                 {isNow && !isEventCompleted && (
                     <>
@@ -255,13 +251,13 @@ function TimelineCard({
                     </>
                 )}
                 <button
-                    onClick={(e) => { e.stopPropagation(); onToggleEventCompletion(event.google_event_id, event.calendar_id) }}
+                    onClick={(e) => { e.stopPropagation(); onToggleEventCompletion(item.googleEventId!, item.calendarId!) }}
                     className="flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                 >
                     {isEventCompleted ? (
-                        <CheckSquare className="w-4 h-4 text-primary" />
+                        <CheckSquare className="w-5 h-5 text-primary" />
                     ) : (
-                        <Square className="w-4 h-4 text-blue-400" />
+                        <Square className="w-5 h-5 text-blue-400" />
                     )}
                 </button>
                 <div className="flex-shrink-0 w-12 pt-0.5">
@@ -274,7 +270,7 @@ function TimelineCard({
                         "text-sm font-medium truncate",
                         isEventCompleted && "line-through text-muted-foreground"
                     )}>
-                        {event.title}
+                        {item.title}
                     </div>
                     {event.location && (
                         <div className="text-[10px] text-muted-foreground truncate mt-0.5">
@@ -287,10 +283,10 @@ function TimelineCard({
     }
 
     // Task card
-    const task = item.data as Task
-    const isRunning = timer.runningTaskId === task.id
-    const isDone = task.status === 'done'
-    const projectName = task.project_id ? projectNameMap?.get(task.project_id) : undefined
+    const task = item.originalTask!
+    const isRunning = item.isTimerRunning
+    const isDone = item.isCompleted
+    const projectName = item.projectId ? projectNameMap?.get(item.projectId) : undefined
 
     return (
         <div
@@ -304,8 +300,7 @@ function TimelineCard({
                     ? "border-primary/60 bg-primary/10 dark:border-primary/50 dark:bg-primary/10"
                     : isNow
                         ? "border-green-300 bg-green-50/50 dark:border-green-700 dark:bg-green-950/30"
-                        : "border-border",
-            isPast && !isRunning && !isDone && "opacity-50"
+                        : "border-border"
         )}>
             {isNow && !isRunning && !isDone && (
                 <>
@@ -314,13 +309,13 @@ function TimelineCard({
                 </>
             )}
             <button
-                onClick={(e) => { e.stopPropagation(); onToggleTask(task.id) }}
+                onClick={(e) => { e.stopPropagation(); onToggleTask(item.id) }}
                 className="flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
             >
                 {isDone ? (
-                    <CheckSquare className="w-4 h-4 text-primary" />
+                    <CheckSquare className="w-5 h-5 text-primary" />
                 ) : (
-                    <Square className="w-4 h-4 text-green-500" />
+                    <Square className="w-5 h-5 text-green-500" />
                 )}
             </button>
             <div className="flex-shrink-0 w-12 pt-0.5">
@@ -333,12 +328,12 @@ function TimelineCard({
                     "text-sm font-medium truncate",
                     isDone && "line-through text-muted-foreground"
                 )}>
-                    {task.title}
+                    {item.title}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                    {task.estimated_time > 0 && (
+                    {(item.estimatedTime ?? 0) > 0 && (
                         <span className="text-[10px] text-muted-foreground">
-                            ⏱ {task.estimated_time}分
+                            ⏱ {item.estimatedTime}分
                         </span>
                     )}
                     {projectName && (
@@ -358,17 +353,17 @@ function TimelineCard({
                     <button
                         onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                         aria-label="タイマーを一時停止"
-                        className="p-2 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                        className="p-2.5 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                     >
-                        <Pause className="w-4 h-4" />
+                        <Pause className="w-5 h-5" />
                     </button>
                 ) : (
                     <button
                         onClick={(e) => { e.stopPropagation(); timer.startTimer(task) }}
-                        aria-label={`${task.title}のタイマーを開始`}
-                        className="p-2 rounded-full hover:bg-muted active:bg-muted text-muted-foreground hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                        aria-label={`${item.title}のタイマーを開始`}
+                        className="p-2.5 rounded-full hover:bg-muted active:bg-muted text-muted-foreground hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
                     >
-                        <Play className="w-4 h-4" />
+                        <Play className="w-5 h-5" />
                     </button>
                 )}
             </div>

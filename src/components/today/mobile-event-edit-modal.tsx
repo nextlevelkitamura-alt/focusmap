@@ -1,20 +1,17 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Task } from "@/types/database"
-import { CalendarEvent } from "@/types/calendar"
 import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
+import type { TimeBlock } from "@/lib/time-block"
 
 // --- Types ---
 
-type EditTarget =
-    | { type: 'task'; data: Task; startTime: Date; endTime: Date }
-    | { type: 'event'; data: CalendarEvent; startTime: Date; endTime: Date }
+type EditTarget = TimeBlock
 
 interface MobileEventEditModalProps {
     target: EditTarget | null
@@ -79,17 +76,12 @@ export function MobileEventEditModal({
     useEffect(() => {
         if (!target) return
 
-        if (target.type === 'task') {
-            const task = target.data
-            setTitle(task.title)
-            setScheduledDate(new Date(target.startTime))
-            setDuration(task.estimated_time || 60)
-            setCalendarId(task.calendar_id || '')
+        setTitle(target.title)
+        setScheduledDate(new Date(target.startTime))
+        setCalendarId(target.calendarId || '')
+        if (target.source === 'task') {
+            setDuration(target.estimatedTime || 60)
         } else {
-            const event = target.data
-            setTitle(event.title)
-            setScheduledDate(new Date(target.startTime))
-            setCalendarId(event.calendar_id)
             const dur = Math.round((target.endTime.getTime() - target.startTime.getTime()) / 60000)
             setDuration(dur)
         }
@@ -128,10 +120,8 @@ export function MobileEventEditModal({
 
         onClose()
 
-        if (target.type === 'task') {
-            const task = target.data
-
-            onSaveTask(task.id, {
+        if (target.source === 'task') {
+            onSaveTask(target.taskId!, {
                 title,
                 scheduled_at: scheduledDate.toISOString(),
                 estimated_time: duration,
@@ -140,15 +130,14 @@ export function MobileEventEditModal({
                 console.error('[MobileEventEditModal] Save task error:', err)
             })
         } else {
-            const event = target.data
             const newEnd = new Date(scheduledDate.getTime() + duration * 60000)
 
-            onSaveEvent(event.id, {
+            onSaveEvent(target.id, {
                 title,
                 start_time: scheduledDate.toISOString(),
                 end_time: newEnd.toISOString(),
-                googleEventId: event.google_event_id,
-                calendarId: event.calendar_id,
+                googleEventId: target.googleEventId!,
+                calendarId: target.calendarId!,
             }).catch(err => {
                 console.error('[MobileEventEditModal] Save event error:', err)
             })
@@ -158,11 +147,10 @@ export function MobileEventEditModal({
     // Delete handler
     const handleDelete = useCallback(() => {
         if (!target) return
-        if (target.type === 'task') {
-            onDeleteTask?.(target.data.id)
+        if (target.source === 'task') {
+            onDeleteTask?.(target.taskId!)
         } else {
-            const event = target.data
-            onDeleteEvent?.(event.id, event.google_event_id, event.calendar_id)
+            onDeleteEvent?.(target.id, target.googleEventId!, target.calendarId!)
         }
         onClose()
     }, [target, onDeleteTask, onDeleteEvent, onClose])
@@ -174,7 +162,7 @@ export function MobileEventEditModal({
 
     if (!isOpen || !target) return null
 
-    const isTask = target.type === 'task'
+    const isTask = target.source === 'task'
     const selectedCalendar = availableCalendars.find(c => c.id === calendarId)
 
     return (
@@ -341,12 +329,12 @@ export function MobileEventEditModal({
                     )}
 
                     {/* Timer Section (Tasks only) */}
-                    {isTask && (() => {
-                        const task = target.data as Task
+                    {isTask && target.originalTask && (() => {
+                        const task = target.originalTask!
                         const isRunning = timer.runningTaskId === task.id
                         const elapsedSeconds = isRunning
                             ? timer.currentElapsedSeconds
-                            : (task.total_elapsed_seconds ?? 0)
+                            : (target.totalElapsedSeconds ?? 0)
                         const hasElapsed = elapsedSeconds > 0
 
                         return (

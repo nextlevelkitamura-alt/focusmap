@@ -52,11 +52,12 @@ export async function POST(
       );
     }
 
-    // scheduled_at を更新
+    // scheduled_at を更新し、stage を 'scheduled' に遷移
     const { error: updateError } = await supabase
       .from('tasks')
       .update({
         scheduled_at: scheduledAt,
+        stage: task.status === 'done' ? 'done' : 'scheduled',
         updated_at: new Date().toISOString()
       })
       .eq('id', taskId)
@@ -214,12 +215,13 @@ export async function DELETE(
       }
     }
 
-    // scheduled_at と calendar_event_id をクリア
+    // scheduled_at と calendar_event_id をクリアし、stage を 'plan' に戻す
     const { error: updateError } = await supabase
       .from('tasks')
       .update({
         scheduled_at: null,
         calendar_event_id: null,
+        stage: task.status === 'done' ? 'done' : 'plan',
         updated_at: new Date().toISOString()
       })
       .eq('id', taskId)

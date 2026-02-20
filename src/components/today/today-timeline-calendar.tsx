@@ -9,6 +9,7 @@ import { Play, Pause, Check, Square, CheckSquare, GripVertical, Plus, ChevronDow
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
+import type { TimeBlock } from "@/lib/time-block"
 
 // --- Constants ---
 const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
@@ -17,19 +18,16 @@ const DEFAULT_SCROLL_HOUR = 7 // scroll to 7am by default
 const TOTAL_HEIGHT = HOUR_HEIGHT * 24
 
 // --- Types ---
-type TimelineItem =
-    | { type: 'event'; data: CalendarEvent; startTime: Date; endTime: Date }
-    | { type: 'task'; data: Task; startTime: Date; endTime: Date }
 
 interface TodayTimelineCalendarProps {
-    timelineItems: TimelineItem[]
+    timelineItems: TimeBlock[]
     allDayEvents: CalendarEvent[]
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
     completedEventIds: Set<string>
     onToggleEventCompletion: (googleEventId: string, calendarId: string) => void
-    onItemTap?: (item: TimelineItem) => void
+    onItemTap?: (item: TimeBlock) => void
     onDragDrop?: (item: DragItem, newStartTime: Date, newEndTime: Date) => void
     childTasksMap?: Map<string, Task[]>
     onCreateSubTask?: (parentTaskId: string, title: string) => void
@@ -146,7 +144,7 @@ export function TodayTimelineCalendar({
             const group = [...overlapping, { ...item, column, totalColumns: 1 }]
             const maxCol = Math.max(...group.map(g => g.column)) + 1
             for (const r of result) {
-                if (group.some(g => g === r || (g.type === r.type && (g.data as { id: string }).id === (r.data as { id: string }).id))) {
+                if (group.some(g => g === r || (g.source === r.source && g.id === r.id))) {
                     r.totalColumns = maxCol
                 }
             }
@@ -293,8 +291,8 @@ export function TodayTimelineCalendar({
 
                         {/* Calendar Events & Tasks */}
                         {layoutItems.map((item) => {
-                            const isEvent = item.type === 'event'
-                            const id = isEvent ? (item.data as CalendarEvent).id : (item.data as Task).id
+                            const isEvent = item.source === 'google_event'
+                            const id = item.id
 
                             const leftPercent = (item.column / item.totalColumns) * 100
                             const widthPercent = (1 / item.totalColumns) * 100
@@ -304,7 +302,7 @@ export function TodayTimelineCalendar({
                                 (item.endTime.getTime() - item.startTime.getTime()) / 60000
                             )
                             const dragItem: DragItem = {
-                                type: item.type,
+                                type: isEvent ? 'event' : 'task',
                                 id,
                                 startTime: item.startTime,
                                 endTime: item.endTime,
@@ -317,7 +315,7 @@ export function TodayTimelineCalendar({
 
                             return (
                                 <div
-                                    key={`${item.type}-${id}`}
+                                    key={`${item.source}-${id}`}
                                     className={cn(
                                         "absolute touch-none select-none",
                                         isDragTarget && "opacity-30",
@@ -333,20 +331,20 @@ export function TodayTimelineCalendar({
                                 >
                                     {isEvent ? (
                                         <EventBlock
-                                            event={item.data as CalendarEvent}
+                                            event={item.originalEvent!}
                                             currentTime={currentTime}
                                             height={item.height}
-                                            isCompleted={completedEventIds.has((item.data as CalendarEvent).google_event_id)}
+                                            isCompleted={completedEventIds.has(item.googleEventId!)}
                                             onToggleCompletion={() => onToggleEventCompletion(
-                                                (item.data as CalendarEvent).google_event_id,
-                                                (item.data as CalendarEvent).calendar_id
+                                                item.googleEventId!,
+                                                item.calendarId!
                                             )}
                                             onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     ) : (
                                         <>
                                             <TaskBlock
-                                                task={item.data as Task}
+                                                task={item.originalTask!}
                                                 currentTime={currentTime}
                                                 startTime={item.startTime}
                                                 endTime={item.endTime}
@@ -358,7 +356,7 @@ export function TodayTimelineCalendar({
                                                 childDoneCount={taskChildTasks?.filter(t => t.status === 'done').length ?? 0}
                                                 isExpanded={isExpanded}
                                                 onToggleExpand={onCreateSubTask ? () => setExpandedTaskId(prev => prev === id ? null : id) : undefined}
-                                                projectName={(item.data as Task).project_id ? projectNameMap?.get((item.data as Task).project_id!) : undefined}
+                                                projectName={item.projectId ? projectNameMap?.get(item.projectId) : undefined}
                                             />
                                             {isExpanded && onCreateSubTask && (
                                                 <div className="relative z-40">
@@ -446,8 +444,7 @@ function EventBlock({
                 "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isCompleted && "opacity-40",
-                !isCompleted && isNow && "ring-1",
-                isPast && !isCompleted && "opacity-40"
+                !isCompleted && isNow && "ring-1"
             )}
             style={{
                 borderLeftColor: isCompleted ? 'var(--color-muted-foreground)' : eventHex,
@@ -464,9 +461,9 @@ function EventBlock({
                         className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                     >
                         {isCompleted ? (
-                            <CheckSquare className="w-3 h-3 text-primary" />
+                            <CheckSquare className="w-4 h-4 text-primary" />
                         ) : (
-                            <Square className="w-3 h-3" style={{ color: eventHex }} />
+                            <Square className="w-4 h-4" style={{ color: eventHex }} />
                         )}
                     </button>
                     <span className={cn("text-[10px] font-medium", isCompleted ? "text-muted-foreground" : "text-muted-foreground")}>{startStr}</span>
@@ -485,9 +482,9 @@ function EventBlock({
                             className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                         >
                             {isCompleted ? (
-                                <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                                <CheckSquare className="w-4.5 h-4.5 text-primary" />
                             ) : (
-                                <Square className="w-3.5 h-3.5" style={{ color: eventHex }} />
+                                <Square className="w-4.5 h-4.5" style={{ color: eventHex }} />
                             )}
                         </button>
                         <span className={cn(
@@ -561,8 +558,7 @@ function TaskBlock({
             onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
             isRunning && "ring-1",
             isDone && !isRunning && "opacity-40",
-            isNow && !isRunning && "ring-1",
-            isPast && !isRunning && "opacity-40"
+            isNow && !isRunning && "ring-1"
             )}
             style={isRunning
                 ? { borderLeftColor: 'var(--color-primary)', backgroundColor: 'rgba(var(--color-primary-rgb, 59,130,246), 0.15)', boxShadow: '0 0 0 1px rgba(var(--color-primary-rgb, 59,130,246), 0.4)' }
@@ -581,9 +577,9 @@ function TaskBlock({
                         className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                     >
                         {isDone ? (
-                            <CheckSquare className="w-3 h-3 text-primary" />
+                            <CheckSquare className="w-4 h-4 text-primary" />
                         ) : (
-                            <Square className="w-3 h-3" style={{ color: TASK_HEX }} />
+                            <Square className="w-4 h-4" style={{ color: TASK_HEX }} />
                         )}
                     </button>
                     <span className={cn(
@@ -592,14 +588,14 @@ function TaskBlock({
                     )}>
                         {task.title}
                     </span>
-                    <div className="ml-auto flex-shrink-0 flex items-center gap-0.5">
+                    <div className="ml-auto flex-shrink-0 flex items-center gap-1">
                         {isRunning ? (
                             <button
                                 onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                                 aria-label="タイマーを一時停止"
                                 className="p-0.5 text-primary focus:outline-none rounded"
                             >
-                                <Pause className="w-3 h-3" />
+                                <Pause className="w-3.5 h-3.5" />
                             </button>
                         ) : (
                             <button
@@ -607,7 +603,7 @@ function TaskBlock({
                                 aria-label={`${task.title}のタイマーを開始`}
                                 className="p-0.5 text-muted-foreground focus:outline-none rounded"
                             >
-                                <Play className="w-3 h-3" />
+                                <Play className="w-3.5 h-3.5" />
                             </button>
                         )}
                         {onToggleExpand && (
@@ -622,10 +618,10 @@ function TaskBlock({
                                 {childTaskCount > 0 ? (
                                     <>
                                         <span className="text-[9px] tabular-nums">{childDoneCount}/{childTaskCount}</span>
-                                        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                     </>
                                 ) : (
-                                    <Plus className="w-3 h-3" />
+                                    <Plus className="w-3.5 h-3.5" />
                                 )}
                             </button>
                         )}
@@ -641,9 +637,9 @@ function TaskBlock({
                                 className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                             >
                                 {isDone ? (
-                                    <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                                    <CheckSquare className="w-4.5 h-4.5 text-primary" />
                                 ) : (
-                                    <Square className="w-3.5 h-3.5" style={{ color: TASK_HEX }} />
+                                    <Square className="w-4.5 h-4.5" style={{ color: TASK_HEX }} />
                                 )}
                             </button>
                             <span className={cn(
@@ -653,14 +649,14 @@ function TaskBlock({
                                 {task.title}
                             </span>
                         </div>
-                        <div className="flex-shrink-0 ml-1 flex items-center gap-0.5">
+                        <div className="flex-shrink-0 ml-1 flex items-center gap-1">
                             {isRunning ? (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
                                     aria-label="タイマーを一時停止"
                                     className="p-1 rounded-full bg-primary/10 text-primary focus:outline-none"
                                 >
-                                    <Pause className="w-3.5 h-3.5" />
+                                    <Pause className="w-4 h-4" />
                                 </button>
                             ) : (
                                 <button
@@ -668,7 +664,7 @@ function TaskBlock({
                                     aria-label={`${task.title}のタイマーを開始`}
                                     className="p-1 rounded-full active:bg-muted text-muted-foreground focus:outline-none"
                                 >
-                                    <Play className="w-3.5 h-3.5" />
+                                    <Play className="w-4 h-4" />
                                 </button>
                             )}
                             {onToggleExpand && (
@@ -685,10 +681,10 @@ function TaskBlock({
                                     {childTaskCount > 0 ? (
                                         <>
                                             <span className="text-[9px] tabular-nums">{childDoneCount}/{childTaskCount}</span>
-                                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                                         </>
                                     ) : (
-                                        <Plus className="w-3.5 h-3.5" />
+                                        <Plus className="w-4 h-4" />
                                     )}
                                 </button>
                             )}

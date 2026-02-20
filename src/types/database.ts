@@ -127,6 +127,7 @@ export interface Database {
                     is_group: boolean  // 🆕 Group flag (true = group, false = task)
                     title: string
                     status: string
+                    stage: string  // 'plan' | 'scheduled' | 'executing' | 'done' | 'archived'
                     priority: number | null
                     order_index: number
                     scheduled_at: string | null
@@ -156,6 +157,7 @@ export interface Database {
                     is_group?: boolean  // 🆕 Group flag (default: false)
                     title: string
                     status?: string
+                    stage?: string  // default: 'plan'
                     priority?: number | null
                     order_index?: number
                     scheduled_at?: string | null
@@ -185,6 +187,7 @@ export interface Database {
                     is_group?: boolean  // 🆕 Group flag
                     title?: string
                     status?: string
+                    stage?: string
                     priority?: number | null
                     order_index?: number
                     scheduled_at?: string | null
@@ -507,6 +510,9 @@ export interface Database {
         }
     }
 }
+
+// Task stage type
+export type TaskStage = 'plan' | 'scheduled' | 'executing' | 'done' | 'archived'
 
 // Convenience type aliases for commonly used table rows
 export type Task = Database['public']['Tables']['tasks']['Row']

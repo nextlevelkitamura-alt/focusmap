@@ -23,12 +23,9 @@ import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
+import { taskToTimeBlock, eventToTimeBlock, type TimeBlock } from "@/lib/time-block"
 
 // --- Types ---
-
-type TimelineItem =
-    | { type: 'event'; data: CalendarEvent; startTime: Date; endTime: Date }
-    | { type: 'task'; data: Task; startTime: Date; endTime: Date }
 
 type TimelineMode = 'calendar' | 'cards'
 
@@ -285,43 +282,41 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     )
     const taskGoogleIds = new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!))
 
-    const timelineItems = useMemo(() => {
-        const items: TimelineItem[] = []
+    const timelineItems: TimeBlock[] = useMemo(() => {
+        const items: TimeBlock[] = []
 
         for (const event of calendarEvents) {
             if (event.is_all_day) continue
             // Skip calendar events that have a matching task (task takes priority)
             if (taskGoogleIds.has(event.google_event_id)) continue
 
-            let startTime = new Date(event.start_time)
-            let endTime = new Date(event.end_time)
-            // 前日からの繰り越し: startTimeを0:00にクランプ（当日0:00より前の場合のみ）
-            if (startTime.getTime() < today.getTime()) startTime = new Date(today)
+            const block = eventToTimeBlock(event)
+            // 前日からの繰り越し: startTimeを0:00にクランプ
+            if (block.startTime.getTime() < today.getTime()) block.startTime = new Date(today)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
-            if (endTime.getTime() > tomorrow.getTime()) endTime = new Date(tomorrow)
+            if (block.endTime.getTime() > tomorrow.getTime()) block.endTime = new Date(tomorrow)
 
-            items.push({ type: 'event', data: event, startTime, endTime })
+            items.push(block)
         }
 
         for (const task of todayScheduledTasks) {
             if (!task.scheduled_at) continue
-            const start = new Date(task.scheduled_at)
-            const end = new Date(start.getTime() + (task.estimated_time || 30) * 60 * 1000)
+            const block = taskToTimeBlock(task)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
-            const clampedEnd = end > tomorrow ? new Date(tomorrow) : end
-            items.push({ type: 'task', data: task, startTime: start, endTime: clampedEnd })
+            if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
+            items.push(block)
         }
 
         // 前日からの繰り越しタスク（0:00から残り時間分を表示）
-        //翌日の24:00までクランプ
         const dayAfterTomorrow = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000)
         for (const task of overflowTasks) {
-            const originalStart = new Date(task.scheduled_at!)
-            const originalEnd = new Date(originalStart.getTime() + (task.estimated_time || 30) * 60 * 1000)
-            const adjustedStart = new Date(today)
+            const block = taskToTimeBlock(task)
+            block.startTime = new Date(today)
             // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
-            const adjustedEnd = new Date(Math.min(originalEnd.getTime(), dayAfterTomorrow.getTime()))
-            items.push({ type: 'task', data: task, startTime: adjustedStart, endTime: adjustedEnd })
+            if (block.endTime.getTime() > dayAfterTomorrow.getTime()) {
+                block.endTime = new Date(dayAfterTomorrow)
+            }
+            items.push(block)
         }
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
@@ -375,7 +370,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [onUpdateTask, toggleCompletion, updateChildTaskStatus])
 
     // Handle item tap (open edit modal)
-    const handleItemTap = useCallback((item: EditTarget) => {
+    const handleItemTap = useCallback((item: TimeBlock) => {
         setEditTarget(item)
         setIsEditModalOpen(true)
     }, [])
