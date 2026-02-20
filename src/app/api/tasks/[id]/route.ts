@@ -100,40 +100,6 @@ export async function DELETE(
       .single();
 
     if (taskError || !task) {
-      // tasks テーブルに見つからない場合、task_groups テーブル（旧スキーマ）を確認
-      console.log('[tasks/[id] DELETE] Task not found in tasks table, checking task_groups (legacy):', taskId);
-      try {
-        const { data: legacyGroup } = await supabase
-          .from('task_groups')
-          .select('id')
-          .eq('id', taskId)
-          .single();
-
-        if (legacyGroup) {
-          // task_groups から削除
-          const { error: legacyDeleteError } = await supabase
-            .from('task_groups')
-            .delete()
-            .eq('id', taskId);
-
-          if (legacyDeleteError) {
-            console.error('[tasks/[id] DELETE] Failed to delete from task_groups:', legacyDeleteError);
-            return NextResponse.json(
-              { success: false, error: { code: 'DELETE_ERROR', message: 'Failed to delete legacy group' } },
-              { status: 500 }
-            );
-          }
-
-          // task_groups に紐づく子タスクも削除（group_id で参照しているもの）
-          await supabase.from('tasks').delete().eq('group_id', taskId);
-
-          console.log('[tasks/[id] DELETE] Legacy group deleted from task_groups:', taskId);
-          return NextResponse.json({ success: true, message: 'Legacy group deleted successfully' });
-        }
-      } catch (legacyError) {
-        console.error('[tasks/[id] DELETE] Error checking task_groups:', legacyError);
-      }
-
       return NextResponse.json(
         {
           success: false,
@@ -182,13 +148,6 @@ export async function DELETE(
         },
         { status: 500 }
       );
-    }
-
-    // task_groups テーブルにも同じIDのレコードがあれば削除（マイグレーション済みデータの重複クリーンアップ）
-    try {
-      await supabase.from('task_groups').delete().eq('id', taskId);
-    } catch {
-      // task_groups にレコードがなくてもエラーは無視
     }
 
     console.log('[tasks/[id] DELETE] Task deleted successfully');

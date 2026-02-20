@@ -412,7 +412,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Save task via existing onUpdateTask (with optimistic update for calendar sync)
     const handleSaveTask = useCallback(async (taskId: string, updates: {
-        title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string
+        title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null
     }) => {
         // Optimistic update so useMultiTaskCalendarSync picks up changes immediately
         setLocalTasks(prev => prev.map(t =>

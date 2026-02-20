@@ -73,6 +73,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       .is('deleted_at', null)
 
     if (selectError) {
+      console.error('[import-events] Select error:', selectError)
       return NextResponse.json(
         { success: false, error: { code: 'DB_ERROR', message: selectError.message } },
         { status: 500 }
@@ -156,6 +157,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         .select()
 
       if (upsertError) {
+        console.error('[import-events] Upsert error:', upsertError)
         return NextResponse.json(
           { success: false, error: { code: 'DB_ERROR', message: upsertError.message } },
           { status: 500 }
@@ -191,6 +193,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[import-events] Error:', err)
     return NextResponse.json(
       { success: false, error: { code: 'SERVER_ERROR', message } },
       { status: 500 }

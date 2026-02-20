@@ -82,47 +82,11 @@ export interface Database {
                     created_at?: string
                 }
             }
-            task_groups: {
-                Row: {
-                    id: string
-                    user_id: string
-                    project_id: string
-                    title: string
-                    order_index: number
-                    priority: number | null
-                    scheduled_at: string | null
-                    estimated_time: number | null
-                    created_at: string
-                }
-                Insert: {
-                    id?: string
-                    user_id: string
-                    project_id: string
-                    title: string
-                    order_index?: number
-                    priority?: number | null
-                    scheduled_at?: string | null
-                    estimated_time?: number | null
-                    created_at?: string
-                }
-                Update: {
-                    id?: string
-                    user_id?: string
-                    project_id?: string
-                    title?: string
-                    order_index?: number
-                    priority?: number | null
-                    scheduled_at?: string | null
-                    estimated_time?: number | null
-                    created_at?: string
-                }
-            }
             tasks: {
                 Row: {
                     id: string
                     user_id: string
-                    group_id: string | null  // 🔄 Optional (will be removed in Phase 3)
-                    project_id: string | null  // 🆕 For project-level tasks/groups
+                    project_id: string | null  // For project-level tasks/groups
                     parent_task_id: string | null
                     is_group: boolean  // 🆕 Group flag (true = group, false = task)
                     title: string
@@ -152,12 +116,13 @@ export interface Database {
                     habit_icon: string | null
                     habit_start_date: string | null
                     habit_end_date: string | null
+                    // Memo
+                    memo: string | null
                 }
                 Insert: {
                     id?: string
                     user_id: string
-                    group_id?: string | null  // 🔄 Optional (will be removed in Phase 3)
-                    project_id?: string | null  // 🆕 For project-level tasks/groups
+                    project_id?: string | null  // For project-level tasks/groups
                     parent_task_id?: string | null
                     is_group?: boolean  // 🆕 Group flag (default: false)
                     title: string
@@ -187,12 +152,13 @@ export interface Database {
                     habit_icon?: string | null
                     habit_start_date?: string | null
                     habit_end_date?: string | null
+                    // Memo
+                    memo?: string | null
                 }
                 Update: {
                     id?: string
                     user_id?: string
-                    group_id?: string | null  // 🔄 Optional (will be removed in Phase 3)
-                    project_id?: string | null  // 🆕 For project-level tasks/groups
+                    project_id?: string | null  // For project-level tasks/groups
                     parent_task_id?: string | null
                     is_group?: boolean  // 🆕 Group flag
                     title?: string
@@ -222,6 +188,8 @@ export interface Database {
                     habit_icon?: string | null
                     habit_start_date?: string | null
                     habit_end_date?: string | null
+                    // Memo
+                    memo?: string | null
                 }
             }
             habit_completions: {
@@ -508,10 +476,6 @@ export type TaskSource = 'manual' | 'google_event'
 export type Task = Database['public']['Tables']['tasks']['Row']
 export type TaskInsert = Database['public']['Tables']['tasks']['Insert']
 export type TaskUpdate = Database['public']['Tables']['tasks']['Update']
-
-export type TaskGroup = Database['public']['Tables']['task_groups']['Row']
-export type TaskGroupInsert = Database['public']['Tables']['task_groups']['Insert']
-export type TaskGroupUpdate = Database['public']['Tables']['task_groups']['Update']
 
 export type Project = Database['public']['Tables']['projects']['Row']
 export type ProjectInsert = Database['public']['Tables']['projects']['Insert']

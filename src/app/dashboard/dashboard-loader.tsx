@@ -1,7 +1,7 @@
 "use client"
 
 import dynamic from "next/dynamic"
-import { Space, Project, TaskGroup, Task } from "@/types/database"
+import { Space, Project, Task } from "@/types/database"
 
 const DashboardClient = dynamic(
     () => import("./dashboard-client").then(mod => ({ default: mod.DashboardClient })),
@@ -18,7 +18,6 @@ const DashboardClient = dynamic(
 interface DashboardLoaderProps {
     initialSpaces: Space[]
     initialProjects: Project[]
-    initialGroups: TaskGroup[]
     initialTasks: Task[]
     userId: string
 }

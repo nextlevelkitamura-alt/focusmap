@@ -15,7 +15,7 @@ import 'reactflow/dist/style.css'
 import dagre from 'dagre'
 import { Task, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus, StickyNote } from "lucide-react"
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
@@ -303,7 +303,8 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     const hasEstimatedTime = (data?.estimatedDisplayMinutes ?? 0) > 0
     const hasPriority = data?.priority != null
     const hasScheduledAt = !!data?.scheduled_at
-    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt
+    const hasMemo = !!data?.memo
+    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo
 
     return (
         <div
@@ -460,6 +461,25 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                             />
                         </div>
 
+                        {/* Memo */}
+                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">メモ</div>
+                        <div className="px-3 pb-2">
+                            <textarea
+                                className="nodrag nopan w-full text-sm border rounded-lg p-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary resize-none min-h-[80px]"
+                                placeholder="メモを入力..."
+                                defaultValue={data?.memo || ''}
+                                key={data?.taskId + '-memo'}
+                                onBlur={(e) => {
+                                    const val = e.target.value.trim() || null;
+                                    if (val !== (data?.memo || null)) {
+                                        data?.onUpdateMemo?.(val);
+                                    }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                onTouchMove={(e) => e.stopPropagation()}
+                            />
+                        </div>
+
                         {/* Habit */}
                         <HabitSettingsPanel data={data} />
 
@@ -483,6 +503,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                 <div className="flex items-center gap-2 pl-5 flex-wrap">
                     {hasEstimatedTime && <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} />}
                     {hasPriority && <PriorityBadge value={data.priority as Priority} />}
+                    {hasMemo && <StickyNote className="w-3 h-3 text-muted-foreground" />}
                     {hasScheduledAt && (
                         <span className="text-[11px] text-muted-foreground ml-auto">
                             {format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}
@@ -615,7 +636,7 @@ function MobileMindMapContent({
             const parent = task.parent_task_id ? taskMap.get(task.parent_task_id) : null
             const parentIsHabit = parent?.is_habit ?? false
 
-            const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at
+            const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at || !!task.memo
             const height = estimateTaskNodeHeight(task.title, hasInfoRow)
 
             nodes.push({
@@ -716,6 +737,8 @@ function MobileMindMapContent({
                         habit_start_date: updates.habit_start_date,
                         habit_end_date: updates.habit_end_date,
                     }),
+                    memo: task.memo,
+                    onUpdateMemo: (memo: string | null) => onUpdateTask?.(task.id, { memo }),
                 },
             })
 

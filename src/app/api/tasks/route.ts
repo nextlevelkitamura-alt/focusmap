@@ -7,7 +7,7 @@ import { createClient } from '@/utils/supabase/server';
  *
  * ボディ:
  *   id: タスクID（クライアントで生成したUUID、楽観的UI用）
- *   group_id: タスクグループID（必須）
+ *   project_id: プロジェクトID（オプション）
  *   parent_task_id: 親タスクID（オプション）
  *   title: タイトル（必須）
  *   order_index: 表示順（オプション、デフォルト0）
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, group_id, project_id, parent_task_id, title, order_index, scheduled_at, estimated_time, calendar_id, priority, is_group, is_habit, habit_frequency, habit_icon } = body;
+    const { id, project_id, parent_task_id, title, order_index, scheduled_at, estimated_time, calendar_id, priority, is_group, is_habit, habit_frequency, habit_icon } = body;
     const titleValue = (typeof title === 'string' && title.trim()) || 'New Task';
 
     // title バリデーション
@@ -56,7 +56,6 @@ export async function POST(request: NextRequest) {
     // INSERT
     const insertPayload: Record<string, unknown> = {
       user_id: user.id,
-      group_id: group_id || null, // 後方互換性のため残す（Phase 3で削除）
       project_id: project_id || null,
       parent_task_id: parent_task_id || null,
       title: titleValue,

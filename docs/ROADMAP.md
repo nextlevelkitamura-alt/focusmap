@@ -134,31 +134,23 @@
   - 音声認識: オープンソース/低コスト/高精度を優先
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
-- 🔧 **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
-  - Phase 1: DB移行 ✅ | Phase 2: コード変更 ✅ | Phase 3: 旧テーブル削除 ○
+- ✅ **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
+  - Phase 1: DB移行 ✅ | Phase 2: コード変更 ✅ | Phase 3: 旧テーブル削除 ✅
 - 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
-- 🔧 **習慣機能強化 + モバイルUI改善** → [計画](plans/features/mobile-ui-redesign.md)
-  - Phase 2: 未スケジュールタスク削除 ✅
-  - Phase 3: 習慣DB ✅ | Phase 4: マインドマップ習慣設定UI ✅
-  - Phase 5: 習慣API + Hook ✅
-  - Phase 6: 今日ビュー習慣バー強化 ✅
-  - Phase 7-8: 習慣ビュー + PC版統合 ✅（基本実装）
-- 🔧 **モバイル今日ビュー強化**（D&D時間変更、タップ編集、全アイテムチェックボックス、イベント完了DB） → [仕様](specs/mobile-today-view-enhancement.md) | [計画](plans/features/mobile-today-view-enhancement.md)
-  - Phase 1: イベント完了DB + チェックボックス ✅
-  - Phase 2: タップ編集モーダル ✅
-  - Phase 3: モバイルD&D時間変更 ✅
-- 🔧 **クイックタスク追加 + サブタスク追加**（FABボタン、プロジェクト選択、カレンダー横+ボタン、チェックリスト） → [計画](plans/features/quick-task-add.md)
+- ✅ **習慣機能強化 + モバイルUI改善**（習慣DB、API、習慣ビュー、PC版統合） → [計画](plans/features/mobile-ui-redesign.md)
+- ✅ **モバイル今日ビュー強化**（D&D時間変更、タップ編集、チェックボックス、イベント完了DB） → [仕様](specs/mobile-today-view-enhancement.md) | [計画](plans/features/mobile-today-view-enhancement.md)
+- ✅ **クイックタスク追加 + サブタスク追加**（FABボタン、プロジェクト選択、カレンダー横+ボタン、チェックリスト） → [計画](plans/features/quick-task-add.md)
   - Phase 1: FABボタン + タスク追加モーダル ✅
-  - Phase 2: サブタスク追加 + チェックリスト表示 ○
+  - Phase 2: サブタスク追加 + チェックリスト表示 ✅
 - ✅ **カレンダーイベント自動取り込み**（イベント→タスク化、タイマー・サブタスク統合、差分同期、1ヶ月自動取り込み） → [仕様](specs/event-task-import.md)
   - Phase 1: DB基盤 + 取り込みHook ✅
   - Phase 2: UI統合 + event_completions廃止 ✅
   - Phase 3: 設定画面 + クリーンアップ ○
-- 🔧 **設定画面リデザイン**（カレンダー設定拡張、自動取り込み制御、ダークモード、アカウント管理） → [計画](plans/features/settings-redesign.md)
-  - Phase 1: UI構築（モバイル） ○
-  - Phase 2: カレンダー設定実装 ○
-  - Phase 3: アカウント機能実装 ○
-  - Phase 4: PC統合 ○
+- ✅ **設定画面リデザイン**（カレンダー設定拡張、自動取り込み制御、ダークモード、アカウント管理） → [計画](plans/features/settings-redesign.md)
+  - Phase 1: UI構築（モバイル） ✅
+  - Phase 2: カレンダー設定実装 ✅
+  - Phase 3: アカウント機能実装 ✅
+  - Phase 4: PC統合 ✅
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -193,11 +185,5 @@
 
 ## 現在進行中のタスク
 
-- 🔥 **品質基盤整備** → [計画](plans/features/quality-improvement.md)
-  - 優先度: 最高（今後の開発に必須）
-  - 新スキル `/test`, `/quality` の開発と並行
-- 🔧 **モバイル今日ビュー強化** → Phase 1 から開始
-- 🔧 **習慣機能強化** → Phase 6 完了、習慣ビュー強化が次の対象
-- 🔧 **グループとタスクの統合** Phase 3（旧テーブル削除）
-- 🔧 スペース機能 + 左サイドバー再設計 → [計画](plans/features/space-sidebar-redesign.md)
-- 🔧 **カレンダーイベント自動取り込み** → Phase 1 から開始
+- 🔧 **AIメモ機能** → Phase 1-6 未着手 → [計画](plans/features/ai-memo-feature.md)
+- 🔧 **スペース機能 + 左サイドバー再設計** → 未着手（依存解消済み） → [計画](plans/features/space-sidebar-redesign.md)

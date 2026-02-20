@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useMindMapSync } from './useMindMapSync'
-import type { Task, TaskGroup } from '@/types/database'
+import type { Task } from '@/types/database'
 
 // --- Supabase mock ---
 const mockSupabaseChain = () => {
@@ -77,12 +77,12 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
     id: `task-${Math.random().toString(36).slice(2, 8)}`,
     user_id: 'user-1',
-    group_id: null,
     project_id: 'project-1',
     parent_task_id: null,
     is_group: false,
     title: 'Test Task',
     status: 'todo',
+    stage: 'plan',
     priority: null,
     order_index: 0,
     scheduled_at: null,
@@ -94,28 +94,32 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     total_elapsed_seconds: 0,
     last_started_at: null,
     is_timer_running: false,
+    source: 'manual',
+    deleted_at: null,
+    google_event_fingerprint: null,
     is_habit: false,
     habit_frequency: null,
     habit_icon: null,
+    habit_start_date: null,
+    habit_end_date: null,
     created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     ...overrides,
   }
 }
 
-function createMockGroup(overrides: Partial<TaskGroup> = {}): TaskGroup {
-  return {
-    id: `group-${Math.random().toString(36).slice(2, 8)}`,
-    user_id: 'user-1',
-    project_id: 'project-1',
-    title: 'Test Group',
-    order_index: 0,
-    created_at: new Date().toISOString(),
+// ルートタスク（グループ）作成ヘルパー
+function createMockRootTask(overrides: Partial<Task> = {}): Task {
+  return createMockTask({
+    id: `root-${Math.random().toString(36).slice(2, 8)}`,
+    is_group: true,
+    title: 'Test Root Task',
     ...overrides,
-  } as TaskGroup
+  })
 }
 
 // 安定した参照の defaultProps（renderHookの外で定義）
-const EMPTY_GROUPS: TaskGroup[] = []
+const EMPTY_ROOT_TASKS: Task[] = []
 const EMPTY_TASKS: Task[] = []
 
 // --- Tests ---
@@ -132,22 +136,22 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('groups / tasks 計算プロパティ', () => {
     test('初期データからルートタスク(groups)と子タスク(tasks)を正しく分離する', () => {
-      const group1 = createMockGroup({ id: 'g1', title: 'Group 1', order_index: 0 })
-      const group2 = createMockGroup({ id: 'g2', title: 'Group 2', order_index: 1 })
+      const group1 = createMockRootTask({ id: 'g1', title: 'Group 1', order_index: 0 })
+      const group2 = createMockRootTask({ id: 'g2', title: 'Group 2', order_index: 1 })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', order_index: 0 })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1', order_index: 1 })
       const task3 = createMockTask({ id: 't3', parent_task_id: 'g2', order_index: 0 })
 
       // renderHook外で安定した参照のpropsを作成
       // （useEffectの依存配列で無限ループを防止）
-      const initialGroups = [group1, group2]
+      const initialRootTasks = [group1, group2]
       const initialTasks = [task1, task2, task3]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -162,15 +166,15 @@ describe('useMindMapSync', () => {
     })
 
     test('order_index でソートされる', () => {
-      const group1 = createMockGroup({ id: 'g1', title: 'Second', order_index: 1 })
-      const group2 = createMockGroup({ id: 'g2', title: 'First', order_index: 0 })
-      const initialGroups = [group1, group2]
+      const group1 = createMockRootTask({ id: 'g1', title: 'Second', order_index: 1 })
+      const group2 = createMockRootTask({ id: 'g2', title: 'First', order_index: 0 })
+      const initialRootTasks = [group1, group2]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -189,7 +193,7 @@ describe('useMindMapSync', () => {
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups: EMPTY_GROUPS,
+          initialRootTasks: EMPTY_ROOT_TASKS,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -212,7 +216,7 @@ describe('useMindMapSync', () => {
         useMindMapSync({
           projectId: null,
           userId: 'user-1',
-          initialGroups: EMPTY_GROUPS,
+          initialRootTasks: EMPTY_ROOT_TASKS,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -231,7 +235,7 @@ describe('useMindMapSync', () => {
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups: EMPTY_GROUPS,
+          initialRootTasks: EMPTY_ROOT_TASKS,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -254,14 +258,14 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('createTask', () => {
     test('楽観的にタスクを作成しstateに追加する', async () => {
-      const group = createMockGroup({ id: 'g1', title: 'Group' })
-      const initialGroups = [group]
+      const group = createMockRootTask({ id: 'g1', title: 'Group' })
+      const initialRootTasks = [group]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -279,16 +283,16 @@ describe('useMindMapSync', () => {
     })
 
     test('parentTaskId指定時に正しいparent_task_idを設定する', async () => {
-      const group = createMockGroup({ id: 'g1', title: 'Group' })
+      const group = createMockRootTask({ id: 'g1', title: 'Group' })
       const parentTask = createMockTask({ id: 't1', parent_task_id: 'g1' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [parentTask]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -307,16 +311,16 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('updateTask', () => {
     test('stateを楽観的に更新する', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task = createMockTask({ id: 't1', parent_task_id: 'g1', title: 'Old Title' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -329,17 +333,17 @@ describe('useMindMapSync', () => {
     })
 
     test('status=doneで全兄弟が完了なら親を自動完了する', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', status: 'done' })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1', status: 'todo' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1, task2]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -355,16 +359,16 @@ describe('useMindMapSync', () => {
     })
 
     test('status=todoで親がdoneなら親を自動未完了に戻す', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', status: 'done' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -389,17 +393,17 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('deleteTask', () => {
     test('タスクと子孫を一括削除する', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const parentTask = createMockTask({ id: 't1', parent_task_id: 'g1' })
       const childTask = createMockTask({ id: 't2', parent_task_id: 't1' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [parentTask, childTask]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -415,16 +419,16 @@ describe('useMindMapSync', () => {
     })
 
     test('通知をキャンセルする', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task = createMockTask({ id: 't1', parent_task_id: 'g1' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -442,17 +446,17 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('deleteGroup', () => {
     test('グループと配下のタスクを全て削除する', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1' })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1, task2]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -474,17 +478,17 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('moveTask', () => {
     test('parent_task_idを変更する', async () => {
-      const group1 = createMockGroup({ id: 'g1', order_index: 0 })
-      const group2 = createMockGroup({ id: 'g2', order_index: 1 })
+      const group1 = createMockRootTask({ id: 'g1', order_index: 0 })
+      const group2 = createMockRootTask({ id: 'g2', order_index: 1 })
       const task = createMockTask({ id: 't1', parent_task_id: 'g1' })
-      const initialGroups = [group1, group2]
+      const initialRootTasks = [group1, group2]
       const initialTasks = [task]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -503,18 +507,18 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('getChildTasks / getParentTasks', () => {
     test('指定された親の子タスクをorder_index順で返す', () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', order_index: 1, title: 'Second' })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1', order_index: 0, title: 'First' })
       const task3 = createMockTask({ id: 't3', parent_task_id: 'g1', order_index: 2, title: 'Third' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1, task2, task3]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -527,16 +531,16 @@ describe('useMindMapSync', () => {
     })
 
     test('getParentTasksはgetChildTasksと同じ結果を返す', () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task = createMockTask({ id: 't1', parent_task_id: 'g1' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -552,18 +556,18 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('reorderTask', () => {
     test('above位置に正しく並び替える', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', order_index: 0, title: 'Task 1' })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1', order_index: 1, title: 'Task 2' })
       const task3 = createMockTask({ id: 't3', parent_task_id: 'g1', order_index: 2, title: 'Task 3' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1, task2, task3]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -580,18 +584,18 @@ describe('useMindMapSync', () => {
     })
 
     test('below位置に正しく並び替える', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1', order_index: 0, title: 'Task 1' })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1', order_index: 1, title: 'Task 2' })
       const task3 = createMockTask({ id: 't3', parent_task_id: 'g1', order_index: 2, title: 'Task 3' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1, task2, task3]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -613,16 +617,16 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('promoteTaskToGroup', () => {
     test('タスクをルートに昇格する', async () => {
-      const group = createMockGroup({ id: 'g1', order_index: 0 })
+      const group = createMockRootTask({ id: 'g1', order_index: 0 })
       const task = createMockTask({ id: 't1', parent_task_id: 'g1', title: 'Promoted' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -644,14 +648,14 @@ describe('useMindMapSync', () => {
     })
 
     test('既にルートタスクの場合は何もしない', async () => {
-      const group = createMockGroup({ id: 'g1', order_index: 0 })
-      const initialGroups = [group]
+      const group = createMockRootTask({ id: 'g1', order_index: 0 })
+      const initialRootTasks = [group]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -671,18 +675,18 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('bulkDelete', () => {
     test('複数タスクと子孫を一括削除する', async () => {
-      const group = createMockGroup({ id: 'g1' })
+      const group = createMockRootTask({ id: 'g1' })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1' })
       const task2 = createMockTask({ id: 't2', parent_task_id: 'g1' })
       const child1 = createMockTask({ id: 'c1', parent_task_id: 't1' })
-      const initialGroups = [group]
+      const initialRootTasks = [group]
       const initialTasks = [task1, task2, child1]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -698,17 +702,17 @@ describe('useMindMapSync', () => {
     })
 
     test('グループごと一括削除できる', async () => {
-      const group1 = createMockGroup({ id: 'g1', order_index: 0 })
-      const group2 = createMockGroup({ id: 'g2', order_index: 1 })
+      const group1 = createMockRootTask({ id: 'g1', order_index: 0 })
+      const group2 = createMockRootTask({ id: 'g2', order_index: 1 })
       const task1 = createMockTask({ id: 't1', parent_task_id: 'g1' })
-      const initialGroups = [group1, group2]
+      const initialRootTasks = [group1, group2]
       const initialTasks = [task1]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks,
         })
       )
@@ -729,14 +733,14 @@ describe('useMindMapSync', () => {
   // ===========================
   describe('updateGroupTitle', () => {
     test('グループタイトルを楽観的に更新する', async () => {
-      const group = createMockGroup({ id: 'g1', title: 'Old Title' })
-      const initialGroups = [group]
+      const group = createMockRootTask({ id: 'g1', title: 'Old Title' })
+      const initialRootTasks = [group]
 
       const { result } = renderHook(() =>
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups,
+          initialRootTasks,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -758,7 +762,7 @@ describe('useMindMapSync', () => {
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups: EMPTY_GROUPS,
+          initialRootTasks: EMPTY_ROOT_TASKS,
           initialTasks: EMPTY_TASKS,
         })
       )
@@ -780,7 +784,7 @@ describe('useMindMapSync', () => {
         useMindMapSync({
           projectId: 'project-1',
           userId: 'user-1',
-          initialGroups: EMPTY_GROUPS,
+          initialRootTasks: EMPTY_ROOT_TASKS,
           initialTasks: EMPTY_TASKS,
         })
       )

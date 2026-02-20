@@ -1,6 +1,39 @@
 import { createClient } from '@/utils/supabase/server'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import type { NoteInsert } from '@/types/note'
+
+// DELETE /api/notes?id=xxx - メモ削除
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const noteId = request.nextUrl.searchParams.get('id')
+    if (!noteId) {
+      return NextResponse.json({ error: 'Note ID is required' }, { status: 400 })
+    }
+
+    const { error } = await supabase
+      .from('notes')
+      .delete()
+      .eq('id', noteId)
+      .eq('user_id', user.id)
+
+    if (error) {
+      console.error('Error deleting note:', error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Unexpected error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
 
 // GET /api/notes - メモ一覧取得
 export async function GET() {

@@ -5,7 +5,7 @@ import { LeftSidebar } from "@/components/dashboard/left-sidebar"
 import { CenterPane } from "@/components/dashboard/center-pane"
 import { RightSidebar, RightSidebarRef } from "@/components/dashboard/right-sidebar"
 import { Header } from "@/components/layout/header"
-import { Database, Task, TaskGroup, Project, Space } from "@/types/database"
+import { Database, Task, Project, Space } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
@@ -22,7 +22,6 @@ import { MemoView } from "@/components/memo/memo-view"
 interface DashboardClientProps {
     initialSpaces: Space[]
     initialProjects: Project[]
-    initialGroups: TaskGroup[]
     initialTasks: Task[]
     userId: string
 }
@@ -30,7 +29,6 @@ interface DashboardClientProps {
 export function DashboardClient({
     initialSpaces,
     initialProjects,
-    initialGroups,
     initialTasks,
     userId
 }: DashboardClientProps) {
@@ -99,49 +97,31 @@ export function DashboardClient({
     )
 
     // --- MindMap Sync Hook ---
-    // STABLE reference for initial groups using useMemo with string dep
-    // 旧スキーマ (task_groups) + 新スキーマ (tasks の is_group=true) を統合
-    const projectGroupsInitial = useMemo(() => {
-        const oldGroups = initialGroups.filter(g => g.project_id === selectedProjectId)
-        const oldGroupIds = new Set(oldGroups.map(g => g.id))
-        // 新スキーマ: tasks テーブルに is_group=true で作成されたグループも含める
-        const newGroupsFromTasks = initialTasks
-            .filter(t => t.is_group === true && t.project_id === selectedProjectId && !oldGroupIds.has(t.id))
-            .map(t => ({
-                id: t.id,
-                user_id: t.user_id,
-                project_id: t.project_id!,
-                title: t.title,
-                order_index: t.order_index,
-                priority: t.priority,
-                scheduled_at: t.scheduled_at,
-                estimated_time: t.estimated_time,
-                created_at: t.created_at,
-                // Preserve habit fields for tasks used as groups
-                is_habit: t.is_habit,
-                habit_frequency: t.habit_frequency,
-                habit_icon: t.habit_icon,
-                habit_start_date: t.habit_start_date,
-                habit_end_date: t.habit_end_date,
-            } as TaskGroup & { is_habit?: boolean; habit_frequency?: string | null; habit_icon?: string | null; habit_start_date?: string | null; habit_end_date?: string | null }))
-        return [...oldGroups, ...newGroupsFromTasks]
-    }, [initialGroups, initialTasks, selectedProjectId])
+    // STABLE reference for initial groups (root tasks) using useMemo
+    const projectRootTasksInitial = useMemo(() => {
+        // ルートタスク = parent_task_id === null のタスク
+        return initialTasks.filter(t =>
+            t.parent_task_id === null &&
+            t.project_id === selectedProjectId
+        )
+    }, [initialTasks, selectedProjectId])
 
-    // STABLE reference for initial tasks - useMemo
-    // 新スキーマ: group_id (旧) または parent_task_id (新) でプロジェクトのタスクを取得
+    // STABLE reference for initial child tasks - useMemo
+    // 選択プロジェクトに属する子タスク（parent_task_id !== null）
     const projectTasksInitial = useMemo(() => {
-        const groupIds = new Set(projectGroupsInitial.map(g => g.id))
-        // BFS: グループの全子孫タスクを取得
+        // ルートタスクIDを取得
+        const rootTaskIds = new Set(projectRootTasksInitial.map(t => t.id))
+        // BFS: ルートタスクの全子孫タスクを取得
         const result: Task[] = []
         const taskIds = new Set<string>()
-        const queue = [...groupIds]
+        const queue = [...rootTaskIds]
         while (queue.length > 0) {
             const parentId = queue.shift()!
             for (const t of initialTasks) {
                 if (taskIds.has(t.id)) continue
-                // is_group=true のタスクはグループとして既に処理済み → スキップ
+                // is_group=true のタスクはルートタスクとして処理済み → スキップ
                 if (t.is_group === true) continue
-                if (t.group_id === parentId || t.parent_task_id === parentId) {
+                if (t.parent_task_id === parentId) {
                     result.push(t)
                     taskIds.add(t.id)
                     queue.push(t.id) // 子タスクの子も探索
@@ -149,7 +129,7 @@ export function DashboardClient({
             }
         }
         return result
-    }, [initialTasks, projectGroupsInitial])
+    }, [initialTasks, projectRootTasksInitial])
 
     const {
         groups: currentGroups,
@@ -175,7 +155,7 @@ export function DashboardClient({
     } = useMindMapSync({
         projectId: selectedProjectId,
         userId,
-        initialGroups: projectGroupsInitial,
+        initialRootTasks: projectRootTasksInitial,
         initialTasks: projectTasksInitial,
         onSyncError: useCallback((message: string) => {
             setSyncErrorToast({ type: 'error', message })
@@ -308,7 +288,6 @@ export function DashboardClient({
         const optimisticTask: Task = {
             id: optimisticId,
             user_id: userId,
-            group_id: null,
             project_id: taskData.project_id,
             parent_task_id: null,
             is_group: false,
@@ -464,7 +443,6 @@ export function DashboardClient({
         const optimisticTask: Task = {
             id: optimisticId,
             user_id: userId,
-            group_id: null,
             project_id: parentTask?.project_id ?? null,
             parent_task_id: parentTaskId,
             is_group: false,

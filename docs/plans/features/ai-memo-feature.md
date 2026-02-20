@@ -16,13 +16,42 @@
 
 ---
 
+## 技術選定（確定）
+
+### AI API
+| 採用 | コスト | 速度 | 精度 | 理由 |
+|------|--------|------|------|------|
+| **Gemini 3.0 Flash** | 無料枠大 | 高速 | 高 | コスパ最強 |
+
+### 音声認識
+| 採用 | コスト | 精度 | 理由 |
+|------|--------|------|------|
+| **Groq API（Whisper large-v3-turbo）** | Free tier: $0（100人まで） | 高い | 日本語精度高・導入最簡単 |
+
+#### Groq Free tier の容量（組織単位）
+- 音声秒数/日: 28,800秒（8時間）
+- リクエスト/日: 2,000回
+- リクエスト/分: 20回
+- 100人×1日5回×10秒 = 5,000秒/日 → **余裕（17%使用）**
+
+#### スケール戦略
+| フェーズ | ユーザー数 | 構成 | 月額 |
+|---------|-----------|------|------|
+| 立ち上げ期 | ~100人 | Groq Free のみ | $0 |
+| 成長期 | 100~500人 | Groq Free + Whisper.cpp フォールバック | ~$3 |
+| 拡大期 | 500人~ | Groq Developer($0.04/h) + Whisper.cpp | ~$8 |
+
+---
+
 ## アーキテクチャ
 
 ### データフロー
 ```
 入力（音声/テキスト）
     ↓
-AI分析（分類 + プロジェクト特定 + ノード提案）
+[音声の場合] MediaRecorder API → /api/transcribe → Groq API → テキスト化
+    ↓
+AI分析（Gemini 3.0 Flash: 分類 + プロジェクト特定 + ノード提案）
     ↓
     ├─ 「予定」→ カレンダーへ追加
     └─ 「計画」→ マップのノードへ追加
@@ -30,37 +59,43 @@ AI分析（分類 + プロジェクト特定 + ノード提案）
 ユーザー確認/修正（チャットで指示可能）
 ```
 
-### 新規DBテーブル
+### 音声入力フロー
+```
+[ブラウザ] MediaRecorder API で録音
+    ↓ WebM(Chrome/Android) or MP4(Safari/iOS) を自動検出
+[Next.js API Route: /api/transcribe]
+    ↓ FormData → Groq API (whisper-large-v3-turbo)
+[テキスト結果] → メモ入力欄に反映
+```
 
+### DBテーブル
+
+#### notes テーブル（Phase 1 で作成済み）
 ```sql
--- メモテーブル
 CREATE TABLE notes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id),
   project_id UUID REFERENCES projects(id),
   task_id UUID REFERENCES tasks(id),
   content TEXT NOT NULL,
-  raw_input TEXT,
+  raw_input TEXT,              -- 音声認識の生テキスト
   input_type TEXT NOT NULL DEFAULT 'text', -- 'text' | 'voice'
-  status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'processed' | 'archived'
+  status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'processed' | 'archived'
   ai_analysis JSONB,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+```
 
--- tasksテーブル拡張
+#### tasks.memo カラム（Phase 6 で追加済み）
+```sql
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS memo TEXT;
-
--- インデックス
-CREATE INDEX idx_notes_user_id ON notes(user_id);
-CREATE INDEX idx_notes_project_id ON notes(project_id);
-CREATE INDEX idx_notes_task_id ON notes(task_id);
 ```
 
 ### ai_analysis JSON構造
 ```json
 {
-  "classification": "calendar" | "map",
+  "classification": "calendar | map",
   "confidence": 0.85,
   "suggested_project_id": "uuid",
   "suggested_project_name": "プロジェクト名",
@@ -79,57 +114,21 @@ CREATE INDEX idx_notes_task_id ON notes(task_id);
 
 ## Phase構成
 
-### Phase 1: メニューバー + メモ入力UI
+### Phase 1: メニューバー + メモ入力UI ✅ 完了
+- `bottom-nav.tsx` に「メモ」メニュー追加
+- `ViewContext` に `memo` ビュー追加
+- `MemoView` コンポーネント作成
+- `notes` テーブル作成（マイグレーション）
+- メモ保存API (`/api/notes`)
+
+### Phase 2: AI統合（Gemini 3.0 Flash）
 
 #### タスク
-1. `bottom-nav.tsx` に「メモ」メニュー追加
-2. `ViewContext` に `memo` ビュー追加
-3. `MemoView` コンポーネント作成
-   - テキスト入力エリア
-   - 展開/折りたたみボタン
-   - 保存ボタン
-4. `notes` テーブル作成（マイグレーション）
-5. メモ保存API (`/api/notes`)
-
-#### UIモック
-```
-┌─────────────────────────────┐
-│  📝 メモ                    │
-├─────────────────────────────┤
-│ ┌─────────────────────────┐ │
-│ │ アイディアを入力...      │ │
-│ │                         │ │
-│ └─────────────────────────┘ │
-│                             │
-│ [展開 ▼]  [AIに分析してもらう]│
-└─────────────────────────────┘
-
-展開時:
-┌─────────────────────────────┐
-│  📝 メモ                    │
-├─────────────────────────────┤
-│ ┌─────────────────────────┐ │
-│ │ 来週の水曜に設計会議を   │ │
-│ │ やりたい                 │ │
-│ └─────────────────────────┘ │
-│                             │
-│ プロジェクト: [自動判定 ▼]  │
-│ タイプ: [予定 / 計画]       │
-│                             │
-│ [折りたたむ ▲] [保存]       │
-└─────────────────────────────┘
-```
-
----
-
-### Phase 2: AI統合
-
-#### タスク
-1. AI API選定・環境変数設定
-   - 候補: OpenAI GPT-4o-mini / Gemini 2.0 Flash
+1. Gemini API 環境変数設定（`GEMINI_API_KEY`）
 2. `/api/ai/analyze-memo` エンドポイント作成
-3. AI分析プロンプト設計
+3. AI分析プロンプト設計（プロジェクト一覧をコンテキストに含める）
 4. `ai_analysis` カラムへの結果保存
+5. MemoView に「AIに分析してもらう」ボタン + 結果表示UI
 
 #### プロンプト構成
 ```
@@ -139,7 +138,7 @@ CREATE INDEX idx_notes_task_id ON notes(task_id);
 メモ: "{user_input}"
 
 ユーザーのプロジェクト一覧:
-{projects}
+{projects_with_tasks}
 
 出力形式（JSON）:
 {
@@ -155,10 +154,8 @@ CREATE INDEX idx_notes_task_id ON notes(task_id);
 ### Phase 3: マップ/カレンダーへの追加
 
 #### タスク
-1. マップへのノード追加ロジック
-   - `useMindMapSync` の `createTask` を活用
-2. カレンダーへの予定追加ロジック
-   - `useTaskCalendarSync` を活用
+1. マップへのノード追加ロジック（`useMindMapSync.createTask` 活用）
+2. カレンダーへの予定追加ロジック（`useTaskCalendarSync` 活用）
 3. メモ→タスク変換処理
 4. UI: 追加確認ダイアログ
 
@@ -169,41 +166,29 @@ CREATE INDEX idx_notes_task_id ON notes(task_id);
 
 ---
 
-### Phase 4: 音声入力
+### Phase 4: 音声入力（Groq API）
 
 #### タスク
-1. Web Speech API 統合（`SpeechRecognition`）
-2. 録音UI（マイクボタン + 波形表示）
-3. 音声認識結果の `raw_input` 保存
-4. ブラウザ互換性チェック
+1. `/api/transcribe` エンドポイント作成（Groq API連携）
+2. `useVoiceRecorder` Hook 作成（MediaRecorder API）
+   - iPhone Safari 対応: MP4/AAC フォーマット自動検出
+   - Android/Chrome: WebM/Opus
+3. 録音UI（マイクボタン + 録音状態表示）
+4. Groq API 環境変数設定（`GROQ_API_KEY`）
+5. レート制限エラーのハンドリング
 
 #### 実装方針
-- **第一選択**: Web Speech API（ブラウザ標準、無料）
-- **フォールバック**: 非対応ブラウザではテキスト入力のみ
-
 ```typescript
-// hooks/useSpeechRecognition.ts
-const useSpeechRecognition = () => {
-  const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
-
-  const startListening = () => {
-    const recognition = new webkitSpeechRecognition();
-    recognition.lang = 'ja-JP';
-    recognition.continuous = true;
-    recognition.onresult = (event) => {
-      setTranscript(event.results[0][0].transcript);
-    };
-    recognition.start();
-  };
-
-  return { isListening, transcript, startListening, stopListening };
-};
+// /api/transcribe/route.ts
+// 1. FormData から音声ファイル取得
+// 2. Groq API (whisper-large-v3-turbo) に送信
+// 3. テキスト結果を返却
 ```
 
-#### 将来拡張（オプション）
-- Groq + Whisper: 高速・高精度（API料金黄安）
-- ローカルWhisper: ユーザー環境依存
+#### 音声データの扱い
+- 音声ファイルは**保存しない**（トランスクリプト後に破棄）
+- `notes.raw_input` に音声認識の生テキストを保存
+- `notes.input_type = 'voice'` で音声入力を識別
 
 ---
 
@@ -215,83 +200,52 @@ const useSpeechRecognition = () => {
 3. 文脈を考慮した再分析
 4. 「ここに追加して」指示の解析・実行
 
-#### UIモック
-```
-┌─────────────────────────────┐
-│  📝 メモ                    │
-├─────────────────────────────┤
-│ 来週の水曜に設計会議        │
-│                             │
-│ AI提案: 「設計」プロジェクト│
-│        「設計方針」ノード   │
-│                             │
-│ ┌─────────────────────────┐ │
-│ │ ここに追加して           │ │
-│ └─────────────────────────┘ │
-│ [送信]                      │
-│                             │
-│ AI: 了解、「設計方針」に    │
-│     追加しました！          │
-└─────────────────────────────┘
-```
+---
+
+### Phase 6: タスクメモ欄 + MindMap同期 ✅ 完了（DB未適用）
+- `tasks` テーブルに `memo` カラム追加
+- TaskNode にメモ表示UI追加（デスクトップ + モバイル）
+- メモ編集（blur時に自動保存）
+- MindMapとリアルタイム同期
 
 ---
 
-### Phase 6: タスクメモ欄 + MindMap同期
-
-#### タスク
-1. `tasks` テーブルに `memo` カラム追加
-2. TaskNode にメモ表示UI追加
-3. メモ編集モーダル
-4. MindMapとリアルタイム同期
-
-#### DB変更
-```sql
-ALTER TABLE tasks ADD COLUMN IF NOT EXISTS memo TEXT;
-```
-
----
-
-## 技術選定
-
-### AI API
-| 候補 | コスト | 速度 | 精度 | 採用理由 |
-|------|--------|------|------|---------|
-| **Gemini 2.0 Flash** | 無料枠大 | 高速 | 高 | 推奨（コスパ最強）|
-| OpenAI GPT-4o-mini | 安 | 高速 | 高 | 代替案 |
-| Claude Haiku | 安 | 高速 | 高 | 代替案 |
-
-### 音声認識
-| 候補 | コスト | 精度 | 採用理由 |
-|------|--------|------|---------|
-| **Web Speech API** | 無料 | 中〜高 | 推奨（ブラウザ標準）|
-| Groq + Whisper | 格安 | 最高 | Phase 4で検討 |
-
----
-
-## ファイル構成（予定）
+## ファイル構成
 
 ```
 src/
 ├── app/api/
 │   ├── notes/
-│   │   └── route.ts          # メモCRUD
+│   │   └── route.ts              # メモCRUD ✅
+│   ├── transcribe/
+│   │   └── route.ts              # 音声→テキスト（Groq API）
 │   └── ai/
 │       └── analyze-memo/
-│           └── route.ts      # AI分析
+│           └── route.ts          # AI分析（Gemini 3.0 Flash）
 ├── components/
 │   ├── memo/
-│   │   ├── memo-view.tsx     # メモ画面
-│   │   ├── memo-input.tsx    # 入力コンポーネント
-│   │   ├── memo-chat.tsx     # チャットUI
-│   │   └── voice-input.tsx   # 音声入力
+│   │   ├── memo-view.tsx         # メモ画面 ✅
+│   │   ├── memo-chat.tsx         # チャットUI（Phase 5）
+│   │   └── voice-input.tsx       # 音声入力（Phase 4）
 │   └── mobile/
-│       └── bottom-nav.tsx    # メニュー追加
+│       └── bottom-nav.tsx        # メニュー追加 ✅
 ├── hooks/
-│   ├── useNotes.ts           # メモ操作
-│   └── useSpeechRecognition.ts # 音声認識
+│   ├── useNotes.ts               # メモ操作（必要時に抽出）
+│   └── useVoiceRecorder.ts       # 音声録音（Phase 4）
 └── types/
-    └── note.ts               # メモ型定義
+    └── note.ts                   # メモ型定義 ✅
+```
+
+---
+
+## 環境変数
+
+```env
+# AI分析（Phase 2）
+GEMINI_API_KEY=xxx
+
+# 音声認識（Phase 4）
+GROQ_API_KEY=xxx
 ```
 
 ---
@@ -300,15 +254,17 @@ src/
 
 | リスク | 対策 |
 |--------|------|
-| AI APIコスト増 | Gemini無料枠活用 + キャッシュ |
-| 音声認識精度 | Web Speech API + AI整形 |
+| Groq レート制限超過 | 100人以下なら余裕。超過時は429エラーをUIで通知 |
+| iPhone Safari の音声録音 | MediaRecorder のフォーマット自動検出で対応 |
+| AI APIコスト増 | Gemini 3.0 Flash 無料枠活用 |
 | 既存機能への影響 | 段階的リリース + テスト |
-| DB移行エラー | ロールバック可能なマイグレーション |
+| DB移行エラー | IF NOT EXISTS で安全なマイグレーション |
 
 ---
 
 ## 次のアクション
 
-1. **Phase 1 開始**: メニューバー + メモ入力UI
-2. DB設計の最終確認
-3. AI API選定（Gemini 2.0 Flash推奨）
+1. **DBマイグレーション実行**: `notes` テーブル + `tasks.memo` カラム
+2. **Phase 2 着手**: Gemini 3.0 Flash でAI分析
+3. **Phase 3 着手**: マップ/カレンダーへの追加
+4. **Phase 4 着手**: Groq API で音声入力

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2 } from "lucide-react"
+import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
@@ -17,7 +17,7 @@ interface MobileEventEditModalProps {
     target: EditTarget | null
     isOpen: boolean
     onClose: () => void
-    onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string }) => Promise<void>
+    onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null }) => Promise<void>
     onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string }) => Promise<void>
     onDeleteTask?: (taskId: string) => void
     onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
@@ -49,6 +49,7 @@ export function MobileEventEditModal({
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
+    const [memo, setMemo] = useState('')
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -79,6 +80,7 @@ export function MobileEventEditModal({
         setTitle(target.title)
         setScheduledDate(new Date(target.startTime))
         setCalendarId(target.calendarId || '')
+        setMemo(target.originalTask?.memo || '')
         if (target.source === 'task') {
             setDuration(target.estimatedTime || 60)
         } else {
@@ -126,6 +128,7 @@ export function MobileEventEditModal({
                 scheduled_at: scheduledDate.toISOString(),
                 estimated_time: duration,
                 calendar_id: calendarId || undefined,
+                memo: memo || null,
             }).catch(err => {
                 console.error('[MobileEventEditModal] Save task error:', err)
             })
@@ -378,6 +381,22 @@ export function MobileEventEditModal({
                             </div>
                         )
                     })()}
+
+                    {/* Memo (Task only) */}
+                    {isTask && (
+                        <div className="space-y-1.5">
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                <StickyNote className="w-3.5 h-3.5" />
+                                メモ
+                            </label>
+                            <textarea
+                                value={memo}
+                                onChange={(e) => setMemo(e.target.value)}
+                                className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent resize-none min-h-[80px]"
+                                placeholder="メモを入力..."
+                            />
+                        </div>
+                    )}
 
                 </div>
 

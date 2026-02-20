@@ -4,8 +4,8 @@
 CREATE TABLE IF NOT EXISTS notes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
-  task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+  project_id UUID,  -- projects テーブルは未作成のため FK なし（将来追加）
+  task_id UUID,  -- tasks テーブルへの FK は後から追加
   content TEXT NOT NULL,
   raw_input TEXT,
   input_type TEXT NOT NULL DEFAULT 'text' CHECK (input_type IN ('text', 'voice')),

@@ -25,13 +25,7 @@ export default async function DashboardPage() {
         .select("*")
         .order("created_at", { ascending: false })
 
-    // 3. Groups
-    const { data: groups } = await supabase
-        .from("task_groups")
-        .select("*")
-        .order("order_index")
-
-    // 4. Tasks
+    // 3. Tasks
     const { data: tasks } = await supabase
         .from("tasks")
         .select("*")
@@ -41,7 +35,6 @@ export default async function DashboardPage() {
         <DashboardLoader
             initialSpaces={spaces || []}
             initialProjects={projects || []}
-            initialGroups={groups || []}
             initialTasks={tasks || []}
             userId={user.id}
         />

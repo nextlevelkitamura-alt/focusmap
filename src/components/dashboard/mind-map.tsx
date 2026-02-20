@@ -18,7 +18,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, Target, Clock, GripVertical } from "lucide-react";
+import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, StickyNote } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
@@ -720,7 +720,8 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     const hasEstimatedTime = settings.showEstimatedTime && (data?.estimatedDisplayMinutes ?? 0) > 0;
     const hasPriority = settings.showPriority && data?.priority != null;
     const hasScheduledAt = settings.showScheduledAt && !!data?.scheduled_at;
-    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt;
+    const hasMemo = !!data?.memo;
+    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo;
 
     return (
         <div
@@ -928,6 +929,24 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                             />
                         </div>
 
+                        {/* Memo */}
+                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">メモ</div>
+                        <div className="px-2 pb-2">
+                            <textarea
+                                className="nodrag nopan w-full text-xs border rounded p-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none min-h-[60px]"
+                                placeholder="メモを入力..."
+                                defaultValue={data?.memo || ''}
+                                key={data?.taskId + '-memo'}
+                                onBlur={(e) => {
+                                    const val = e.target.value.trim() || null;
+                                    if (val !== (data?.memo || null)) {
+                                        data?.onUpdateMemo?.(val);
+                                    }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                            />
+                        </div>
+
                         {/* Habit Settings - uses HabitSettingsPanel */}
                         <HabitSettingsPanel data={data} />
                         {/* 閉じるボタン */}
@@ -1005,6 +1024,11 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                 <X className="w-2.5 h-2.5" />
                             </button>
                         </>
+                    )}
+
+                    {/* Memo indicator */}
+                    {hasMemo && (
+                        <StickyNote className="w-3 h-3 text-muted-foreground" />
                     )}
 
                     {/* DateTime（右寄せ） */}
@@ -1587,6 +1611,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         calendar_id: string | null; google_event_id: string | null;
         is_habit: boolean; habit_frequency: string | null; habit_icon: string | null;
         habit_start_date: string | null; habit_end_date: string | null;
+        memo: string | null;
     };
 
     const { structureNodes, edges, taskDataMap } = useMemo(() => {
@@ -1783,6 +1808,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     habit_start_date: taskData?.habit_start_date ?? null,
                     habit_end_date: taskData?.habit_end_date ?? null,
                     onUpdateHabit: (habitUpdates: Partial<Pick<ParsedTask, 'is_habit' | 'habit_frequency' | 'habit_icon' | 'habit_start_date' | 'habit_end_date'>>) => cbs.onUpdateTask?.(taskId, habitUpdates),
+                    memo: taskData?.memo ?? null,
+                    onUpdateMemo: (memo: string | null) => cbs.onUpdateTask?.(taskId, { memo }),
                     onAddChild: () => cbs.addChildTask(taskId),
                     onAddSibling: () => cbs.addSiblingTask(taskId),
                     onPromote: () => cbs.promoteTask(taskId),
