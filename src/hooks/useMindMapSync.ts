@@ -222,7 +222,7 @@ export function useMindMapSync({
         return optimisticTask
     }, [projectId, userId, supabase, pushAction])
 
-    // updateGroupTitle → updateTask にデリゲート
+    // updateGroupTitle → APIルート経由で更新
     const updateGroupTitle = useCallback(async (groupId: string, title: string) => {
         const oldTitle = allTasksRef.current.find(t => t.id === groupId)?.title ?? ''
 
@@ -232,28 +232,52 @@ export function useMindMapSync({
             description: `「${oldTitle}」の名前変更`,
             undo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, title: oldTitle } : t))
-                await supabase.from('tasks').update({ title: oldTitle }).eq('id', groupId)
+                try {
+                    await fetch(`/api/tasks/${groupId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: oldTitle }),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] undo updateGroupTitle failed:', e)
+                }
             },
             redo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, title } : t))
-                await supabase.from('tasks').update({ title }).eq('id', groupId)
+                try {
+                    await fetch(`/api/tasks/${groupId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title }),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] redo updateGroupTitle failed:', e)
+                }
             },
         })
 
         try {
-            console.log('[Sync] Updating group title:', groupId, oldTitle, '->', title);
-            const { error } = await supabase.from('tasks').update({ title }).eq('id', groupId)
-            if (error) {
-                console.error('[Sync] updateGroupTitle UPDATE failed:', error);
-                throw error;
+            console.log('[Sync] updateGroupTitle via API:', groupId.slice(0, 8), oldTitle, '->', title);
+            const response = await fetch(`/api/tasks/${groupId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title }),
+            })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] updateGroupTitle API failed:', errorData)
+                // Rollback
+                setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, title: oldTitle } : t))
+                return
             }
-            console.log('[Sync] updateGroupTitle UPDATE success:', groupId);
+            console.log('[Sync] updateGroupTitle API success:', groupId.slice(0, 8));
         } catch (e) {
             console.error('[Sync] updateGroupTitle failed:', e)
+            setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, title: oldTitle } : t))
         }
-    }, [supabase, pushAction])
+    }, [pushAction])
 
-    // updateGroup → updateTask にデリゲート
+    // updateGroup → APIルート経由で更新
     const updateGroup = useCallback(async (groupId: string, updates: Partial<Task>) => {
         const beforeTask = allTasksRef.current.find(t => t.id === groupId)
         const beforeValues: Partial<Task> = {}
@@ -263,11 +287,24 @@ export function useMindMapSync({
 
         setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...updates } : t))
 
-        const { error } = await supabase.from('tasks').update(updates).eq('id', groupId)
-        if (error) {
-            console.error('[Sync] updateGroup DB error:', error)
-            onSyncError?.(`グループの更新に失敗しました: ${error.message}`)
-            // Rollback
+        try {
+            console.log('[Sync] updateGroup via API:', groupId.slice(0, 8), updates)
+            const response = await fetch(`/api/tasks/${groupId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates),
+            })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] updateGroup API failed:', errorData)
+                onSyncError?.(`グループの更新に失敗しました: ${errorData.message || response.statusText}`)
+                setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...beforeValues } : t))
+                return
+            }
+            console.log('[Sync] updateGroup API success:', groupId.slice(0, 8))
+        } catch (e) {
+            console.error('[Sync] updateGroup failed:', e)
+            onSyncError?.(`グループの更新に失敗しました: ネットワークエラー`)
             setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...beforeValues } : t))
             return
         }
@@ -276,16 +313,32 @@ export function useMindMapSync({
             description: `設定を変更`,
             undo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...beforeValues } : t))
-                await supabase.from('tasks').update(beforeValues).eq('id', groupId)
+                try {
+                    await fetch(`/api/tasks/${groupId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(beforeValues),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] undo updateGroup failed:', e)
+                }
             },
             redo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...updates } : t))
-                await supabase.from('tasks').update(updates).eq('id', groupId)
+                try {
+                    await fetch(`/api/tasks/${groupId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(updates),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] redo updateGroup failed:', e)
+                }
             },
         })
-    }, [supabase, pushAction, onSyncError])
+    }, [pushAction, onSyncError])
 
-    // deleteGroup → deleteTask と同じロジック
+    // deleteGroup → APIルート経由で削除（deleteTaskと同じ方式）
     const deleteGroup = useCallback(async (groupId: string) => {
         const currentAll = allTasksRef.current
         const capturedTask = currentAll.find(t => t.id === groupId)
@@ -299,11 +352,20 @@ export function useMindMapSync({
 
         setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
 
-        const { error } = await supabase.from('tasks').delete().eq('id', groupId)
-        if (error) {
-            console.error('[Sync] deleteGroup DB error:', error)
-            onSyncError?.(`グループの削除に失敗しました: ${error.message}`)
-            // Rollback: restore removed tasks
+        try {
+            console.log('[Sync] deleteGroup via API:', groupId.slice(0, 8))
+            const response = await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] deleteGroup API failed:', errorData)
+                onSyncError?.(`グループの削除に失敗しました: ${errorData.message || response.statusText}`)
+                setAllTasks(prev => [...prev, ...allCaptured])
+                return
+            }
+            console.log('[Sync] deleteGroup API success:', groupId.slice(0, 8))
+        } catch (e) {
+            console.error('[Sync] deleteGroup failed:', e)
+            onSyncError?.(`グループの削除に失敗しました: ネットワークエラー`)
             setAllTasks(prev => [...prev, ...allCaptured])
             return
         }
@@ -321,7 +383,11 @@ export function useMindMapSync({
                 },
                 redo: async () => {
                     setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
-                    await supabase.from('tasks').delete().eq('id', groupId)
+                    try {
+                        await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
+                    } catch (e) {
+                        console.error('[UndoRedo] redo deleteGroup failed:', e)
+                    }
                 },
             })
         }
@@ -506,13 +572,17 @@ export function useMindMapSync({
         const beforeTask = currentAll.find(t => t.id === taskId)
         if (!beforeTask) {
             // Task not in current project state (e.g. habit child from another project)
-            // Still perform DB update directly
-            console.log('[Sync] updateTask: task not in local state, updating DB directly:', taskId.slice(0, 8))
+            // Still perform DB update via API route
+            console.log('[Sync] updateTask: task not in local state, updating via API:', taskId.slice(0, 8))
             try {
-                const { error } = await supabase.from('tasks').update(updates).eq('id', taskId)
-                if (error) console.error('[Sync] updateTask direct DB error:', error)
+                const response = await fetch(`/api/tasks/${taskId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates),
+                })
+                if (!response.ok) console.error('[Sync] updateTask direct API error:', await response.text())
             } catch (e) {
-                console.error('[Sync] updateTask direct DB failed:', e)
+                console.error('[Sync] updateTask direct API failed:', e)
             }
             return
         }
@@ -526,15 +596,22 @@ export function useMindMapSync({
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
 
         try {
-            const { error: updateError, data: updateData } = await supabase.from('tasks').update(updates).eq('id', taskId).select()
-            if (updateError) {
-                console.error('[Sync] updateTask DB error:', updateError)
-                onSyncError?.(`保存に失敗しました: ${updateError.message}`)
+            console.log('[Sync] updateTask via API:', taskId.slice(0, 8))
+            const response = await fetch(`/api/tasks/${taskId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates),
+            })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] updateTask API error:', errorData)
+                onSyncError?.(`保存に失敗しました: ${errorData.message || response.statusText}`)
                 // Rollback optimistic update
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
                 return
             }
-            console.log('[Sync] updateTask DB success:', taskId.slice(0, 8), updateData)
+            const result = await response.json()
+            console.log('[Sync] updateTask API success:', taskId.slice(0, 8), result.task?.id)
 
             // AUTO-COMPLETE PARENT
             if (updates.status === 'done') {
@@ -554,9 +631,21 @@ export function useMindMapSync({
                         setAllTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'done' } : t
                         ));
-                        const { error: parentDoneError } = await supabase.from('tasks').update({ status: 'done' }).eq('id', task.parent_task_id);
-                        if (parentDoneError) {
-                            console.error('[Sync] auto-complete parent DB error:', parentDoneError)
+                        try {
+                            const parentRes = await fetch(`/api/tasks/${task.parent_task_id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ status: 'done' }),
+                            })
+                            if (!parentRes.ok) {
+                                console.error('[Sync] auto-complete parent API error')
+                                setAllTasks(prev => prev.map(t =>
+                                    t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                                ))
+                                parentAutoCompleteUndo = null
+                            }
+                        } catch (parentErr) {
+                            console.error('[Sync] auto-complete parent failed:', parentErr)
                             setAllTasks(prev => prev.map(t =>
                                 t.id === task.parent_task_id ? { ...t, status: parent.status } : t
                             ))
@@ -576,9 +665,21 @@ export function useMindMapSync({
                         setAllTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'todo' } : t
                         ));
-                        const { error: parentUndoneError } = await supabase.from('tasks').update({ status: 'todo' }).eq('id', task.parent_task_id);
-                        if (parentUndoneError) {
-                            console.error('[Sync] auto-uncomplete parent DB error:', parentUndoneError)
+                        try {
+                            const parentRes = await fetch(`/api/tasks/${task.parent_task_id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ status: 'todo' }),
+                            })
+                            if (!parentRes.ok) {
+                                console.error('[Sync] auto-uncomplete parent API error')
+                                setAllTasks(prev => prev.map(t =>
+                                    t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                                ))
+                                parentAutoCompleteUndo = null
+                            }
+                        } catch (parentErr) {
+                            console.error('[Sync] auto-uncomplete parent failed:', parentErr)
                             setAllTasks(prev => prev.map(t =>
                                 t.id === task.parent_task_id ? { ...t, status: parent.status } : t
                             ))
@@ -600,27 +701,59 @@ export function useMindMapSync({
             description: `「${beforeTask?.title || 'タスク'}」を変更`,
             undo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
-                await supabase.from('tasks').update(beforeValues).eq('id', taskId)
+                try {
+                    await fetch(`/api/tasks/${taskId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(beforeValues),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] undo updateTask failed:', e)
+                }
                 if (capturedParentUndo) {
                     setAllTasks(prev => prev.map(t =>
                         t.id === capturedParentUndo.parentId ? { ...t, status: capturedParentUndo.beforeStatus } : t
                     ))
-                    await supabase.from('tasks').update({ status: capturedParentUndo.beforeStatus }).eq('id', capturedParentUndo.parentId)
+                    try {
+                        await fetch(`/api/tasks/${capturedParentUndo.parentId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: capturedParentUndo.beforeStatus }),
+                        })
+                    } catch (e) {
+                        console.error('[UndoRedo] undo parent status failed:', e)
+                    }
                 }
             },
             redo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
-                await supabase.from('tasks').update(updates).eq('id', taskId)
+                try {
+                    await fetch(`/api/tasks/${taskId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(updates),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] redo updateTask failed:', e)
+                }
                 if (capturedParentUndo) {
                     const newStatus = updates.status === 'done' ? 'done' : 'todo'
                     setAllTasks(prev => prev.map(t =>
                         t.id === capturedParentUndo.parentId ? { ...t, status: newStatus } : t
                     ))
-                    await supabase.from('tasks').update({ status: newStatus }).eq('id', capturedParentUndo.parentId)
+                    try {
+                        await fetch(`/api/tasks/${capturedParentUndo.parentId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: newStatus }),
+                        })
+                    } catch (e) {
+                        console.error('[UndoRedo] redo parent status failed:', e)
+                    }
                 }
             },
         })
-    }, [supabase, pushAction, onSyncError])
+    }, [pushAction, onSyncError])
 
     const deleteTask = useCallback(async (taskId: string) => {
         const currentAll = allTasksRef.current;
@@ -690,11 +823,24 @@ export function useMindMapSync({
 
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: newGroupId } : t))
 
-        const { error } = await supabase.from('tasks').update({ parent_task_id: newGroupId }).eq('id', taskId)
-        if (error) {
-            console.error('[Sync] moveTask DB error:', error)
-            onSyncError?.(`タスクの移動に失敗しました: ${error.message}`)
-            // Rollback
+        try {
+            console.log('[Sync] moveTask via API:', taskId.slice(0, 8), '->', newGroupId.slice(0, 8))
+            const response = await fetch(`/api/tasks/${taskId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parent_task_id: newGroupId }),
+            })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] moveTask API failed:', errorData)
+                onSyncError?.(`タスクの移動に失敗しました: ${errorData.message || response.statusText}`)
+                setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: oldParentId } : t))
+                return
+            }
+            console.log('[Sync] moveTask API success:', taskId.slice(0, 8))
+        } catch (e) {
+            console.error('[Sync] moveTask failed:', e)
+            onSyncError?.(`タスクの移動に失敗しました: ネットワークエラー`)
             setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: oldParentId } : t))
             return
         }
@@ -704,15 +850,31 @@ export function useMindMapSync({
                 description: `「${taskTitle}」を移動`,
                 undo: async () => {
                     setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: oldParentId } : t))
-                    await supabase.from('tasks').update({ parent_task_id: oldParentId }).eq('id', taskId)
+                    try {
+                        await fetch(`/api/tasks/${taskId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ parent_task_id: oldParentId }),
+                        })
+                    } catch (e) {
+                        console.error('[UndoRedo] undo moveTask failed:', e)
+                    }
                 },
                 redo: async () => {
                     setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: newGroupId } : t))
-                    await supabase.from('tasks').update({ parent_task_id: newGroupId }).eq('id', taskId)
+                    try {
+                        await fetch(`/api/tasks/${taskId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ parent_task_id: newGroupId }),
+                        })
+                    } catch (e) {
+                        console.error('[UndoRedo] redo moveTask failed:', e)
+                    }
                 },
             })
         }
-    }, [supabase, pushAction, onSyncError])
+    }, [pushAction, onSyncError])
 
     // --- Bulk Delete ---
     const bulkDelete = useCallback(async (groupIds: string[], taskIds: string[]) => {
@@ -781,7 +943,7 @@ export function useMindMapSync({
         return tasks.filter(t => t.parent_task_id === groupId).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     }, [tasks])
 
-    // --- Reorder Operations ---
+    // --- Reorder Operations --- (APIルート経由)
     const reorderTask = useCallback(async (taskId: string, referenceTaskId: string, position: 'above' | 'below') => {
         const currentAll = allTasksRef.current;
         const task = currentAll.find(t => t.id === taskId)
@@ -839,15 +1001,24 @@ export function useMindMapSync({
                     const original = currentAll.find(o => o.id === t.id)
                     return original ? { ...t, order_index: original.order_index } : t
                 }))
-                await supabase.from('tasks').update({
-                    parent_task_id: beforeParentId,
-                    order_index: beforeOrderIndex,
-                }).eq('id', taskId)
-                for (const sib of siblings) {
-                    const original = currentAll.find(o => o.id === sib.id)
-                    if (original && original.order_index !== sib.order_index) {
-                        await supabase.from('tasks').update({ order_index: original.order_index }).eq('id', sib.id)
+                try {
+                    await fetch(`/api/tasks/${taskId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ parent_task_id: beforeParentId, order_index: beforeOrderIndex }),
+                    })
+                    for (const sib of siblings) {
+                        const original = currentAll.find(o => o.id === sib.id)
+                        if (original && original.order_index !== sib.order_index) {
+                            await fetch(`/api/tasks/${sib.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ order_index: original.order_index }),
+                            })
+                        }
                     }
+                } catch (e) {
+                    console.error('[UndoRedo] undo reorderTask failed:', e)
                 }
             },
             redo: async () => {
@@ -860,7 +1031,15 @@ export function useMindMapSync({
                 })
                 for (const u of updates) {
                     const { id, ...rest } = u
-                    await supabase.from('tasks').update(rest).eq('id', id)
+                    try {
+                        await fetch(`/api/tasks/${id}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(rest),
+                        })
+                    } catch (e) {
+                        console.error('[UndoRedo] redo reorderTask failed:', e)
+                    }
                 }
             },
         })
@@ -868,9 +1047,19 @@ export function useMindMapSync({
         let reorderFailed = false
         for (const u of updates) {
             const { id, ...rest } = u
-            const { error } = await supabase.from('tasks').update(rest).eq('id', id)
-            if (error) {
-                console.error('[Sync] reorderTask DB error:', error)
+            try {
+                const response = await fetch(`/api/tasks/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(rest),
+                })
+                if (!response.ok) {
+                    console.error('[Sync] reorderTask API error for:', id)
+                    reorderFailed = true
+                    break
+                }
+            } catch (e) {
+                console.error('[Sync] reorderTask failed:', e)
                 reorderFailed = true
                 break
             }
@@ -886,14 +1075,14 @@ export function useMindMapSync({
                 return original ? { ...t, order_index: original.order_index } : t
             }))
         }
-    }, [supabase, pushAction, onSyncError])
+    }, [pushAction, onSyncError])
 
     // reorderGroup → reorderTask にデリゲート（ルートタスクの並び替え）
     const reorderGroup = useCallback(async (groupId: string, referenceGroupId: string, position: 'above' | 'below') => {
         return reorderTask(groupId, referenceGroupId, position)
     }, [reorderTask])
 
-    // タスクをルートに昇格（parent_task_id を null に変更）
+    // タスクをルートに昇格（parent_task_id を null に変更）APIルート経由
     const promoteTaskToGroup = useCallback(async (taskId: string) => {
         const currentAll = allTasksRef.current;
         const task = currentAll.find(t => t.id === taskId)
@@ -916,37 +1105,57 @@ export function useMindMapSync({
                 setAllTasks(prev => prev.map(t =>
                     t.id === taskId ? { ...t, parent_task_id: beforeParentId, order_index: task.order_index } : t
                 ))
-                await supabase.from('tasks').update({
-                    parent_task_id: beforeParentId,
-                    order_index: task.order_index,
-                }).eq('id', taskId)
+                try {
+                    await fetch(`/api/tasks/${taskId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ parent_task_id: beforeParentId, order_index: task.order_index }),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] undo promoteTaskToGroup failed:', e)
+                }
             },
             redo: async () => {
                 setAllTasks(prev => prev.map(t =>
                     t.id === taskId ? { ...t, parent_task_id: null, project_id: projectId, order_index: maxOrder } : t
                 ))
-                await supabase.from('tasks').update({
-                    parent_task_id: null,
-                    project_id: projectId,
-                    order_index: maxOrder,
-                }).eq('id', taskId)
+                try {
+                    await fetch(`/api/tasks/${taskId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ parent_task_id: null, project_id: projectId, order_index: maxOrder }),
+                    })
+                } catch (e) {
+                    console.error('[UndoRedo] redo promoteTaskToGroup failed:', e)
+                }
             },
         })
 
-        const { error } = await supabase.from('tasks').update({
-            parent_task_id: null,
-            project_id: projectId,
-            order_index: maxOrder,
-        }).eq('id', taskId)
-        if (error) {
-            console.error('[Sync] promoteTaskToGroup DB error:', error)
+        try {
+            console.log('[Sync] promoteTaskToGroup via API:', taskId.slice(0, 8))
+            const response = await fetch(`/api/tasks/${taskId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ parent_task_id: null, project_id: projectId, order_index: maxOrder }),
+            })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] promoteTaskToGroup API error:', errorData)
+                onSyncError?.('ルート昇格の保存に失敗しました')
+                setAllTasks(prev => prev.map(t =>
+                    t.id === taskId ? { ...t, parent_task_id: beforeParentId, order_index: task.order_index } : t
+                ))
+            } else {
+                console.log('[Sync] promoteTaskToGroup API success:', taskId.slice(0, 8))
+            }
+        } catch (e) {
+            console.error('[Sync] promoteTaskToGroup failed:', e)
             onSyncError?.('ルート昇格の保存に失敗しました')
-            // Rollback
             setAllTasks(prev => prev.map(t =>
                 t.id === taskId ? { ...t, parent_task_id: beforeParentId, order_index: task.order_index } : t
             ))
         }
-    }, [projectId, supabase, pushAction, onSyncError])
+    }, [projectId, pushAction, onSyncError])
 
     const updateProjectTitle = useCallback(async (projectId: string, title: string) => {
         try {
