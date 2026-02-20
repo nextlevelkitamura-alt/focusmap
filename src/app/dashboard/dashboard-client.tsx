@@ -399,6 +399,78 @@ export function DashboardClient({
         })()
     }, [userId, debouncedRefreshCalendar])
 
+    // サブタスク作成（今日のビュー用）— quickTasks に追加して allTasksMerged に反映
+    const handleCreateSubTask = useCallback(async (parentTaskId: string, title: string) => {
+        const parentTask = allTasksMerged.find(t => t.id === parentTaskId)
+        const optimisticId = crypto.randomUUID()
+        const optimisticTask: Task = {
+            id: optimisticId,
+            user_id: userId,
+            group_id: null,
+            project_id: parentTask?.project_id ?? null,
+            parent_task_id: parentTaskId,
+            is_group: false,
+            title,
+            status: 'todo',
+            priority: null,
+            order_index: 0,
+            scheduled_at: null,
+            estimated_time: 0,
+            actual_time_minutes: 0,
+            google_event_id: null,
+            calendar_event_id: null,
+            calendar_id: null,
+            total_elapsed_seconds: 0,
+            last_started_at: null,
+            is_timer_running: false,
+            created_at: new Date().toISOString(),
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
+        }
+
+        // quickTasks に追加 → allTasksMerged に反映 → TodayView の allTasks prop に伝播
+        setQuickTasks(prev => [...prev, optimisticTask])
+
+        try {
+            const res = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: optimisticId,
+                    parent_task_id: parentTaskId,
+                    project_id: parentTask?.project_id ?? null,
+                    title,
+                }),
+            })
+            if (!res.ok) {
+                console.error('[SubTask] Create failed:', await res.text())
+                setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+            }
+        } catch (err) {
+            console.error('[SubTask] Create error:', err)
+            setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+        }
+    }, [allTasksMerged, userId])
+
+    // タスク削除（今日のビュー用）— quickTasks + taskOverrides からも削除
+    const handleDeleteTaskFromToday = useCallback(async (taskId: string) => {
+        setQuickTasks(prev => prev.filter(t => t.id !== taskId))
+        setTaskOverrides(prev => {
+            const next = { ...prev }
+            delete next[taskId]
+            return next
+        })
+
+        try {
+            await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+        } catch (err) {
+            console.error('[Dashboard] Failed to delete task:', err)
+        }
+    }, [])
+
     // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
     const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
         // ローカルオーバーライドを即座に適用（UI即時反映）
@@ -598,6 +670,8 @@ export function DashboardClient({
                             onUpdateTask={handleUpdateTaskWithQuickSync}
                             projects={projects}
                             onCreateQuickTask={handleCreateQuickTask}
+                            onCreateSubTask={handleCreateSubTask}
+                            onDeleteTask={handleDeleteTaskFromToday}
                         />
                     </div>
                 )}

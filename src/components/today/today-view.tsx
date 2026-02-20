@@ -37,6 +37,8 @@ interface TodayViewProps {
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
     projects?: Project[]
     onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
+    onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
+    onDeleteTask?: (taskId: string) => Promise<void>
 }
 
 // --- Helper: compute week dots from completions ---
@@ -55,7 +57,7 @@ function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
 
 // --- Main Component ---
 
-export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask }: TodayViewProps) {
+export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask: onCreateSubTaskProp, onDeleteTask: onDeleteTaskProp }: TodayViewProps) {
     const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
     const { todayHabits, toggleCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
     const { completedEventIds, toggleEventCompletion } = useEventCompletions()
@@ -372,61 +374,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         }
     }, [onUpdateTask, toggleCompletion, updateChildTaskStatus])
 
-    // Create subtask (optimistic UI + background API)
-    const handleCreateSubTask = useCallback(async (parentTaskId: string, title: string) => {
-        const parentTask = localTasks.find(t => t.id === parentTaskId)
-        const optimisticId = crypto.randomUUID()
-        const optimisticTask: Task = {
-            id: optimisticId,
-            user_id: '',
-            group_id: null,
-            project_id: parentTask?.project_id ?? null,
-            parent_task_id: parentTaskId,
-            is_group: false,
-            title,
-            status: 'todo',
-            priority: null,
-            order_index: 0,
-            scheduled_at: null,
-            estimated_time: 0,
-            actual_time_minutes: 0,
-            google_event_id: null,
-            calendar_event_id: null,
-            calendar_id: null,
-            total_elapsed_seconds: 0,
-            last_started_at: null,
-            is_timer_running: false,
-            created_at: new Date().toISOString(),
-            is_habit: false,
-            habit_frequency: null,
-            habit_icon: null,
-            habit_start_date: null,
-            habit_end_date: null,
-        }
-
-        // Optimistic update
-        setLocalTasks(prev => [...prev, optimisticTask])
-
-        // Background API call
-        try {
-            const res = await fetch('/api/tasks', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: optimisticId,
-                    parent_task_id: parentTaskId,
-                    project_id: parentTask?.project_id ?? null,
-                    title,
-                }),
-            })
-            if (!res.ok) {
-                setLocalTasks(prev => prev.filter(t => t.id !== optimisticId))
-            }
-        } catch {
-            setLocalTasks(prev => prev.filter(t => t.id !== optimisticId))
-        }
-    }, [localTasks])
-
     // Handle item tap (open edit modal)
     const handleItemTap = useCallback((item: EditTarget) => {
         setEditTarget(item)
@@ -470,13 +417,20 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         }
     }, [])
 
-    // Delete task (optimistic UI + background API)
+    // Delete task — dashboard-client 経由で quickTasks/taskOverrides も同期
     const handleDeleteTask = useCallback((taskId: string) => {
+        // ローカル即時反映
         setLocalTasks(prev => prev.filter(t => t.id !== taskId))
-        fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
-            console.error('[TodayView] Failed to delete task:', err)
-        })
-    }, [])
+        // 親コンポーネント経由でDB削除 + state同期
+        if (onDeleteTaskProp) {
+            onDeleteTaskProp(taskId)
+        } else {
+            // フォールバック: 直接API呼び出し
+            fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
+                console.error('[TodayView] Failed to delete task:', err)
+            })
+        }
+    }, [onDeleteTaskProp])
 
     // Delete event (optimistic UI + background API)
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
@@ -873,7 +827,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         onItemTap={handleItemTap}
                         onDragDrop={handleDragDrop}
                         childTasksMap={childTasksMap}
-                        onCreateSubTask={handleCreateSubTask}
+                        onCreateSubTask={onCreateSubTaskProp}
                         onDeleteSubTask={handleDeleteTask}
                         projectNameMap={projectNameMap}
                     />
