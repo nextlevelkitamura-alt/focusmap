@@ -390,7 +390,9 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                     <PopoverContent
                         align="end"
                         side="bottom"
-                        className="nodrag nopan w-64 p-1 max-h-[60vh] overflow-y-auto"
+                        className="nodrag nopan w-64 p-1 max-h-[60vh] overflow-y-auto overscroll-contain"
+                        style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+                        onTouchMove={(e) => e.stopPropagation()}
                         onOpenAutoFocus={(e) => e.preventDefault()}
                         onPointerDownOutside={(e) => e.preventDefault()}
                         onFocusOutside={(e) => e.preventDefault()}

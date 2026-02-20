@@ -917,7 +917,9 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                     </PopoverTrigger>
                     <PopoverContent
                         align="end"
-                        className="nodrag nopan w-56 p-1 max-h-[70vh] overflow-y-auto"
+                        className="nodrag nopan w-56 p-1 max-h-[70vh] overflow-y-auto overscroll-contain"
+                        style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+                        onTouchMove={(e) => e.stopPropagation()}
                         onOpenAutoFocus={(e) => e.preventDefault()}
                         onPointerDownOutside={(e) => e.preventDefault()}
                         onFocusOutside={(e) => e.preventDefault()}
