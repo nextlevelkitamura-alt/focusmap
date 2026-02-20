@@ -418,14 +418,15 @@ function FreeTimeSlot({
 // --- Current Time Indicator ---
 
 function CurrentTimeIndicator() {
-    const [now, setNow] = useState(() => {
-        const d = new Date(); d.setSeconds(0, 0); return d
-    })
+    const [now, setNow] = useState<Date | null>(null)
     useEffect(() => {
         setNow(new Date())
         const interval = setInterval(() => setNow(new Date()), 60000)
         return () => clearInterval(interval)
     }, [])
+
+    if (!now) return null // SSR時はレンダリングしない（タイムゾーン差でミスマッチを防ぐ）
+
     const timeStr = format(now, 'HH:mm')
 
     return (

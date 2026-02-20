@@ -13,10 +13,15 @@ export function useEventCompletions(): UseEventCompletionsReturn {
     const [completions, setCompletions] = useState<EventCompletion[]>([])
     const [isLoading, setIsLoading] = useState(true)
 
-    const todayStr = new Date().toISOString().split('T')[0]
+    // SSR-safe: render中にnew Date()を呼ばない（タイムゾーン差でSSR/Client不一致を防ぐ）
+    const [todayStr, setTodayStr] = useState('')
+    useEffect(() => {
+        setTodayStr(new Date().toISOString().split('T')[0])
+    }, [])
 
     // Fetch today's completions
     const fetchCompletions = useCallback(async () => {
+        if (!todayStr) return
         try {
             const res = await fetch(`/api/event-completions?date=${todayStr}`)
             const data = await res.json()

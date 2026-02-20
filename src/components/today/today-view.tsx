@@ -80,19 +80,23 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         setLocalTasks(allTasks)
     }
 
-    // Selected date (defaults to today)
-    const [selectedDate, setSelectedDate] = useState(() => {
-        const d = new Date()
-        d.setHours(0, 0, 0, 0)
-        return d
-    })
+    // Selected date (SSR-safe: マウント後にクライアントの日付を設定)
+    const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+    useEffect(() => {
+        if (selectedDate === null) {
+            const d = new Date()
+            d.setHours(0, 0, 0, 0)
+            setSelectedDate(d)
+        }
+    }, [selectedDate])
 
-    const today = selectedDate
+    const today = selectedDate ?? new Date(0) // fallback for SSR
 
-    const isToday = useMemo(() => {
+    const [isToday, setIsToday] = useState(true)
+    useEffect(() => {
         const now = new Date()
         now.setHours(0, 0, 0, 0)
-        return today.getTime() === now.getTime()
+        setIsToday(today.getTime() === now.getTime())
     }, [today])
 
     const tomorrow = useMemo(() => {
