@@ -1,12 +1,12 @@
 # Today TODO
 > 日付: 2026-02-20
 
-## タスク（stage機能の実装続行）
-- [x] stage-utils.ts / time-block.ts / 型定義 / API更新（前日からの継続分）
-- [x] Supabase マイグレーション適用（stage カラム追加）→ 既に適用済み
-- [x] TimeBlock を今日ビューに組み込み
-- [x] UI改善（過去アイテムのグレー化廃止、チェックボックス/ボタン拡大）
-- [x] 変更をコミット
-- [x] 2段階表示の修正（カレンダー+タスクを一括表示）
+## タスク
+- [x] カレンダーイベント自動取り込み Phase 1-2 完了
+  - DB基盤（source/deleted_at/fingerprint カラム）
+  - useEventImport Hook + API
+  - UI統合 + event_completions廃止
+  - 1ヶ月自動取り込み対応
 
 ## 完了
+- Phase 1-2 完了、Phase 3（設定画面）は後日

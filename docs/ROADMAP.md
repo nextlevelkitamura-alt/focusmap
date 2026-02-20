@@ -142,9 +142,9 @@
 - 🔧 **クイックタスク追加 + サブタスク追加**（FABボタン、プロジェクト選択、カレンダー横+ボタン、チェックリスト） → [計画](plans/features/quick-task-add.md)
   - Phase 1: FABボタン + タスク追加モーダル ✅
   - Phase 2: サブタスク追加 + チェックリスト表示 ○
-- 🔧 **カレンダーイベント自動取り込み**（イベント→タスク化、タイマー・サブタスク統合、差分同期） → [仕様](specs/event-task-import.md) | [計画](plans/features/event-task-import.md)
-  - Phase 1: DB基盤 + 取り込みHook ○
-  - Phase 2: UI統合 + event_completions移行 ○
+- ✅ **カレンダーイベント自動取り込み**（イベント→タスク化、タイマー・サブタスク統合、差分同期、1ヶ月自動取り込み） → [仕様](specs/event-task-import.md)
+  - Phase 1: DB基盤 + 取り込みHook ✅
+  - Phase 2: UI統合 + event_completions廃止 ✅
   - Phase 3: 設定画面 + クリーンアップ ○
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
@@ -154,6 +154,7 @@
 
 ## 完了履歴
 
+- 2026-02-20: **カレンダーイベント自動取り込み Phase 1-2** 完了 (C, /tdd+/impl, DB基盤+UI統合+event_completions廃止+1ヶ月取り込み)
 - 2026-02-19: **tasks/route・tasks/[id]/route テスト追加** 完了 (C, /test, 25テスト追加 → 計203テスト)
 - 2026-02-19: **event-completions・habits・habits/completions route テスト追加** 完了 (C, /test, 41テスト追加 → 計178テスト)
 - 2026-02-19: **sync-task/route テスト追加** 完了 (C, /test, 28テスト追加 → 計137テスト)
