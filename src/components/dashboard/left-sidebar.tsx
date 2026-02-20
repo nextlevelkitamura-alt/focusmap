@@ -283,9 +283,12 @@ function Section({
                 isDragOver && "bg-primary/10 ring-1 ring-primary/30"
             )}
         >
-            <button
+            <div
+                role="button"
+                tabIndex={0}
                 onClick={onToggle}
-                className="flex items-center justify-between w-full px-1 py-1 group hover:bg-muted/30 rounded-sm"
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle() }}
+                className="flex items-center justify-between w-full px-1 py-1 group hover:bg-muted/30 rounded-sm cursor-pointer"
             >
                 <div className="flex items-center gap-1">
                     {isCollapsed ? (
@@ -341,7 +344,7 @@ function Section({
                         </Button>
                     )
                 )}
-            </button>
+            </div>
             {!isCollapsed && (
                 <div className="mt-1 space-y-0.5">
                     {items.map(p => (

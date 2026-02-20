@@ -552,6 +552,16 @@ function MobileMindMapContent({
     // Hidden bridge input to maintain keyboard during node transitions
     const bridgeInputRef = useRef<HTMLInputElement>(null)
 
+    // Keyboard accessory bar ref (passive: false で touchstart preventDefault を有効にする)
+    const accessoryBarRef = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+        const el = accessoryBarRef.current
+        if (!el) return
+        const handler = (e: TouchEvent) => e.preventDefault()
+        el.addEventListener('touchstart', handler, { passive: false })
+        return () => el.removeEventListener('touchstart', handler)
+    }, [selectedNodeId])
+
     // Text proxy: bridge captures keystrokes and forwards to new node display
     const [proxyTargetId, setProxyTargetId] = useState<string | null>(null)
     const [proxyText, setProxyText] = useState('')
@@ -1042,11 +1052,11 @@ function MobileMindMapContent({
             {/* Keyboard Accessory Bar - top ベース配置で確実に可視領域の下端に表示 */}
             {selectedNodeId && (
                 <div
+                    ref={accessoryBarRef}
                     className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
                     style={{
                         top: `${isKeyboardOpen ? viewportBottom - 48 : viewportBottom - 48 - 64}px`,
                     }}
-                    onTouchStart={(e) => e.preventDefault()}
                     onMouseDown={(e) => e.preventDefault()}
                 >
                     <div className="flex items-center justify-between px-2 py-1.5 safe-area-inset-bottom">
