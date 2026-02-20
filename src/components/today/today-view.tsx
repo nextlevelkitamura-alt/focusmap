@@ -80,36 +80,30 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         setLocalTasks(allTasks)
     }
 
-    // Selected date (SSR-safe: マウント後にクライアントの日付を設定)
-    const [selectedDate, setSelectedDate] = useState<Date | null>(null)
-    useEffect(() => {
-        if (selectedDate === null) {
-            const d = new Date()
-            d.setHours(0, 0, 0, 0)
-            setSelectedDate(d)
-        }
-    }, [selectedDate])
+    // Selected date (ssr:false なのでクライアント直接初期化OK)
+    const [selectedDate, setSelectedDate] = useState<Date>(() => {
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
 
-    const today = selectedDate ?? new Date(0) // fallback for SSR
+    const today = selectedDate
 
-    const [isToday, setIsToday] = useState(true)
-    useEffect(() => {
+    const isToday = useMemo(() => {
         const now = new Date()
         now.setHours(0, 0, 0, 0)
-        setIsToday(today.getTime() === now.getTime())
+        return today.getTime() === now.getTime()
     }, [today])
 
     const tomorrow = useMemo(() => {
-        const d = new Date(selectedDate)
+        const d = new Date(today)
         d.setDate(d.getDate() + 1)
         return d
-    }, [selectedDate])
+    }, [today])
 
     const previousDay = useMemo(() => {
-        const d = new Date(selectedDate)
+        const d = new Date(today)
         d.setDate(d.getDate() - 1)
         return d
-    }, [selectedDate])
+    }, [today])
 
     // Date navigation
     const goToPrevDay = useCallback(() => {
