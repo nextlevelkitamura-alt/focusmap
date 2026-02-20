@@ -383,11 +383,17 @@ export function useMindMapSync({
             console.log('[Sync] deleteGroup via API:', groupId.slice(0, 8))
             const response = await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ message: response.statusText }))
-                console.error('[Sync] deleteGroup API failed:', errorData)
-                onSyncError?.(`グループの削除に失敗しました: ${errorData.message || response.statusText}`)
-                setAllTasks(prev => [...prev, ...allCaptured])
-                return
+                if (response.status === 404) {
+                    // DB上に存在しないグループ（ゴーストタスク）→ UIからの削除は成功とする
+                    console.warn('[Sync] deleteGroup: group not found in DB (ghost task), removing from UI only:', groupId.slice(0, 8))
+                    // ロールバックしない（DBにないのでUIから消すだけでOK）
+                } else {
+                    const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                    console.error('[Sync] deleteGroup API failed:', errorData)
+                    onSyncError?.(`グループの削除に失敗しました: ${errorData.message || response.statusText}`)
+                    setAllTasks(prev => [...prev, ...allCaptured])
+                    return
+                }
             }
             console.log('[Sync] deleteGroup API success:', groupId.slice(0, 8))
         } catch (e) {
@@ -773,12 +779,18 @@ export function useMindMapSync({
         try {
             const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ message: response.statusText }))
-                console.error('[Sync] deleteTask API failed:', errorData)
-                onSyncError?.(`タスクの削除に失敗しました: ${errorData.message || response.statusText}`)
-                // Rollback: restore removed tasks
-                setAllTasks(prev => [...prev, ...allCaptured])
-                return
+                if (response.status === 404) {
+                    // DB上に存在しないタスク（ゴーストタスク）→ UIからの削除は成功とする
+                    console.warn('[Sync] deleteTask: task not found in DB (ghost task), removing from UI only:', taskId.slice(0, 8))
+                    // ロールバックしない（DBにないのでUIから消すだけでOK）
+                } else {
+                    const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                    console.error('[Sync] deleteTask API failed:', errorData)
+                    onSyncError?.(`タスクの削除に失敗しました: ${errorData.message || response.statusText}`)
+                    // Rollback: restore removed tasks
+                    setAllTasks(prev => [...prev, ...allCaptured])
+                    return
+                }
             }
         } catch (e) {
             console.error('[Sync] deleteTask failed:', e)
