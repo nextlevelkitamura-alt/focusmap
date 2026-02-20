@@ -31,6 +31,8 @@ import { Switch } from "@/components/ui/switch";
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
 import { DateTimePicker } from "@/lib/dynamic-imports";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
+import { format } from "date-fns";
+import { ja } from "date-fns/locale";
 
 // --- Dagre Layout Function ---
 const dagreGraph = new dagre.graphlib.Graph();
@@ -978,7 +980,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                     <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
                                         <CalendarIcon className="w-3 h-3 mr-2" />
                                         {data?.scheduled_at ? (
-                                            <span>{new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                            <span>{format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}</span>
                                         ) : (
                                             <span className="text-muted-foreground">日時を設定</span>
                                         )}
@@ -1087,7 +1089,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                                 trigger={
                                     <div className="flex items-center gap-1">
                                         <span className="text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer">
-                                            {new Date(data.scheduled_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            {format(new Date(data.scheduled_at), 'M/d HH:mm')}
                                         </span>
                                         <button
                                             className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"

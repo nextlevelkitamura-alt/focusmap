@@ -8,6 +8,7 @@ import {
     Calendar as CalendarIcon
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { format } from "date-fns"
 import { useState, useMemo } from "react"
 
 // --- Types ---
@@ -226,8 +227,8 @@ function TimelineCard({
     onTap?: () => void
     projectNameMap?: Map<string, string>
 }) {
-    const startStr = item.startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-    const endStr = item.endTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const startStr = format(item.startTime, 'HH:mm')
+    const endStr = format(item.endTime, 'HH:mm')
     const isNow = currentTime >= item.startTime && currentTime < item.endTime
     const isPast = currentTime >= item.endTime
 
@@ -384,8 +385,8 @@ function FreeTimeSlot({
     slot: { startTime: Date; endTime: Date }
     currentTime: Date
 }) {
-    const startStr = slot.startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-    const endStr = slot.endTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const startStr = format(slot.startTime, 'HH:mm')
+    const endStr = format(slot.endTime, 'HH:mm')
     const durationMinutes = Math.round((slot.endTime.getTime() - slot.startTime.getTime()) / (1000 * 60))
     const isNow = currentTime >= slot.startTime && currentTime < slot.endTime
 
@@ -418,7 +419,7 @@ function FreeTimeSlot({
 
 function CurrentTimeIndicator() {
     const now = new Date()
-    const timeStr = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const timeStr = format(now, 'HH:mm')
 
     return (
         <div className="relative my-3">

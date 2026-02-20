@@ -43,7 +43,12 @@ export function CalendarDayView({
     hourHeight = HOUR_HEIGHT,
     gridRef
 }: CalendarDayViewProps) {
-    const [currentTime, setCurrentTime] = useState(new Date())
+    const [currentTime, setCurrentTime] = useState(() => {
+        // SSR-safe: midnight as initial value, updated in useEffect
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
+    const [isMounted, setIsMounted] = useState(false)
+    useEffect(() => { setCurrentTime(new Date()); setIsMounted(true) }, [])
     const calendarGridRef = gridRef || useRef<HTMLDivElement>(null) // 外部refを優先、なければ内部ref
     const timeLabelsRef = useRef<HTMLDivElement>(null)
     const containerRef = useRef<HTMLDivElement>(null) // スワイプ検出用
@@ -109,7 +114,7 @@ export function CalendarDayView({
 
     const eventLayouts = useMemo(() => calculateEventLayout(dayEvents), [dayEvents])
 
-    const isToday = isSameDay(currentDate, new Date())
+    const isToday = isMounted && isSameDay(currentDate, currentTime)
     const currentTimePosition = ((currentTime.getHours() * 60 + currentTime.getMinutes()) / (24 * 60)) * 100
 
     const totalHeight = hourHeight * 24

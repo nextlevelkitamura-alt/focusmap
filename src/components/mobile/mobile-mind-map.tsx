@@ -23,6 +23,8 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { Button } from "@/components/ui/button"
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
 import { DateTimePicker } from "@/lib/dynamic-imports"
+import { format } from "date-fns"
+import { ja } from "date-fns/locale"
 
 // --- Dagre Layout ---
 const NODE_WIDTH = 240
@@ -441,7 +443,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                                     <Button variant="outline" size="sm" className="w-full justify-start text-sm h-9">
                                         <CalendarIcon className="w-4 h-4 mr-2" />
                                         {data?.scheduled_at ? (
-                                            <span suppressHydrationWarning>{new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                            <span>{format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}</span>
                                         ) : <span className="text-muted-foreground">日時を設定</span>}
                                     </Button>
                                 }
@@ -482,8 +484,8 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                     {hasEstimatedTime && <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} />}
                     {hasPriority && <PriorityBadge value={data.priority as Priority} />}
                     {hasScheduledAt && (
-                        <span className="text-[11px] text-muted-foreground ml-auto" suppressHydrationWarning>
-                            {new Date(data.scheduled_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        <span className="text-[11px] text-muted-foreground ml-auto">
+                            {format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}
                         </span>
                     )}
                 </div>

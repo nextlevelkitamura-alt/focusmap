@@ -11,7 +11,8 @@ import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
     LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays
 } from "lucide-react"
-import { isSameDay } from "date-fns"
+import { isSameDay, format } from "date-fns"
+import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
@@ -508,9 +509,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [onUpdateTask, calendarEvents])
 
     // Date header
-    const dateStr = isToday
-        ? `今日 · ${today.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })}`
-        : today.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })
+    const dateFmt = format(today, 'M月d日(E)', { locale: ja })
+    const dateStr = isToday ? `今日 · ${dateFmt}` : dateFmt
 
     // Current time
     const [currentTime, setCurrentTime] = useState(new Date())
@@ -527,7 +527,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         for (let i = 6; i >= 0; i--) {
             const d = new Date(today)
             d.setDate(d.getDate() - i)
-            labels.push(d.toLocaleDateString('ja-JP', { weekday: 'narrow' }))
+            labels.push(format(d, 'EEEEE', { locale: ja }))
         }
         return labels
     }, [today])

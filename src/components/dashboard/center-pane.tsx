@@ -16,6 +16,7 @@ import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
 import { TaskCalendarSyncStatus } from "@/components/tasks/task-calendar-sync-status"
 import { useTaskCalendarSync } from "@/hooks/useTaskCalendarSync"
 import { DateTimePicker } from "@/lib/dynamic-imports"
+import { format } from "date-fns"
 
 type TaskIndex = {
     byId: Map<string, Task>
@@ -504,7 +505,7 @@ function TaskItem({
                                     setDate={(date) => onUpdateTask?.(task.id, { scheduled_at: date ? date.toISOString() : null })}
                                     trigger={
                                         <span className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer">
-                                            {new Date(task.scheduled_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            {format(new Date(task.scheduled_at), 'M/d HH:mm')}
                                         </span>
                                     }
                                 />
@@ -1098,7 +1099,7 @@ export function CenterPane({
                                                             group.scheduled_at ? (
                                                                 <div className="flex items-center gap-1">
                                                                     <span className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer">
-                                                                        {new Date(group.scheduled_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                                        {format(new Date(group.scheduled_at), 'M/d HH:mm')}
                                                                     </span>
                                                                     <Button
                                                                         variant="ghost"

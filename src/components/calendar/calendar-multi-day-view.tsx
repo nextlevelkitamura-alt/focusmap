@@ -36,7 +36,12 @@ export function CalendarMultiDayView({
     hourHeight = HOUR_HEIGHT,
     gridRef
 }: CalendarMultiDayViewProps) {
-    const [currentTime, setCurrentTime] = useState(new Date())
+    const [currentTime, setCurrentTime] = useState(() => {
+        // SSR-safe: midnight as initial value, updated in useEffect
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
+    const [isMounted, setIsMounted] = useState(false)
+    useEffect(() => { setCurrentTime(new Date()); setIsMounted(true) }, [])
     const timeLabelsRef = useRef<HTMLDivElement>(null)
     const calendarGridRef = gridRef || useRef<HTMLDivElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -224,7 +229,7 @@ export function CalendarMultiDayView({
                         </div>
 
                         {/* Current Time Indicator */}
-                        {viewDates.map((date) => {
+                        {isMounted && viewDates.map((date) => {
                             if (isSameDay(date, currentTime)) {
                                 return (
                                     <div

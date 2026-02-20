@@ -7,6 +7,7 @@ import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
 import { Play, Pause, Check, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
 
 // --- Constants ---
@@ -426,7 +427,7 @@ function EventBlock({
     const isPast = currentTime >= endTime
     const isCompact = height < 40
 
-    const startStr = startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const startStr = format(startTime, 'HH:mm')
 
     const eventHex = getEventColor(event)
     const rgb = hexToRgb(eventHex)
@@ -539,7 +540,7 @@ function TaskBlock({
     const isDone = task.status === 'done'
     const isCompact = height < 40
 
-    const startStr = startTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const startStr = format(startTime, 'HH:mm')
 
     // EventBlock と完全に同じ rgba 方式でタスク色を定義
     const TASK_HEX = '#F97316' // orange-500
@@ -720,8 +721,8 @@ function DragPreview({
 }) {
     if (!dragState.previewStartTime || !dragState.previewEndTime) return null
 
-    const startStr = dragState.previewStartTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-    const endStr = dragState.previewEndTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+    const startStr = format(dragState.previewStartTime, 'HH:mm')
+    const endStr = format(dragState.previewEndTime, 'HH:mm')
     const heightPx = (item.durationMinutes / (24 * 60)) * TOTAL_HEIGHT
 
     const isTask = item.type === 'task'

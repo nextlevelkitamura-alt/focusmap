@@ -175,7 +175,10 @@ export function DashboardClient({
         projectId: selectedProjectId,
         userId,
         initialGroups: projectGroupsInitial,
-        initialTasks: projectTasksInitial
+        initialTasks: projectTasksInitial,
+        onSyncError: useCallback((message: string) => {
+            setSyncErrorToast({ type: 'error', message })
+        }, []),
     })
 
     // STABLE handlers using useCallback
@@ -424,13 +427,31 @@ export function DashboardClient({
             const override = taskOverrides[base.id]
             return override ? { ...base, ...override } as Task : base
         })
-        // Add quick tasks that aren't already in the list
         const existingIds = new Set(merged.map(t => t.id))
+        // Add new tasks from mind map (created during session, not in initialTasks)
+        for (const ct of currentTasks) {
+            if (!existingIds.has(ct.id)) {
+                const override = taskOverrides[ct.id]
+                merged.push(override ? { ...ct, ...override } as Task : ct)
+                existingIds.add(ct.id)
+            }
+        }
+        // Add groups from mind map (for completeness)
+        for (const cg of currentGroups) {
+            if (!existingIds.has(cg.id)) {
+                merged.push(cg)
+                existingIds.add(cg.id)
+            }
+        }
+        // Add quick tasks that aren't already in the list
         for (const qt of quickTasks) {
             if (!existingIds.has(qt.id)) merged.push(qt)
         }
         return merged
-    }, [initialTasks, currentTasks, quickTasks, taskOverrides])
+    }, [initialTasks, currentTasks, currentGroups, quickTasks, taskOverrides])
+
+    // --- Sync Error Toast ---
+    const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
 
     // --- Undo/Redo Keyboard Listener ---
     const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
@@ -549,6 +570,15 @@ export function DashboardClient({
                         message={undoToast.message}
                         duration={2000}
                         onClose={() => setUndoToast(null)}
+                    />
+                )}
+                {/* Sync Error Toast */}
+                {syncErrorToast && (
+                    <CalendarToast
+                        type={syncErrorToast.type}
+                        message={syncErrorToast.message}
+                        duration={4000}
+                        onClose={() => setSyncErrorToast(null)}
                     />
                 )}
                 {/* Quick Task Toast */}

@@ -11,6 +11,7 @@ interface UseMindMapSyncProps {
     userId: string
     initialGroups: TaskGroup[]  // 旧テーブル互換（page.tsx から渡される）
     initialTasks?: Task[]
+    onSyncError?: (message: string) => void
 }
 
 interface UseMindMapSyncReturn {
@@ -42,7 +43,8 @@ export function useMindMapSync({
     projectId,
     userId,
     initialGroups,
-    initialTasks = []
+    initialTasks = [],
+    onSyncError,
 }: UseMindMapSyncProps): UseMindMapSyncReturn {
     const supabase = createClient()
     const { cancelNotifications } = useNotificationScheduler()
@@ -261,6 +263,15 @@ export function useMindMapSync({
 
         setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...updates } : t))
 
+        const { error } = await supabase.from('tasks').update(updates).eq('id', groupId)
+        if (error) {
+            console.error('[Sync] updateGroup DB error:', error)
+            onSyncError?.(`グループの更新に失敗しました: ${error.message}`)
+            // Rollback
+            setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...beforeValues } : t))
+            return
+        }
+
         pushAction({
             description: `設定を変更`,
             undo: async () => {
@@ -272,13 +283,7 @@ export function useMindMapSync({
                 await supabase.from('tasks').update(updates).eq('id', groupId)
             },
         })
-
-        try {
-            await supabase.from('tasks').update(updates).eq('id', groupId)
-        } catch (e) {
-            console.error('[Sync] updateGroup failed:', e)
-        }
-    }, [supabase, pushAction])
+    }, [supabase, pushAction, onSyncError])
 
     // deleteGroup → deleteTask と同じロジック
     const deleteGroup = useCallback(async (groupId: string) => {
@@ -293,6 +298,15 @@ export function useMindMapSync({
         const allIds = new Set(allCaptured.map(t => t.id))
 
         setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+
+        const { error } = await supabase.from('tasks').delete().eq('id', groupId)
+        if (error) {
+            console.error('[Sync] deleteGroup DB error:', error)
+            onSyncError?.(`グループの削除に失敗しました: ${error.message}`)
+            // Rollback: restore removed tasks
+            setAllTasks(prev => [...prev, ...allCaptured])
+            return
+        }
 
         if (capturedTask) {
             pushAction({
@@ -311,13 +325,7 @@ export function useMindMapSync({
                 },
             })
         }
-
-        try {
-            await supabase.from('tasks').delete().eq('id', groupId)
-        } catch (e) {
-            console.error('[Sync] deleteGroup failed:', e)
-        }
-    }, [supabase, pushAction])
+    }, [supabase, pushAction, onSyncError])
 
     // --- タスク操作 ---
     const createTask = useCallback(async (groupId: string, title: string = "New Task", parentTaskId: string | null = null): Promise<Task | null> => {
@@ -521,6 +529,7 @@ export function useMindMapSync({
             const { error: updateError, data: updateData } = await supabase.from('tasks').update(updates).eq('id', taskId).select()
             if (updateError) {
                 console.error('[Sync] updateTask DB error:', updateError)
+                onSyncError?.(`保存に失敗しました: ${updateError.message}`)
                 // Rollback optimistic update
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
                 return
@@ -580,6 +589,10 @@ export function useMindMapSync({
             }
         } catch (e) {
             console.error('[Sync] updateTask failed:', e)
+            onSyncError?.('タスクの更新に失敗しました: ネットワークエラー')
+            // Rollback optimistic update
+            setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+            return
         }
 
         const capturedParentUndo = parentAutoCompleteUndo
@@ -607,7 +620,7 @@ export function useMindMapSync({
                 }
             },
         })
-    }, [supabase, pushAction])
+    }, [supabase, pushAction, onSyncError])
 
     const deleteTask = useCallback(async (taskId: string) => {
         const currentAll = allTasksRef.current;
@@ -621,6 +634,30 @@ export function useMindMapSync({
 
         const allIds = new Set(allCaptured.map(t => t.id))
         setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+
+        try {
+            await cancelNotifications('task', taskId);
+        } catch (error) {
+            console.error('[Notification] Failed to cancel notifications:', error);
+        }
+
+        try {
+            const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                console.error('[Sync] deleteTask API failed:', errorData)
+                onSyncError?.(`タスクの削除に失敗しました: ${errorData.message || response.statusText}`)
+                // Rollback: restore removed tasks
+                setAllTasks(prev => [...prev, ...allCaptured])
+                return
+            }
+        } catch (e) {
+            console.error('[Sync] deleteTask failed:', e)
+            onSyncError?.(`タスクの削除に失敗しました: ネットワークエラー`)
+            // Rollback: restore removed tasks
+            setAllTasks(prev => [...prev, ...allCaptured])
+            return
+        }
 
         if (capturedTask) {
             pushAction({
@@ -643,23 +680,7 @@ export function useMindMapSync({
                 },
             })
         }
-
-        try {
-            await cancelNotifications('task', taskId);
-        } catch (error) {
-            console.error('[Notification] Failed to cancel notifications:', error);
-        }
-
-        try {
-            const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
-            if (!response.ok) {
-                const error = await response.json()
-                console.error('[Sync] deleteTask API failed:', error)
-            }
-        } catch (e) {
-            console.error('[Sync] deleteTask failed:', e)
-        }
-    }, [cancelNotifications, supabase, pushAction])
+    }, [cancelNotifications, supabase, pushAction, onSyncError])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
         const currentAll = allTasksRef.current;
@@ -668,6 +689,15 @@ export function useMindMapSync({
         const taskTitle = task?.title || 'タスク'
 
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: newGroupId } : t))
+
+        const { error } = await supabase.from('tasks').update({ parent_task_id: newGroupId }).eq('id', taskId)
+        if (error) {
+            console.error('[Sync] moveTask DB error:', error)
+            onSyncError?.(`タスクの移動に失敗しました: ${error.message}`)
+            // Rollback
+            setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: oldParentId } : t))
+            return
+        }
 
         if (oldParentId) {
             pushAction({
@@ -682,13 +712,7 @@ export function useMindMapSync({
                 },
             })
         }
-
-        try {
-            await supabase.from('tasks').update({ parent_task_id: newGroupId }).eq('id', taskId)
-        } catch (e) {
-            console.error('[Sync] moveTask failed:', e)
-        }
-    }, [supabase, pushAction])
+    }, [supabase, pushAction, onSyncError])
 
     // --- Bulk Delete ---
     const bulkDelete = useCallback(async (groupIds: string[], taskIds: string[]) => {
@@ -728,14 +752,25 @@ export function useMindMapSync({
         })
 
         // DB sync - ルートレベルのIDだけ削除（CASCADE で子孫も削除される）
-        try {
-            for (const id of [...groupIds, ...taskIds]) {
-                await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+        let bulkFailed = false
+        for (const id of [...groupIds, ...taskIds]) {
+            try {
+                const response = await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+                if (!response.ok) {
+                    console.error('[Sync] bulkDelete API failed for:', id)
+                    bulkFailed = true
+                }
+            } catch (e) {
+                console.error('[Sync] bulkDelete failed:', e)
+                bulkFailed = true
             }
-        } catch (e) {
-            console.error('[Sync] bulkDelete failed:', e)
         }
-    }, [supabase, pushAction])
+        if (bulkFailed) {
+            onSyncError?.('一括削除の一部が失敗しました')
+            // Rollback: restore all
+            setAllTasks(prev => [...prev, ...capturedTasks])
+        }
+    }, [supabase, pushAction, onSyncError])
 
     // --- Helper Functions ---
     const getChildTasks = useCallback((parentTaskId: string): Task[] => {
@@ -830,15 +865,28 @@ export function useMindMapSync({
             },
         })
 
-        try {
-            for (const u of updates) {
-                const { id, ...rest } = u
-                await supabase.from('tasks').update(rest).eq('id', id)
+        let reorderFailed = false
+        for (const u of updates) {
+            const { id, ...rest } = u
+            const { error } = await supabase.from('tasks').update(rest).eq('id', id)
+            if (error) {
+                console.error('[Sync] reorderTask DB error:', error)
+                reorderFailed = true
+                break
             }
-        } catch (e) {
-            console.error('[Sync] reorderTask failed:', e)
         }
-    }, [supabase, pushAction])
+        if (reorderFailed) {
+            onSyncError?.('並び替えの保存に失敗しました')
+            // Rollback to original order
+            setAllTasks(prev => prev.map(t => {
+                if (t.id === taskId) {
+                    return { ...t, parent_task_id: beforeParentId, order_index: beforeOrderIndex }
+                }
+                const original = currentAll.find(o => o.id === t.id)
+                return original ? { ...t, order_index: original.order_index } : t
+            }))
+        }
+    }, [supabase, pushAction, onSyncError])
 
     // reorderGroup → reorderTask にデリゲート（ルートタスクの並び替え）
     const reorderGroup = useCallback(async (groupId: string, referenceGroupId: string, position: 'above' | 'below') => {
@@ -885,16 +933,20 @@ export function useMindMapSync({
             },
         })
 
-        try {
-            await supabase.from('tasks').update({
-                parent_task_id: null,
-                project_id: projectId,
-                order_index: maxOrder,
-            }).eq('id', taskId)
-        } catch (e) {
-            console.error('[Sync] promoteTaskToGroup failed:', e)
+        const { error } = await supabase.from('tasks').update({
+            parent_task_id: null,
+            project_id: projectId,
+            order_index: maxOrder,
+        }).eq('id', taskId)
+        if (error) {
+            console.error('[Sync] promoteTaskToGroup DB error:', error)
+            onSyncError?.('ルート昇格の保存に失敗しました')
+            // Rollback
+            setAllTasks(prev => prev.map(t =>
+                t.id === taskId ? { ...t, parent_task_id: beforeParentId, order_index: task.order_index } : t
+            ))
         }
-    }, [projectId, supabase, pushAction])
+    }, [projectId, supabase, pushAction, onSyncError])
 
     const updateProjectTitle = useCallback(async (projectId: string, title: string) => {
         try {
