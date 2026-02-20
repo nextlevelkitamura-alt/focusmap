@@ -932,6 +932,18 @@ function MobileMindMapContent({
         }
     }, [endProxy])
 
+    // ノード追加/削除時にfitViewで全体が見えるように調整
+    const prevNodeCountRef = useRef(augmentedNodes.length)
+    useEffect(() => {
+        if (augmentedNodes.length !== prevNodeCountRef.current) {
+            prevNodeCountRef.current = augmentedNodes.length
+            // ノード数変化 → レイアウト再計算後にfitView
+            requestAnimationFrame(() => {
+                reactFlow.fitView({ padding: 0.3, maxZoom: 1.0, duration: 200 })
+            })
+        }
+    }, [augmentedNodes.length, reactFlow])
+
     // マインドマップ表示中はbodyのスクロールを防止
     useEffect(() => {
         document.body.style.overflow = 'hidden'
@@ -1014,7 +1026,7 @@ function MobileMindMapContent({
                 minZoom={0.2}
                 maxZoom={2.0}
                 selectNodesOnDrag={false}
-                onlyRenderVisibleElements={true}
+                onlyRenderVisibleElements={false}
             >
                 {/* No controls or background on mobile to save space */}
             </ReactFlow>

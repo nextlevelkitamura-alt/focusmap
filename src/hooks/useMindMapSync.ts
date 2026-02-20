@@ -49,9 +49,29 @@ export function useMindMapSync({
     const supabase = createClient()
     const { cancelNotifications } = useNotificationScheduler()
 
+    // TaskGroup → Task 変換ヘルパー（旧 task_groups テーブルのレコードに不足フィールドを補完）
+    const convertGroupToTask = useCallback((g: TaskGroup): Task => ({
+        ...g,
+        is_group: true,
+        group_id: null,
+        parent_task_id: null, // TaskGroup には parent_task_id がないため明示的に null 設定
+        project_id: g.project_id,
+        status: (g as any).status ?? 'todo',
+        actual_time_minutes: (g as any).actual_time_minutes ?? 0,
+        total_elapsed_seconds: (g as any).total_elapsed_seconds ?? 0,
+        last_started_at: (g as any).last_started_at ?? null,
+        is_timer_running: (g as any).is_timer_running ?? false,
+        google_event_id: (g as any).google_event_id ?? null,
+        calendar_event_id: (g as any).calendar_event_id ?? null,
+        calendar_id: (g as any).calendar_id ?? null,
+        is_habit: (g as any).is_habit ?? false,
+        habit_frequency: (g as any).habit_frequency ?? null,
+        habit_icon: (g as any).habit_icon ?? null,
+    } as Task), [])
+
     // 統合ステート管理（全タスクを1つのリストで管理）
     const [allTasks, setAllTasks] = useState<Task[]>([
-        ...initialGroups.map(g => ({ ...g, is_group: true, group_id: null, project_id: g.project_id } as Task)),
+        ...initialGroups.map(convertGroupToTask),
         ...initialTasks
     ])
     const [isLoading, setIsLoading] = useState(false)
@@ -92,12 +112,12 @@ export function useMindMapSync({
                 !allInitialIds.has(t.id) && t.project_id === projectId
             );
             return [
-                ...initialGroups.map(g => ({ ...g, is_group: true, group_id: null, project_id: g.project_id } as Task)),
+                ...initialGroups.map(convertGroupToTask),
                 ...initialTasks,
                 ...optimisticItems
             ];
         });
-    }, [initialGroups, initialTasks, projectId])
+    }, [initialGroups, initialTasks, projectId, convertGroupToTask])
 
     // Watchdog: 楽観的タスクが state から消えた場合に再追加（現プロジェクトのみ）
     useEffect(() => {
