@@ -1,6 +1,6 @@
 import { createClient } from "@/utils/supabase/server"
-import { DashboardClient } from "./dashboard-client"
 import { redirect } from "next/navigation"
+import { DashboardLoader } from "./dashboard-loader"
 
 export default async function DashboardPage() {
     const supabase = await createClient()
@@ -38,7 +38,7 @@ export default async function DashboardPage() {
         .order("priority", { ascending: false })
 
     return (
-        <DashboardClient
+        <DashboardLoader
             initialSpaces={spaces || []}
             initialProjects={projects || []}
             initialGroups={groups || []}
@@ -47,4 +47,3 @@ export default async function DashboardPage() {
         />
     )
 }
-
