@@ -146,6 +146,11 @@
   - Phase 1: DB基盤 + 取り込みHook ✅
   - Phase 2: UI統合 + event_completions廃止 ✅
   - Phase 3: 設定画面 + クリーンアップ ○
+- 🔧 **設定画面リデザイン**（カレンダー設定拡張、自動取り込み制御、ダークモード、アカウント管理） → [計画](plans/features/settings-redesign.md)
+  - Phase 1: UI構築（モバイル） ○
+  - Phase 2: カレンダー設定実装 ○
+  - Phase 3: アカウント機能実装 ○
+  - Phase 4: PC統合 ○
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
