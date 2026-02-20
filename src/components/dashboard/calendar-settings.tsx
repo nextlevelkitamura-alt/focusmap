@@ -3,9 +3,12 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Settings2 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
+import { cn } from "@/lib/utils"
 
 interface CalendarStatus {
   isConnected: boolean
@@ -15,9 +18,26 @@ interface CalendarStatus {
   tokenExpired?: boolean
 }
 
+interface CalendarInfo {
+  google_calendar_id: string
+  name: string
+  background_color?: string
+}
+
 interface CalendarSettingsProps {
   compact?: boolean
 }
+
+const IMPORT_PERIOD_OPTIONS = [
+  { value: '7', label: '1週間' },
+  { value: '30', label: '1ヶ月' },
+  { value: '90', label: '3ヶ月' },
+]
+
+// LocalStorage keys
+const STORAGE_KEY_AUTO_IMPORT = 'shikumika_auto_import_enabled'
+const STORAGE_KEY_IMPORT_PERIOD = 'shikumika_import_period_days'
+const STORAGE_KEY_IMPORT_CALENDARS = 'shikumika_import_calendar_ids'
 
 export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   const [status, setStatus] = useState<CalendarStatus>({
@@ -27,10 +47,38 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
     lastSyncedAt: null
   })
   const [isLoading, setIsLoading] = useState(true)
+  const [isSyncing, setIsSyncing] = useState(false)
+
+  // New settings (localStorage for now)
+  const [autoImportEnabled, setAutoImportEnabled] = useState(true)
+  const [importPeriod, setImportPeriod] = useState('30')
+  const [calendars, setCalendars] = useState<CalendarInfo[]>([])
+  const [selectedCalendarIds, setSelectedCalendarIds] = useState<Set<string>>(new Set())
+  const [showCalendarSelect, setShowCalendarSelect] = useState(false)
 
   useEffect(() => {
     fetchStatus()
+    loadLocalSettings()
   }, [])
+
+  const loadLocalSettings = () => {
+    // Load from localStorage
+    const savedAutoImport = localStorage.getItem(STORAGE_KEY_AUTO_IMPORT)
+    const savedPeriod = localStorage.getItem(STORAGE_KEY_IMPORT_PERIOD)
+    const savedCalendars = localStorage.getItem(STORAGE_KEY_IMPORT_CALENDARS)
+
+    if (savedAutoImport !== null) {
+      setAutoImportEnabled(savedAutoImport === 'true')
+    }
+    if (savedPeriod) {
+      setImportPeriod(savedPeriod)
+    }
+    if (savedCalendars) {
+      try {
+        setSelectedCalendarIds(new Set(JSON.parse(savedCalendars)))
+      } catch {}
+    }
+  }
 
   const fetchStatus = async () => {
     try {
@@ -45,6 +93,20 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
       setIsLoading(false)
     }
   }
+
+  // Fetch calendars when connected
+  useEffect(() => {
+    if (status.isConnected) {
+      fetch('/api/calendars')
+        .then(res => res.json())
+        .then(data => {
+          if (data.calendars) {
+            setCalendars(data.calendars)
+          }
+        })
+        .catch(console.error)
+    }
+  }, [status.isConnected])
 
   const handleConnect = () => {
     window.location.href = '/api/calendar/connect'
@@ -77,6 +139,45 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleManualSync = async () => {
+    setIsSyncing(true)
+    try {
+      // Trigger calendar event refetch
+      const response = await fetch('/api/calendar/sync', { method: 'POST' })
+      if (response.ok) {
+        const data = await response.json()
+        setStatus(prev => ({ ...prev, lastSyncedAt: new Date().toISOString() }))
+      }
+    } catch (error) {
+      console.error('Manual sync error:', error)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  const handleAutoImportToggle = (enabled: boolean) => {
+    setAutoImportEnabled(enabled)
+    localStorage.setItem(STORAGE_KEY_AUTO_IMPORT, String(enabled))
+  }
+
+  const handlePeriodChange = (period: string) => {
+    setImportPeriod(period)
+    localStorage.setItem(STORAGE_KEY_IMPORT_PERIOD, period)
+  }
+
+  const handleCalendarToggle = (calendarId: string) => {
+    setSelectedCalendarIds(prev => {
+      const next = new Set(prev)
+      if (next.has(calendarId)) {
+        next.delete(calendarId)
+      } else {
+        next.add(calendarId)
+      }
+      localStorage.setItem(STORAGE_KEY_IMPORT_CALENDARS, JSON.stringify([...next]))
+      return next
+    })
   }
 
   // Compact mode (for header)
@@ -170,22 +271,34 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
           </div>
 
           {/* アクションボタン */}
-          {!status.isConnected ? (
-            <Button onClick={handleConnect} size="sm">
-              <Link2 className="h-4 w-4 mr-2" />
-              連携する
-            </Button>
-          ) : status.tokenExpired ? (
-            <Button onClick={handleConnect} size="sm" variant="outline" className="text-amber-600 border-amber-300 hover:bg-amber-50">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              再連携
-            </Button>
-          ) : (
-            <Button onClick={handleDisconnect} size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive">
-              <Unlink className="h-4 w-4 mr-2" />
-              連携解除
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {status.isConnected && !status.tokenExpired && (
+              <Button
+                onClick={handleManualSync}
+                size="sm"
+                variant="outline"
+                disabled={isSyncing}
+              >
+                <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+              </Button>
+            )}
+            {!status.isConnected ? (
+              <Button onClick={handleConnect} size="sm">
+                <Link2 className="h-4 w-4 mr-2" />
+                連携する
+              </Button>
+            ) : status.tokenExpired ? (
+              <Button onClick={handleConnect} size="sm" variant="outline" className="text-amber-600 border-amber-300 hover:bg-amber-50">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                再連携
+              </Button>
+            ) : (
+              <Button onClick={handleDisconnect} size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive">
+                <Unlink className="h-4 w-4 mr-2" />
+                連携解除
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* 最終同期時刻 */}
@@ -204,7 +317,104 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
             </p>
           </div>
         )}
+
+        {/* 自動取り込み設定（連携中のみ表示） */}
+        {status.isConnected && !status.tokenExpired && (
+          <div className="pt-4 border-t space-y-4">
+            <div className="flex items-center gap-2">
+              <Download className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">自動取り込み</span>
+            </div>
+
+            {/* ON/OFF */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <p className="text-sm">イベントをタスクとして取り込む</p>
+                <p className="text-xs text-muted-foreground">
+                  カレンダーの予定を自動的にタスク化します
+                </p>
+              </div>
+              <Switch
+                checked={autoImportEnabled}
+                onCheckedChange={handleAutoImportToggle}
+              />
+            </div>
+
+            {/* 取り込み期間 */}
+            {autoImportEnabled && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm">取り込み期間</span>
+                <Select value={importPeriod} onValueChange={handlePeriodChange}>
+                  <SelectTrigger className="w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IMPORT_PERIOD_OPTIONS.map(option => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* カレンダー選択 */}
+            {autoImportEnabled && calendars.length > 0 && (
+              <div className="space-y-2">
+                <button
+                  onClick={() => setShowCalendarSelect(!showCalendarSelect)}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  <Settings2 className="w-4 h-4" />
+                  取り込むカレンダーを選択
+                  <span className="text-xs">
+                    ({selectedCalendarIds.size === 0 ? 'すべて' : `${selectedCalendarIds.size}件`})
+                  </span>
+                </button>
+
+                {showCalendarSelect && (
+                  <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                    {calendars.map(cal => (
+                      <label
+                        key={cal.google_calendar_id}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedCalendarIds.size === 0 || selectedCalendarIds.has(cal.google_calendar_id)}
+                          onChange={() => handleCalendarToggle(cal.google_calendar_id)}
+                          className="rounded border-gray-300"
+                        />
+                        <div
+                          className="w-3 h-3 rounded"
+                          style={{ backgroundColor: cal.background_color || '#039BE5' }}
+                        />
+                        <span className="text-sm truncate">{cal.name}</span>
+                      </label>
+                    ))}
+                    <p className="text-[10px] text-muted-foreground pt-1">
+                      ※ 選択なし = すべてのカレンダーを取り込み
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
+}
+
+// Export helpers for use in today-view
+export function getAutoImportSettings() {
+  if (typeof window === 'undefined') {
+    return { enabled: true, periodDays: 30, calendarIds: [] }
+  }
+  const enabled = localStorage.getItem(STORAGE_KEY_AUTO_IMPORT) !== 'false'
+  const periodDays = parseInt(localStorage.getItem(STORAGE_KEY_IMPORT_PERIOD) || '30', 10)
+  const calendarIdsJson = localStorage.getItem(STORAGE_KEY_IMPORT_CALENDARS)
+  const calendarIds = calendarIdsJson ? JSON.parse(calendarIdsJson) : []
+  return { enabled, periodDays, calendarIds }
 }

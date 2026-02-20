@@ -17,6 +17,7 @@ import { useView } from "@/contexts/ViewContext"
 import { TodayView } from "@/components/today/today-view"
 import { HabitsView } from "@/components/habits/habits-view"
 import { OutlineView } from "@/components/mobile/outline-view"
+import { MemoView } from "@/components/memo/memo-view"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -715,6 +716,14 @@ export function DashboardClient({
                             onUpdateGroup={updateGroup}
                             onUpdateProject={handleUpdateProjectTitle}
                         />
+                    </div>
+                )}
+
+                {isViewReady && activeView === 'memo' && (
+                    <div className="flex-1 overflow-hidden md:flex md:justify-center">
+                        <div className="w-full max-w-2xl">
+                            <MemoView />
+                        </div>
                     </div>
                 )}
 

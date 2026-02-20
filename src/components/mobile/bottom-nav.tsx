@@ -2,12 +2,13 @@
 
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { usePathname, useRouter } from "next/navigation"
-import { CalendarDays, Network, Target, Settings } from "lucide-react"
+import { CalendarDays, Network, Target, Settings, StickyNote } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navItems: { id: DashboardView | 'settings'; icon: typeof CalendarDays; label: string }[] = [
     { id: "today", icon: CalendarDays, label: "To do" },
     { id: "map", icon: Network, label: "マップ" },
+    { id: "memo", icon: StickyNote, label: "メモ" },
     { id: "habits", icon: Target, label: "習慣" },
     { id: "settings", icon: Settings, label: "設定" },
 ]
@@ -21,7 +22,7 @@ export function BottomNav() {
 
     return (
         <div className="fixed bottom-0 left-0 z-50 w-full h-16 bg-background border-t md:hidden">
-            <div className="grid h-full grid-cols-4 font-medium">
+            <div className="grid h-full grid-cols-5 font-medium">
                 {navItems.map((item) => {
                     const isActive = item.id === 'settings'
                         ? isSettingsPage
@@ -45,7 +46,7 @@ export function BottomNav() {
                                 isActive ? "text-primary" : "text-muted-foreground"
                             )}
                         >
-                            <item.icon className={cn("w-6 h-6 mb-1", isActive && "fill-current")} />
+                            <item.icon className={cn("w-5 h-5 mb-1", isActive && "fill-current")} />
                             <span className="text-[10px]">{item.label}</span>
                         </button>
                     )

@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
-export type DashboardView = 'today' | 'map' | 'habits'
+export type DashboardView = 'today' | 'map' | 'habits' | 'memo'
 
 const STORAGE_KEY = 'shikumika:activeView'
 
@@ -28,7 +28,7 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
     // Read localStorage after mount (client-only)
     useEffect(() => {
         const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
-        if (saved && ['today', 'map', 'habits'].includes(saved)) {
+        if (saved && ['today', 'map', 'habits', 'memo'].includes(saved)) {
             setActiveViewState(saved)
         } else if (window.innerWidth < 768) {
             setActiveViewState('today')
