@@ -124,19 +124,12 @@
   - レイアウトロジック、ノードコンポーネント、Hooks の責務分離
 
 #### 機能拡張
-- 🔧 **AIメモ機能** → [計画](plans/features/ai-memo-feature.md)
-  - Phase 1: メニューバー追加 + メモ入力UI + テキスト保存 ○
-  - Phase 2: AI統合（分類: カレンダー vs マップ） ○
-  - Phase 3: マップ/カレンダーへの追加処理 ○
-  - Phase 4: 音声入力（Web Speech API / Groq+Whisper） ○
-  - Phase 5: チャット壁打ち + 修正指示UI ○
-  - Phase 6: タスクメモ欄 + MindMap同期 ○
-  - 音声認識: オープンソース/低コスト/高精度を優先
+- ❌ **AIメモ機能** → 中止（計画書は保持: [計画](plans/features/ai-memo-feature.md)）
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
 - ✅ **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
   - Phase 1: DB移行 ✅ | Phase 2: コード変更 ✅ | Phase 3: 旧テーブル削除 ✅
-- 🔧 **スペース機能 + 左サイドバー再設計**（Goal→Space移行、プロジェクトCRUD、カレンダー紐付け） → [計画](plans/features/space-sidebar-redesign.md)
+- ❌ **スペース機能 + 左サイドバー再設計** → 中止（計画書は保持: [計画](plans/features/space-sidebar-redesign.md)）
 - ✅ **習慣機能強化 + モバイルUI改善**（習慣DB、API、習慣ビュー、PC版統合） → [計画](plans/features/mobile-ui-redesign.md)
 - ✅ **モバイル今日ビュー強化**（D&D時間変更、タップ編集、チェックボックス、イベント完了DB） → [仕様](specs/mobile-today-view-enhancement.md) | [計画](plans/features/mobile-today-view-enhancement.md)
 - ✅ **クイックタスク追加 + サブタスク追加**（FABボタン、プロジェクト選択、カレンダー横+ボタン、チェックリスト） → [計画](plans/features/quick-task-add.md)
@@ -151,6 +144,7 @@
   - Phase 2: カレンダー設定実装 ✅
   - Phase 3: アカウント機能実装 ✅
   - Phase 4: PC統合 ✅
+- 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [計画](plans/features/habit-daily-reset.md)
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -159,6 +153,8 @@
 
 ## 完了履歴
 
+- 2026-02-21: **AIメモ機能** 中止（計画書保持）
+- 2026-02-21: **スペース機能 + 左サイドバー再設計** 中止（計画書保持）
 - 2026-02-20: **カレンダーイベント自動取り込み Phase 1-2** 完了 (C, /tdd+/impl, DB基盤+UI統合+event_completions廃止+1ヶ月取り込み)
 - 2026-02-19: **tasks/route・tasks/[id]/route テスト追加** 完了 (C, /test, 25テスト追加 → 計203テスト)
 - 2026-02-19: **event-completions・habits・habits/completions route テスト追加** 完了 (C, /test, 41テスト追加 → 計178テスト)
@@ -185,5 +181,4 @@
 
 ## 現在進行中のタスク
 
-- 🔧 **AIメモ機能** → Phase 1-6 未着手 → [計画](plans/features/ai-memo-feature.md)
-- 🔧 **スペース機能 + 左サイドバー再設計** → 未着手（依存解消済み） → [計画](plans/features/space-sidebar-redesign.md)
+- 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [計画](plans/features/habit-daily-reset.md)
