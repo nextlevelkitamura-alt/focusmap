@@ -772,9 +772,12 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
 
                 <GripVertical className="w-3 h-3 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
 
-                {settings.showStatus && (
-                    <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", data?.status === 'done' ? "bg-primary" : "bg-muted-foreground/30")} />
-                )}
+                {settings.showStatus && (() => {
+                    const taskDone = data?.is_habit
+                        ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
+                        : data?.status === 'done'
+                    return <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", taskDone ? "bg-primary" : "bg-muted-foreground/30")} />
+                })()}
 
                 {/* Habit Icon Badge */}
                 {data?.is_habit && data?.habit_icon && (
@@ -818,7 +821,9 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                         "nodrag nopan flex-1 bg-transparent border-none text-xs focus:outline-none focus:ring-0 px-0.5 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words",
                         !showCaret && "caret-transparent",
                         !showCaret && !selected && "pointer-events-none select-none",
-                        data?.status === 'done' && "line-through text-muted-foreground"
+                        (data?.is_habit
+                            ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
+                            : data?.status === 'done') && "line-through text-muted-foreground"
                     )}
                 />
 

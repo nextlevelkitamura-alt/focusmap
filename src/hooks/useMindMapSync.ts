@@ -625,7 +625,8 @@ export function useMindMapSync({
 
                     if (allSiblingsDone) {
                         const parent = currentAll.find(t => t.id === task.parent_task_id)
-                        if (parent && parent.status !== 'done') {
+                        // 習慣タスクは AUTO-COMPLETE しない（日次完了で親が完了扱いになるのを防止）
+                        if (parent && parent.status !== 'done' && !parent.is_habit) {
                             parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
                         }
                         setAllTasks(prev => prev.map(t =>
@@ -660,7 +661,8 @@ export function useMindMapSync({
                 const task = currentAll.find(t => t.id === taskId);
                 if (task?.parent_task_id) {
                     const parent = currentAll.find(t => t.id === task.parent_task_id);
-                    if (parent?.status === 'done') {
+                    // 習慣タスクは AUTO-UNCOMPLETE しない
+                    if (parent?.status === 'done' && !parent.is_habit) {
                         parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
                         setAllTasks(prev => prev.map(t =>
                             t.id === task.parent_task_id ? { ...t, status: 'todo' } : t

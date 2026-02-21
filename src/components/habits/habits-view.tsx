@@ -7,9 +7,10 @@ import {
 } from "@/hooks/useHabits"
 import {
     Target, ChevronDown, ChevronRight, ChevronLeft, Flame, Trash2,
-    Calendar as CalendarIcon, Repeat, Loader2, CheckCircle2
+    Calendar as CalendarIcon, Repeat, Loader2, CheckCircle2, Settings2
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { HabitSettingsSheet } from "./habit-settings-sheet"
 
 // --- Types ---
 
@@ -86,6 +87,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
     const [expandedHabits, setExpandedHabits] = useState<Set<string>>(new Set())
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
     const [weekOffset, setWeekOffset] = useState(0) // 0 = this week, -1 = last week, etc.
+    const [settingsHabit, setSettingsHabit] = useState<Task | null>(null)
 
     const toggleExpand = (habitId: string) => {
         setExpandedHabits(prev => {
@@ -306,6 +308,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onRequestDelete={() => setConfirmDeleteId(item.habit.id)}
                                     onConfirmDelete={() => { removeHabit(item.habit.id); setConfirmDeleteId(null) }}
                                     onCancelDelete={() => setConfirmDeleteId(null)}
+                                    onOpenSettings={() => setSettingsHabit(item.habit)}
                                 />
                             ))}
                         </div>
@@ -333,12 +336,23 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onRequestDelete={() => setConfirmDeleteId(item.habit.id)}
                                     onConfirmDelete={() => { removeHabit(item.habit.id); setConfirmDeleteId(null) }}
                                     onCancelDelete={() => setConfirmDeleteId(null)}
+                                    onOpenSettings={() => setSettingsHabit(item.habit)}
                                 />
                             ))}
                         </div>
                     </section>
                 )}
             </div>
+
+            {/* Habit Settings Sheet */}
+            {settingsHabit && onUpdateTask && (
+                <HabitSettingsSheet
+                    open={!!settingsHabit}
+                    onOpenChange={(open) => { if (!open) setSettingsHabit(null) }}
+                    habit={settingsHabit}
+                    onUpdate={onUpdateTask}
+                />
+            )}
         </div>
     )
 }
@@ -356,9 +370,10 @@ interface HabitCardProps {
     onRequestDelete: () => void
     onConfirmDelete: () => void
     onCancelDelete: () => void
+    onOpenSettings: () => void
 }
 
-function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onToggleChild, isToday, isConfirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete }: HabitCardProps) {
+function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onToggleChild, isToday, isConfirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete, onOpenSettings }: HabitCardProps) {
     const { habit, childTasks, streak, isCompletedToday } = item
     const freq = habit.habit_frequency
     const icon = habit.habit_icon
@@ -470,6 +485,15 @@ function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onTog
                         }
                     </button>
                 )}
+
+                {/* Settings button */}
+                <button
+                    onClick={(e) => { e.stopPropagation(); onOpenSettings() }}
+                    className="flex-shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors p-0.5"
+                    title="習慣設定"
+                >
+                    <Settings2 className="h-3.5 w-3.5" />
+                </button>
 
                 {/* Delete button */}
                 <button

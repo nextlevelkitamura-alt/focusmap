@@ -299,7 +299,10 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     }, [isEditing])
 
     const isHabit = data?.is_habit || data?.parentIsHabit
-    const isDone = data?.status === 'done'
+    // 習慣タスクは期間完了（end_date 過ぎ + status='done'）のみ完了表示
+    const isDone = data?.is_habit
+        ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
+        : data?.status === 'done'
     const hasEstimatedTime = (data?.estimatedDisplayMinutes ?? 0) > 0
     const hasPriority = data?.priority != null
     const hasScheduledAt = !!data?.scheduled_at

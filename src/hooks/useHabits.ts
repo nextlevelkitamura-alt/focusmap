@@ -149,6 +149,49 @@ export function useHabits() {
             })
 
             setHabits(processed)
+
+            // 期間完了の自動判定: end_date が過ぎた習慣をチェック
+            const today = new Date()
+            today.setHours(0, 0, 0, 0)
+            for (const h of processed) {
+                const habit = h.habit
+                if (habit.status === 'done' || !habit.is_habit) continue
+                if (!habit.habit_end_date) continue
+
+                const endDate = new Date(habit.habit_end_date + 'T00:00:00')
+                if (today <= endDate) continue // まだ期間中
+
+                // 期間内の全対象日をチェック
+                const startDate = habit.habit_start_date
+                    ? new Date(habit.habit_start_date + 'T00:00:00')
+                    : endDate // start未設定なら終了日のみ
+                const targetDays = parseFrequency(habit.habit_frequency)
+                const completedDates = new Set(h.completions.map(c => c.completed_date))
+
+                let allCompleted = true
+                const d = new Date(startDate)
+                while (d <= endDate) {
+                    const dayKey = DAY_KEYS[d.getDay()]
+                    // 対象曜日のみチェック（周波数未設定なら全日チェック）
+                    if (targetDays.length === 0 || targetDays.includes(dayKey)) {
+                        const dateStr = formatDateString(d)
+                        if (!completedDates.has(dateStr)) {
+                            allCompleted = false
+                            break
+                        }
+                    }
+                    d.setDate(d.getDate() + 1)
+                }
+
+                if (allCompleted) {
+                    // 期間完了 → status を 'done' に更新
+                    fetch(`/api/tasks/${habit.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: 'done' }),
+                    }).catch(err => console.error('[useHabits] Period complete update failed:', err))
+                }
+            }
         } catch (err) {
             console.error('[useHabits] Fetch error:', err)
             setError('Failed to fetch habits')
