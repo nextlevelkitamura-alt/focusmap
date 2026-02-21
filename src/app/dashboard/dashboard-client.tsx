@@ -18,6 +18,7 @@ import { TodayView } from "@/components/today/today-view"
 import { HabitsView } from "@/components/habits/habits-view"
 import { OutlineView } from "@/components/mobile/outline-view"
 import { MemoView } from "@/components/memo/memo-view"
+import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -793,6 +794,8 @@ export function DashboardClient({
                     <RightSidebar ref={rightSidebarRef} onUpdateTask={updateTask} />
                 </div>
             </div>
+            {/* AI Chat Floating Panel */}
+            <AiChatPanel />
             </TimerProvider>
         </DragProvider>
     )

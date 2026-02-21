@@ -6,6 +6,7 @@ interface UseVoiceRecorderReturn {
   isRecording: boolean
   isTranscribing: boolean
   error: string | null
+  analyserRef: React.RefObject<AnalyserNode | null>
   startRecording: () => Promise<void>
   stopRecording: () => void
 }
@@ -18,6 +19,8 @@ export function useVoiceRecorder(
   const [error, setError] = useState<string | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
 
   const startRecording = useCallback(async () => {
     setError(null)
@@ -97,6 +100,20 @@ export function useVoiceRecorder(
         stream.getTracks().forEach(track => track.stop())
       }
 
+      // AudioContext + AnalyserNode で波形データを取得
+      try {
+        const audioContext = new AudioContext()
+        const source = audioContext.createMediaStreamSource(stream)
+        const analyser = audioContext.createAnalyser()
+        analyser.fftSize = 256
+        analyser.smoothingTimeConstant = 0.7
+        source.connect(analyser)
+        audioContextRef.current = audioContext
+        analyserRef.current = analyser
+      } catch {
+        // AudioContext が使えなくても録音自体は続行
+      }
+
       mediaRecorderRef.current = mediaRecorder
       mediaRecorder.start()
       setIsRecording(true)
@@ -115,12 +132,19 @@ export function useVoiceRecorder(
       mediaRecorderRef.current.stop()
       setIsRecording(false)
     }
+    // AudioContext クリーンアップ
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
+      audioContextRef.current = null
+      analyserRef.current = null
+    }
   }, [])
 
   return {
     isRecording,
     isTranscribing,
     error,
+    analyserRef,
     startRecording,
     stopRecording,
   }

@@ -218,6 +218,32 @@ export interface Database {
                     updated_at?: string
                 }
             }
+            habit_task_completions: {
+                Row: {
+                    id: string
+                    habit_id: string
+                    task_id: string
+                    user_id: string
+                    completed_date: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    habit_id: string
+                    task_id: string
+                    user_id: string
+                    completed_date: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    habit_id?: string
+                    task_id?: string
+                    user_id?: string
+                    completed_date?: string
+                    created_at?: string
+                }
+            }
             ai_suggestions: {
                 Row: {
                     id: string
@@ -487,3 +513,6 @@ export type SpaceUpdate = Database['public']['Tables']['spaces']['Update']
 
 export type HabitCompletion = Database['public']['Tables']['habit_completions']['Row']
 export type HabitCompletionInsert = Database['public']['Tables']['habit_completions']['Insert']
+
+export type HabitTaskCompletion = Database['public']['Tables']['habit_task_completions']['Row']
+export type HabitTaskCompletionInsert = Database['public']['Tables']['habit_task_completions']['Insert']

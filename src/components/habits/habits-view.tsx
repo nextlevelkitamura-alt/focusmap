@@ -1,10 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Task } from "@/types/database"
-import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
 import {
-    Target, ChevronDown, ChevronRight, Flame, Trash2,
+    useHabits, HabitWithDetails, DAY_KEYS, formatDateString, getTodayDateString, parseFrequency
+} from "@/hooks/useHabits"
+import {
+    Target, ChevronDown, ChevronRight, ChevronLeft, Flame, Trash2,
     Calendar as CalendarIcon, Repeat, Loader2, CheckCircle2
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -27,11 +29,6 @@ interface HabitsViewProps {
 
 // --- Helper functions ---
 
-function parseFrequency(freq: string | null): string[] {
-    if (!freq) return []
-    return freq.split(',').map(s => s.trim()).filter(Boolean)
-}
-
 function getFrequencyLabel(freq: string | null): string {
     const days = parseFrequency(freq)
     if (days.length === 0) return '未設定'
@@ -49,12 +46,46 @@ function formatDate(dateStr: string | null): string {
     return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
+// Get the Monday of the week containing the given date
+function getWeekStart(date: Date): Date {
+    const d = new Date(date)
+    d.setHours(0, 0, 0, 0)
+    const dayOfWeek = d.getDay()
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek // Monday = 1
+    d.setDate(d.getDate() + diff)
+    return d
+}
+
+// Get achievement rate for a habit on a given date
+function getAchievementRate(
+    item: HabitWithDetails,
+    dateStr: string,
+): number {
+    if (item.childTasks.length === 0) {
+        return item.completions.some(c => c.completed_date === dateStr) ? 100 : 0
+    }
+    const doneCount = item.childTasks.filter(child =>
+        item.taskCompletions.some(tc => tc.task_id === child.id && tc.completed_date === dateStr)
+    ).length
+    return Math.round((doneCount / item.childTasks.length) * 100)
+}
+
+// Get heatmap color class based on achievement rate
+function getHeatmapColor(rate: number, isApplicable: boolean): string {
+    if (!isApplicable) return 'bg-transparent'
+    if (rate === 0) return 'bg-gray-200 dark:bg-gray-700'
+    if (rate < 50) return 'bg-green-200 dark:bg-green-900'
+    if (rate < 100) return 'bg-green-400 dark:bg-green-700'
+    return 'bg-green-600 dark:bg-green-500'
+}
+
 // --- Main Component ---
 
 export function HabitsView({ onUpdateTask }: HabitsViewProps) {
-    const { todayHabits, otherHabits, isLoading, error, toggleCompletion, removeHabit } = useHabits()
+    const { habits, todayHabits, otherHabits, isLoading, error, toggleCompletion, toggleChildTaskCompletion, removeHabit } = useHabits()
     const [expandedHabits, setExpandedHabits] = useState<Set<string>>(new Set())
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+    const [weekOffset, setWeekOffset] = useState(0) // 0 = this week, -1 = last week, etc.
 
     const toggleExpand = (habitId: string) => {
         setExpandedHabits(prev => {
@@ -65,11 +96,46 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
         })
     }
 
-    const toggleChildTask = async (taskId: string, currentStatus: string) => {
-        if (!onUpdateTask) return
-        const newStatus = currentStatus === 'done' ? 'todo' : 'done'
-        await onUpdateTask(taskId, { status: newStatus })
+    const toggleChildTask = async (taskId: string, currentStatus: string, habitItem?: HabitWithDetails) => {
+        if (habitItem) {
+            await toggleChildTaskCompletion(habitItem.habit.id, taskId)
+        } else if (onUpdateTask) {
+            const newStatus = currentStatus === 'done' ? 'todo' : 'done'
+            await onUpdateTask(taskId, { status: newStatus })
+        }
     }
+
+    // Week dates for heatmap
+    const weekDates = useMemo(() => {
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+        const weekStart = getWeekStart(today)
+        weekStart.setDate(weekStart.getDate() + weekOffset * 7)
+
+        const dates: { date: Date; dateStr: string; dayKey: string; label: string; isToday: boolean }[] = []
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(weekStart)
+            d.setDate(d.getDate() + i)
+            const todayDate = new Date()
+            todayDate.setHours(0, 0, 0, 0)
+            dates.push({
+                date: d,
+                dateStr: formatDateString(d),
+                dayKey: DAY_KEYS[d.getDay()],
+                label: HABIT_DAYS[i].label,
+                isToday: d.getTime() === todayDate.getTime(),
+            })
+        }
+        return dates
+    }, [weekOffset])
+
+    // Week label
+    const weekLabel = useMemo(() => {
+        if (weekDates.length === 0) return ''
+        const start = weekDates[0].date
+        const end = weekDates[6].date
+        return `${start.getMonth() + 1}/${start.getDate()} 〜 ${end.getMonth() + 1}/${end.getDate()}`
+    }, [weekDates])
 
     if (isLoading) {
         return (
@@ -119,6 +185,106 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                     </div>
                 </div>
 
+                {/* Heatmap Grid */}
+                {habits.length > 0 && (
+                    <section>
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                                <CalendarIcon className="h-3.5 w-3.5" />
+                                週間達成率
+                            </h3>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setWeekOffset(prev => Math.max(prev - 1, -3))}
+                                    className="p-1 rounded-md hover:bg-muted/50 transition-colors text-muted-foreground"
+                                >
+                                    <ChevronLeft className="h-4 w-4" />
+                                </button>
+                                <span className="text-xs text-muted-foreground min-w-[100px] text-center">
+                                    {weekOffset === 0 ? '今週' : weekLabel}
+                                </span>
+                                <button
+                                    onClick={() => setWeekOffset(prev => Math.min(prev + 1, 0))}
+                                    className={cn(
+                                        "p-1 rounded-md transition-colors",
+                                        weekOffset >= 0 ? "text-muted-foreground/20" : "hover:bg-muted/50 text-muted-foreground"
+                                    )}
+                                    disabled={weekOffset >= 0}
+                                >
+                                    <ChevronRight className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="border rounded-lg overflow-hidden">
+                            {/* Day headers */}
+                            <div className="grid grid-cols-[1fr_repeat(7,_minmax(0,_1fr))] gap-0 bg-muted/30">
+                                <div className="p-2 text-[10px] text-muted-foreground" />
+                                {weekDates.map((wd, i) => (
+                                    <div
+                                        key={i}
+                                        className={cn(
+                                            "p-1.5 text-center text-[10px] font-medium",
+                                            wd.isToday ? "text-primary bg-primary/10" : "text-muted-foreground"
+                                        )}
+                                    >
+                                        <div>{wd.label}</div>
+                                        <div className="text-[9px] opacity-60">{wd.date.getDate()}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Habit rows */}
+                            {habits.map(item => {
+                                const activeDays = parseFrequency(item.habit.habit_frequency)
+                                return (
+                                    <div
+                                        key={item.habit.id}
+                                        className="grid grid-cols-[1fr_repeat(7,_minmax(0,_1fr))] gap-0 border-t"
+                                    >
+                                        {/* Habit name */}
+                                        <div className="p-2 flex items-center gap-1.5 min-w-0">
+                                            <span className="text-xs flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
+                                            <span className="text-xs truncate">{item.habit.title}</span>
+                                        </div>
+                                        {/* Day cells */}
+                                        {weekDates.map((wd, i) => {
+                                            const isApplicable = activeDays.length === 0 || activeDays.includes(wd.dayKey)
+                                            const rate = isApplicable ? getAchievementRate(item, wd.dateStr) : -1
+                                            return (
+                                                <div
+                                                    key={i}
+                                                    className={cn(
+                                                        "flex items-center justify-center p-1.5",
+                                                        wd.isToday && "bg-primary/5"
+                                                    )}
+                                                    title={isApplicable ? `${rate}%` : '対象外'}
+                                                >
+                                                    <div className={cn(
+                                                        "w-5 h-5 rounded-sm transition-colors",
+                                                        isApplicable
+                                                            ? getHeatmapColor(rate, true)
+                                                            : "bg-transparent border border-dashed border-muted-foreground/15"
+                                                    )} />
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )
+                            })}
+
+                            {/* Legend */}
+                            <div className="border-t px-3 py-2 flex items-center justify-end gap-1.5">
+                                <span className="text-[9px] text-muted-foreground mr-1">達成率:</span>
+                                <div className="w-3 h-3 rounded-sm bg-gray-200 dark:bg-gray-700" title="0%" />
+                                <div className="w-3 h-3 rounded-sm bg-green-200 dark:bg-green-900" title="1-49%" />
+                                <div className="w-3 h-3 rounded-sm bg-green-400 dark:bg-green-700" title="50-99%" />
+                                <div className="w-3 h-3 rounded-sm bg-green-600 dark:bg-green-500" title="100%" />
+                            </div>
+                        </div>
+                    </section>
+                )}
+
                 {/* Today's Habits */}
                 {todayHabits.length > 0 && (
                     <section>
@@ -134,7 +300,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     isExpanded={expandedHabits.has(item.habit.id)}
                                     onToggleExpand={() => toggleExpand(item.habit.id)}
                                     onToggleCompletion={() => toggleCompletion(item.habit.id)}
-                                    onToggleChild={toggleChildTask}
+                                    onToggleChild={(taskId, status) => toggleChildTask(taskId, status, item)}
                                     isToday
                                     isConfirmingDelete={confirmDeleteId === item.habit.id}
                                     onRequestDelete={() => setConfirmDeleteId(item.habit.id)}
@@ -161,7 +327,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     isExpanded={expandedHabits.has(item.habit.id)}
                                     onToggleExpand={() => toggleExpand(item.habit.id)}
                                     onToggleCompletion={() => toggleCompletion(item.habit.id)}
-                                    onToggleChild={toggleChildTask}
+                                    onToggleChild={(taskId, status) => toggleChildTask(taskId, status, item)}
                                     isToday={false}
                                     isConfirmingDelete={confirmDeleteId === item.habit.id}
                                     onRequestDelete={() => setConfirmDeleteId(item.habit.id)}
@@ -200,6 +366,12 @@ function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onTog
     const endDate = habit.habit_end_date
     const frequencyLabel = getFrequencyLabel(freq)
     const activeDays = parseFrequency(freq)
+    const todayStr = getTodayDateString()
+
+    // 日次ベースの子タスク完了数
+    const doneChildCount = childTasks.length > 0
+        ? childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === todayStr)).length
+        : 0
 
     return (
         <div className={cn(
@@ -246,6 +418,11 @@ function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onTog
                             </span>
                             {isCompletedToday && isToday && (
                                 <span className="text-green-600 text-xs font-medium">完了</span>
+                            )}
+                            {childTasks.length > 0 && isToday && (
+                                <span className="text-[10px] text-muted-foreground">
+                                    {doneChildCount}/{childTasks.length}
+                                </span>
                             )}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
@@ -327,35 +504,40 @@ function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onTog
                 </div>
             )}
 
-            {/* Expanded: Child Tasks */}
+            {/* Expanded: Child Tasks (date-based completion) */}
             {isExpanded && childTasks.length > 0 && (
                 <div className="border-t px-3 py-2 space-y-1">
-                    {childTasks.map(child => (
-                        <button
-                            key={child.id}
-                            className="w-full flex items-center gap-2.5 py-1.5 px-2 rounded hover:bg-muted/50 transition-colors text-left"
-                            onClick={() => onToggleChild(child.id, child.status || 'todo')}
-                        >
-                            <div className={cn(
-                                "w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors",
-                                child.status === 'done'
-                                    ? "bg-primary border-primary text-primary-foreground"
-                                    : "border-muted-foreground/30"
-                            )}>
-                                {child.status === 'done' && (
-                                    <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none">
-                                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                    </svg>
-                                )}
-                            </div>
-                            <span className={cn(
-                                "text-sm flex-1",
-                                child.status === 'done' && "line-through text-muted-foreground"
-                            )}>
-                                {child.title}
-                            </span>
-                        </button>
-                    ))}
+                    {childTasks.map(child => {
+                        const isDoneToday = item.taskCompletions.some(
+                            tc => tc.task_id === child.id && tc.completed_date === todayStr
+                        )
+                        return (
+                            <button
+                                key={child.id}
+                                className="w-full flex items-center gap-2.5 py-1.5 px-2 rounded hover:bg-muted/50 transition-colors text-left"
+                                onClick={() => onToggleChild(child.id, child.status || 'todo')}
+                            >
+                                <div className={cn(
+                                    "w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors",
+                                    isDoneToday
+                                        ? "bg-primary border-primary text-primary-foreground"
+                                        : "border-muted-foreground/30"
+                                )}>
+                                    {isDoneToday && (
+                                        <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none">
+                                            <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                        </svg>
+                                    )}
+                                </div>
+                                <span className={cn(
+                                    "text-sm flex-1",
+                                    isDoneToday && "line-through text-muted-foreground"
+                                )}>
+                                    {child.title}
+                                </span>
+                            </button>
+                        )
+                    })}
                 </div>
             )}
         </div>

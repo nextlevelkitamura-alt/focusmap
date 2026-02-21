@@ -5,7 +5,7 @@ import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
-import { useHabits, HabitWithDetails } from "@/hooks/useHabits"
+import { useHabits, HabitWithDetails, getTodayDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
@@ -56,7 +56,7 @@ function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
 
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask: onCreateSubTaskProp, onDeleteTask: onDeleteTaskProp }: TodayViewProps) {
     const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
-    const { todayHabits, toggleCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
+    const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
     const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
@@ -370,34 +370,21 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         await onUpdateTask(taskId, { status: newStatus })
     }, [localTasks, onUpdateTask])
 
-    // Toggle child task status + optimistic UI + auto-complete parent habit
+    // Toggle child task: use date-based completion for habit children
     const toggleChildTask = useCallback(async (
         taskId: string,
         currentStatus: string,
         habitItem?: HabitWithDetails
     ) => {
-        const newStatus = currentStatus === 'done' ? 'todo' : 'done'
-
-        // Optimistic update in useHabits state (so UI reflects immediately)
         if (habitItem) {
-            updateChildTaskStatus(habitItem.habit.id, taskId, newStatus)
+            // 日次完了ベース: habit_task_completions テーブルで管理
+            await toggleChildTaskCompletion(habitItem.habit.id, taskId)
+        } else {
+            // 通常タスク（習慣外）: 従来の status 更新
+            const newStatus = currentStatus === 'done' ? 'todo' : 'done'
+            await onUpdateTask(taskId, { status: newStatus })
         }
-
-        // DB update
-        await onUpdateTask(taskId, { status: newStatus })
-
-        // Auto-complete/uncomplete parent habit
-        if (habitItem && habitItem.childTasks.length > 0) {
-            const allDone = habitItem.childTasks.every(c =>
-                c.id === taskId ? newStatus === 'done' : c.status === 'done'
-            )
-            if (allDone && !habitItem.isCompletedToday) {
-                await toggleCompletion(habitItem.habit.id)
-            } else if (!allDone && habitItem.isCompletedToday) {
-                await toggleCompletion(habitItem.habit.id)
-            }
-        }
-    }, [onUpdateTask, toggleCompletion, updateChildTaskStatus])
+    }, [onUpdateTask, toggleChildTaskCompletion])
 
     // Handle item tap (open edit modal)
     const handleItemTap = useCallback((item: TimeBlock) => {
@@ -660,6 +647,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
                             {todayHabits.map(item => {
                                 const hasChildren = item.childTasks.length > 0
+                                const todayStr = getTodayDateString()
+                                // 日次ベースの完了数を計算
+                                const doneChildCount = hasChildren
+                                    ? item.childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === todayStr)).length
+                                    : 0
                                 return (
                                     <button
                                         key={item.habit.id}
@@ -692,7 +684,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                         </span>
                                         {hasChildren && (
                                             <span className="text-[10px] text-muted-foreground flex-shrink-0">
-                                                {item.childTasks.filter(c => c.status === 'done').length}/{item.childTasks.length}
+                                                {doneChildCount}/{item.childTasks.length}
                                             </span>
                                         )}
                                         {item.streak > 0 && (
@@ -707,71 +699,140 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     </div>
 
-                    {/* Expanded: Child tasks only (compact) */}
-                    {habitsExpanded && (
-                        <div className="px-4 pb-2 space-y-0.5 animate-in slide-in-from-top-2 duration-200">
-                            {todayHabits.map(item => (
-                                item.childTasks.length > 0 && (
-                                    <div key={item.habit.id} className="space-y-0">
-                                        {item.childTasks.map(child => {
-                                            const isRunning = timer.runningTaskId === child.id
-                                            const isDone = child.status === 'done'
-                                            const hasElapsed = (child.total_elapsed_seconds ?? 0) > 0
-                                            return (
-                                                <div
-                                                    key={child.id}
-                                                    className={cn(
-                                                        "flex items-center gap-1.5 rounded-md transition-colors",
-                                                        isRunning && "bg-primary/10"
-                                                    )}
-                                                >
-                                                    {/* Tappable area: checkbox + title */}
-                                                    <button
-                                                        className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
-                                                        onClick={() => toggleChildTask(child.id, child.status || 'todo', item)}
-                                                    >
-                                                        {isDone ? (
-                                                            <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                                                        ) : (
-                                                            <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
-                                                        )}
-                                                        <span className={cn(
-                                                            "text-xs flex-1 truncate text-left",
-                                                            isDone ? "line-through text-muted-foreground" : "text-foreground"
-                                                        )}>
-                                                            {child.title}
-                                                        </span>
-                                                    </button>
-                                                    {/* Timer display: show elapsed even when stopped */}
-                                                    {isRunning ? (
-                                                        <span className="text-[10px] font-mono text-primary flex-shrink-0">
-                                                            {formatTime(timer.currentElapsedSeconds)}
-                                                        </span>
-                                                    ) : hasElapsed ? (
-                                                        <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
-                                                            {formatTime(child.total_elapsed_seconds ?? 0)}
-                                                        </span>
-                                                    ) : null}
-                                                    <button
-                                                        className={cn(
-                                                            "p-1.5 rounded-full flex-shrink-0",
-                                                            isRunning ? "text-primary bg-primary/10" : "text-muted-foreground/50 active:bg-muted/50"
-                                                        )}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            isRunning ? timer.pauseTimer() : timer.startTimer(child)
-                                                        }}
-                                                    >
-                                                        {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                                                    </button>
-                                                </div>
-                                            )
-                                        })}
+                    {/* Expanded: Card-style with progress bar + child tasks */}
+                    {habitsExpanded && (() => {
+                        const todayStr = getTodayDateString()
+                        // 全体の達成率を計算
+                        const totalChildren = todayHabits.reduce((sum, h) => sum + Math.max(h.childTasks.length, 1), 0)
+                        const doneChildren = todayHabits.reduce((sum, h) => {
+                            if (h.childTasks.length === 0) return sum + (h.isCompletedToday ? 1 : 0)
+                            return sum + h.childTasks.filter(c => h.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === todayStr)).length
+                        }, 0)
+                        const progressPct = totalChildren > 0 ? Math.round((doneChildren / totalChildren) * 100) : 0
+                        return (
+                            <div className="px-4 pb-3 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                                {/* Progress bar */}
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-primary rounded-full transition-all duration-300"
+                                            style={{ width: `${progressPct}%` }}
+                                        />
                                     </div>
-                                )
-                            ))}
-                        </div>
-                    )}
+                                    <span className="text-[10px] text-muted-foreground font-medium">{progressPct}%</span>
+                                </div>
+                                {/* Habit cards */}
+                                {todayHabits.map(item => {
+                                    const hasChildren = item.childTasks.length > 0
+                                    const doneCount = hasChildren
+                                        ? item.childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === todayStr)).length
+                                        : (item.isCompletedToday ? 1 : 0)
+                                    const totalCount = hasChildren ? item.childTasks.length : 1
+                                    return (
+                                        <div key={item.habit.id} className={cn(
+                                            "border rounded-lg p-2.5 transition-all",
+                                            item.isCompletedToday
+                                                ? "border-primary/20 bg-primary/5"
+                                                : "border-border"
+                                        )}>
+                                            {/* Habit header */}
+                                            <div className="flex items-center gap-2 mb-1">
+                                                {!hasChildren ? (
+                                                    <button
+                                                        onClick={() => toggleCompletion(item.habit.id)}
+                                                        className="flex-shrink-0"
+                                                    >
+                                                        {item.isCompletedToday ? (
+                                                            <CheckSquare className="w-4 h-4 text-primary" />
+                                                        ) : (
+                                                            <Square className="w-4 h-4 text-muted-foreground/40" />
+                                                        )}
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-base flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
+                                                )}
+                                                <span className={cn(
+                                                    "text-sm font-medium flex-1",
+                                                    item.isCompletedToday && "line-through text-muted-foreground"
+                                                )}>
+                                                    {hasChildren && <span className="mr-1">{item.habit.habit_icon || '🔄'}</span>}
+                                                    {item.habit.title}
+                                                </span>
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    {doneCount}/{totalCount}
+                                                </span>
+                                                {item.streak > 0 && (
+                                                    <span className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium">
+                                                        <Flame className="w-3 h-3" />
+                                                        {item.streak}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {/* Child tasks */}
+                                            {hasChildren && (
+                                                <div className="space-y-0 ml-1">
+                                                    {item.childTasks.map(child => {
+                                                        const isRunning = timer.runningTaskId === child.id
+                                                        const isDoneToday = item.taskCompletions.some(
+                                                            tc => tc.task_id === child.id && tc.completed_date === todayStr
+                                                        )
+                                                        const hasElapsed = (child.total_elapsed_seconds ?? 0) > 0
+                                                        return (
+                                                            <div
+                                                                key={child.id}
+                                                                className={cn(
+                                                                    "flex items-center gap-1.5 rounded-md transition-colors",
+                                                                    isRunning && "bg-primary/10"
+                                                                )}
+                                                            >
+                                                                <button
+                                                                    className="flex items-center gap-1.5 flex-1 min-w-0 py-1 px-1.5 rounded-md active:bg-muted/50 transition-colors"
+                                                                    onClick={() => toggleChildTask(child.id, child.status || 'todo', item)}
+                                                                >
+                                                                    {isDoneToday ? (
+                                                                        <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                                                    ) : (
+                                                                        <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+                                                                    )}
+                                                                    <span className={cn(
+                                                                        "text-xs flex-1 truncate text-left",
+                                                                        isDoneToday ? "line-through text-muted-foreground" : "text-foreground"
+                                                                    )}>
+                                                                        {child.title}
+                                                                    </span>
+                                                                </button>
+                                                                {isRunning ? (
+                                                                    <span className="text-[10px] font-mono text-primary flex-shrink-0">
+                                                                        {formatTime(timer.currentElapsedSeconds)}
+                                                                    </span>
+                                                                ) : hasElapsed ? (
+                                                                    <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
+                                                                        {formatTime(child.total_elapsed_seconds ?? 0)}
+                                                                    </span>
+                                                                ) : null}
+                                                                <button
+                                                                    className={cn(
+                                                                        "p-1 rounded-full flex-shrink-0",
+                                                                        isRunning ? "text-primary bg-primary/10" : "text-muted-foreground/50 active:bg-muted/50"
+                                                                    )}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        isRunning ? timer.pauseTimer() : timer.startTimer(child)
+                                                                    }}
+                                                                >
+                                                                    {isRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                                                </button>
+                                                            </div>
+                                                        )
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )
+                    })()}
                 </div>
             )}
 

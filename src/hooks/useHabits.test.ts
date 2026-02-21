@@ -60,7 +60,15 @@ type HabitApiResponse = {
   child_tasks?: Task[]
 }
 
+function mockTaskCompletionsSuccess(completions: any[] = []) {
+  mockFetch.mockResolvedValueOnce({
+    ok: true,
+    json: () => Promise.resolve({ success: true, completions }),
+  })
+}
+
 function mockHabitsSuccess(habits: HabitApiResponse[] = []) {
+  // fetchHabits now calls 2 APIs in parallel: /api/habits + /api/habits/task-completions
   mockFetch.mockResolvedValueOnce({
     ok: true,
     json: () =>
@@ -73,6 +81,7 @@ function mockHabitsSuccess(habits: HabitApiResponse[] = []) {
         })),
       }),
   })
+  mockTaskCompletionsSuccess()
 }
 
 function mockHabitsError(message = 'Fetch failed') {
@@ -80,6 +89,7 @@ function mockHabitsError(message = 'Fetch failed') {
     ok: true,
     json: () => Promise.resolve({ success: false, error: { message } }),
   })
+  mockTaskCompletionsSuccess()
 }
 
 function mockApiSuccess() {
@@ -116,8 +126,9 @@ describe('useHabits - fetchHabits', () => {
       await new Promise(resolve => setTimeout(resolve, 50))
     })
 
-    expect(mockFetch).toHaveBeenCalledOnce()
+    expect(mockFetch).toHaveBeenCalledTimes(2)
     expect(mockFetch.mock.calls[0][0]).toMatch(/^\/api\/habits\?from=.*&to=.*/)
+    expect(mockFetch.mock.calls[1][0]).toMatch(/^\/api\/habits\/task-completions\?from=.*&to=.*/)
     expect(result.current.habits).toHaveLength(1)
     expect(result.current.habits[0].habit.title).toBe('Morning Exercise')
     expect(result.current.isLoading).toBe(false)
@@ -139,6 +150,8 @@ describe('useHabits - fetchHabits', () => {
   })
 
   test('fetch 例外時は error ステートをセットする', async () => {
+    // Promise.all will reject if any promise rejects
+    mockFetch.mockRejectedValueOnce(new Error('Network Error'))
     mockFetch.mockRejectedValueOnce(new Error('Network Error'))
 
     const { result } = renderHook(() => useHabits())

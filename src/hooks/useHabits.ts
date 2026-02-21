@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo } from "react"
-import { Task, HabitCompletion } from "@/types/database"
+import { Task, HabitCompletion, HabitTaskCompletion } from "@/types/database"
 
 // --- Types ---
 
@@ -9,17 +9,22 @@ export interface HabitWithDetails {
     habit: Task
     childTasks: Task[]
     completions: HabitCompletion[]
+    taskCompletions: HabitTaskCompletion[]  // 子タスクの日次完了記録
     streak: number
     isCompletedToday: boolean
     isTodayHabit: boolean
 }
 
-const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const
+export const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const
 
 // --- Helper functions ---
 
-function getTodayDateString(): string {
+export function getTodayDateString(): string {
     const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export function formatDateString(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
@@ -27,11 +32,10 @@ function getDateRange(days: number): { from: string; to: string } {
     const to = new Date()
     const from = new Date()
     from.setDate(from.getDate() - days)
-    const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    return { from: fmt(from), to: fmt(to) }
+    return { from: formatDateString(from), to: formatDateString(to) }
 }
 
-function parseFrequency(freq: string | null): string[] {
+export function parseFrequency(freq: string | null): string[] {
     if (!freq) return []
     return freq.split(',').map(s => s.trim()).filter(Boolean)
 }
@@ -70,7 +74,7 @@ function calculateStreak(completions: HabitCompletion[], freq: string | null): n
     for (let i = 0; i < 365; i++) {
         const checkDate = new Date(today)
         checkDate.setDate(checkDate.getDate() - i)
-        const dateStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`
+        const dateStr = formatDateString(checkDate)
         const dayKey = DAY_KEYS[checkDate.getDay()]
 
         // Skip days not in the frequency
@@ -101,16 +105,26 @@ export function useHabits() {
             setError(null)
 
             const { from, to } = getDateRange(30) // Last 30 days for streak calculation
-            const res = await fetch(`/api/habits?from=${from}&to=${to}`)
-            const data = await res.json()
 
-            if (!data.success) {
-                setError(data.error?.message || 'Failed to fetch habits')
+            // Fetch habits and task completions in parallel
+            const [habitsRes, taskCompletionsRes] = await Promise.all([
+                fetch(`/api/habits?from=${from}&to=${to}`),
+                fetch(`/api/habits/task-completions?from=${from}&to=${to}`),
+            ])
+            const habitsData = await habitsRes.json()
+            const taskCompletionsData = await taskCompletionsRes.json()
+
+            if (!habitsData.success) {
+                setError(habitsData.error?.message || 'Failed to fetch habits')
                 return
             }
 
+            const allTaskCompletions: HabitTaskCompletion[] = taskCompletionsData.success
+                ? (taskCompletionsData.completions || [])
+                : []
+
             const todayStr = getTodayDateString()
-            const processed: HabitWithDetails[] = (data.habits || []).map((h: any) => {
+            const processed: HabitWithDetails[] = (habitsData.habits || []).map((h: any) => {
                 const completions: HabitCompletion[] = h.completions || []
                 const isCompletedToday = completions.some((c: HabitCompletion) => c.completed_date === todayStr)
                 const freq = h.habit_frequency as string | null
@@ -118,10 +132,16 @@ export function useHabits() {
                 const endDate = h.habit_end_date as string | null
                 const isTodayHabit = isTodayInFrequency(freq) && isTodayInPeriod(startDate, endDate)
 
+                // Filter task completions for this habit
+                const habitTaskCompletions = allTaskCompletions.filter(
+                    (tc: HabitTaskCompletion) => tc.habit_id === h.id
+                )
+
                 return {
                     habit: h as Task,
                     childTasks: h.child_tasks || [],
                     completions,
+                    taskCompletions: habitTaskCompletions,
                     streak: calculateStreak(completions, freq),
                     isCompletedToday,
                     isTodayHabit,
@@ -137,7 +157,7 @@ export function useHabits() {
         }
     }, [])
 
-    // Toggle completion for today
+    // Toggle completion for today (habit-level)
     const toggleCompletion = useCallback(async (habitId: string) => {
         const todayStr = getTodayDateString()
         const habit = habits.find(h => h.habit.id === habitId)
@@ -160,14 +180,12 @@ export function useHabits() {
 
         try {
             if (habit.isCompletedToday) {
-                // Remove completion
                 await fetch('/api/habits/completions', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ habit_id: habitId, completed_date: todayStr }),
                 })
             } else {
-                // Add completion
                 await fetch('/api/habits/completions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -176,14 +194,106 @@ export function useHabits() {
             }
         } catch (err) {
             console.error('[useHabits] Toggle error:', err)
-            // Revert on error
             await fetchHabits()
         }
     }, [habits, fetchHabits])
 
+    // Toggle child task completion for today (date-based)
+    const toggleChildTaskCompletion = useCallback(async (habitId: string, taskId: string) => {
+        const todayStr = getTodayDateString()
+        const habit = habits.find(h => h.habit.id === habitId)
+        if (!habit) return
+
+        const isCurrentlyCompleted = habit.taskCompletions.some(
+            tc => tc.task_id === taskId && tc.completed_date === todayStr
+        )
+
+        // Optimistic update
+        setHabits(prev => prev.map(h => {
+            if (h.habit.id !== habitId) return h
+            const newTaskCompletions = isCurrentlyCompleted
+                ? h.taskCompletions.filter(tc => !(tc.task_id === taskId && tc.completed_date === todayStr))
+                : [...h.taskCompletions, { id: 'temp', habit_id: habitId, task_id: taskId, user_id: '', completed_date: todayStr, created_at: '' } as HabitTaskCompletion]
+
+            // Check if all child tasks are now completed today
+            const allChildrenDoneToday = h.childTasks.every(child => {
+                if (child.id === taskId) return !isCurrentlyCompleted
+                return newTaskCompletions.some(tc => tc.task_id === child.id && tc.completed_date === todayStr)
+            })
+
+            // Auto-update habit completion
+            let newCompletions = h.completions
+            let newIsCompletedToday = h.isCompletedToday
+            if (h.childTasks.length > 0) {
+                if (allChildrenDoneToday && !h.isCompletedToday) {
+                    newCompletions = [...h.completions, { id: 'temp-auto', habit_id: habitId, user_id: '', completed_date: todayStr, created_at: '', updated_at: '' } as HabitCompletion]
+                    newIsCompletedToday = true
+                } else if (!allChildrenDoneToday && h.isCompletedToday) {
+                    newCompletions = h.completions.filter(c => c.completed_date !== todayStr)
+                    newIsCompletedToday = false
+                }
+            }
+
+            return {
+                ...h,
+                taskCompletions: newTaskCompletions,
+                completions: newCompletions,
+                isCompletedToday: newIsCompletedToday,
+                streak: calculateStreak(newCompletions, h.habit.habit_frequency),
+            }
+        }))
+
+        try {
+            if (isCurrentlyCompleted) {
+                await fetch('/api/habits/task-completions', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task_id: taskId, completed_date: todayStr }),
+                })
+            } else {
+                await fetch('/api/habits/task-completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ habit_id: habitId, task_id: taskId, completed_date: todayStr }),
+                })
+            }
+
+            // Auto-complete/uncomplete parent habit
+            const updatedHabit = habits.find(h => h.habit.id === habitId)
+            if (updatedHabit && updatedHabit.childTasks.length > 0) {
+                const allDone = updatedHabit.childTasks.every(child => {
+                    if (child.id === taskId) return !isCurrentlyCompleted
+                    return updatedHabit.taskCompletions.some(tc => tc.task_id === child.id && tc.completed_date === todayStr)
+                })
+                if (allDone && !updatedHabit.isCompletedToday) {
+                    await fetch('/api/habits/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ habit_id: habitId, completed_date: todayStr }),
+                    })
+                } else if (!allDone && updatedHabit.isCompletedToday) {
+                    await fetch('/api/habits/completions', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ habit_id: habitId, completed_date: todayStr }),
+                    })
+                }
+            }
+        } catch (err) {
+            console.error('[useHabits] Toggle child task error:', err)
+            await fetchHabits()
+        }
+    }, [habits, fetchHabits])
+
+    // Check if a child task is completed for a specific date
+    const isChildTaskCompletedForDate = useCallback((habitId: string, taskId: string, dateStr: string): boolean => {
+        const habit = habits.find(h => h.habit.id === habitId)
+        if (!habit) return false
+        return habit.taskCompletions.some(tc => tc.task_id === taskId && tc.completed_date === dateStr)
+    }, [habits])
+
     // Remove habit (delete the task entirely)
     const removeHabit = useCallback(async (habitId: string) => {
-        // Optimistic update
         setHabits(prev => prev.filter(h => h.habit.id !== habitId))
 
         try {
@@ -199,7 +309,7 @@ export function useHabits() {
         }
     }, [fetchHabits])
 
-    // Optimistic update for child task status (used by TodayView)
+    // Optimistic update for child task status (used by TodayView - legacy)
     const updateChildTaskStatus = useCallback((habitId: string, taskId: string, newStatus: string) => {
         setHabits(prev => prev.map(h => {
             if (h.habit.id !== habitId) return h
@@ -228,6 +338,8 @@ export function useHabits() {
         isLoading,
         error,
         toggleCompletion,
+        toggleChildTaskCompletion,
+        isChildTaskCompletedForDate,
         updateChildTaskStatus,
         removeHabit,
         refetch: fetchHabits,
