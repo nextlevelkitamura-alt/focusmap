@@ -38,10 +38,12 @@ const DURATION_OPTIONS = [
   { label: '1.5時間', value: 90 },
   { label: '2時間', value: 120 },
   { label: '3時間', value: 180 },
+  { label: 'カスタム', value: -1 },
 ];
 
 const REMINDER_OPTIONS = [
-  { label: 'なし', value: 0 },
+  { label: 'なし', value: -1 },
+  { label: '予定の時刻', value: 0 },
   { label: '5分前', value: 5 },
   { label: '10分前', value: 10 },
   { label: '15分前', value: 15 },
@@ -60,6 +62,9 @@ export function CalendarEventEditModal({
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [duration, setDuration] = useState<number>(60);
+  const [isCustomDuration, setIsCustomDuration] = useState(false);
+  const [customHours, setCustomHours] = useState(1);
+  const [customMinutes, setCustomMinutes] = useState(0);
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [reminder, setReminder] = useState<number>(15);
   const [calendarId, setCalendarId] = useState<string>('');
@@ -78,26 +83,29 @@ export function CalendarEventEditModal({
     return eventStartSetting?.advance_minutes ?? 15;
   }, [notificationSettings]);
 
-  // 現在のdurationがオプションにない場合、動的にオプションを追加
+  // 実際の所要時間（分）：カスタムの場合はcustomHours/customMinutesから計算
+  const effectiveDuration = isCustomDuration ? (customHours * 60 + customMinutes) : duration;
+
+  // 現在のdurationがプリセットオプションにない場合、動的にオプションを追加
   const durationOptions = useMemo(() => {
     const opts = [...DURATION_OPTIONS];
-    if (!opts.some(o => o.value === duration)) {
+    const presetValues = DURATION_OPTIONS.map(o => o.value);
+    if (!isCustomDuration && duration > 0 && !presetValues.includes(duration)) {
       const label = duration < 60
         ? `${duration}分`
         : duration % 60 === 0
           ? `${duration / 60}時間`
           : `${(duration / 60).toFixed(1)}時間`;
-      opts.push({ label, value: duration });
-      opts.sort((a, b) => a.value - b.value);
+      opts.splice(opts.length - 1, 0, { label, value: duration }); // カスタムの前に挿入
     }
     return opts;
-  }, [duration]);
+  }, [duration, isCustomDuration]);
 
   // 終了時刻の計算（プレビュー用）
   const endTime = useMemo(() => {
     if (!startDate) return null;
-    return addMinutes(startDate, duration);
-  }, [startDate, duration]);
+    return addMinutes(startDate, effectiveDuration || 60);
+  }, [startDate, effectiveDuration]);
 
   // イベントが変更されたらフォームを初期化
   useEffect(() => {
@@ -106,14 +114,32 @@ export function CalendarEventEditModal({
       setStartDate(new Date(event.start_time));
       setPriority(event.priority || 'medium');
       setCalendarId(event.calendar_id);
-      setReminder(defaultReminderMinutes);
+      // Google Calendarのリマインダーがあればそれを使用、なければデフォルト
+      if (event.reminders && event.reminders.length > 0) {
+        setReminder(event.reminders[0]); // 最初のリマインダー値を使用（0=予定の時刻）
+      } else if (event.reminders && event.reminders.length === 0) {
+        setReminder(-1); // 空配列 = なし
+      } else {
+        setReminder(defaultReminderMinutes);
+      }
       setError(null);
 
       // 所要時間: estimated_time > イベントの実際のduration
       const eventDuration = Math.round(
         (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
       );
-      setDuration(event.estimated_time || eventDuration || 60);
+      const dur = event.estimated_time || eventDuration || 60;
+      const presetValues = DURATION_OPTIONS.filter(o => o.value > 0).map(o => o.value);
+      if (presetValues.includes(dur)) {
+        setDuration(dur);
+        setIsCustomDuration(false);
+      } else {
+        // プリセットにない値はそのまま表示（動的追加される）
+        setDuration(dur);
+        setIsCustomDuration(false);
+      }
+      setCustomHours(Math.floor(dur / 60));
+      setCustomMinutes(dur % 60);
     }
   }, [event, isOpen, defaultReminderMinutes]);
 
@@ -135,9 +161,15 @@ export function CalendarEventEditModal({
       return;
     }
 
+    const saveDuration = effectiveDuration || 60;
+    if (isCustomDuration && saveDuration <= 0) {
+      setError('所要時間を1分以上に設定してください');
+      return;
+    }
+
     setError(null);
 
-    const computedEndTime = addMinutes(startDate, duration);
+    const computedEndTime = addMinutes(startDate, saveDuration);
 
     // 即座にモーダルを閉じ、バックグラウンドで保存
     onClose();
@@ -146,9 +178,9 @@ export function CalendarEventEditModal({
       start_time: startDate.toISOString(),
       end_time: computedEndTime.toISOString(),
       priority: isTaskLinked ? priority : undefined,
-      reminders: reminder > 0 ? [reminder] : [],
+      reminders: reminder >= 0 ? [reminder] : [], // -1=なし(空配列), 0=予定の時刻, N>0=N分前
       calendar_id: calendarId,
-      estimated_time: duration,
+      estimated_time: saveDuration,
     });
   };
 
@@ -216,8 +248,19 @@ export function CalendarEventEditModal({
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs">所要時間</Label>
               <Select
-                value={String(duration)}
-                onValueChange={(v) => setDuration(Number(v))}
+                value={isCustomDuration ? '-1' : String(duration)}
+                onValueChange={(v) => {
+                  if (v === '-1') {
+                    setIsCustomDuration(true);
+                    // 現在のdurationをカスタム初期値に
+                    const cur = duration > 0 ? duration : 60;
+                    setCustomHours(Math.floor(cur / 60));
+                    setCustomMinutes(cur % 60);
+                  } else {
+                    setIsCustomDuration(false);
+                    setDuration(Number(v));
+                  }
+                }}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
@@ -232,6 +275,31 @@ export function CalendarEventEditModal({
               </Select>
             </div>
           </div>
+
+          {/* カスタム所要時間入力 */}
+          {isCustomDuration && (
+            <div className="flex items-center gap-2 -mt-1">
+              <input
+                type="number"
+                min={0}
+                max={23}
+                value={customHours}
+                onChange={(e) => setCustomHours(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
+                className="w-14 h-8 text-xs text-center border rounded-md bg-background"
+              />
+              <span className="text-xs text-muted-foreground">時間</span>
+              <input
+                type="number"
+                min={0}
+                max={59}
+                step={5}
+                value={customMinutes}
+                onChange={(e) => setCustomMinutes(Math.max(0, Math.min(59, Number(e.target.value) || 0)))}
+                className="w-14 h-8 text-xs text-center border rounded-md bg-background"
+              />
+              <span className="text-xs text-muted-foreground">分</span>
+            </div>
+          )}
 
           {/* 終了時刻プレビュー */}
           {endTime && (

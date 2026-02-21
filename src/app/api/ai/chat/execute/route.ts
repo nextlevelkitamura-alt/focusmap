@@ -100,7 +100,17 @@ export async function POST(request: Request) {
         const msg = calendarSynced
           ? `✅ 予定「${title}」をカレンダーに登録しました`
           : `✅ 予定「${title}」をタスクとして追加しました`
-        return NextResponse.json({ success: true, message: msg })
+        return NextResponse.json({
+          success: true,
+          message: msg,
+          eventData: {
+            id: taskId,
+            title,
+            scheduled_at,
+            estimated_time: estMin,
+            calendar_id: calId || calendar_id || null,
+          },
+        })
       }
 
       case 'edit_memo': {

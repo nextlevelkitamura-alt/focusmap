@@ -29,11 +29,19 @@ interface ChatMessage {
   optionsUsed?: boolean
 }
 
+interface CalendarEventData {
+  id: string
+  title: string
+  scheduled_at: string
+  estimated_time: number
+  calendar_id?: string | null
+}
+
 interface AiChatPanelProps {
   activeNoteId?: string | null
   activeProjectId?: string | null
   hideFab?: boolean
-  onCalendarEventCreated?: () => void
+  onCalendarEventCreated?: (eventData?: CalendarEventData) => void
 }
 
 const MAX_RALLIES = 7
@@ -150,7 +158,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         body: JSON.stringify({ action: msg.action }),
       })
 
-      const { success, message } = await res.json()
+      const { success, message, eventData } = await res.json()
 
       setMessages(prev => [
         ...prev.map(m =>
@@ -163,9 +171,9 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         },
       ])
 
-      // カレンダーイベント作成成功時にリフレッシュ
+      // カレンダーイベント作成成功時に楽観的更新
       if (success && msg.action?.type === 'add_calendar_event') {
-        onCalendarEventCreated?.()
+        onCalendarEventCreated?.(eventData)
       }
     } catch {
       setMessages(prev => prev.map(m =>

@@ -190,7 +190,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { title, start_time, end_time, description, location, googleEventId, calendarId = 'primary', estimated_time, priority } = body;
+    const { title, start_time, end_time, description, location, googleEventId, calendarId = 'primary', estimated_time, priority, reminders } = body;
 
     if (!googleEventId) {
       return NextResponse.json(
@@ -209,7 +209,7 @@ export async function PATCH(
     console.log('[events/update] Updating Google Calendar event:', googleEventId);
     const { calendar } = await getCalendarClient(user.id);
 
-    const googleEvent = {
+    const googleEvent: any = {
       summary: title,
       description: description || undefined,
       location: location || undefined,
@@ -222,6 +222,18 @@ export async function PATCH(
         timeZone: 'Asia/Tokyo',
       },
     };
+
+    // リマインダー設定をGoogle Calendarに送信
+    if (reminders !== undefined) {
+      if (Array.isArray(reminders) && reminders.length > 0) {
+        googleEvent.reminders = {
+          useDefault: false,
+          overrides: reminders.map((minutes: number) => ({ method: 'popup', minutes })),
+        };
+      } else {
+        googleEvent.reminders = { useDefault: false, overrides: [] };
+      }
+    }
 
     await calendar.events.update({
       calendarId,

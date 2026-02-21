@@ -276,9 +276,33 @@ export function DashboardClient({
     // タスク更新のローカルオーバーライド（タイマー等の変更を即座に反映）
     const [taskOverrides, setTaskOverrides] = useState<Record<string, Partial<Task>>>({})
 
-    // Debounced calendar refresh (2s after last call)
+    // Debounced calendar refresh (2s after last call) + optimistic event add
     const calendarRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const debouncedRefreshCalendar = useCallback(() => {
+    const handleCalendarEventCreated = useCallback((eventData?: {
+        id: string; title: string; scheduled_at: string; estimated_time: number; calendar_id?: string | null
+    }) => {
+        // 楽観的にカレンダーへ即座追加
+        if (eventData) {
+            const startTime = new Date(eventData.scheduled_at)
+            const endTime = new Date(startTime.getTime() + eventData.estimated_time * 60 * 1000)
+            rightSidebarRef.current?.addOptimisticEvent({
+                id: `optimistic-${eventData.id}`,
+                user_id: '',
+                google_event_id: '',
+                calendar_id: eventData.calendar_id || '',
+                title: eventData.title,
+                start_time: startTime.toISOString(),
+                end_time: endTime.toISOString(),
+                is_all_day: false,
+                timezone: 'Asia/Tokyo',
+                synced_at: new Date().toISOString(),
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                task_id: eventData.id,
+                estimated_time: eventData.estimated_time,
+            })
+        }
+        // デバウンスリフレッシュで実データに置換
         if (calendarRefreshTimerRef.current) clearTimeout(calendarRefreshTimerRef.current)
         calendarRefreshTimerRef.current = setTimeout(async () => {
             await rightSidebarRef.current?.refreshCalendar()
@@ -843,7 +867,7 @@ export function DashboardClient({
                 </div>
             </div>
             {/* AI Chat Floating Panel */}
-            <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={debouncedRefreshCalendar} />
+            <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} />
             </TimerProvider>
         </DragProvider>
     )

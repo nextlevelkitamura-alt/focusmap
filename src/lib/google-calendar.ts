@@ -313,6 +313,13 @@ export async function fetchCalendarEvents(
     return events.map((event) => {
       const isAllDay = !!event.start?.date; // dateフィールドがあれば終日イベント
 
+      // リマインダー情報を抽出
+      const reminders: number[] | undefined = event.reminders?.overrides
+        ? event.reminders.overrides
+            .filter((r: any) => r.method === 'popup')
+            .map((r: any) => r.minutes as number)
+        : undefined;
+
       return {
         user_id: userId,
         google_event_id: event.id!,
@@ -335,6 +342,7 @@ export async function fetchCalendarEvents(
         background_color: undefined,
         google_created_at: event.created || undefined,
         google_updated_at: event.updated || undefined,
+        reminders,
       };
     });
   } catch (error: any) {
