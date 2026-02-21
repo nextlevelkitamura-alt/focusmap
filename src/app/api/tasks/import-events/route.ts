@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { createClient } from '@/utils/supabase/server'
 
 interface EventPayload {
@@ -129,8 +130,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         })
         updated++
       } else {
-        // 新規 → INSERT
+        // 新規 → INSERT（id を明示的に生成して upsert の null id を防ぐ）
         toUpsert.push({
+          id: randomUUID(),
           user_id: user.id,
           title: event.title,
           google_event_id: event.google_event_id,
