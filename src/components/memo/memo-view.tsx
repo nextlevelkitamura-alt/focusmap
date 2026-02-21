@@ -132,7 +132,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
 
       if (!res.ok) {
         const { error } = await res.json()
-        throw new Error(error || "AI analysis failed")
+        throw new Error(error || "AI分析に失敗しました")
       }
 
       const { analysis } = await res.json()
@@ -149,7 +149,8 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
       })
     } catch (error) {
       console.error("Analysis error:", error)
-      showToast("error", error instanceof Error ? error.message : "AI分析に失敗しました")
+      const msg = error instanceof Error ? error.message : "AI分析に失敗しました"
+      showToast("error", `メモは保存済みです。${msg}`)
     } finally {
       setIsAnalyzing(false)
     }

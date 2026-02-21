@@ -118,6 +118,15 @@ ${projectContext || '(プロジェクトなし)'}
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error)
     console.error('AI analysis error:', errMsg, error)
-    return NextResponse.json({ error: `AI analysis failed: ${errMsg}` }, { status: 500 })
+
+    // Google API固有のエラーをユーザーフレンドリーなメッセージに変換
+    if (errMsg.includes('API key not valid') || errMsg.includes('API_KEY_INVALID')) {
+      return NextResponse.json({ error: 'AI機能が一時的に利用できません' }, { status: 503 })
+    }
+    if (errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('RATE_LIMIT')) {
+      return NextResponse.json({ error: 'リクエスト上限に達しました。しばらくお待ちください' }, { status: 429 })
+    }
+
+    return NextResponse.json({ error: 'AI分析中にエラーが発生しました' }, { status: 500 })
   }
 }

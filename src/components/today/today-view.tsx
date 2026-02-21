@@ -5,7 +5,7 @@ import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useCalendarEvents } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
-import { useHabits, HabitWithDetails, getTodayDateString } from "@/hooks/useHabits"
+import { useHabits, HabitWithDetails, getTodayDateString, formatDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
@@ -57,7 +57,7 @@ function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
 
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask: onCreateSubTaskProp, onDeleteTask: onDeleteTaskProp }: TodayViewProps) {
     const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
-    const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
+    const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, getHabitsForDate, isCompletedForDate, isLoading: habitsLoading } = useHabits()
     const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
     const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
@@ -526,7 +526,15 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         return () => clearInterval(interval)
     }, [])
 
-    const doneHabitCount = todayHabits.filter(h => h.isCompletedToday).length
+    // 選択日の習慣リストと完了数
+    const dateHabits = useMemo(() => getHabitsForDate(selectedDate), [getHabitsForDate, selectedDate])
+    const selectedDateStr = useMemo(() => formatDateString(selectedDate), [selectedDate])
+    const doneHabitCount = useMemo(() => {
+        return dateHabits.filter(h => {
+            if (isToday) return h.isCompletedToday
+            return h.completions.some(c => c.completed_date === selectedDateStr)
+        }).length
+    }, [dateHabits, isToday, selectedDateStr])
 
     // Week day labels for expanded habits
     const weekDayLabels = useMemo(() => {
@@ -568,7 +576,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 {displayItems.length}件のスケジュール
-                                {isToday && todayHabits.length > 0 && ` · ${doneHabitCount}/${todayHabits.length} 習慣完了`}
+                                {dateHabits.length > 0 && ` · ${doneHabitCount}/${dateHabits.length} 習慣完了`}
                             </p>
                         </div>
                         <button
@@ -630,50 +638,52 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 </div>
             )}
 
-            {/* Habit Bar (fixed) + Expandable Detail — only when viewing today */}
-            {isToday && !habitsLoading && todayHabits.length > 0 && (
+            {/* Habit Bar (fixed) + Expandable Detail — any date with habits */}
+            {!habitsLoading && dateHabits.length > 0 && (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
-                        <div className="flex items-center gap-2 mb-1.5">
+                        <button
+                            onClick={() => setHabitsExpanded(prev => !prev)}
+                            className="flex items-center gap-2 mb-1.5 w-full text-left"
+                        >
                             <Target className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                            <span className="text-xs font-medium text-muted-foreground flex-1">今日の習慣</span>
-                            <button
-                                onClick={() => setHabitsExpanded(prev => !prev)}
-                                className="p-1 rounded-md hover:bg-muted/50 transition-colors"
-                            >
-                                {habitsExpanded ? (
-                                    <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
-                                ) : (
-                                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                                )}
-                            </button>
-                        </div>
+                            <span className="text-xs font-medium text-muted-foreground flex-1">
+                                {isToday ? '今日の習慣' : `${format(selectedDate, 'M/d', { locale: ja })}の習慣`}
+                            </span>
+                            {habitsExpanded ? (
+                                <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                            ) : (
+                                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                            )}
+                        </button>
                         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
-                            {todayHabits.map(item => {
+                            {dateHabits.map(item => {
                                 const hasChildren = item.childTasks.length > 0
-                                const todayStr = getTodayDateString()
+                                const isCompleted = isToday
+                                    ? item.isCompletedToday
+                                    : item.completions.some(c => c.completed_date === selectedDateStr)
                                 // 日次ベースの完了数を計算
                                 const doneChildCount = hasChildren
-                                    ? item.childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === todayStr)).length
+                                    ? item.childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === selectedDateStr)).length
                                     : 0
                                 return (
                                     <button
                                         key={item.habit.id}
                                         onClick={() => {
-                                            if (!hasChildren) toggleCompletion(item.habit.id)
+                                            if (!hasChildren && isToday) toggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
                                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all flex-shrink-0 border",
-                                            !hasChildren && "active:scale-[0.98]",
-                                            item.isCompletedToday
+                                            !hasChildren && isToday && "active:scale-[0.98]",
+                                            isCompleted
                                                 ? "bg-primary/10 border-primary/30 dark:bg-primary/15"
-                                                : !hasChildren
+                                                : !hasChildren && isToday
                                                     ? "border-border hover:bg-muted/40 active:bg-muted/60"
                                                     : "border-border"
                                         )}
                                     >
-                                        {item.isCompletedToday ? (
+                                        {isCompleted ? (
                                             <CheckSquare className={cn("w-3.5 h-3.5 flex-shrink-0", hasChildren ? "text-primary/50" : "text-primary")} />
                                         ) : (
                                             <Square className={cn("w-3.5 h-3.5 flex-shrink-0", hasChildren ? "text-muted-foreground/20" : "text-muted-foreground/40")} />
@@ -681,7 +691,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                         <span className="text-sm flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
                                         <span className={cn(
                                             "text-xs whitespace-nowrap",
-                                            item.isCompletedToday
+                                            isCompleted
                                                 ? "text-primary font-medium line-through"
                                                 : "text-foreground"
                                         )}>
@@ -707,18 +717,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     {/* Expanded: Child tasks only (compact) */}
                     {habitsExpanded && (
                         <div className="px-4 pb-2 space-y-0.5 animate-in slide-in-from-top-2 duration-200">
-                            {todayHabits.map(item => {
+                            {dateHabits.map(item => {
                                 if (item.childTasks.length === 0) return null
-                                const todayStr = getTodayDateString()
                                 return (
                                     <div key={item.habit.id} className="space-y-0">
                                         {item.childTasks.map(child => {
-                                            const isRunning = timer.runningTaskId === child.id
-                                            const isDoneToday = item.taskCompletions.some(
-                                                tc => tc.task_id === child.id && tc.completed_date === todayStr
+                                            const isRunning = isToday && timer.runningTaskId === child.id
+                                            const isDoneForDate = item.taskCompletions.some(
+                                                tc => tc.task_id === child.id && tc.completed_date === selectedDateStr
                                             )
                                             const todayCompletion = item.taskCompletions.find(
-                                                tc => tc.task_id === child.id && tc.completed_date === todayStr
+                                                tc => tc.task_id === child.id && tc.completed_date === selectedDateStr
                                             )
                                             const todayElapsed = todayCompletion?.elapsed_seconds ?? 0
                                             const hasElapsed = todayElapsed > 0
@@ -730,45 +739,63 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                         isRunning && "bg-primary/10"
                                                     )}
                                                 >
-                                                    {/* Tappable area: checkbox + title */}
-                                                    <button
-                                                        className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
-                                                        onClick={() => toggleChildTask(child.id, child.status || 'todo', item)}
-                                                    >
-                                                        {isDoneToday ? (
-                                                            <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                                                        ) : (
-                                                            <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
-                                                        )}
-                                                        <span className={cn(
-                                                            "text-xs flex-1 truncate text-left",
-                                                            isDoneToday ? "line-through text-muted-foreground" : "text-foreground"
-                                                        )}>
-                                                            {child.title}
-                                                        </span>
-                                                    </button>
-                                                    {/* Timer display: show today's elapsed time */}
-                                                    {isRunning ? (
-                                                        <span className="text-[10px] font-mono text-primary flex-shrink-0">
-                                                            {formatTime(todayElapsed + (timer.currentElapsedSeconds - (child.total_elapsed_seconds ?? 0)))}
-                                                        </span>
-                                                    ) : hasElapsed ? (
-                                                        <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
-                                                            {formatTime(todayElapsed)}
-                                                        </span>
-                                                    ) : null}
-                                                    <button
-                                                        className={cn(
-                                                            "p-1.5 rounded-full flex-shrink-0",
-                                                            isRunning ? "text-primary bg-primary/10" : "text-muted-foreground/50 active:bg-muted/50"
-                                                        )}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            isRunning ? timer.pauseTimer() : timer.startTimer(child)
-                                                        }}
-                                                    >
-                                                        {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                                                    </button>
+                                                    {isToday ? (
+                                                        <button
+                                                            className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
+                                                            onClick={() => toggleChildTask(child.id, child.status || 'todo', item)}
+                                                        >
+                                                            {isDoneForDate ? (
+                                                                <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                                            ) : (
+                                                                <Square className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+                                                            )}
+                                                            <span className={cn(
+                                                                "text-xs flex-1 truncate text-left",
+                                                                isDoneForDate ? "line-through text-muted-foreground" : "text-foreground"
+                                                            )}>
+                                                                {child.title}
+                                                            </span>
+                                                        </button>
+                                                    ) : (
+                                                        <div className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2">
+                                                            {isDoneForDate ? (
+                                                                <CheckSquare className="w-3.5 h-3.5 text-primary/50 flex-shrink-0" />
+                                                            ) : (
+                                                                <Square className="w-3.5 h-3.5 text-muted-foreground/20 flex-shrink-0" />
+                                                            )}
+                                                            <span className={cn(
+                                                                "text-xs flex-1 truncate text-left",
+                                                                isDoneForDate ? "line-through text-muted-foreground" : "text-foreground/70"
+                                                            )}>
+                                                                {child.title}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                    {isToday && (
+                                                        <>
+                                                            {isRunning ? (
+                                                                <span className="text-[10px] font-mono text-primary flex-shrink-0">
+                                                                    {formatTime(todayElapsed + (timer.currentElapsedSeconds - (child.total_elapsed_seconds ?? 0)))}
+                                                                </span>
+                                                            ) : hasElapsed ? (
+                                                                <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
+                                                                    {formatTime(todayElapsed)}
+                                                                </span>
+                                                            ) : null}
+                                                            <button
+                                                                className={cn(
+                                                                    "p-1.5 rounded-full flex-shrink-0",
+                                                                    isRunning ? "text-primary bg-primary/10" : "text-muted-foreground/50 active:bg-muted/50"
+                                                                )}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    isRunning ? timer.pauseTimer() : timer.startTimer(child)
+                                                                }}
+                                                            >
+                                                                {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                                                            </button>
+                                                        </>
+                                                    )}
                                                 </div>
                                             )
                                         })}

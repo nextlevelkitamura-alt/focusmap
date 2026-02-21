@@ -47,6 +47,13 @@ function isTodayInFrequency(freq: string | null): boolean {
     return days.includes(todayKey)
 }
 
+export function isDateInFrequency(freq: string | null, date: Date): boolean {
+    const days = parseFrequency(freq)
+    if (days.length === 0) return true
+    const dayKey = DAY_KEYS[date.getDay()]
+    return days.includes(dayKey)
+}
+
 function isTodayInPeriod(startDate: string | null, endDate: string | null): boolean {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -57,6 +64,20 @@ function isTodayInPeriod(startDate: string | null, endDate: string | null): bool
     if (endDate) {
         const end = new Date(endDate + 'T00:00:00')
         if (today > end) return false
+    }
+    return true
+}
+
+export function isDateInPeriod(startDate: string | null, endDate: string | null, date: Date): boolean {
+    const d = new Date(date)
+    d.setHours(0, 0, 0, 0)
+    if (startDate) {
+        const start = new Date(startDate + 'T00:00:00')
+        if (d < start) return false
+    }
+    if (endDate) {
+        const end = new Date(endDate + 'T00:00:00')
+        if (d > end) return false
     }
     return true
 }
@@ -369,6 +390,23 @@ export function useHabits() {
     const todayHabits = useMemo(() => habits.filter(h => h.isTodayHabit), [habits])
     const otherHabits = useMemo(() => habits.filter(h => !h.isTodayHabit), [habits])
 
+    // Get habits applicable for a specific date
+    const getHabitsForDate = useCallback((date: Date): HabitWithDetails[] => {
+        return habits.filter(h => {
+            const freq = h.habit.habit_frequency as string | null
+            const startDate = h.habit.habit_start_date as string | null
+            const endDate = h.habit.habit_end_date as string | null
+            return isDateInFrequency(freq, date) && isDateInPeriod(startDate, endDate, date)
+        })
+    }, [habits])
+
+    // Check if a habit is completed for a specific date
+    const isCompletedForDate = useCallback((habitId: string, dateStr: string): boolean => {
+        const habit = habits.find(h => h.habit.id === habitId)
+        if (!habit) return false
+        return habit.completions.some(c => c.completed_date === dateStr)
+    }, [habits])
+
     // Initial fetch
     useEffect(() => {
         fetchHabits()
@@ -385,6 +423,8 @@ export function useHabits() {
         isChildTaskCompletedForDate,
         updateChildTaskStatus,
         removeHabit,
+        getHabitsForDate,
+        isCompletedForDate,
         refetch: fetchHabits,
     }
 }
