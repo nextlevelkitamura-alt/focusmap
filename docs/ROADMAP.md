@@ -129,7 +129,7 @@
   - Phase 2: AI分析（Gemini 2.5 Flash） ✅
   - Phase 3: マップ/カレンダー連携（マップ追加 ✅ / カレンダー追加 ○）
   - Phase 4: 音声入力（Groq Whisper） ✅
-  - Phase 5: AIチャット型対話 ○
+  - Phase 5: AIチャット型対話 ○ → [仕様](specs/ai-chat-dialogue.md)
   - Phase 6: タスクメモ欄 ✅
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）

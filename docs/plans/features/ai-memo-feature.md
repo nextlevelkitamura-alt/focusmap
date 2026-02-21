@@ -192,13 +192,25 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS memo TEXT;
 
 ---
 
-### Phase 5: チャット壁打ち
+### Phase 5: AIチャット型対話 → [仕様](../../specs/ai-chat-dialogue.md)
 
-#### タスク
-1. メモ画面にチャットUI統合
-2. 会話履歴の保持（ローカル状態）
-3. 文脈を考慮した再分析
-4. 「ここに追加して」指示の解析・実行
+#### Phase 5a: チャットUI + 基本対話
+1. フローティングアイコン + パネルUI（右下、モバイル50vh/PC 400x500px）
+2. `/api/ai/chat` エンドポイント（Gemini 2.5 Flash、プロジェクト一覧コンテキスト）
+3. メッセージ表示 + テキスト入力 + 7ラリー制限
+4. 音声入力統合（既存 useVoiceRecorder 活用）
+
+#### Phase 5b: アクション実行（Function Calling）
+1. Gemini Function Calling 設定（7アクション定義）
+2. `/api/ai/chat/execute` エンドポイント
+3. アクション確認UI（実行/修正/キャンセルボタン）
+4. マップ追加・カレンダー追加の実行ロジック
+5. メモ編集・紐付け・アーカイブの実行ロジック
+
+#### Phase 5c: セッション管理
+1. `ai_chat_summaries` テーブル作成（100文字要約 × 最新5セッション）
+2. `/api/ai/chat/summarize` エンドポイント（セッション終了時に自動要約）
+3. セッション開始時の要約読み込み + プロンプト注入
 
 ---
 
