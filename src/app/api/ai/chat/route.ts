@@ -101,15 +101,32 @@ export async function POST(request: Request) {
 ## ルール
 - 操作を実行する場合、応答テキストに操作内容を説明し、JSONブロックでアクションを指定する
 - 削除操作は実行不可。「削除はメモ画面から行ってください」と案内する
-- 曖昧な指示は質問して明確にする
+- 曖昧な指示は質問して明確にする。その際、選択肢ブロックで候補を提示する
 - 簡潔に応答する（3文以内）
 - 日本語で応答する
+
+## 選択肢の指定方法
+ユーザーに選択を求める場合、応答の最後に以下のJSONブロックを含める:
+\`\`\`options
+[{"label": "表示テキスト", "value": "選択時に送信される値"}, ...]
+\`\`\`
+- 最大4つまで
+- プロジェクトやタスクを選ぶ場合は、コンテキストの一覧から候補を出す
+- 日時を選ぶ場合は、具体的な候補日時を出す
+
+例:
+ユーザー: 「マップに追加して」
+AI: どのプロジェクトに追加しますか？
+\`\`\`options
+[{"label": "プロジェクトA", "value": "プロジェクトAに追加して"}, {"label": "プロジェクトB", "value": "プロジェクトBに追加して"}]
+\`\`\`
 
 ## アクション指定方法
 操作が必要な場合、応答の最後に以下のJSONブロックを含める:
 \`\`\`action
 {"type": "アクション名", "params": {パラメータ}, "description": "確認用の説明"}
 \`\`\`
+注意: actionブロックとoptionsブロックは同時に使わない。どちらか一方のみ。
 
 アクション名と必要なパラメータ:
 - add_task: {"title": "タスク名", "project_id": "プロジェクトID(任意)"}
@@ -153,16 +170,32 @@ ${activeNoteContent}`
     if (actionMatch) {
       try {
         action = JSON.parse(actionMatch[1])
-        // アクションブロックを応答テキストから除去
-        replyText = responseText.replace(/```action\s*\n[\s\S]*?\n```/, '').trim()
+        replyText = replyText.replace(/```action\s*\n[\s\S]*?\n```/, '').trim()
       } catch {
         // JSON パース失敗時はアクションなしで続行
+      }
+    }
+
+    // 選択肢ブロックを抽出
+    const optionsMatch = replyText.match(/```options\s*\n([\s\S]*?)\n```/)
+    let options: { label: string; value: string }[] | undefined
+
+    if (optionsMatch) {
+      try {
+        const parsed = JSON.parse(optionsMatch[1])
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          options = parsed.slice(0, 4)
+        }
+        replyText = replyText.replace(/```options\s*\n[\s\S]*?\n```/, '').trim()
+      } catch {
+        // パース失敗時は選択肢なしで続行
       }
     }
 
     return NextResponse.json({
       reply: replyText,
       action,
+      options,
     })
   } catch (error) {
     console.error('Chat error:', error)

@@ -10,58 +10,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import type { Note, NoteAiAnalysis } from "@/types/note"
 import type { Project } from "@/types/database"
-
-// 音声波形ビジュアライザー
-function VoiceWaveform({ analyserRef }: { analyserRef: React.RefObject<AnalyserNode | null> }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const animationRef = useRef<number>(0)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    const analyser = analyserRef.current
-    if (!canvas || !analyser) return
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const bufferLength = analyser.frequencyBinCount
-    const dataArray = new Uint8Array(bufferLength)
-    const barCount = 24
-    const barWidth = 3
-    const barGap = 2
-    const totalWidth = barCount * (barWidth + barGap) - barGap
-
-    canvas.width = totalWidth
-    canvas.height = 32
-
-    function draw() {
-      animationRef.current = requestAnimationFrame(draw)
-      analyser!.getByteFrequencyData(dataArray)
-
-      ctx!.clearRect(0, 0, canvas!.width, canvas!.height)
-
-      for (let i = 0; i < barCount; i++) {
-        const index = Math.floor((i / barCount) * bufferLength * 0.6)
-        const value = dataArray[index] / 255
-        const barHeight = Math.max(3, value * 28)
-        const x = i * (barWidth + barGap)
-        const y = (32 - barHeight) / 2
-
-        ctx!.fillStyle = `rgba(239, 68, 68, ${0.5 + value * 0.5})`
-        ctx!.beginPath()
-        ctx!.roundRect(x, y, barWidth, barHeight, 1.5)
-        ctx!.fill()
-      }
-    }
-
-    draw()
-    return () => { cancelAnimationFrame(animationRef.current) }
-  }, [analyserRef])
-
-  return <canvas ref={canvasRef} className="h-8" style={{ width: 'auto' }} />
-}
 
 // インライン提案の状態
 interface InlineProposal {
@@ -86,6 +37,7 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
   const [isLoadingNotes, setIsLoadingNotes] = useState(true)
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null)
   const [editingProjectNoteId, setEditingProjectNoteId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   // インライン提案
   const [proposal, setProposal] = useState<InlineProposal | null>(null)
@@ -307,16 +259,20 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
     setEditingProjectNoteId(null)
   }, [])
 
-  // メモ削除
+  // メモ削除（確認後に実行）
   const handleDelete = useCallback(async (noteId: string) => {
     try {
       const res = await fetch(`/api/notes?id=${noteId}`, { method: "DELETE" })
       if (res.ok) {
         setNotes(prev => prev.filter(n => n.id !== noteId))
         if (proposal?.noteId === noteId) setProposal(null)
+        showToast("success", "メモを削除しました")
       }
     } catch (err) {
       console.error("Delete error:", err)
+      showToast("error", "削除に失敗しました")
+    } finally {
+      setConfirmDeleteId(null)
     }
   }, [proposal])
 
@@ -387,19 +343,24 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
           </div>
 
           <div className="mt-3 flex items-center justify-between">
-            <Button
-              variant={isRecording ? "destructive" : "outline"}
-              size="sm"
-              onClick={isRecording ? stopRecording : startRecording}
-              disabled={isLoading || isTranscribing}
-              className="gap-1"
-            >
-              {isRecording ? (
-                <><Square className="w-3 h-3" />停止</>
-              ) : (
-                <><Mic className="w-4 h-4" />音声入力</>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={isRecording ? "destructive" : "outline"}
+                size="sm"
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={isLoading || isTranscribing}
+                className="gap-1"
+              >
+                {isRecording ? (
+                  <><Square className="w-3 h-3" />停止</>
+                ) : (
+                  <><Mic className="w-4 h-4" />音声入力</>
+                )}
+              </Button>
+              {isRecording && (
+                <VoiceWaveform analyserRef={analyserRef} barCount={16} height={24} />
               )}
-            </Button>
+            </div>
 
             <Button
               onClick={handleSave}
@@ -678,15 +639,36 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
                       )}
                     </Button>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(note.id)}
-                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive transition-colors"
-                      title="削除"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    {confirmDeleteId === note.id ? (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDelete(note.id)}
+                          className="h-7 px-2 text-xs"
+                        >
+                          削除
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="h-7 w-7 p-0"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setConfirmDeleteId(note.id)}
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive transition-colors"
+                        title="削除"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>
