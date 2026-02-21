@@ -23,6 +23,7 @@ interface MobileProjectSelectorProps {
     spaces: Space[]
     selectedSpaceId: string | null
     onSelectProject: (id: string) => void
+    onSelectSpace?: (id: string | null) => void
     onCreateGroup: () => void
     onCreateProject?: (title: string) => Promise<Project | null>
 }
@@ -41,6 +42,7 @@ export function MobileProjectSelector({
     spaces,
     selectedSpaceId,
     onSelectProject,
+    onSelectSpace,
     onCreateGroup,
     onCreateProject,
 }: MobileProjectSelectorProps) {
@@ -112,69 +114,110 @@ export function MobileProjectSelector({
                     side="bottom"
                     sideOffset={4}
                 >
-                    <div className="py-1 max-h-[60vh] overflow-y-auto">
-                        <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                            プロジェクト
-                        </div>
-                        {projects.map(p => (
-                            <button
-                                key={p.id}
-                                onClick={() => {
-                                    onSelectProject(p.id)
-                                    setIsOpen(false)
-                                }}
-                                className={cn(
-                                    "flex items-center gap-2 w-full px-3 py-2 text-sm text-left transition-colors",
-                                    p.id === project?.id
-                                        ? "bg-primary/10 text-primary"
-                                        : "hover:bg-muted/50"
-                                )}
-                            >
-                                <div className={cn(
-                                    "w-2 h-2 rounded-full shrink-0",
-                                    statusColorMap[p.status ?? 'active'] ?? "bg-green-500"
-                                )} />
-                                <span className="truncate">{p.title}</span>
-                            </button>
-                        ))}
-
-                        {/* プロジェクト新規作成 */}
-                        {onCreateProject && (
-                            <>
-                                <div className="mx-3 my-1 border-t" />
-                                {isCreating ? (
-                                    <div className="px-3 py-1.5">
-                                        <input
-                                            ref={createInputRef}
-                                            value={createTitle}
-                                            onChange={(e) => setCreateTitle(e.target.value)}
-                                            placeholder="プロジェクト名..."
-                                            className="w-full text-sm bg-muted/50 border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary"
-                                            onKeyDown={(e) => {
-                                                if (e.nativeEvent.isComposing) return
-                                                if (e.key === 'Enter') {
-                                                    e.preventDefault()
-                                                    handleCreateSubmit()
-                                                }
-                                                if (e.key === 'Escape') {
-                                                    setIsCreating(false)
-                                                    setCreateTitle('')
-                                                }
-                                            }}
-                                            onBlur={handleCreateSubmit}
-                                        />
-                                    </div>
-                                ) : (
+                    <div className="max-h-[60vh] overflow-y-auto">
+                        {/* スペース切り替えチップ */}
+                        {onSelectSpace && spaces.length > 0 && (
+                            <div className="px-3 pt-2.5 pb-1.5 border-b">
+                                <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
                                     <button
-                                        onClick={() => setIsCreating(true)}
-                                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
+                                        onClick={() => onSelectSpace(null)}
+                                        className={cn(
+                                            "shrink-0 text-xs px-2.5 py-1 rounded-full border transition-colors",
+                                            selectedSpaceId === null
+                                                ? "bg-primary text-primary-foreground border-primary"
+                                                : "border-border text-muted-foreground hover:bg-muted"
+                                        )}
                                     >
-                                        <Plus className="w-4 h-4" />
-                                        <span>新しいプロジェクト</span>
+                                        全体
                                     </button>
-                                )}
-                            </>
+                                    {spaces.map(s => (
+                                        <button
+                                            key={s.id}
+                                            onClick={() => onSelectSpace(s.id)}
+                                            className={cn(
+                                                "shrink-0 text-xs px-2.5 py-1 rounded-full border transition-colors",
+                                                selectedSpaceId === s.id
+                                                    ? "bg-primary text-primary-foreground border-primary"
+                                                    : "border-border text-muted-foreground hover:bg-muted"
+                                            )}
+                                        >
+                                            {s.title}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                         )}
+
+                        <div className="py-1">
+                            <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                                プロジェクト
+                            </div>
+                            {projects.map(p => (
+                                <button
+                                    key={p.id}
+                                    onClick={() => {
+                                        onSelectProject(p.id)
+                                        setIsOpen(false)
+                                    }}
+                                    className={cn(
+                                        "flex items-center gap-2 w-full px-3 py-2 text-sm text-left transition-colors",
+                                        p.id === project?.id
+                                            ? "bg-primary/10 text-primary"
+                                            : "hover:bg-muted/50"
+                                    )}
+                                >
+                                    <div className={cn(
+                                        "w-2 h-2 rounded-full shrink-0",
+                                        statusColorMap[p.status ?? 'active'] ?? "bg-green-500"
+                                    )} />
+                                    <span className="truncate">{p.title}</span>
+                                </button>
+                            ))}
+
+                            {projects.length === 0 && (
+                                <div className="px-3 py-3 text-sm text-muted-foreground text-center">
+                                    プロジェクトがありません
+                                </div>
+                            )}
+
+                            {/* プロジェクト新規作成 */}
+                            {onCreateProject && (
+                                <>
+                                    <div className="mx-3 my-1 border-t" />
+                                    {isCreating ? (
+                                        <div className="px-3 py-1.5">
+                                            <input
+                                                ref={createInputRef}
+                                                value={createTitle}
+                                                onChange={(e) => setCreateTitle(e.target.value)}
+                                                placeholder="プロジェクト名..."
+                                                className="w-full text-sm bg-muted/50 border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary"
+                                                onKeyDown={(e) => {
+                                                    if (e.nativeEvent.isComposing) return
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault()
+                                                        handleCreateSubmit()
+                                                    }
+                                                    if (e.key === 'Escape') {
+                                                        setIsCreating(false)
+                                                        setCreateTitle('')
+                                                    }
+                                                }}
+                                                onBlur={handleCreateSubmit}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => setIsCreating(true)}
+                                            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
+                                        >
+                                            <Plus className="w-4 h-4" />
+                                            <span>新しいプロジェクト</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </div>
                     </div>
                 </PopoverContent>
             </Popover>

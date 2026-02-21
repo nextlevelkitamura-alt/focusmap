@@ -22,6 +22,7 @@ interface OutlineViewProps {
     selectedProjectId: string | null
     selectedSpaceId: string | null
     onSelectProject: (id: string) => void
+    onSelectSpace?: (id: string | null) => void
     onCreateGroup: (title: string) => Promise<Task | null>
     onCreateTask: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
@@ -44,6 +45,7 @@ export function OutlineView({
     selectedProjectId,
     selectedSpaceId,
     onSelectProject,
+    onSelectSpace,
     onCreateGroup,
     onCreateTask,
     onUpdateTask,
@@ -68,6 +70,7 @@ export function OutlineView({
                     spaces={spaces}
                     selectedSpaceId={selectedSpaceId}
                     onSelectProject={onSelectProject}
+                    onSelectSpace={onSelectSpace}
                     onCreateProject={onCreateProject}
                     onCreateGroup={async () => {
                         const g = await onCreateGroup('新しいグループ')

@@ -4,15 +4,20 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import {
   StickyNote, Send, Loader2,
   Sparkles, Mic, Square, Calendar, Map, Trash2,
-  FolderOpen, ChevronRight, Check, X,
+  FolderOpen, ChevronRight, ChevronDown, Check, X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import type { Note, NoteAiAnalysis } from "@/types/note"
-import type { Project } from "@/types/database"
+import type { Project, Space } from "@/types/database"
 
 // インライン提案の状態
 interface InlineProposal {
@@ -27,11 +32,23 @@ interface InlineProposal {
 interface MemoViewProps {
   className?: string
   projects?: Project[]
+  spaces?: Space[]
+  selectedSpaceId?: string | null
+  onSelectSpace?: (id: string | null) => void
 }
 
-export function MemoView({ className, projects = [] }: MemoViewProps) {
+const statusColorMap: Record<string, string> = {
+  active: "bg-green-500",
+  concept: "bg-blue-500",
+  on_hold: "bg-blue-500",
+  completed: "bg-gray-500",
+  archived: "bg-gray-500",
+}
+
+export function MemoView({ className, projects = [], spaces = [], selectedSpaceId = null, onSelectSpace }: MemoViewProps) {
   const [content, setContent] = useState("")
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [notes, setNotes] = useState<Note[]>([])
   const [isLoadingNotes, setIsLoadingNotes] = useState(true)
@@ -288,23 +305,139 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
 
   return (
     <div className={cn("flex flex-col h-full bg-background", className)}>
-      {/* Header + Project Filter */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b shrink-0">
-        <StickyNote className="w-5 h-5 text-primary shrink-0" />
-        <h1 className="text-lg font-semibold shrink-0">メモ</h1>
-        {projects.length > 0 && (
-          <select
-            value={selectedProjectId === "__unassigned__" ? "__unassigned__" : selectedProjectId || ""}
-            onChange={(e) => setSelectedProjectId(e.target.value || null)}
-            className="ml-2 text-sm px-2 py-1 rounded-md border bg-background text-foreground truncate max-w-[180px]"
-          >
-            <option value="">全て</option>
-            <option value="__unassigned__">未登録</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.title}</option>
-            ))}
-          </select>
-        )}
+      {/* Header + Project Filter (Popover) */}
+      <div className="border-b bg-background/95 backdrop-blur-sm sticky top-0 z-10 shrink-0">
+        <div className="flex items-center justify-between px-3 py-2.5">
+          <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+            <PopoverTrigger asChild>
+              <button className="flex items-center gap-2 min-w-0 flex-1">
+                <StickyNote className="w-4.5 h-4.5 text-primary shrink-0" />
+                <div className="flex flex-col items-start min-w-0">
+                  <span className="text-sm font-semibold truncate max-w-[200px]">
+                    {selectedProjectId === "__unassigned__"
+                      ? "未登録"
+                      : selectedProjectId
+                        ? projects.find(p => p.id === selectedProjectId)?.title || "全て"
+                        : "全て"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {selectedSpaceId
+                      ? spaces.find(s => s.id === selectedSpaceId)?.title
+                      : "全体"}
+                  </span>
+                </div>
+                <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+              </button>
+            </PopoverTrigger>
+
+            <PopoverContent
+              className="w-[280px] p-0"
+              align="start"
+              side="bottom"
+              sideOffset={4}
+            >
+              <div className="max-h-[60vh] overflow-y-auto">
+                {/* スペース切り替えチップ */}
+                {onSelectSpace && spaces.length > 0 && (
+                  <div className="px-3 pt-2.5 pb-1.5 border-b">
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                      <button
+                        onClick={() => onSelectSpace(null)}
+                        className={cn(
+                          "shrink-0 text-xs px-2.5 py-1 rounded-full border transition-colors",
+                          selectedSpaceId === null
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "border-border text-muted-foreground hover:bg-muted"
+                        )}
+                      >
+                        全体
+                      </button>
+                      {spaces.map(s => (
+                        <button
+                          key={s.id}
+                          onClick={() => onSelectSpace(s.id)}
+                          className={cn(
+                            "shrink-0 text-xs px-2.5 py-1 rounded-full border transition-colors",
+                            selectedSpaceId === s.id
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "border-border text-muted-foreground hover:bg-muted"
+                          )}
+                        >
+                          {s.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* フィルタ選択 */}
+                <div className="py-1">
+                  <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                    フィルタ
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedProjectId(null)
+                      setIsFilterOpen(false)
+                    }}
+                    className={cn(
+                      "flex items-center gap-2 w-full px-3 py-2 text-sm text-left transition-colors",
+                      !selectedProjectId
+                        ? "bg-primary/10 text-primary"
+                        : "hover:bg-muted/50"
+                    )}
+                  >
+                    <span className="truncate">全て</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedProjectId("__unassigned__")
+                      setIsFilterOpen(false)
+                    }}
+                    className={cn(
+                      "flex items-center gap-2 w-full px-3 py-2 text-sm text-left transition-colors",
+                      selectedProjectId === "__unassigned__"
+                        ? "bg-primary/10 text-primary"
+                        : "hover:bg-muted/50"
+                    )}
+                  >
+                    <span className="truncate">未登録</span>
+                  </button>
+
+                  {projects.length > 0 && (
+                    <>
+                      <div className="mx-3 my-1 border-t" />
+                      <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                        プロジェクト
+                      </div>
+                      {projects.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => {
+                            setSelectedProjectId(p.id)
+                            setIsFilterOpen(false)
+                          }}
+                          className={cn(
+                            "flex items-center gap-2 w-full px-3 py-2 text-sm text-left transition-colors",
+                            p.id === selectedProjectId
+                              ? "bg-primary/10 text-primary"
+                              : "hover:bg-muted/50"
+                          )}
+                        >
+                          <div className={cn(
+                            "w-2 h-2 rounded-full shrink-0",
+                            statusColorMap[p.status ?? 'active'] ?? "bg-green-500"
+                          )} />
+                          <span className="truncate">{p.title}</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       {/* Toast */}

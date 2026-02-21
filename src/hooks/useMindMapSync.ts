@@ -34,6 +34,7 @@ interface UseMindMapSyncReturn {
     isLoading: boolean
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
+    refreshFromServer: () => Promise<void>
     undo: () => Promise<string | null>
     redo: () => Promise<string | null>
     canUndo: () => boolean
@@ -1166,6 +1167,29 @@ export function useMindMapSync({
         }
     }, [supabase])
 
+    // サーバーからタスクを再取得（ビュー切り替え時など外部でタスクが追加された場合）
+    const refreshFromServer = useCallback(async () => {
+        if (!projectId) return
+        try {
+            const { data, error } = await supabase
+                .from('tasks')
+                .select('*')
+                .eq('project_id', projectId)
+            if (error) throw error
+            if (data) {
+                setAllTasks(prev => {
+                    const serverIds = new Set(data.map(t => t.id))
+                    const optimistic = prev.filter(t =>
+                        !serverIds.has(t.id) && pendingOptimisticTasks.current.has(t.id)
+                    )
+                    return [...data, ...optimistic]
+                })
+            }
+        } catch (e) {
+            console.error('[Sync] refreshFromServer failed:', e)
+        }
+    }, [projectId, supabase])
+
     return {
         groups,
         tasks,
@@ -1185,6 +1209,7 @@ export function useMindMapSync({
         isLoading,
         getChildTasks,
         getParentTasks,
+        refreshFromServer,
         undo,
         redo,
         canUndo,

@@ -737,7 +737,12 @@ export function DashboardClient({
                 {isViewReady && activeView === 'memo' && (
                     <div className="flex-1 overflow-hidden md:flex md:justify-center">
                         <div className="w-full max-w-2xl h-full">
-                            <MemoView projects={projects} />
+                            <MemoView
+                                projects={filteredProjects}
+                                spaces={spaces}
+                                selectedSpaceId={selectedSpaceId}
+                                onSelectSpace={setSelectedSpaceId}
+                            />
                         </div>
                     </div>
                 )}
