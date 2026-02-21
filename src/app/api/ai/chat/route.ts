@@ -103,37 +103,32 @@ export async function POST(request: Request) {
 - 情報が足りない場合は選択肢付きで質問する
 - 例: 「マップに追加して」→ まずプロジェクトを聞く → 次に追加場所を聞く → 最後に実行
 - 削除操作は実行不可。「削除はメモ画面から行ってください」と案内する
-- 簡潔に応答する（2文以内 + 選択肢）
+- 曖昧な指示は質問して明確にする。その際、選択肢ブロックで候補を提示する
+- 簡潔に応答する（3文以内）
 - 日本語で応答する
 
-## 選択肢の出し方（超重要）
-ユーザーに確認が必要な場合、応答の最後に選択肢ブロックを含める:
-\`\`\`choices
-["選択肢1", "選択肢2", "選択肢3"]
+## 選択肢の指定方法
+ユーザーに選択を求める場合、応答の最後に以下のJSONブロックを含める:
+\`\`\`options
+[{"label": "表示テキスト", "value": "選択時に送信される値"}, ...]
 \`\`\`
+- 最大4つまで
+- プロジェクトやタスクを選ぶ場合は、コンテキストの一覧から候補を出す
+- 日時を選ぶ場合は、具体的な候補日時を出す
 
-### 必ず選択肢を出すべき場面:
-1. **プロジェクトの選択**: 「どのプロジェクトに追加しますか？」+ プロジェクト名一覧
-2. **タスクの追加場所**: 「どこに追加しますか？」+ 「ルートに追加」「○○の下」など
-3. **日時の確認**: 「いつにしますか？」+ 「今日」「明日」「来週月曜」など
-4. **操作の確認**: 「追加しますか？」+ 「追加する」「やめる」
-5. **曖昧な指示の明確化**: 何をしたいか選択肢で提示
-
-### 対話フローの例:
-ユーザー: 「これをマップに追加して」
-AI: 「どのプロジェクトに追加しますか？」+ choices: ["プロジェクトA", "プロジェクトB", "新しいプロジェクト"]
-
-ユーザー: 「プロジェクトA」
-AI: 「プロジェクトAのどこに追加しますか？」+ choices: ["ルートに追加", "タスクXの下", "タスクYの下"]
-
-ユーザー: 「タスクXの下」
-AI: 「タスクXの下に「メモ内容」を追加します。」+ action ブロック
+例:
+ユーザー: 「マップに追加して」
+AI: どのプロジェクトに追加しますか？
+\`\`\`options
+[{"label": "プロジェクトA", "value": "プロジェクトAに追加して"}, {"label": "プロジェクトB", "value": "プロジェクトBに追加して"}]
+\`\`\`
 
 ## アクション指定方法
 すべての確認が完了して実行する段階で、応答の最後に以下のJSONブロックを含める:
 \`\`\`action
 {"type": "アクション名", "params": {パラメータ}, "description": "確認用の説明"}
 \`\`\`
+注意: actionブロックとoptionsブロックは同時に使わない。どちらか一方のみ。
 
 アクション名と必要なパラメータ:
 - add_task: {"title": "タスク名", "project_id": "プロジェクトID(任意)", "parent_task_id": "親タスクID(任意)"}
@@ -184,13 +179,16 @@ ${activeNoteContent}`
     }
 
     // 選択肢ブロックを抽出
-    const choicesMatch = replyText.match(/```choices\s*\n([\s\S]*?)\n```/)
-    let choices: string[] | undefined
+    const optionsMatch = replyText.match(/```options\s*\n([\s\S]*?)\n```/)
+    let options: { label: string; value: string }[] | undefined
 
-    if (choicesMatch) {
+    if (optionsMatch) {
       try {
-        choices = JSON.parse(choicesMatch[1])
-        replyText = replyText.replace(/```choices\s*\n[\s\S]*?\n```/, '').trim()
+        const parsed = JSON.parse(optionsMatch[1])
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          options = parsed.slice(0, 4)
+        }
+        replyText = replyText.replace(/```options\s*\n[\s\S]*?\n```/, '').trim()
       } catch {
         // パース失敗時は選択肢なしで続行
       }
@@ -199,7 +197,7 @@ ${activeNoteContent}`
     return NextResponse.json({
       reply: replyText,
       action,
-      choices,
+      options,
     })
   } catch (error) {
     console.error('Chat error:', error)

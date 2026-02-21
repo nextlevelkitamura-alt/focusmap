@@ -8,18 +8,25 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { VoiceWaveform } from "@/components/ui/voice-waveform"
+
+interface ChatOption {
+  label: string
+  value: string
+}
 
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  choices?: string[]
   action?: {
     type: string
     params: Record<string, unknown>
     description: string
   }
   actionStatus?: 'pending' | 'executing' | 'success' | 'error'
+  options?: ChatOption[]
+  optionsUsed?: boolean
 }
 
 interface AiChatPanelProps {
@@ -46,13 +53,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
 
   // ラリー数カウント
   const rallyCount = messages.filter(m => m.role === 'user').length
-
-  // 最後のAIメッセージの選択肢を取得（まだ選択されていない場合のみ）
-  const lastAiMessage = [...messages].reverse().find(m => m.role === 'assistant')
-  const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')
-  const activeChoices = lastAiMessage && lastAiMessage.choices &&
-    (!lastUserMessage || messages.indexOf(lastAiMessage) > messages.indexOf(lastUserMessage))
-    ? lastAiMessage.choices : undefined
 
   // 自動スクロール
   useEffect(() => {
@@ -104,15 +104,15 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
         throw new Error(error || 'Chat failed')
       }
 
-      const { reply, action, choices } = await res.json()
+      const { reply, action, options } = await res.json()
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: reply,
-        choices,
         action,
         actionStatus: action ? 'pending' : undefined,
+        options: options?.length ? options : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
     } catch (error) {
@@ -131,11 +131,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
   const handleSend = useCallback(() => {
     sendMessage(input)
   }, [input, sendMessage])
-
-  // 選択肢タップで送信
-  const handleChoiceTap = useCallback((choice: string) => {
-    sendMessage(choice)
-  }, [sendMessage])
 
   // アクション実行
   const handleExecuteAction = useCallback(async (messageId: string) => {
@@ -157,7 +152,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
 
       setMessages(prev => [
         ...prev.map(m =>
-          m.id === messageId ? { ...m, actionStatus: (success ? 'success' : 'error') as const } : m
+          m.id === messageId ? { ...m, actionStatus: success ? 'success' as const : 'error' as const } : m
         ),
         {
           id: crypto.randomUUID(),
@@ -178,6 +173,69 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
       m.id === messageId ? { ...m, action: undefined, actionStatus: undefined } : m
     ))
   }, [])
+
+  // 選択肢ボタンクリック
+  const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
+    // 選択肢を使用済みにする
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, optionsUsed: true } : m
+    ))
+
+    if (option.value) {
+      // valueをユーザーメッセージとして送信
+      setInput(option.value)
+      // 次のティックで送信（inputが更新されてから）
+      setTimeout(() => {
+        setInput('')
+        const userMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: option.value,
+        }
+        setMessages(prev => [...prev, userMessage])
+        // handleSend相当の処理を直接実行
+        setIsLoading(true)
+        fetch('/api/ai/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: option.value,
+            history: [...messages.filter(m => !m.optionsUsed || m.role === 'user'), userMessage].map(m => ({
+              role: m.role,
+              content: m.content,
+            })),
+            context: {
+              activeNoteId: activeNoteId || undefined,
+              activeProjectId: activeProjectId || undefined,
+            },
+          }),
+        })
+          .then(res => res.json())
+          .then(({ reply, action, options: opts }) => {
+            const aiMsg: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: reply,
+              action,
+              actionStatus: action ? 'pending' : undefined,
+              options: opts?.length ? opts : undefined,
+            }
+            setMessages(prev => [...prev, aiMsg])
+          })
+          .catch(() => {
+            setMessages(prev => [...prev, {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: 'エラーが発生しました。もう一度お試しください。',
+            }])
+          })
+          .finally(() => setIsLoading(false))
+      }, 0)
+    } else {
+      // 「自分で入力」→ 入力欄にフォーカス
+      inputRef.current?.focus()
+    }
+  }, [messages, activeNoteId, activeProjectId])
 
   // リセット
   const handleReset = useCallback(() => {
@@ -274,36 +332,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                   )}>
                     <p className="whitespace-pre-wrap">{msg.content}</p>
 
-                    {/* 選択肢ボタン（最後のAIメッセージのみアクティブ） */}
-                    {msg.choices && msg.choices.length > 0 && msg.id === lastAiMessage?.id && activeChoices && (
-                      <div className="mt-2 pt-2 border-t border-border/30 flex flex-wrap gap-1.5">
-                        {msg.choices.map((choice) => (
-                          <button
-                            key={choice}
-                            onClick={() => handleChoiceTap(choice)}
-                            disabled={isLoading}
-                            className="text-xs px-3 py-1.5 rounded-full bg-background border border-border hover:bg-primary hover:text-primary-foreground transition-colors disabled:opacity-50"
-                          >
-                            {choice}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* 過去の選択肢は薄く表示 */}
-                    {msg.choices && msg.choices.length > 0 && !(msg.id === lastAiMessage?.id && activeChoices) && (
-                      <div className="mt-2 pt-2 border-t border-border/20 flex flex-wrap gap-1.5 opacity-40">
-                        {msg.choices.map((choice) => (
-                          <span
-                            key={choice}
-                            className="text-xs px-3 py-1.5 rounded-full border border-border/50"
-                          >
-                            {choice}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
                     {/* アクション確認ボタン */}
                     {msg.action && msg.actionStatus === 'pending' && (
                       <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
@@ -351,6 +379,30 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                         失敗
                       </div>
                     )}
+
+                    {/* 選択肢ボタン */}
+                    {msg.options && !msg.optionsUsed && (
+                      <div className="mt-2 pt-2 border-t border-border/30 flex flex-wrap gap-1.5">
+                        {msg.options.map((opt, i) => (
+                          <Button
+                            key={i}
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={() => handleOptionSelect(msg.id, opt)}
+                            disabled={isLoading}
+                          >
+                            {opt.label}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+
+                    {msg.optionsUsed && msg.options && (
+                      <div className="mt-1 text-xs opacity-50">
+                        選択済み
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -393,50 +445,69 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                   </Button>
                 </div>
               ) : (
-                <div className="flex items-end gap-1.5">
-                  {/* 音声入力ボタン */}
-                  <Button
-                    variant={isRecording ? "destructive" : "ghost"}
-                    size="sm"
-                    className={cn(
-                      "h-9 w-9 p-0 shrink-0",
-                      isRecording && "animate-pulse"
-                    )}
-                    onClick={isRecording ? stopRecording : startRecording}
-                    disabled={isLoading || isTranscribing}
-                    title={isRecording ? "録音停止" : "音声入力"}
-                  >
-                    {isTranscribing ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : isRecording ? (
-                      <Square className="w-3.5 h-3.5" />
-                    ) : (
-                      <Mic className="w-4 h-4" />
-                    )}
-                  </Button>
+                <>
+                  {/* 録音中インジケーター */}
+                  {isRecording && (
+                    <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-red-500/10 rounded-lg">
+                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0" />
+                      <VoiceWaveform
+                        analyserRef={analyserRef}
+                        barCount={32}
+                        barWidth={2}
+                        barGap={1}
+                        height={24}
+                      />
+                      <button
+                        onClick={stopRecording}
+                        className="ml-auto text-xs text-red-600 font-medium hover:text-red-700 shrink-0"
+                      >
+                        停止
+                      </button>
+                    </div>
+                  )}
 
-                  {/* テキスト入力 */}
-                  <textarea
-                    ref={inputRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={isRecording ? "録音中..." : "テキストまたは音声で入力"}
-                    className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-20 min-h-[36px]"
-                    rows={1}
-                    disabled={isLoading || isRecording}
-                  />
+                  <div className="flex items-end gap-2">
+                    {/* 音声入力ボタン */}
+                    <Button
+                      variant={isRecording ? "destructive" : "ghost"}
+                      size="sm"
+                      className="h-9 w-9 p-0 shrink-0"
+                      onClick={isRecording ? stopRecording : startRecording}
+                      disabled={isLoading || isTranscribing}
+                      title={isRecording ? "録音停止" : "音声入力"}
+                    >
+                      {isTranscribing ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : isRecording ? (
+                        <Square className="w-3.5 h-3.5" />
+                      ) : (
+                        <Mic className="w-4 h-4" />
+                      )}
+                    </Button>
 
-                  {/* 送信ボタン */}
-                  <Button
-                    size="sm"
-                    className="h-9 w-9 p-0 shrink-0"
-                    onClick={handleSend}
-                    disabled={!input.trim() || isLoading}
-                  >
-                    <Send className="w-4 h-4" />
-                  </Button>
-                </div>
+                    {/* テキスト入力 */}
+                    <textarea
+                      ref={inputRef}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="メッセージを入力..."
+                      className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-24 min-h-[36px]"
+                      rows={1}
+                      disabled={isLoading}
+                    />
+
+                    {/* 送信ボタン */}
+                    <Button
+                      size="sm"
+                      className="h-9 w-9 p-0 shrink-0"
+                      onClick={handleSend}
+                      disabled={!input.trim() || isLoading}
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
           </div>
