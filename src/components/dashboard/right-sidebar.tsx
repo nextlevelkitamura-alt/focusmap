@@ -4,11 +4,14 @@ import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from "
 import { SidebarCalendar, SidebarCalendarRef } from "@/components/dashboard/sidebar-calendar"
 import { CalendarToast, useCalendarToast } from "@/components/calendar/calendar-toast"
 import { Task } from "@/types/database"
+import { CalendarEvent } from "@/types/calendar"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 
 export interface RightSidebarRef {
     refreshCalendar: () => Promise<void>
+    addOptimisticEvent: (event: CalendarEvent) => void
+    removeOptimisticEvent: (eventId: string) => void
 }
 
 interface RightSidebarProps {
@@ -58,11 +61,17 @@ export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(funct
         }
     }, [showToast, onUpdateTask])
 
-    // 親コンポーネントから refreshCalendar を呼び出せるようにする
+    // 親コンポーネントから refreshCalendar + 楽観的イベント操作を呼び出せるようにする
     useImperativeHandle(ref, () => ({
         refreshCalendar: async () => {
             await calendarRef.current?.refetch()
-        }
+        },
+        addOptimisticEvent: (event: CalendarEvent) => {
+            calendarRef.current?.addOptimisticEvent(event)
+        },
+        removeOptimisticEvent: (eventId: string) => {
+            calendarRef.current?.removeOptimisticEvent(eventId)
+        },
     }), [])
 
     return (

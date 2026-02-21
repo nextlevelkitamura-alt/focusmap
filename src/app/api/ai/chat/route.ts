@@ -60,6 +60,28 @@ export async function POST(request: Request) {
       .is('parent_task_id', null)
       .limit(30)
 
+    // ユーザーのカレンダー設定を取得
+    const { data: calendarSettings } = await supabase
+      .from('user_calendar_settings')
+      .select('is_sync_enabled, default_calendar_id')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    let calendarsContext = ''
+    if (calendarSettings?.is_sync_enabled) {
+      const { data: userCalendars } = await supabase
+        .from('user_calendars')
+        .select('google_calendar_id, name, is_primary')
+        .eq('user_id', user.id)
+        .order('is_primary', { ascending: false })
+
+      if (userCalendars && userCalendars.length > 0) {
+        calendarsContext = userCalendars.map(c =>
+          `- ${c.name} (ID: ${c.google_calendar_id})${c.is_primary ? ' [デフォルト]' : ''}`
+        ).join('\n')
+      }
+    }
+
     // アクティブなメモのコンテキスト
     let activeNoteContent = ''
     if (context.activeNoteId) {
@@ -132,15 +154,38 @@ AI: どのプロジェクトに追加しますか？
 
 アクション名と必要なパラメータ:
 - add_task: {"title": "タスク名", "project_id": "プロジェクトID(任意)", "parent_task_id": "親タスクID(任意)"}
-- add_calendar_event: {"title": "予定名", "scheduled_at": "ISO8601日時", "estimated_time": 分数}
+- add_calendar_event: {"title": "予定名", "scheduled_at": "ISO8601日時(JST)", "estimated_time": 分数, "calendar_id": "カレンダーID(任意)", "project_id": "プロジェクトID(任意)"}
 - edit_memo: {"note_id": "メモID", "content": "新しい内容"}
 - link_project: {"note_id": "メモID", "project_id": "プロジェクトID"}
 - archive_memo: {"note_id": "メモID"}
 - update_priority: {"task_id": "タスクID", "priority": 1-4}
 - set_deadline: {"task_id": "タスクID", "scheduled_at": "ISO8601日時", "estimated_time": 分数}
 
+## カレンダー予定追加の対話フロー（重要）
+ユーザーが「予定を入れて」「明日○○に行きたい」等と言った場合、以下のステップで**必ず1つずつ確認**する:
+
+Step 1: 予定名の確認
+- ユーザーの発言から予定名を推測して提案する
+- optionsで候補を2-3個出す
+
+Step 2: 日時の確認
+- 「明日」「来週」等は具体的な日付に変換して確認する
+- optionsで時間帯の候補を出す（例: 9:00, 10:00, 13:00, 14:00）
+
+Step 3: 所要時間の確認
+- optionsで候補を出す: 1時間, 2時間, 3時間, 4時間
+
+Step 4: 最終確認（ここで初めてactionブロックを出力）
+- 要約を表示: 「📅 2/22(土) 10:00〜12:00 買い物 をカレンダーに登録します」
+- scheduled_atはISO8601 JST形式で出力（例: 2026-02-22T10:00:00+09:00）
+
+**注意: Step 1-3を絶対にスキップしない。いきなりactionを出すのは禁止。**
+
 ## コンテキスト
 今日の日付: ${new Date().toISOString().split('T')[0]}
+現在時刻: ${new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}
+タイムゾーン: Asia/Tokyo
+${calendarSettings?.is_sync_enabled ? `Googleカレンダー連携: 有効\nデフォルトカレンダーID: ${calendarSettings.default_calendar_id || 'primary'}${calendarsContext ? '\n利用可能なカレンダー:\n' + calendarsContext : ''}` : 'Googleカレンダー連携: 未設定'}
 
 ユーザーのプロジェクト一覧:
 ${projectsContext || '(プロジェクトなし)'}
@@ -157,7 +202,7 @@ ${activeNoteContent}`
         { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
       ],
       generationConfig: {
-        maxOutputTokens: 500,
+        maxOutputTokens: 800,
         temperature: 0.7,
       },
     })

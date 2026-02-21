@@ -39,20 +39,68 @@ export async function POST(request: Request) {
       }
 
       case 'add_calendar_event': {
-        const { title, scheduled_at, estimated_time } = action.params as {
+        const { title, scheduled_at, estimated_time, calendar_id, project_id } = action.params as {
           title: string; scheduled_at: string; estimated_time?: number
+          calendar_id?: string; project_id?: string
         }
-        const { error } = await supabase
+
+        const taskId = crypto.randomUUID()
+        const estMin = estimated_time || 60
+
+        // 1. タスク作成（stage='scheduled'で今日ビューに表示可能）
+        const { error: taskError } = await supabase
           .from('tasks')
           .insert({
+            id: taskId,
             title,
             user_id: user.id,
+            project_id: project_id || null,
             scheduled_at,
-            estimated_time: estimated_time || 60,
-            status: 'pending',
+            estimated_time: estMin,
+            calendar_id: calendar_id || null,
+            stage: 'scheduled',
+            status: 'todo',
+            priority: 3,
           })
-        if (error) throw error
-        return NextResponse.json({ success: true, message: `✅ 予定「${title}」を追加しました` })
+        if (taskError) throw taskError
+
+        // 2. Google Calendar同期
+        let calendarSynced = false
+        if (scheduled_at && estMin > 0) {
+          let calId = calendar_id as string | undefined
+          if (!calId) {
+            // calendar_id未指定ならデフォルトカレンダーを使用
+            const { data: settings } = await supabase
+              .from('user_calendar_settings')
+              .select('is_sync_enabled, default_calendar_id')
+              .eq('user_id', user.id)
+              .maybeSingle()
+            if (settings?.is_sync_enabled) {
+              calId = settings.default_calendar_id || 'primary'
+              await supabase.from('tasks').update({ calendar_id: calId }).eq('id', taskId)
+            }
+          }
+          if (calId) {
+            try {
+              const { syncTaskToCalendar } = await import('@/lib/google-calendar')
+              await syncTaskToCalendar(user.id, taskId, {
+                title,
+                scheduled_at,
+                estimated_time: estMin,
+                calendar_id: calId,
+              })
+              calendarSynced = true
+            } catch (syncError) {
+              console.error('[execute] Calendar sync failed:', syncError)
+              // タスク作成は成功しているのでエラーにはしない
+            }
+          }
+        }
+
+        const msg = calendarSynced
+          ? `✅ 予定「${title}」をカレンダーに登録しました`
+          : `✅ 予定「${title}」をタスクとして追加しました`
+        return NextResponse.json({ success: true, message: msg })
       }
 
       case 'edit_memo': {

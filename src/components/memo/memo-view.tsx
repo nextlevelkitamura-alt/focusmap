@@ -18,15 +18,22 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import type { Note, NoteAiAnalysis } from "@/types/note"
 import type { Project, Space } from "@/types/database"
+import { useCalendars } from "@/hooks/useCalendars"
 
 // インライン提案の状態
 interface InlineProposal {
   noteId: string
   analysis: NoteAiAnalysis
-  step: 'initial' | 'select_project' | 'select_node' | 'executing' | 'done'
+  step: 'initial' | 'select_project' | 'select_node' | 'calendar_form' | 'executing' | 'done'
   selectedProjectId?: string
   projectTasks?: { id: string; title: string }[]
   result?: string
+  // カレンダー追加用
+  calendarTitle?: string
+  calendarDate?: string      // YYYY-MM-DD
+  calendarTime?: string      // HH:MM
+  calendarDuration?: number  // 分
+  calendarId?: string        // Google Calendar ID
 }
 
 interface MemoViewProps {
@@ -59,6 +66,9 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
   // インライン提案
   const [proposal, setProposal] = useState<InlineProposal | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+  // カレンダー一覧（カレンダー追加用）
+  const { calendars } = useCalendars()
 
   // 音声入力
   const handleTranscribed = useCallback((text: string) => {
@@ -256,6 +266,73 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
       } : null)
     }
   }, [proposal, notes, getProjectName])
+
+  // カレンダーフォームを開く
+  const handleStartCalendarForm = useCallback(() => {
+    if (!proposal) return
+    const noteContent = notes.find(n => n.id === proposal.noteId)?.content || ""
+    const { dates, times } = proposal.analysis.extracted_entities || { dates: [], times: [] }
+    const primaryCal = calendars.find(c => c.is_primary)
+
+    setProposal(prev => prev ? {
+      ...prev,
+      step: 'calendar_form',
+      calendarTitle: noteContent.slice(0, 100),
+      calendarDate: dates[0] || new Date().toISOString().slice(0, 10),
+      calendarTime: times[0] || '09:00',
+      calendarDuration: 60,
+      calendarId: primaryCal?.google_calendar_id || undefined,
+    } : null)
+  }, [proposal, notes, calendars])
+
+  // カレンダーに追加（実行）
+  const handleExecuteCalendarAdd = useCallback(async () => {
+    if (!proposal) return
+
+    setProposal(prev => prev ? { ...prev, step: 'executing' } : null)
+
+    try {
+      const scheduledAt = `${proposal.calendarDate}T${proposal.calendarTime}:00+09:00`
+
+      const res = await fetch('/api/ai/chat/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: {
+            type: 'add_calendar_event',
+            params: {
+              title: proposal.calendarTitle,
+              scheduled_at: scheduledAt,
+              estimated_time: proposal.calendarDuration || 60,
+              calendar_id: proposal.calendarId || undefined,
+            },
+          },
+        }),
+      })
+
+      const data = await res.json()
+
+      setProposal(prev => prev ? {
+        ...prev,
+        step: 'done',
+        result: data.success ? data.message : '❌ カレンダー追加に失敗しました',
+      } : null)
+
+      if (data.success) {
+        setNotes(prev => prev.map(n =>
+          n.id === proposal.noteId ? { ...n, status: 'archived' as const } : n
+        ))
+        setTimeout(() => setProposal(null), 3000)
+      }
+    } catch (error) {
+      console.error("Add to calendar error:", error)
+      setProposal(prev => prev ? {
+        ...prev,
+        step: 'done',
+        result: '❌ カレンダー追加に失敗しました',
+      } : null)
+    }
+  }, [proposal])
 
   // メモのプロジェクト更新
   const handleUpdateProject = useCallback(async (noteId: string, projectId: string | null) => {
@@ -593,9 +670,9 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2 mt-2">
-                      <Button size="sm" variant="outline" className="gap-1" disabled>
+                      <Button size="sm" className="gap-1" onClick={handleStartCalendarForm}>
                         <Calendar className="w-3.5 h-3.5" />
-                        カレンダーに追加（準備中）
+                        カレンダーに追加
                       </Button>
                       <Button size="sm" variant="outline" className="gap-1" onClick={handleSelectProject}>
                         <Map className="w-3.5 h-3.5" />
@@ -670,6 +747,106 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                     </Button>
                   ))}
                   <Button size="sm" variant="ghost" onClick={() => setProposal(prev => prev ? { ...prev, step: 'select_project' } : null)}>
+                    戻る
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Step: calendar_form - カレンダー追加フォーム */}
+            {proposal.step === 'calendar_form' && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Calendar className="w-4 h-4 text-blue-500" />
+                  <span>カレンダーに追加</span>
+                </div>
+
+                {/* タイトル */}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">タイトル</label>
+                  <input
+                    type="text"
+                    value={proposal.calendarTitle || ''}
+                    onChange={(e) => setProposal(prev => prev ? { ...prev, calendarTitle: e.target.value } : null)}
+                    className="w-full h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="予定のタイトル"
+                  />
+                </div>
+
+                {/* 日付・時刻 */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">日付</label>
+                    <input
+                      type="date"
+                      value={proposal.calendarDate || ''}
+                      onChange={(e) => setProposal(prev => prev ? { ...prev, calendarDate: e.target.value } : null)}
+                      className="w-full h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">時刻</label>
+                    <input
+                      type="time"
+                      value={proposal.calendarTime || ''}
+                      onChange={(e) => setProposal(prev => prev ? { ...prev, calendarTime: e.target.value } : null)}
+                      className="w-full h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+
+                {/* 所要時間 */}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">所要時間</label>
+                  <select
+                    value={proposal.calendarDuration || 60}
+                    onChange={(e) => setProposal(prev => prev ? { ...prev, calendarDuration: Number(e.target.value) } : null)}
+                    className="w-full h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value={15}>15分</option>
+                    <option value={30}>30分</option>
+                    <option value={45}>45分</option>
+                    <option value={60}>1時間</option>
+                    <option value={90}>1時間30分</option>
+                    <option value={120}>2時間</option>
+                    <option value={180}>3時間</option>
+                  </select>
+                </div>
+
+                {/* カレンダー選択 */}
+                {calendars.length > 0 && (
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">カレンダー</label>
+                    <select
+                      value={proposal.calendarId || ''}
+                      onChange={(e) => setProposal(prev => prev ? { ...prev, calendarId: e.target.value } : null)}
+                      className="w-full h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      {calendars.map(cal => (
+                        <option key={cal.id} value={cal.google_calendar_id}>
+                          {cal.name}{cal.is_primary ? '（メイン）' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* アクションボタン */}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    className="gap-1"
+                    onClick={handleExecuteCalendarAdd}
+                    disabled={!proposal.calendarTitle?.trim() || !proposal.calendarDate}
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    追加する
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setProposal(prev => prev ? { ...prev, step: 'initial' } : null)}
+                  >
                     戻る
                   </Button>
                 </div>

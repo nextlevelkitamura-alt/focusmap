@@ -207,6 +207,15 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     return fetchEvents(true);
   }, [fetchEvents]);
 
+  // Optimistic event: add immediately to UI, then sync will replace with real data
+  const addOptimisticEvent = useCallback((event: CalendarEvent) => {
+    setEvents(prev => [...prev, event]);
+  }, []);
+
+  const removeOptimisticEvent = useCallback((eventId: string) => {
+    setEvents(prev => prev.filter(e => e.id !== eventId));
+  }, []);
+
   return {
     events,
     setEvents,
@@ -214,6 +223,8 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     error,
     lastSyncedAt,
     syncNow,
-    refetch: fetchEvents
+    refetch: fetchEvents,
+    addOptimisticEvent,
+    removeOptimisticEvent,
   };
 }

@@ -72,6 +72,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
     })
     const timelineContainerRef = useRef<HTMLDivElement>(null)
+    const scrollPositionRef = useRef<number | undefined>(undefined)
     const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
 
     // Sync local tasks with prop changes (render-time sync for instant updates)
@@ -174,7 +175,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     })
 
     // Fetch calendar events (1ヶ月分を一括取得、日付切り替え時はクライアントフィルタで即座表示)
-    const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow } = useCalendarEvents({
+    const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
         timeMin: fetchWindow.min,
         timeMax: fetchWindow.max,
         calendarIds: selectedCalendarIds,
@@ -202,11 +203,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         importEvents(allFetchedEvents).catch(() => {}) // 次回起動時にリトライ
     }, [eventsLoading, allFetchedEvents, importEvents, isImporting])
 
-    // カレンダー同期（今日のビューのタスク全体）
+    // カレンダー同期（今日のビューのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
         tasks: localTasks,
         onRefreshCalendar: syncNow,
         onUpdateTask,
+        onAddOptimisticEvent: addOptimisticEvent,
+        onRemoveOptimisticEvent: removeOptimisticEvent,
     })
 
     // Use localCalendarEvents for rendering (supports optimistic D&D updates)
@@ -629,7 +632,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             {/* Habit Bar (fixed) + Expandable Detail — only when viewing today */}
             {isToday && !habitsLoading && todayHabits.length > 0 && (
-                <div className="flex-shrink-0 border-b">
+                <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
                         <div className="flex items-center gap-2 mb-1.5">
@@ -855,6 +858,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         onCreateSubTask={onCreateSubTaskProp}
                         onDeleteSubTask={handleDeleteTask}
                         projectNameMap={projectNameMap}
+                        initialScrollTop={scrollPositionRef.current}
+                        onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">

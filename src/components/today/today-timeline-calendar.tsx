@@ -31,6 +31,8 @@ interface TodayTimelineCalendarProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => void
     onDeleteSubTask?: (taskId: string) => void
     projectNameMap?: Map<string, string>
+    initialScrollTop?: number
+    onScrollPositionChange?: (scrollTop: number) => void
 }
 
 // --- Helpers ---
@@ -60,6 +62,8 @@ export function TodayTimelineCalendar({
     onCreateSubTask,
     onDeleteSubTask,
     projectNameMap,
+    initialScrollTop,
+    onScrollPositionChange,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
@@ -77,20 +81,22 @@ export function TodayTimelineCalendar({
         enabled: !!onDragDrop,
     })
 
-    // Scroll to default hour on mount
+    // Scroll to saved position (or default hour) on mount
     useEffect(() => {
+        const scrollTo = initialScrollTop ?? DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
         if (gridRef.current) {
-            gridRef.current.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+            gridRef.current.scrollTop = scrollTo
         }
         if (timeLabelRef.current) {
-            timeLabelRef.current.scrollTop = DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+            timeLabelRef.current.scrollTop = scrollTo
         }
     }, [])
 
-    // Sync scroll between time labels and grid
+    // Sync scroll between time labels and grid + notify parent
     const handleGridScroll = () => {
         if (gridRef.current && timeLabelRef.current) {
             timeLabelRef.current.scrollTop = gridRef.current.scrollTop
+            onScrollPositionChange?.(gridRef.current.scrollTop)
         }
     }
 

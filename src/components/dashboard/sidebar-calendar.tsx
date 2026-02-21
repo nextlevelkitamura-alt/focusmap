@@ -21,6 +21,8 @@ import { useNotificationScheduler } from "@/hooks/useNotificationScheduler"
 
 export interface SidebarCalendarRef {
     refetch: () => Promise<void>
+    addOptimisticEvent: (event: CalendarEvent) => void
+    removeOptimisticEvent: (eventId: string) => void
 }
 
 interface SidebarCalendarProps {
@@ -81,7 +83,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
     }, [currentDate])
 
     // Fetch events — visibleCalendarIds が変わるとイベントを再取得
-    const { events, setEvents, refetch, isLoading } = useCalendarEvents({
+    const { events, setEvents, refetch, isLoading, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
         timeMin,
         timeMax,
         calendarIds: visibleCalendarIds.length > 0 ? visibleCalendarIds : undefined,
@@ -89,10 +91,12 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         syncInterval: 300000
     })
 
-    // 親コンポーネントから refetch を呼び出せるようにする
+    // 親コンポーネントから refetch + 楽観的イベント操作を呼び出せるようにする
     useImperativeHandle(ref, () => ({
-        refetch
-    }), [refetch])
+        refetch,
+        addOptimisticEvent,
+        removeOptimisticEvent,
+    }), [refetch, addOptimisticEvent, removeOptimisticEvent])
 
     // Handlers
     const handleToday = useCallback(() => {

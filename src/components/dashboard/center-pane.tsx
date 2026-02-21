@@ -31,6 +31,8 @@ interface CenterPaneProps {
     onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
     onReorderGroup?: (groupId: string, referenceGroupId: string, position: 'above' | 'below') => Promise<void>
     onRefreshCalendar?: () => Promise<void>
+    onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
+    onRemoveOptimisticEvent?: (eventId: string) => void
 }
 
 export function CenterPane({
@@ -46,7 +48,9 @@ export function CenterPane({
     onBulkDelete,
     onReorderTask,
     onReorderGroup,
-    onRefreshCalendar
+    onRefreshCalendar,
+    onAddOptimisticEvent,
+    onRemoveOptimisticEvent,
 }: CenterPaneProps) {
     // Splitter State
     const [topHeight, setTopHeight] = useState(50)
@@ -207,6 +211,8 @@ export function CenterPane({
                         onReorderTask={onReorderTask}
                         onReorderGroup={onReorderGroup}
                         onRefreshCalendar={onRefreshCalendar}
+                        onAddOptimisticEvent={onAddOptimisticEvent}
+                        onRemoveOptimisticEvent={onRemoveOptimisticEvent}
                     />
                     <Button
                         variant="outline"

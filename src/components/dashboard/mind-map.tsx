@@ -1088,9 +1088,11 @@ interface MindMapProps {
     onBulkDelete?: (groupIds: string[], taskIds: string[]) => Promise<void>
     onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
     onRefreshCalendar?: () => Promise<void>
+    onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
+    onRemoveOptimisticEvent?: (eventId: string) => void
 }
 
-function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent }: MindMapProps) {
     const reactFlow = useReactFlow();
     const projectId = project?.id ?? '';
     const USER_ACTION_WINDOW_MS = 800;
@@ -1102,11 +1104,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(DEFAULT_SETTINGS);
     useEffect(() => { setDisplaySettings(loadSettings()) }, []);
 
-    // カレンダー同期（マインドマップのタスク全体）
+    // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
         tasks: [...groups, ...tasks], // ルートタスク + 子タスク
         onRefreshCalendar,
         onUpdateTask,
+        onAddOptimisticEvent,
+        onRemoveOptimisticEvent,
     });
     const groupsJson = JSON.stringify(groups?.map(g => ({
         id: g?.id,

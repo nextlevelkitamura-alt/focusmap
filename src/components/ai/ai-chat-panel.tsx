@@ -33,11 +33,12 @@ interface AiChatPanelProps {
   activeNoteId?: string | null
   activeProjectId?: string | null
   hideFab?: boolean
+  onCalendarEventCreated?: () => void
 }
 
 const MAX_RALLIES = 7
 
-export function AiChatPanel({ activeNoteId, activeProjectId, hideFab }: AiChatPanelProps) {
+export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated }: AiChatPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
@@ -161,6 +162,11 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab }: AiChatPa
           content: message,
         },
       ])
+
+      // カレンダーイベント作成成功時にリフレッシュ
+      if (success && msg.action?.type === 'add_calendar_event') {
+        onCalendarEventCreated?.()
+      }
     } catch {
       setMessages(prev => prev.map(m =>
         m.id === messageId ? { ...m, actionStatus: 'error' as const } : m

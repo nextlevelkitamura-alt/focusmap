@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { Task } from '@/types/database'
+import { CalendarEvent } from '@/types/calendar'
 
 type SyncStatus = 'idle' | 'syncing' | 'success' | 'error'
 
@@ -14,6 +15,30 @@ interface UseMultiTaskCalendarSyncOptions {
   tasks: Task[]
   onRefreshCalendar?: () => Promise<void>
   onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+  onAddOptimisticEvent?: (event: CalendarEvent) => void
+  onRemoveOptimisticEvent?: (eventId: string) => void
+}
+
+/** タスク情報から楽観的CalendarEventを生成 */
+function buildOptimisticEvent(task: Task): CalendarEvent {
+  const startTime = new Date(task.scheduled_at!)
+  const endTime = new Date(startTime.getTime() + (task.estimated_time || 60) * 60 * 1000)
+  const now = new Date().toISOString()
+  return {
+    id: `optimistic-${task.id}`,
+    user_id: task.user_id,
+    google_event_id: '',
+    calendar_id: task.calendar_id!,
+    title: task.title,
+    start_time: startTime.toISOString(),
+    end_time: endTime.toISOString(),
+    is_all_day: false,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    synced_at: now,
+    created_at: now,
+    updated_at: now,
+    task_id: task.id,
+  }
 }
 
 /**
@@ -25,6 +50,8 @@ export function useMultiTaskCalendarSync({
   tasks,
   onRefreshCalendar,
   onUpdateTask,
+  onAddOptimisticEvent,
+  onRemoveOptimisticEvent,
 }: UseMultiTaskCalendarSyncOptions) {
   // 各タスクの前回の状態を保持
   const prevTasksRef = useRef<Map<string, {
@@ -124,8 +151,20 @@ export function useMultiTaskCalendarSync({
     task: Task
   ) => {
     syncingTasksRef.current.add(taskId)
+    const optimisticId = `optimistic-${task.id}`
 
     try {
+      // 楽観的UI更新: API呼び出し前に即座にカレンダーUIに反映
+      if (method === 'POST' && onAddOptimisticEvent) {
+        onAddOptimisticEvent(buildOptimisticEvent(task))
+      } else if (method === 'PATCH' && onRemoveOptimisticEvent && onAddOptimisticEvent) {
+        // 更新: 古い楽観的イベントを削除して新しいものを追加
+        onRemoveOptimisticEvent(optimisticId)
+        onAddOptimisticEvent(buildOptimisticEvent(task))
+      } else if (method === 'DELETE' && onRemoveOptimisticEvent) {
+        onRemoveOptimisticEvent(optimisticId)
+      }
+
       const body = {
         taskId,
         scheduled_at: task.scheduled_at,
@@ -134,7 +173,6 @@ export function useMultiTaskCalendarSync({
         google_event_id: task.google_event_id,
         title: task.title,
       }
-
 
       const response = await fetch('/api/calendar/sync-task', {
         method,
@@ -174,7 +212,9 @@ export function useMultiTaskCalendarSync({
         }
       }
 
-      // カレンダーを更新
+      // 楽観的イベントを削除してから実データで更新
+      onRemoveOptimisticEvent?.(optimisticId)
+      // カレンダーを更新（実データに置換）
       await onRefreshCalendar?.()
     } catch (err) {
       console.error(`[useMultiTaskCalendarSync] ${method} failed for task ${taskId}:`, err)
@@ -189,6 +229,13 @@ export function useMultiTaskCalendarSync({
    */
   const handleCalendarChange = async (taskId: string, task: Task) => {
     syncingTasksRef.current.add(taskId)
+    const optimisticId = `optimistic-${task.id}`
+
+    // 楽観的UI更新: 旧イベントを削除して新しいカレンダーに追加
+    onRemoveOptimisticEvent?.(optimisticId)
+    if (onAddOptimisticEvent) {
+      onAddOptimisticEvent(buildOptimisticEvent(task))
+    }
 
     try {
       // 1. 旧カレンダーから削除
@@ -245,9 +292,13 @@ export function useMultiTaskCalendarSync({
         google_event_id: data.googleEventId || null,
       })
 
+      // 楽観的イベントをクリーンアップして実データに置換
+      onRemoveOptimisticEvent?.(optimisticId)
       await onRefreshCalendar?.()
     } catch (err) {
       console.error('[useMultiTaskCalendarSync] Calendar change failed:', err)
+      // エラー時も楽観的イベントをクリーンアップ
+      onRemoveOptimisticEvent?.(optimisticId)
     } finally {
       syncingTasksRef.current.delete(taskId)
     }

@@ -589,6 +589,14 @@ export function DashboardClient({
         await rightSidebarRef.current?.refreshCalendar()
     }, [])
 
+    // Optimistic calendar event handlers (PC: mind-map → right-sidebar)
+    const handleAddOptimisticEvent = useCallback((event: import('@/types/calendar').CalendarEvent) => {
+        rightSidebarRef.current?.addOptimisticEvent(event)
+    }, [])
+    const handleRemoveOptimisticEvent = useCallback((eventId: string) => {
+        rightSidebarRef.current?.removeOptimisticEvent(eventId)
+    }, [])
+
     // Toggle left sidebar
     const toggleLeftSidebar = useCallback(() => {
         setIsLeftSidebarCollapsed(prev => !prev)
@@ -689,7 +697,7 @@ export function DashboardClient({
                 )}
                 {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
                 {isViewReady && activeView === 'today' && (
-                    <div className="flex-1 flex flex-col md:hidden overflow-hidden">
+                    <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
                         <TodayView
                             allTasks={allTasksMerged}
                             onUpdateTask={handleUpdateTaskWithQuickSync}
@@ -811,6 +819,8 @@ export function DashboardClient({
                             onReorderTask={reorderTask}
                             onReorderGroup={reorderGroup}
                             onRefreshCalendar={handleRefreshCalendar}
+                            onAddOptimisticEvent={handleAddOptimisticEvent}
+                            onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
                         />
                     )}
                 </div>
@@ -833,7 +843,7 @@ export function DashboardClient({
                 </div>
             </div>
             {/* AI Chat Floating Panel */}
-            <AiChatPanel hideFab={activeView === 'today'} />
+            <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={debouncedRefreshCalendar} />
             </TimerProvider>
         </DragProvider>
     )
