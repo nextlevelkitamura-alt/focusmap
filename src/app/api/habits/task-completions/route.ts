@@ -111,6 +111,55 @@ export async function GET(request: NextRequest) {
     }
 }
 
+// PATCH: Add elapsed seconds to a child task's daily timer record (upsert)
+export async function PATCH(request: NextRequest) {
+    try {
+        const supabase = await createClient()
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+        if (authError || !user) {
+            return NextResponse.json(
+                { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } },
+                { status: 401 }
+            )
+        }
+
+        const { habit_id, task_id, completed_date, add_seconds } = await request.json()
+
+        if (!habit_id || !task_id || !completed_date || typeof add_seconds !== 'number') {
+            return NextResponse.json(
+                { success: false, error: { code: 'VALIDATION_ERROR', message: 'habit_id, task_id, completed_date, and add_seconds are required' } },
+                { status: 400 }
+            )
+        }
+
+        // Use RPC for atomic add (upsert with increment)
+        const { error: rpcError } = await supabase.rpc('upsert_habit_timer', {
+            p_habit_id: habit_id,
+            p_task_id: task_id,
+            p_user_id: user.id,
+            p_completed_date: completed_date,
+            p_add_seconds: add_seconds,
+        })
+
+        if (rpcError) {
+            console.error('[habits/task-completions PATCH] RPC error:', rpcError)
+            return NextResponse.json(
+                { success: false, error: { code: 'API_ERROR', message: rpcError.message } },
+                { status: 500 }
+            )
+        }
+
+        return NextResponse.json({ success: true })
+    } catch (error) {
+        console.error('[habits/task-completions PATCH] Unexpected error:', error)
+        return NextResponse.json(
+            { success: false, error: { code: 'API_ERROR', message: 'Internal server error' } },
+            { status: 500 }
+        )
+    }
+}
+
 // DELETE: Remove a child task completion for a specific date
 export async function DELETE(request: NextRequest) {
     try {

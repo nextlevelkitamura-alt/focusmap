@@ -36,9 +36,10 @@ interface TimerProviderProps {
     children: React.ReactNode;
     tasks: Task[];
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>;
+    onTimerSessionEnd?: (taskId: string, sessionSeconds: number) => void;
 }
 
-export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderProps) {
+export function TimerProvider({ children, tasks, onUpdateTask, onTimerSessionEnd }: TimerProviderProps) {
     const supabase = createClient();
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [currentElapsedSeconds, setCurrentElapsedSeconds] = useState(0);
@@ -50,7 +51,8 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
         lastStartedAt: string | null;
         baseElapsedSeconds: number;
         taskTitle: string;
-    }>({ lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '' });
+        sessionStartSeconds: number; // cumulative seconds at session start (for delta calc)
+    }>({ lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '', sessionStartSeconds: 0 });
 
     // Find the running task from tasks array (may be null for habit child tasks)
     const runningTask = tasks.find(t => t.id === runningTaskId) ?? null;
@@ -69,6 +71,7 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 lastStartedAt: runningTasks[0].last_started_at || null,
                 baseElapsedSeconds: runningTasks[0].total_elapsed_seconds ?? 0,
                 taskTitle: runningTasks[0].title,
+                sessionStartSeconds: runningTasks[0].total_elapsed_seconds ?? 0,
             };
         } else {
             console.warn('[TimerContext] Multiple running timers detected:', runningTasks.length);
@@ -85,6 +88,7 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 lastStartedAt: keepTask.last_started_at || null,
                 baseElapsedSeconds: keepTask.total_elapsed_seconds ?? 0,
                 taskTitle: keepTask.title,
+                sessionStartSeconds: keepTask.total_elapsed_seconds ?? 0,
             };
 
             sorted.slice(1).forEach(async (task) => {
@@ -141,6 +145,8 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
             finalSeconds += additionalSeconds;
         }
 
+        // Calculate session duration (time added in this session)
+        const sessionSeconds = finalSeconds - localData.sessionStartSeconds;
 
         // Update task in database
         await onUpdateTask(runningTaskId, {
@@ -150,11 +156,16 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
             actual_time_minutes: Math.floor(finalSeconds / 60)
         });
 
+        // Notify about session end (for daily timer tracking)
+        if (sessionSeconds > 0 && onTimerSessionEnd) {
+            onTimerSessionEnd(runningTaskId, sessionSeconds);
+        }
+
         // Reset local state
-        localTimerDataRef.current = { lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '' };
+        localTimerDataRef.current = { lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '', sessionStartSeconds: 0 };
         setRunningTaskId(null);
         setCurrentElapsedSeconds(0);
-    }, [runningTaskId, onUpdateTask]);
+    }, [runningTaskId, onUpdateTask, onTimerSessionEnd]);
 
     // Start timer for a task
     const startTimer = useCallback(async (task: Task): Promise<boolean> => {
@@ -182,6 +193,7 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 lastStartedAt: now,
                 baseElapsedSeconds: task.total_elapsed_seconds ?? 0,
                 taskTitle: task.title,
+                sessionStartSeconds: task.total_elapsed_seconds ?? 0,
             };
 
             await onUpdateTask(task.id, {
@@ -221,6 +233,8 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 finalSeconds += additionalSeconds;
             }
 
+            const sessionSeconds = finalSeconds - localData.sessionStartSeconds;
+
             await onUpdateTask(runningTaskId, {
                 is_timer_running: false,
                 last_started_at: null,
@@ -229,13 +243,17 @@ export function TimerProvider({ children, tasks, onUpdateTask }: TimerProviderPr
                 status: 'done'
             });
 
-            localTimerDataRef.current = { lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '' };
+            if (sessionSeconds > 0 && onTimerSessionEnd) {
+                onTimerSessionEnd(runningTaskId, sessionSeconds);
+            }
+
+            localTimerDataRef.current = { lastStartedAt: null, baseElapsedSeconds: 0, taskTitle: '', sessionStartSeconds: 0 };
             setRunningTaskId(null);
             setCurrentElapsedSeconds(0);
         } finally {
             setIsLoading(false);
         }
-    }, [runningTaskId, onUpdateTask]);
+    }, [runningTaskId, onUpdateTask, onTimerSessionEnd]);
 
     // Interrupt timer (same as pause)
     const interruptTimer = useCallback(async () => {

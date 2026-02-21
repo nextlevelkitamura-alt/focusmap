@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
 import { TodayView } from "@/components/today/today-view"
 import { HabitsView } from "@/components/habits/habits-view"
+import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
 import { MemoView } from "@/components/memo/memo-view"
 import { AiChatPanel } from "@/components/ai/ai-chat-panel"
@@ -437,6 +438,29 @@ export function DashboardClient({
         return merged
     }, [initialTasks, currentTasks, currentGroups, quickTasks, taskOverrides])
 
+    // Save daily timer for habit child tasks
+    const handleTimerSessionEnd = useCallback((taskId: string, sessionSeconds: number) => {
+        const task = allTasksMerged.find(t => t.id === taskId)
+        if (!task?.parent_task_id) return
+
+        const parentTask = allTasksMerged.find(t => t.id === task.parent_task_id)
+        if (!parentTask?.is_habit) return
+
+        const todayStr = getTodayDateString()
+        fetch('/api/habits/task-completions', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                habit_id: parentTask.id,
+                task_id: taskId,
+                completed_date: todayStr,
+                add_seconds: sessionSeconds,
+            }),
+        }).catch(err => {
+            console.error('[DashboardClient] Failed to save daily timer:', err)
+        })
+    }, [allTasksMerged])
+
     // サブタスク作成（今日のビュー用）— quickTasks に追加して allTasksMerged に反映
     // ※ allTasksMerged の後に定義しないと TDZ エラーになる
     const handleCreateSubTask = useCallback(async (parentTaskId: string, title: string) => {
@@ -617,7 +641,7 @@ export function DashboardClient({
 
     return (
         <DragProvider>
-            <TimerProvider tasks={allTasksMerged} onUpdateTask={handleUpdateTaskWithQuickSync}>
+            <TimerProvider tasks={allTasksMerged} onUpdateTask={handleUpdateTaskWithQuickSync} onTimerSessionEnd={handleTimerSessionEnd}>
                 {/* Header with Space Switcher */}
                 <Header
                     spaces={spaces}

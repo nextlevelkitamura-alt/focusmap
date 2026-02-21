@@ -225,6 +225,7 @@ export interface Database {
                     task_id: string
                     user_id: string
                     completed_date: string
+                    elapsed_seconds: number
                     created_at: string
                 }
                 Insert: {
@@ -233,6 +234,7 @@ export interface Database {
                     task_id: string
                     user_id: string
                     completed_date: string
+                    elapsed_seconds?: number
                     created_at?: string
                 }
                 Update: {
@@ -241,6 +243,7 @@ export interface Database {
                     task_id?: string
                     user_id?: string
                     completed_date?: string
+                    elapsed_seconds?: number
                     created_at?: string
                 }
             }

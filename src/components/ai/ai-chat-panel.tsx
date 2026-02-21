@@ -13,6 +13,7 @@ interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  choices?: string[]
   action?: {
     type: string
     params: Record<string, unknown>
@@ -46,6 +47,13 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
   // ラリー数カウント
   const rallyCount = messages.filter(m => m.role === 'user').length
 
+  // 最後のAIメッセージの選択肢を取得（まだ選択されていない場合のみ）
+  const lastAiMessage = [...messages].reverse().find(m => m.role === 'assistant')
+  const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')
+  const activeChoices = lastAiMessage && lastAiMessage.choices &&
+    (!lastUserMessage || messages.indexOf(lastAiMessage) > messages.indexOf(lastUserMessage))
+    ? lastAiMessage.choices : undefined
+
   // 自動スクロール
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -58,9 +66,9 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
     }
   }, [isOpen])
 
-  // メッセージ送信
-  const handleSend = useCallback(async () => {
-    const trimmed = input.trim()
+  // メッセージ送信（共通ロジック）
+  const sendMessage = useCallback(async (text: string) => {
+    const trimmed = text.trim()
     if (!trimmed || isLoading) return
 
     const userMessage: ChatMessage = {
@@ -69,7 +77,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
       content: trimmed,
     }
 
-    setMessages(prev => [...prev, userMessage])
+    const updatedMessages = [...messages, userMessage]
+    setMessages(updatedMessages)
     setInput("")
     setIsLoading(true)
 
@@ -79,7 +88,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmed,
-          history: [...messages, userMessage].map(m => ({
+          history: updatedMessages.map(m => ({
             role: m.role,
             content: m.content,
           })),
@@ -95,20 +104,17 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
         throw new Error(error || 'Chat failed')
       }
 
-      const { reply, action, shouldReset } = await res.json()
+      const { reply, action, choices } = await res.json()
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: reply,
+        choices,
         action,
         actionStatus: action ? 'pending' : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
-
-      if (shouldReset) {
-        // 7ラリー到達通知
-      }
     } catch (error) {
       const errMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -119,7 +125,17 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, messages, activeNoteId, activeProjectId])
+  }, [isLoading, messages, activeNoteId, activeProjectId])
+
+  // テキスト入力から送信
+  const handleSend = useCallback(() => {
+    sendMessage(input)
+  }, [input, sendMessage])
+
+  // 選択肢タップで送信
+  const handleChoiceTap = useCallback((choice: string) => {
+    sendMessage(choice)
+  }, [sendMessage])
 
   // アクション実行
   const handleExecuteAction = useCallback(async (messageId: string) => {
@@ -199,13 +215,11 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
 
           <div className={cn(
             "fixed z-50 bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
-            // モバイル: 画面下半分
-            "bottom-0 left-0 right-0 h-[55vh]",
-            // PC: 右下固定
-            "md:bottom-6 md:right-6 md:left-auto md:w-[400px] md:h-[500px]",
+            "bottom-0 left-0 right-0 h-[60vh]",
+            "md:bottom-6 md:right-6 md:left-auto md:w-[400px] md:h-[520px]",
           )}>
             {/* ヘッダー */}
-            <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-primary" />
                 <span className="font-semibold text-sm">AIアシスタント</span>
@@ -226,12 +240,21 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
             {/* メッセージエリア */}
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
               {messages.length === 0 && (
-                <div className="text-center text-muted-foreground text-sm py-8">
+                <div className="text-center text-muted-foreground text-sm py-6">
                   <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p>AIアシスタントに話しかけてみましょう</p>
-                  <p className="text-xs mt-1">
-                    「マップに追加して」「予定に入れて」など
-                  </p>
+                  <p>AIに話しかけてみましょう</p>
+                  <p className="text-xs mt-1 opacity-70">テキストでも音声でもOK</p>
+                  <div className="flex flex-wrap gap-2 justify-center mt-4">
+                    {["マップに追加して", "予定に入れて", "メモを整理して"].map(suggestion => (
+                      <button
+                        key={suggestion}
+                        onClick={() => sendMessage(suggestion)}
+                        className="text-xs px-3 py-1.5 rounded-full border border-border hover:bg-muted transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -251,9 +274,39 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                   )}>
                     <p className="whitespace-pre-wrap">{msg.content}</p>
 
+                    {/* 選択肢ボタン（最後のAIメッセージのみアクティブ） */}
+                    {msg.choices && msg.choices.length > 0 && msg.id === lastAiMessage?.id && activeChoices && (
+                      <div className="mt-2 pt-2 border-t border-border/30 flex flex-wrap gap-1.5">
+                        {msg.choices.map((choice) => (
+                          <button
+                            key={choice}
+                            onClick={() => handleChoiceTap(choice)}
+                            disabled={isLoading}
+                            className="text-xs px-3 py-1.5 rounded-full bg-background border border-border hover:bg-primary hover:text-primary-foreground transition-colors disabled:opacity-50"
+                          >
+                            {choice}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* 過去の選択肢は薄く表示 */}
+                    {msg.choices && msg.choices.length > 0 && !(msg.id === lastAiMessage?.id && activeChoices) && (
+                      <div className="mt-2 pt-2 border-t border-border/20 flex flex-wrap gap-1.5 opacity-40">
+                        {msg.choices.map((choice) => (
+                          <span
+                            key={choice}
+                            className="text-xs px-3 py-1.5 rounded-full border border-border/50"
+                          >
+                            {choice}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     {/* アクション確認ボタン */}
                     {msg.action && msg.actionStatus === 'pending' && (
-                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
                         <p className="text-xs opacity-80">{msg.action.description}</p>
                         <div className="flex gap-2">
                           <Button
@@ -262,7 +315,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                             onClick={() => handleExecuteAction(msg.id)}
                           >
                             <CheckCircle2 className="w-3 h-3" />
-                            実行
+                            実行する
                           </Button>
                           <Button
                             size="sm"
@@ -271,7 +324,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                             onClick={() => handleCancelAction(msg.id)}
                           >
                             <XCircle className="w-3 h-3" />
-                            キャンセル
+                            やめる
                           </Button>
                         </div>
                       </div>
@@ -319,33 +372,36 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
             </div>
 
             {/* 7ラリー制限警告 */}
-            {rallyCount >= 6 && rallyCount < MAX_RALLIES && (
+            {rallyCount >= 5 && rallyCount < MAX_RALLIES && (
               <div className="px-4 pb-1">
                 <p className="text-xs text-amber-600 text-center">
-                  残り{MAX_RALLIES - rallyCount}ラリーです
+                  残り{MAX_RALLIES - rallyCount}ラリー
                 </p>
               </div>
             )}
 
             {/* 入力エリア */}
-            <div className="px-4 py-3 border-t shrink-0">
+            <div className="px-3 py-2.5 border-t shrink-0">
               {rallyCount >= MAX_RALLIES ? (
-                <div className="text-center space-y-2">
+                <div className="text-center space-y-2 py-1">
                   <p className="text-sm text-muted-foreground">
                     会話が上限に達しました
                   </p>
                   <Button size="sm" onClick={handleReset} className="gap-1">
                     <RotateCcw className="w-3.5 h-3.5" />
-                    リセットして新しい会話
+                    リセット
                   </Button>
                 </div>
               ) : (
-                <div className="flex items-end gap-2">
+                <div className="flex items-end gap-1.5">
                   {/* 音声入力ボタン */}
                   <Button
                     variant={isRecording ? "destructive" : "ghost"}
                     size="sm"
-                    className="h-9 w-9 p-0 shrink-0"
+                    className={cn(
+                      "h-9 w-9 p-0 shrink-0",
+                      isRecording && "animate-pulse"
+                    )}
                     onClick={isRecording ? stopRecording : startRecording}
                     disabled={isLoading || isTranscribing}
                     title={isRecording ? "録音停止" : "音声入力"}
@@ -365,10 +421,10 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="メッセージを入力..."
-                    className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-24 min-h-[36px]"
+                    placeholder={isRecording ? "録音中..." : "テキストまたは音声で入力"}
+                    className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-20 min-h-[36px]"
                     rows={1}
-                    disabled={isLoading}
+                    disabled={isLoading || isRecording}
                   />
 
                   {/* 送信ボタン */}
