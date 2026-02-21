@@ -32,6 +32,7 @@ interface OutlineViewProps {
     onUpdateGroupTitle: (groupId: string, title: string) => Promise<void>
     onUpdateGroup: (groupId: string, updates: Partial<Task>) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
+    onCreateProject?: (title: string) => Promise<Project | null>
 }
 
 export function OutlineView({
@@ -53,6 +54,7 @@ export function OutlineView({
     onUpdateGroupTitle,
     onUpdateGroup,
     onUpdateProject,
+    onCreateProject,
 }: OutlineViewProps) {
     const [activeTab, setActiveTab] = useState<MobileMapTab>('mindmap')
 
@@ -66,6 +68,7 @@ export function OutlineView({
                     spaces={spaces}
                     selectedSpaceId={selectedSpaceId}
                     onSelectProject={onSelectProject}
+                    onCreateProject={onCreateProject}
                     onCreateGroup={async () => {
                         const g = await onCreateGroup('新しいグループ')
                         return undefined

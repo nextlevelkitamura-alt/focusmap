@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Project, Space } from "@/types/database"
 import { ChevronDown, Plus, MoreHorizontal, FolderPlus } from "lucide-react"
 import {
@@ -24,6 +24,7 @@ interface MobileProjectSelectorProps {
     selectedSpaceId: string | null
     onSelectProject: (id: string) => void
     onCreateGroup: () => void
+    onCreateProject?: (title: string) => Promise<Project | null>
 }
 
 const statusColorMap: Record<string, string> = {
@@ -41,17 +42,49 @@ export function MobileProjectSelector({
     selectedSpaceId,
     onSelectProject,
     onCreateGroup,
+    onCreateProject,
 }: MobileProjectSelectorProps) {
     const [isOpen, setIsOpen] = useState(false)
+    const [isCreating, setIsCreating] = useState(false)
+    const [createTitle, setCreateTitle] = useState('')
+    const createInputRef = useRef<HTMLInputElement>(null)
 
     const currentSpaceName = selectedSpaceId
         ? spaces.find(s => s.id === selectedSpaceId)?.title
         : "全体"
 
+    useEffect(() => {
+        if (isCreating && createInputRef.current) {
+            createInputRef.current.focus()
+        }
+    }, [isCreating])
+
+    const handleCreateSubmit = async () => {
+        const title = createTitle.trim()
+        if (!title || !onCreateProject) {
+            setIsCreating(false)
+            setCreateTitle('')
+            return
+        }
+        const newProject = await onCreateProject(title)
+        setIsCreating(false)
+        setCreateTitle('')
+        if (newProject) {
+            onSelectProject(newProject.id)
+            setIsOpen(false)
+        }
+    }
+
     return (
         <div className="flex items-center justify-between px-3 py-2.5 border-b bg-background/95 backdrop-blur-sm sticky top-0 z-10">
             {/* プロジェクト選択 */}
-            <Popover open={isOpen} onOpenChange={setIsOpen}>
+            <Popover open={isOpen} onOpenChange={(open) => {
+                setIsOpen(open)
+                if (!open) {
+                    setIsCreating(false)
+                    setCreateTitle('')
+                }
+            }}>
                 <PopoverTrigger asChild>
                     <button className="flex items-center gap-2 min-w-0 flex-1">
                         {/* ステータス色ドット */}
@@ -104,6 +137,44 @@ export function MobileProjectSelector({
                                 <span className="truncate">{p.title}</span>
                             </button>
                         ))}
+
+                        {/* プロジェクト新規作成 */}
+                        {onCreateProject && (
+                            <>
+                                <div className="mx-3 my-1 border-t" />
+                                {isCreating ? (
+                                    <div className="px-3 py-1.5">
+                                        <input
+                                            ref={createInputRef}
+                                            value={createTitle}
+                                            onChange={(e) => setCreateTitle(e.target.value)}
+                                            placeholder="プロジェクト名..."
+                                            className="w-full text-sm bg-muted/50 border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-primary"
+                                            onKeyDown={(e) => {
+                                                if (e.nativeEvent.isComposing) return
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    handleCreateSubmit()
+                                                }
+                                                if (e.key === 'Escape') {
+                                                    setIsCreating(false)
+                                                    setCreateTitle('')
+                                                }
+                                            }}
+                                            onBlur={handleCreateSubmit}
+                                        />
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => setIsCreating(true)}
+                                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        <span>新しいプロジェクト</span>
+                                    </button>
+                                )}
+                            </>
+                        )}
                     </div>
                 </PopoverContent>
             </Popover>

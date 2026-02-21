@@ -844,8 +844,25 @@ function MobileMindMapContent({
         setProxyText('')
     }, [proxyTargetId, proxyText, onUpdateTask])
 
+    const isProjectNodeSelected = selectedNodeId === project?.id
+
     const handleAccessoryAddChild = useCallback(() => {
         if (!selectedNodeId) return
+
+        // プロジェクトノード選択中 → グループ作成
+        if (selectedNodeId === project?.id) {
+            endProxy()
+            bridgeInputRef.current?.focus()
+            onCreateGroup?.('').then(newTask => {
+                if (newTask) {
+                    setSelectedNodeId(newTask.id)
+                    setProxyTargetId(newTask.id)
+                    setProxyText('')
+                }
+            })
+            return
+        }
+
         const task = taskMap.get(selectedNodeId)
         if (!task) return
 
@@ -874,10 +891,12 @@ function MobileMindMapContent({
                 setProxyText('')
             }
         })
-    }, [selectedNodeId, taskMap, onCreateTask, onUpdateTask, endProxy])
+    }, [selectedNodeId, project?.id, taskMap, onCreateGroup, onCreateTask, onUpdateTask, endProxy])
 
     const handleAccessoryAddSibling = useCallback(() => {
         if (!selectedNodeId) return
+        // プロジェクトノードに兄弟はない
+        if (selectedNodeId === project?.id) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
 
@@ -914,10 +933,12 @@ function MobileMindMapContent({
                 }
             })
         }
-    }, [selectedNodeId, taskMap, onCreateTask, onCreateGroup, onUpdateTask, endProxy])
+    }, [selectedNodeId, project?.id, taskMap, onCreateTask, onCreateGroup, onUpdateTask, endProxy])
 
     const handleAccessoryDelete = useCallback(() => {
         if (!selectedNodeId) return
+        // プロジェクトノードは削除不可
+        if (selectedNodeId === project?.id) return
         const task = taskMap.get(selectedNodeId)
         if (!task) return
 
@@ -955,7 +976,7 @@ function MobileMindMapContent({
         } else {
             setSelectedNodeId(null)
         }
-    }, [selectedNodeId, taskMap, childrenMap, onDeleteGroup, onDeleteTask, focusNewNode, proxyTargetId, endProxy])
+    }, [selectedNodeId, project?.id, taskMap, childrenMap, onDeleteGroup, onDeleteTask, focusNewNode, proxyTargetId, endProxy])
 
     const handleAccessoryDismiss = useCallback(() => {
         endProxy()
@@ -1095,19 +1116,23 @@ function MobileMindMapContent({
 
                         {/* 右: 兄弟・子・削除（右手操作に最適化） */}
                         <div className="flex items-center gap-0.5">
-                            {/* 兄弟ノード追加 */}
-                            <button
-                                onTouchEnd={(e) => { e.preventDefault(); handleAccessoryAddSibling() }}
-                                onClick={handleAccessoryAddSibling}
-                                className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
-                                title="兄弟ノード追加"
-                            >
-                                <Plus className="w-5 h-5" />
-                                <span className="text-xs">兄弟</span>
-                            </button>
+                            {/* 兄弟ノード追加（プロジェクトノード選択中は非表示） */}
+                            {!isProjectNodeSelected && (
+                                <>
+                                    <button
+                                        onTouchEnd={(e) => { e.preventDefault(); handleAccessoryAddSibling() }}
+                                        onClick={handleAccessoryAddSibling}
+                                        className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-md text-foreground active:bg-muted transition-colors"
+                                        title="兄弟ノード追加"
+                                    >
+                                        <Plus className="w-5 h-5" />
+                                        <span className="text-xs">兄弟</span>
+                                    </button>
 
-                            {/* セパレータ */}
-                            <div className="w-px h-5 bg-border mx-1" />
+                                    {/* セパレータ */}
+                                    <div className="w-px h-5 bg-border mx-1" />
+                                </>
+                            )}
 
                             {/* 子ノード作成 */}
                             <button
@@ -1120,18 +1145,22 @@ function MobileMindMapContent({
                                 <span className="text-xs">子</span>
                             </button>
 
-                            {/* セパレータ */}
-                            <div className="w-px h-5 bg-border mx-1" />
+                            {/* 削除（プロジェクトノード選択中は非表示） */}
+                            {!isProjectNodeSelected && (
+                                <>
+                                    {/* セパレータ */}
+                                    <div className="w-px h-5 bg-border mx-1" />
 
-                            {/* 削除 */}
-                            <button
-                                onTouchEnd={(e) => { e.preventDefault(); handleAccessoryDelete() }}
-                                onClick={handleAccessoryDelete}
-                                className="flex items-center justify-center w-10 h-9 rounded-md text-destructive active:bg-destructive/10 transition-colors"
-                                title="削除"
-                            >
-                                <Trash2 className="w-4.5 h-4.5" />
-                            </button>
+                                    <button
+                                        onTouchEnd={(e) => { e.preventDefault(); handleAccessoryDelete() }}
+                                        onClick={handleAccessoryDelete}
+                                        className="flex items-center justify-center w-10 h-9 rounded-md text-destructive active:bg-destructive/10 transition-colors"
+                                        title="削除"
+                                    >
+                                        <Trash2 className="w-4.5 h-4.5" />
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

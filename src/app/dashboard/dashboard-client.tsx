@@ -693,6 +693,7 @@ export function DashboardClient({
                             onUpdateGroupTitle={updateGroupTitle}
                             onUpdateGroup={updateGroup}
                             onUpdateProject={handleUpdateProjectTitle}
+                            onCreateProject={handleCreateProject}
                         />
                     </div>
                 )}
