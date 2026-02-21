@@ -98,6 +98,10 @@ export function DashboardClient({
         [projects, selectedProjectId]
     )
 
+    // --- View State ---
+    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
+    const { activeView, isViewReady } = useView()
+
     // --- MindMap Sync Hook ---
     // STABLE reference for initial groups (root tasks) using useMemo
     const projectRootTasksInitial = useMemo(() => {
@@ -150,6 +154,7 @@ export function DashboardClient({
         reorderGroup,
         promoteTaskToGroup,
         isLoading,
+        refreshFromServer,
         undo,
         redo,
         canUndo,
@@ -163,6 +168,13 @@ export function DashboardClient({
             setSyncErrorToast({ type: 'error', message })
         }, []),
     })
+
+    // ビュー切り替え時にマインドマップのタスクを再取得
+    useEffect(() => {
+        if (activeView === 'map') {
+            refreshFromServer()
+        }
+    }, [activeView, refreshFromServer])
 
     // STABLE handlers using useCallback
     const handleCreateGroup = useCallback(async (title: string) => {
@@ -402,10 +414,6 @@ export function DashboardClient({
         // DB保存
         await updateTask(taskId, updates)
     }, [updateTask])
-
-    // --- View State ---
-    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
-    const { activeView, isViewReady } = useView()
 
     // Merge all tasks: current project (latest state) + other projects (initial state) + overrides + quick tasks
     const allTasksMerged = useMemo(() => {
@@ -710,6 +718,7 @@ export function DashboardClient({
                             selectedProjectId={selectedProjectId}
                             selectedSpaceId={selectedSpaceId}
                             onSelectProject={setSelectedProjectId}
+                            onSelectSpace={setSelectedSpaceId}
                             onCreateGroup={handleCreateGroup}
                             onCreateTask={createTask}
                             onUpdateTask={updateTask}
