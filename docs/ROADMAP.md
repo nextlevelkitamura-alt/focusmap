@@ -150,7 +150,7 @@
   - Phase 2: カレンダー設定実装 ✅
   - Phase 3: アカウント機能実装 ✅
   - Phase 4: PC統合 ✅
-- 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [計画](plans/features/habit-daily-reset.md)
+- 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [仕様](specs/habit-daily-reset.md) | [計画](plans/features/habit-daily-reset.md)
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
@@ -188,4 +188,4 @@
 ## 現在進行中のタスク
 
 - 🔧 **AIメモ機能**（AI分析・音声入力・プロジェクト紐付け・チャット対話） → [計画](plans/features/ai-memo-feature.md)
-- 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [計画](plans/features/habit-daily-reset.md)
+- 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [仕様](specs/habit-daily-reset.md) | [計画](plans/features/habit-daily-reset.md)
