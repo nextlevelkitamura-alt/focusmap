@@ -52,8 +52,13 @@ export async function POST(request: Request) {
     const genAI = new GoogleGenerativeAI(apiKey)
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
+    const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')
+    const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][new Date().getDay()]
+
     const prompt = `あなたはタスク管理アシスタントです。
 以下のメモを分析して、分類と追加先を提案してください。
+
+今日の日付: ${today}（${dayOfWeek}曜日）
 
 メモ: "${content.trim()}"
 
@@ -69,16 +74,21 @@ ${projectContext || '(プロジェクトなし)'}
   "suggested_node_id": "親タスクID or null",
   "suggested_node_title": "親タスク名 or null",
   "reasoning": "判断理由を1-2文で",
+  "event_title": "カレンダー予定の場合、日時部分を除いた予定名（例: 「明日の朝9時に会議」→「会議」、「来週土曜に江の島旅行」→「江の島旅行」）。map分類の場合はnull",
   "extracted_entities": {
-    "dates": ["抽出された日付（YYYY-MM-DD形式）"],
-    "times": ["抽出された時刻（HH:MM形式）"],
+    "dates": ["抽出された日付（YYYY-MM-DD形式）。「明日」「来週月曜」等は${today}を基準に具体的な日付に変換すること"],
+    "times": ["抽出された時刻（HH:MM形式）。「朝」→09:00、「昼」→12:00、「夕方」→17:00、「夜」→19:00 のように変換"],
     "keywords": ["重要キーワード"]
   }
 }
 
 分類基準:
-- "calendar": 日時が明確、予定・イベント・会議・締め切りなど
-- "map": アイディア・計画・タスク・やること・メモなど`
+- "calendar": 日時が明確、予定・イベント・会議・締め切り・旅行・外出など
+- "map": アイディア・計画・タスク・やること・メモなど
+
+注意:
+- 「明日」「来週」「今週末」等の相対的な表現は、今日(${today})を基準にYYYY-MM-DD形式の具体的な日付に変換すること
+- event_titleは日時情報を含めず、予定の本質的な名前だけを抽出すること`
 
     const result = await model.generateContent(prompt)
     const responseText = result.response.text()

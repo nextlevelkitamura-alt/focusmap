@@ -11,6 +11,7 @@ export interface NoteAiAnalysis {
   suggested_node_id: string | null
   suggested_node_title: string | null
   reasoning: string
+  event_title?: string | null  // カレンダー分類時の予定名（日時部分を除いた本質的なタイトル）
   extracted_entities: {
     dates: string[]
     times: string[]
