@@ -16,6 +16,8 @@ import { startOfMonth, endOfMonth, addMonths } from "date-fns"
 import { HOUR_HEIGHT } from "@/lib/calendar-constants"
 import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
+import { useTimer } from "@/contexts/TimerContext"
+import { useNotificationScheduler } from "@/hooks/useNotificationScheduler"
 
 export interface SidebarCalendarRef {
     refetch: () => Promise<void>
@@ -25,10 +27,11 @@ interface SidebarCalendarProps {
     onTaskDrop?: (taskId: string, dateTime: Date) => void
     onSelectionChange?: (calendarIds: string[]) => void
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+    tasks?: Task[]
 }
 
 export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarProps>(
-    ({ onTaskDrop, onSelectionChange, onUpdateTask }, ref) => {
+    ({ onTaskDrop, onSelectionChange, onUpdateTask, tasks = [] }, ref) => {
     // Default to 'day' view for sidebar as it's most useful for scheduling
     const [viewMode, setViewMode] = useState<ViewMode>('day')
     const [currentDate, setCurrentDate] = useState(() => {
@@ -43,6 +46,18 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
     // CalendarSelector から選択状態を受け取るローカルステート
     const [visibleCalendarIds, setVisibleCalendarIds] = useState<string[]>([])
+
+    // タイマー・タスクマップ
+    const timer = useTimer()
+    const taskMap = useMemo(() => new Map(tasks.map(t => [t.id, t])), [tasks])
+    const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
+
+    const toggleTask = useCallback(async (taskId: string) => {
+        const task = taskMap.get(taskId)
+        if (!task || !onUpdateTask) return
+        const newStatus = task.status === 'done' ? 'todo' : 'done'
+        await onUpdateTask(taskId, { status: newStatus })
+    }, [taskMap, onUpdateTask])
 
     // 編集モーダルの状態
     const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
@@ -174,6 +189,24 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 ))
             }
 
+            // リマインダーのスケジュール
+            if (updates.reminders && updates.reminders.length > 0) {
+                const targetId = event.task_id || eventId
+                const targetType = event.task_id ? 'task' as const : 'event' as const
+                await cancelNotifications(targetType, targetId)
+                for (const minutes of updates.reminders) {
+                    const scheduledAt = new Date(new Date(updates.start_time).getTime() - minutes * 60000)
+                    await scheduleNotification({
+                        targetType,
+                        targetId,
+                        notificationType: event.task_id ? 'task_start' : 'event_start',
+                        scheduledAt,
+                        title: `リマインダー: ${updates.title}`,
+                        body: `${minutes}分後に開始します`,
+                    })
+                }
+            }
+
             // 成功: 最新データに同期
             await refetch()
         } catch (err) {
@@ -182,7 +215,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
             setEvents(prev => prev.map(e => e.id === eventId ? event : e))
             showError(`予定の更新に失敗しました: ${err instanceof Error ? err.message : '不明なエラー'}`)
         }
-    }, [events, setEvents, refetch, updateLinkedTask, showError])
+    }, [events, setEvents, refetch, updateLinkedTask, showError, scheduleNotification, cancelNotifications])
 
     const handleEventTimeChange = useCallback(async (eventId: string, newStartTime: Date, newEndTime: Date) => {
         const event = events.find(e => e.id === eventId)
@@ -352,7 +385,10 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         events={events}
                         onEventEdit={handleEventClick}
                         onEventDelete={handleEventDelete}
-                        hourHeight={hourHeight} // Pass dynamic height
+                        hourHeight={hourHeight}
+                        taskMap={taskMap}
+                        onToggleTask={toggleTask}
+                        timer={timer}
                     />
                 ) : viewMode === '3day' ? (
                     <Calendar3DayView
@@ -362,7 +398,10 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         events={events}
                         onEventEdit={handleEventClick}
                         onEventDelete={handleEventDelete}
-                        hourHeight={hourHeight} // Pass dynamic height
+                        hourHeight={hourHeight}
+                        taskMap={taskMap}
+                        onToggleTask={toggleTask}
+                        timer={timer}
                     />
                 ) : viewMode === 'week' ? (
                     <CalendarWeekView
@@ -372,7 +411,10 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         events={events}
                         onEventEdit={handleEventClick}
                         onEventDelete={handleEventDelete}
-                        hourHeight={hourHeight} // Pass dynamic height
+                        hourHeight={hourHeight}
+                        taskMap={taskMap}
+                        onToggleTask={toggleTask}
+                        timer={timer}
                     />
                 ) : (
                     <CalendarMonthView

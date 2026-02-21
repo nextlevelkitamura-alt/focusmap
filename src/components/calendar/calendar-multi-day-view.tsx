@@ -7,7 +7,15 @@ import { useScrollSync } from "@/hooks/useScrollSync"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { addDays, isSameDay, format, isToday } from "date-fns"
 import { CalendarEvent } from "@/types/calendar"
+import { Task } from "@/types/database"
 import { CalendarEventCard } from "./calendar-event-card"
+
+interface TimerInfo {
+    runningTaskId: string | null
+    currentElapsedSeconds: number
+    startTimer: (task: Task) => Promise<boolean>
+    pauseTimer: () => Promise<void>
+}
 
 interface CalendarMultiDayViewProps {
     currentDate: Date
@@ -21,6 +29,9 @@ interface CalendarMultiDayViewProps {
     onDateChange?: (date: Date) => void
     hourHeight?: number
     gridRef?: RefObject<HTMLDivElement | null>
+    taskMap?: Map<string, Task>
+    onToggleTask?: (taskId: string) => void
+    timer?: TimerInfo
 }
 
 export function CalendarMultiDayView({
@@ -34,7 +45,10 @@ export function CalendarMultiDayView({
     onEventDelete,
     onDateChange,
     hourHeight = HOUR_HEIGHT,
-    gridRef
+    gridRef,
+    taskMap,
+    onToggleTask,
+    timer
 }: CalendarMultiDayViewProps) {
     const [currentTime, setCurrentTime] = useState(() => {
         // SSR-safe: midnight as initial value, updated in useEffect
@@ -302,6 +316,12 @@ export function CalendarMultiDayView({
                                                         isDraggable={true}
                                                         className="h-full shadow-sm text-xs"
                                                         eventHeight={eventHeightPx}
+                                                        linkedTask={event.task_id ? taskMap?.get(event.task_id) : undefined}
+                                                        onToggleTask={onToggleTask}
+                                                        onStartTimer={timer ? (task) => timer.startTimer(task) : undefined}
+                                                        onPauseTimer={timer ? () => timer.pauseTimer() : undefined}
+                                                        isTimerRunning={!!event.task_id && timer?.runningTaskId === event.task_id}
+                                                        timerElapsedSeconds={event.task_id && timer?.runningTaskId === event.task_id ? timer.currentElapsedSeconds : undefined}
                                                     />
                                                 </div>
                                             )

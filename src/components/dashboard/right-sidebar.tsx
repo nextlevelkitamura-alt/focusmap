@@ -13,9 +13,10 @@ export interface RightSidebarRef {
 
 interface RightSidebarProps {
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
+    tasks?: Task[]
 }
 
-export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(function RightSidebar({ onUpdateTask }, ref) {
+export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(function RightSidebar({ onUpdateTask, tasks }, ref) {
     const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([])
     const { toast, showToast, hideToast } = useCalendarToast()
     const calendarRef = useRef<SidebarCalendarRef>(null)
@@ -75,6 +76,7 @@ export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(funct
                             onTaskDrop={handleTaskDrop}
                             onSelectionChange={setSelectedCalendarIds}
                             onUpdateTask={onUpdateTask}
+                            tasks={tasks}
                         />
                     </div>
                 </div>

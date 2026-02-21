@@ -24,6 +24,7 @@ import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { taskToTimeBlock, eventToTimeBlock, type TimeBlock } from "@/lib/time-block"
+import { useNotificationScheduler } from "@/hooks/useNotificationScheduler"
 
 // --- Types ---
 
@@ -59,6 +60,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, isLoading: habitsLoading } = useHabits()
     const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
+    const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
     const [timelineMode, setTimelineMode] = useState<TimelineMode>('calendar')
     const [habitsExpanded, setHabitsExpanded] = useState(false)
@@ -901,6 +903,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 onDeleteTask={handleDeleteTask}
                 onDeleteEvent={handleDeleteEvent}
                 availableCalendars={writableCalendars}
+                onScheduleReminder={async (targetType, targetId, scheduledAt, title, advanceMinutes) => {
+                    await cancelNotifications(targetType, targetId)
+                    await scheduleNotification({
+                        targetType,
+                        targetId,
+                        notificationType: targetType === 'task' ? 'task_start' : 'event_start',
+                        scheduledAt,
+                        title: `リマインダー: ${title}`,
+                        body: `${advanceMinutes}分後に開始します`,
+                    })
+                }}
             />
 
             {/* Quick Task FAB */}

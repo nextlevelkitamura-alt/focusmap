@@ -829,11 +829,11 @@ export function DashboardClient({
                     className="flex-none overflow-hidden h-full"
                     style={{ width: rightSidebarWidth }}
                 >
-                    <RightSidebar ref={rightSidebarRef} onUpdateTask={updateTask} />
+                    <RightSidebar ref={rightSidebarRef} onUpdateTask={updateTask} tasks={allTasksMerged} />
                 </div>
             </div>
             {/* AI Chat Floating Panel */}
-            <AiChatPanel />
+            <AiChatPanel hideFab={activeView === 'today'} />
             </TimerProvider>
         </DragProvider>
     )

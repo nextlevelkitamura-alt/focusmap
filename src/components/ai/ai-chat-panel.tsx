@@ -32,11 +32,12 @@ interface ChatMessage {
 interface AiChatPanelProps {
   activeNoteId?: string | null
   activeProjectId?: string | null
+  hideFab?: boolean
 }
 
 const MAX_RALLIES = 7
 
-export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps) {
+export function AiChatPanel({ activeNoteId, activeProjectId, hideFab }: AiChatPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
@@ -253,7 +254,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId }: AiChatPanelProps)
   return (
     <>
       {/* フローティングアイコン */}
-      {!isOpen && (
+      {!isOpen && !hideFab && (
         <button
           onClick={() => setIsOpen(true)}
           className="fixed bottom-20 right-4 z-50 w-12 h-12 bg-primary text-primary-foreground rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform md:bottom-6"

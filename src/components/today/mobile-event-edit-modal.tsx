@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote } from "lucide-react"
+import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
@@ -22,6 +22,7 @@ interface MobileEventEditModalProps {
     onDeleteTask?: (taskId: string) => void
     onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
     availableCalendars: { id: string; name: string; background_color?: string }[]
+    onScheduleReminder?: (targetType: 'task' | 'event', targetId: string, scheduledAt: Date, title: string, advanceMinutes: number) => void
 }
 
 // --- Time helpers ---
@@ -32,6 +33,15 @@ function toTimeString(date: Date): string {
 
 
 const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120]
+
+const REMINDER_OPTIONS = [
+    { label: 'なし', value: 0 },
+    { label: '5分前', value: 5 },
+    { label: '10分前', value: 10 },
+    { label: '15分前', value: 15 },
+    { label: '30分前', value: 30 },
+    { label: '1時間前', value: 60 },
+]
 
 // --- Main Component ---
 
@@ -44,12 +54,14 @@ export function MobileEventEditModal({
     onDeleteTask,
     onDeleteEvent,
     availableCalendars,
+    onScheduleReminder,
 }: MobileEventEditModalProps) {
     const [title, setTitle] = useState('')
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
     const [memo, setMemo] = useState('')
+    const [reminder, setReminder] = useState(15)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -144,6 +156,14 @@ export function MobileEventEditModal({
             }).catch(err => {
                 console.error('[MobileEventEditModal] Save event error:', err)
             })
+        }
+
+        // リマインダーのスケジュール
+        if (reminder > 0 && onScheduleReminder && scheduledDate) {
+            const targetType = target.source === 'task' ? 'task' as const : 'event' as const
+            const targetId = target.source === 'task' ? target.taskId! : target.id
+            const reminderAt = new Date(scheduledDate.getTime() - reminder * 60000)
+            onScheduleReminder(targetType, targetId, reminderAt, title, reminder)
         }
     }
 
@@ -381,6 +401,26 @@ export function MobileEventEditModal({
                             </div>
                         )
                     })()}
+
+                    {/* Reminder */}
+                    <div className="space-y-1.5">
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <Bell className="w-3.5 h-3.5" />
+                            通知
+                        </label>
+                        <select
+                            value={reminder}
+                            onChange={(e) => setReminder(Number(e.target.value))}
+                            className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none cursor-pointer"
+                            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
+                        >
+                            {REMINDER_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
 
                     {/* Memo (Task only) */}
                     {isTask && (

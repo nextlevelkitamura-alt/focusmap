@@ -5,9 +5,17 @@ import { useCalendarDragDropDay } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { CalendarEvent } from "@/types/calendar"
+import { Task } from "@/types/database"
 import { CalendarEventCard } from "./calendar-event-card"
 import { isSameDay, addDays, format } from "date-fns"
 import { cn } from "@/lib/utils"
+
+interface TimerInfo {
+    runningTaskId: string | null
+    currentElapsedSeconds: number
+    startTimer: (task: Task) => Promise<boolean>
+    pauseTimer: () => Promise<void>
+}
 
 // マウスドラッグ状態
 interface DragState {
@@ -30,6 +38,9 @@ interface CalendarDayViewProps {
     onDateChange?: (date: Date) => void // スワイプナビゲーション用
     hourHeight?: number // ズーム機能用
     gridRef?: RefObject<HTMLDivElement | null> // ズーム機能用
+    taskMap?: Map<string, Task>
+    onToggleTask?: (taskId: string) => void
+    timer?: TimerInfo
 }
 
 export function CalendarDayView({
@@ -41,7 +52,10 @@ export function CalendarDayView({
     onEventDelete,
     onDateChange,
     hourHeight = HOUR_HEIGHT,
-    gridRef
+    gridRef,
+    taskMap,
+    onToggleTask,
+    timer
 }: CalendarDayViewProps) {
     const [currentTime, setCurrentTime] = useState(() => {
         // SSR-safe: midnight as initial value, updated in useEffect
@@ -479,10 +493,16 @@ export function CalendarDayView({
                                     event={displayEvent}
                                     onEdit={onEventEdit}
                                     onDelete={onEventDelete}
-                                    isDraggable={false} // マウスイベントを使用
+                                    isDraggable={false}
                                     className={cn("h-full shadow-sm text-xs", isDragging && "cursor-grabbing")}
                                     eventHeight={eventHeightPx}
                                     isSaving={isSaving}
+                                    linkedTask={event.task_id ? taskMap?.get(event.task_id) : undefined}
+                                    onToggleTask={onToggleTask}
+                                    onStartTimer={timer ? (task) => timer.startTimer(task) : undefined}
+                                    onPauseTimer={timer ? () => timer.pauseTimer() : undefined}
+                                    isTimerRunning={!!event.task_id && timer?.runningTaskId === event.task_id}
+                                    timerElapsedSeconds={event.task_id && timer?.runningTaskId === event.task_id ? timer.currentElapsedSeconds : undefined}
                                 />
                             </div>
                         )
