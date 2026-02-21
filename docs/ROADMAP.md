@@ -124,7 +124,13 @@
   - レイアウトロジック、ノードコンポーネント、Hooks の責務分離
 
 #### 機能拡張
-- ❌ **AIメモ機能** → 中止（計画書は保持: [計画](plans/features/ai-memo-feature.md)）
+- 🔧 **AIメモ機能**（AI分析・音声入力・プロジェクト紐付け・チャット対話） → [計画](plans/features/ai-memo-feature.md)
+  - Phase 1: メニュー + メモUI + notes テーブル + API ✅
+  - Phase 2: AI分析（Gemini 2.5 Flash） ✅
+  - Phase 3: マップ/カレンダー連携（マップ追加 ✅ / カレンダー追加 ○）
+  - Phase 4: 音声入力（Groq Whisper） ✅
+  - Phase 5: AIチャット型対話 ○
+  - Phase 6: タスクメモ欄 ✅
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
 - ✅ **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
@@ -153,7 +159,7 @@
 
 ## 完了履歴
 
-- 2026-02-21: **AIメモ機能** 中止（計画書保持）
+- 2026-02-21: **AIメモ機能 Phase 1,2,4,6** 完了（メモUI・AI分析・音声入力・タスクメモ欄・プロジェクト紐付け）
 - 2026-02-21: **スペース機能 + 左サイドバー再設計** 中止（計画書保持）
 - 2026-02-20: **カレンダーイベント自動取り込み Phase 1-2** 完了 (C, /tdd+/impl, DB基盤+UI統合+event_completions廃止+1ヶ月取り込み)
 - 2026-02-19: **tasks/route・tasks/[id]/route テスト追加** 完了 (C, /test, 25テスト追加 → 計203テスト)
@@ -181,4 +187,5 @@
 
 ## 現在進行中のタスク
 
+- 🔧 **AIメモ機能**（AI分析・音声入力・プロジェクト紐付け・チャット対話） → [計画](plans/features/ai-memo-feature.md)
 - 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [計画](plans/features/habit-daily-reset.md)
