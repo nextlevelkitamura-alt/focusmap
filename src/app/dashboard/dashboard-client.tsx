@@ -406,7 +406,7 @@ export function DashboardClient({
                                     ? { ...t, google_event_id: syncData.googleEventId }
                                     : t
                             ))
-                            debouncedRefreshCalendar()
+                            handleCalendarEventCreated()
                         }
                         setQuickTaskToast({ type: 'success', message: `Googleカレンダーに登録しました` })
                     } else {
@@ -421,7 +421,7 @@ export function DashboardClient({
                 setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
             }
         })()
-    }, [userId, debouncedRefreshCalendar])
+    }, [userId, handleCalendarEventCreated])
 
     // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
     const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
