@@ -315,6 +315,7 @@ export function DashboardClient({
             habit_icon: null,
             habit_start_date: null,
             habit_end_date: null,
+            memo: null,
         }
 
         // カレンダー選択ありの場合のみ今日ビューに即表示
@@ -470,6 +471,7 @@ export function DashboardClient({
             habit_icon: null,
             habit_start_date: null,
             habit_end_date: null,
+            memo: null,
         }
 
         // quickTasks に追加 → allTasksMerged に反映 → TodayView の allTasks prop に伝播
@@ -700,7 +702,7 @@ export function DashboardClient({
 
                 {isViewReady && activeView === 'memo' && (
                     <div className="flex-1 overflow-hidden md:flex md:justify-center">
-                        <div className="w-full max-w-2xl">
+                        <div className="w-full max-w-2xl h-full">
                             <MemoView projects={projects} />
                         </div>
                     </div>

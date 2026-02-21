@@ -70,6 +70,16 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
     return projects.find(p => p.id === projectId)?.title || null
   }, [projects])
 
+  // フィルタリング: ヘッダーのプロジェクト選択に応じてメモを絞り込み
+  const filteredNotes = notes.filter(note => {
+    if (!selectedProjectId) return true // 「全て」
+    if (selectedProjectId === "__unassigned__") return !note.project_id // 「未登録」
+    return note.project_id === selectedProjectId
+  })
+
+  // 保存時のプロジェクトID（フィルタ中なら自動紐付け）
+  const saveProjectId = selectedProjectId && selectedProjectId !== "__unassigned__" ? selectedProjectId : null
+
   // メモ保存
   const handleSave = useCallback(async () => {
     if (!content.trim()) return
@@ -82,7 +92,7 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
         body: JSON.stringify({
           content: content.trim(),
           input_type: isRecording ? "voice" : "text",
-          project_id: selectedProjectId,
+          project_id: saveProjectId,
         }),
       })
 
@@ -98,7 +108,7 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
     } finally {
       setIsLoading(false)
     }
-  }, [content, isRecording, selectedProjectId])
+  }, [content, isRecording, saveProjectId])
 
   // AI分析
   const handleAnalyze = useCallback(async (noteId: string, noteContent: string) => {
@@ -207,10 +217,23 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
 
   return (
     <div className={cn("flex flex-col h-full bg-background", className)}>
-      {/* Header */}
+      {/* Header + Project Filter */}
       <div className="flex items-center gap-2 px-4 py-3 border-b shrink-0">
-        <StickyNote className="w-5 h-5 text-primary" />
-        <h1 className="text-lg font-semibold">メモ</h1>
+        <StickyNote className="w-5 h-5 text-primary shrink-0" />
+        <h1 className="text-lg font-semibold shrink-0">メモ</h1>
+        {projects.length > 0 && (
+          <select
+            value={selectedProjectId === "__unassigned__" ? "__unassigned__" : selectedProjectId || ""}
+            onChange={(e) => setSelectedProjectId(e.target.value || null)}
+            className="ml-2 text-sm px-2 py-1 rounded-md border bg-background text-foreground truncate max-w-[180px]"
+          >
+            <option value="">全て</option>
+            <option value="__unassigned__">未登録</option>
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.title}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Toast */}
@@ -247,22 +270,6 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
               </div>
             )}
           </div>
-
-          {/* Project Select */}
-          {projects.length > 0 && (
-            <div className="mt-2 pt-2 border-t">
-              <select
-                value={selectedProjectId || ""}
-                onChange={(e) => setSelectedProjectId(e.target.value || null)}
-                className="w-full text-sm px-2 py-1.5 rounded-md border bg-background text-foreground"
-              >
-                <option value="">プロジェクト未選択</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.title}</option>
-                ))}
-              </select>
-            </div>
-          )}
 
           {/* Action Buttons */}
           <div className="mt-3 flex items-center justify-between">
@@ -381,15 +388,19 @@ export function MemoView({ className, projects = [] }: MemoViewProps) {
           <div className="flex justify-center py-8">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
-        ) : notes.length === 0 ? (
+        ) : filteredNotes.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
             <StickyNote className="w-12 h-12 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">まだメモがありません</p>
-            <p className="text-xs mt-1">テキストまたは音声でメモを入力してみましょう</p>
+            <p className="text-sm">
+              {notes.length === 0 ? "まだメモがありません" : "該当するメモがありません"}
+            </p>
+            <p className="text-xs mt-1">
+              {notes.length === 0 ? "テキストまたは音声でメモを入力してみましょう" : "プロジェクトフィルタを変更してみてください"}
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
-            {notes.map((note) => (
+            {filteredNotes.map((note) => (
               <Card key={note.id} className="p-3 hover:bg-muted/50 transition-colors group">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
