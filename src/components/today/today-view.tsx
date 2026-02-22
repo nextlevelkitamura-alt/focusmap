@@ -507,8 +507,16 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Delete task — dashboard-client 経由で quickTasks/taskOverrides も同期
     const handleDeleteTask = useCallback(async (taskId: string) => {
-        // ローカル即時反映
+        // 削除対象のタスクを取得（google_event_id の確認のため）
+        const taskToDelete = localTasks.find(t => t.id === taskId)
+
+        // ローカル即時反映（タスクを削除）
         setLocalTasks(prev => prev.filter(t => t.id !== taskId))
+
+        // Googleカレンダーに同期されているイベントをローカルstateからも即座に削除（楽観的UI）
+        if (taskToDelete?.google_event_id) {
+            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== taskToDelete.google_event_id))
+        }
 
         // 親コンポーネント経由でDB削除 + state同期
         if (onDeleteTaskProp) {
@@ -520,22 +528,31 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             })
         }
 
-        // 削除後にカレンダーキャッシュを無効化して即座に再取得
+        // 削除後にカレンダーキャッシュを無効化して即座に再取得（Google側の状態と同期）
         invalidateCalendarCache()
         await syncNow()
-    }, [onDeleteTaskProp, syncNow])
+    }, [onDeleteTaskProp, syncNow, localTasks])
 
     // Delete event (optimistic UI + background API)
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
-        setLocalCalendarEvents(prev => prev.filter(e => e.id !== eventId))
+        // 楽観的削除: フックのメソッドを使う（fetchedCalendarEventsからも削除される）
+        removeOptimisticEvent(eventId, googleEventId)
+
+        // バックグラウンドでAPI呼び出し
         fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
             method: 'DELETE',
         })
-            .then(res => res.ok && invalidateCalendarCache())
+            .then(res => {
+                if (res.ok) {
+                    invalidateCalendarCache()
+                }
+            })
             .catch(err => {
                 console.error('[TodayView] Failed to delete event:', err)
+                // エラー時は再取得して復元
+                syncNow()
             })
-    }, [])
+    }, [removeOptimisticEvent, syncNow])
 
     // Writable calendars for the edit modal
     const writableCalendars = useMemo(() =>

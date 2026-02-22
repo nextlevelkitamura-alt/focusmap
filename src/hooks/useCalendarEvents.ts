@@ -218,8 +218,12 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     setEvents(prev => [...prev, event]);
   }, []);
 
-  const removeOptimisticEvent = useCallback((eventId: string) => {
-    setEvents(prev => prev.filter(e => e.id !== eventId));
+  const removeOptimisticEvent = useCallback((eventId: string, googleEventId?: string) => {
+    setEvents(prev => prev.filter(e => {
+      // googleEventId が指定された場合はそれで削除、そうでなければ eventId で削除
+      if (googleEventId) return e.google_event_id !== googleEventId;
+      return e.id !== eventId;
+    }));
   }, []);
 
   return {
