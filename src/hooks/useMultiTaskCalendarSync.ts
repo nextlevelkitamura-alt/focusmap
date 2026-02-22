@@ -64,6 +64,10 @@ export function useMultiTaskCalendarSync({
   // 同期実行中のタスクを追跡（重複同期防止）
   const syncingTasksRef = useRef<Set<string>>(new Set())
 
+  // 同期クールダウン（同一タスクの短時間内の再同期を防止）
+  const lastSyncedAtRef = useRef<Map<string, number>>(new Map())
+  const SYNC_COOLDOWN_MS = 3000
+
   useEffect(() => {
     // グループを除外し、有効なタスクのみ処理
     const validTasks = tasks.filter(task => !task.is_group)
@@ -150,7 +154,16 @@ export function useMultiTaskCalendarSync({
     method: 'POST' | 'PATCH' | 'DELETE',
     task: Task
   ) => {
+    // クールダウンチェック（DELETE は即時実行を許可）
+    if (method !== 'DELETE') {
+      const lastSynced = lastSyncedAtRef.current.get(taskId)
+      if (lastSynced && Date.now() - lastSynced < SYNC_COOLDOWN_MS) {
+        return
+      }
+    }
+
     syncingTasksRef.current.add(taskId)
+    lastSyncedAtRef.current.set(taskId, Date.now())
     const optimisticId = `optimistic-${task.id}`
 
     try {
@@ -258,9 +271,11 @@ export function useMultiTaskCalendarSync({
           throw new Error(error.error || 'Failed to delete from old calendar')
         }
 
+        // DELETE 成功後に google_event_id をクリア（レースコンディション防止）
+        await onUpdateTask?.(taskId, { google_event_id: null })
       }
 
-      // 2. 新カレンダーに作成
+      // 2. 新カレンダーに作成（google_event_id を明示的に含めない → 新規作成として扱う）
       const response = await fetch('/api/calendar/sync-task', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -270,6 +285,7 @@ export function useMultiTaskCalendarSync({
           estimated_time: task.estimated_time,
           calendar_id: task.calendar_id,
           title: task.title,
+          google_event_id: null,
         }),
       })
 

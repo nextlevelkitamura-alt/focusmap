@@ -52,12 +52,18 @@ export async function POST(request: NextRequest) {
     }
 
     // 通知設定を確認
-    const { data: setting } = await supabase
+    const { data: setting, error: settingError } = await supabase
       .from('notification_settings')
       .select('*')
       .eq('user_id', user.id)
       .eq('notification_type', notificationType)
       .single();
+
+    // テーブル未作成等のエラーはスキップ
+    if (settingError && (settingError.code === '42P01' || settingError.message?.includes('does not exist'))) {
+      console.warn('[notifications/schedule] notification_settings table not found, skipping');
+      return NextResponse.json({ success: true, notificationId: null, skipped: true, reason: 'Table not found' });
+    }
 
     // 通知が無効な場合はスキップ
     if (!setting || !setting.is_enabled) {
@@ -85,7 +91,13 @@ export async function POST(request: NextRequest) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        console.warn('[notifications/schedule] notification_queue table not found, skipping');
+        return NextResponse.json({ success: true, notificationId: null, skipped: true, reason: 'Table not found' });
+      }
+      throw error;
+    }
 
     return NextResponse.json({
       success: true,

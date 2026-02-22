@@ -31,6 +31,12 @@ function getCacheKey(timeMin: Date, timeMax: Date, calendarIds?: string[]): stri
   return `${timeMin.toISOString()}-${timeMax.toISOString()}-${ids}`;
 }
 
+/** キャッシュを全クリア（削除・更新後に呼び出す） */
+export function invalidateCalendarCache() {
+  cache.clear();
+  inflightRequests.clear();
+}
+
 function isQuotaError(error: any): boolean {
   return error?.message?.includes('Quota exceeded') ||
          error?.message?.includes('quota') ||

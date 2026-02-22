@@ -139,17 +139,33 @@ export async function GET(request: NextRequest) {
 
     console.log('[events/list] All DB events:', allDbEvents?.length || 0);
 
-    // Google Calendar API に存在しない DB のイベントのみを追加
+    // Google Calendar API に存在しない DB イベントを抽出
+    // google_event_id 付きで Google に存在しない = 削除済み孤児 → 除外
+    // google_event_id なし = ローカル限定イベント → 表示
     const localOnlyEvents = (allDbEvents || []).filter(event => {
-      // google_event_id がないものはすべてローカルのみ
       if (!event.google_event_id) {
-        return true;
+        return true; // ローカル限定イベント（Google連携なし）
       }
-      // google_event_id があるが、Google Calendar API に存在しないもの
-      return !googleEventIds.has(event.google_event_id);
+      return false; // google_event_id付きはGoogle APIの結果のみを信頼
     });
 
-    console.log('[events/list] Local-only events (not in Google Calendar):', localOnlyEvents.length);
+    // 孤児イベントを非同期でDBからクリーンアップ（Google Calendarに存在しないDB行）
+    const orphanGoogleEventIds = (allDbEvents || [])
+      .filter(e => e.google_event_id && !googleEventIds.has(e.google_event_id))
+      .map(e => e.google_event_id);
+    if (orphanGoogleEventIds.length > 0) {
+      console.log('[events/list] Cleaning up orphan DB events:', orphanGoogleEventIds.length);
+      supabase
+        .from('calendar_events')
+        .delete()
+        .eq('user_id', user.id)
+        .in('google_event_id', orphanGoogleEventIds)
+        .then(({ error: delErr }) => {
+          if (delErr) console.error('[events/list] Orphan cleanup failed:', delErr);
+        });
+    }
+
+    console.log('[events/list] Local-only events (no google_event_id):', localOnlyEvents.length);
 
     // タスクテーブルから google_event_id に対応するタスクIDを取得
     const eventIdsToCheck = [

@@ -18,9 +18,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { taskId, scheduled_at, estimated_time, calendar_id } = await request.json();
+    const { taskId, scheduled_at, estimated_time, calendar_id, reminders } = await request.json();
 
-    console.log('[sync-task POST] Request:', { taskId, scheduled_at, estimated_time, calendar_id });
+    console.log('[sync-task POST] Request:', { taskId, scheduled_at, estimated_time, calendar_id, reminders });
 
     if (!taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
@@ -94,13 +94,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 並行リクエスト対策: 最新の google_event_id を再取得
+    const { data: latestTask } = await supabase
+      .from('tasks')
+      .select('google_event_id')
+      .eq('id', taskId)
+      .eq('user_id', user.id)
+      .single();
+
+    const currentGoogleEventId = latestTask?.google_event_id || task.google_event_id || undefined;
+
     // DB上で既に google_event_id がある場合は更新として扱う（重複防止）
     const result = await syncTaskToCalendar(user.id, taskId, {
       title: task.title,
       scheduled_at,
       estimated_time,
-      google_event_id: task.google_event_id || undefined,
-      calendar_id
+      google_event_id: currentGoogleEventId,
+      calendar_id,
+      reminders,
     });
 
     return NextResponse.json({
@@ -131,9 +142,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
-    const { taskId, scheduled_at, estimated_time, calendar_id } = await request.json();
+    const { taskId, scheduled_at, estimated_time, calendar_id, reminders } = await request.json();
 
-    console.log('[sync-task PATCH] Request:', { taskId, scheduled_at, estimated_time, calendar_id });
+    console.log('[sync-task PATCH] Request:', { taskId, scheduled_at, estimated_time, calendar_id, reminders });
 
     if (!taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
@@ -164,7 +175,8 @@ export async function PATCH(request: NextRequest) {
       scheduled_at,
       estimated_time,
       google_event_id: task.google_event_id,
-      calendar_id
+      calendar_id,
+      reminders,
     });
 
     return NextResponse.json({

@@ -101,6 +101,7 @@ export function taskToCalendarEvent(
     title: string;
     scheduled_at: string | null;
     estimated_time: number;
+    reminders?: number[];
   },
   taskId?: string
 ) {
@@ -110,6 +111,11 @@ export function taskToCalendarEvent(
 
   const startDate = new Date(task.scheduled_at);
   const endDate = new Date(startDate.getTime() + task.estimated_time * 60 * 1000);
+
+  // リマインダー設定: 指定があればそれを使用、なければ「予定の時刻」(0分前)
+  const reminderOverrides = task.reminders && task.reminders.length > 0
+    ? task.reminders.map(minutes => ({ method: 'popup' as const, minutes }))
+    : [{ method: 'popup' as const, minutes: 0 }];
 
   const event: any = {
     summary: task.title,
@@ -121,12 +127,9 @@ export function taskToCalendarEvent(
       dateTime: endDate.toISOString(),
       timeZone: 'Asia/Tokyo',
     },
-    // 通知設定（開始時刻ちょうど = 0分前）
     reminders: {
       useDefault: false,
-      overrides: [
-        { method: 'popup', minutes: 0 }
-      ]
+      overrides: reminderOverrides,
     },
   };
 
@@ -154,6 +157,7 @@ export async function syncTaskToCalendar(
     estimated_time: number;
     google_event_id?: string | null;
     calendar_id?: string | null;
+    reminders?: number[];
   }
 ) {
   const supabase = await createClient();
@@ -183,12 +187,39 @@ export async function syncTaskToCalendar(
       });
       googleEventId = response.data.id!;
     } else {
-      // 新規イベントを作成
-      const response = await calendar.events.insert({
-        calendarId,
-        requestBody: event,
-      });
-      googleEventId = response.data.id!;
+      // べき等性チェック: Extended Properties で既存イベントを検索（リトライ時の重複防止）
+      let existingEventId: string | null = null;
+      try {
+        const searchResult = await calendar.events.list({
+          calendarId,
+          privateExtendedProperty: `taskId=${taskId}`,
+          maxResults: 1,
+          timeMin: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+          timeMax: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+        if (searchResult.data.items && searchResult.data.items.length > 0) {
+          existingEventId = searchResult.data.items[0].id!;
+        }
+      } catch {
+        // 検索失敗は無視して新規作成に進む
+      }
+
+      if (existingEventId) {
+        // 既存イベントが見つかった → 更新に切り替え（重複防止）
+        const response = await calendar.events.update({
+          calendarId,
+          eventId: existingEventId,
+          requestBody: event,
+        });
+        googleEventId = response.data.id!;
+      } else {
+        // 既存イベントなし → 新規作成
+        const response = await calendar.events.insert({
+          calendarId,
+          requestBody: event,
+        });
+        googleEventId = response.data.id!;
+      }
 
       // google_event_id をタスクに保存
       await supabase

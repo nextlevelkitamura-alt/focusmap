@@ -8,7 +8,7 @@ import { Calendar3DayView } from "@/components/calendar/calendar-3day-view"
 import { CalendarMonthView } from "@/components/calendar/calendar-month-view"
 import { CalendarDayView } from "@/components/calendar/calendar-day-view"
 import { CalendarEventEditModal, EventUpdatePayload } from "@/components/calendar/calendar-event-edit-modal"
-import { useCalendarEvents } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useCalendarToast } from "@/components/calendar/calendar-toast"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
@@ -175,6 +175,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                     calendarId: updates.calendar_id || event.calendar_id,
                     estimated_time: updates.estimated_time,
                     priority: updates.priority,
+                    reminders: updates.reminders,
                 })
             })
 
@@ -211,7 +212,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 }
             }
 
-            // 成功: 最新データに同期
+            // 成功: キャッシュ無効化 → 最新データに同期
+            invalidateCalendarCache()
             await refetch()
         } catch (err) {
             console.error('[handleEventSave] Failed:', err)
@@ -261,6 +263,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 const data = await response.json()
 
                 if (data.success) {
+                    invalidateCalendarCache()
                     // API がリンク先の task_id を返した場合、タスク一覧も更新
                     if (data.task_id && onUpdateTask) {
                         await onUpdateTask(data.task_id, {
@@ -310,6 +313,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
             if (!data.success) {
                 throw new Error(data.error?.message || '削除に失敗しました')
             }
+            // 削除成功: キャッシュを無効化して次回フェッチで最新データを取得
+            invalidateCalendarCache()
         } catch (err) {
             // 失敗時: イベントを復元
             setEvents(prev => [...prev, event].sort((a, b) =>

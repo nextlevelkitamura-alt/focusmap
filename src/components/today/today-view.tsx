@@ -404,19 +404,53 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Save task via existing onUpdateTask (with optimistic update for calendar sync)
     const handleSaveTask = useCallback(async (taskId: string, updates: {
-        title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null
+        title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[]
     }) => {
+        const { reminders, ...taskUpdates } = updates
         // Optimistic update so useMultiTaskCalendarSync picks up changes immediately
         setLocalTasks(prev => prev.map(t =>
-            t.id === taskId ? { ...t, ...updates } : t
+            t.id === taskId ? { ...t, ...taskUpdates } : t
         ))
-        await onUpdateTask(taskId, updates)
-    }, [onUpdateTask])
+        await onUpdateTask(taskId, taskUpdates)
 
-    // Save event via PATCH /api/calendar/events/[eventId]
+        // タスクが Google Calendar に同期済みの場合、リマインダーを直接更新
+        if (reminders !== undefined) {
+            const task = localTasks.find(t => t.id === taskId)
+            if (task?.google_event_id && task?.calendar_id) {
+                fetch('/api/calendar/sync-task', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        taskId,
+                        scheduled_at: updates.scheduled_at || task.scheduled_at,
+                        estimated_time: updates.estimated_time || task.estimated_time,
+                        calendar_id: updates.calendar_id || task.calendar_id,
+                        reminders,
+                    }),
+                }).catch(err => {
+                    console.error('[TodayView] Failed to update calendar reminder:', err)
+                })
+            }
+        }
+    }, [onUpdateTask, localTasks])
+
+    // Save event via PATCH /api/calendar/events/[eventId] (楽観的UI + バックグラウンド更新)
     const handleSaveEvent = useCallback(async (eventId: string, updates: {
-        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string
+        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]
     }) => {
+        // 楽観的UI更新: カレンダーイベントを即座に反映
+        setLocalCalendarEvents(prev => prev.map(e =>
+            e.id === eventId
+                ? { ...e, title: updates.title, start_time: updates.start_time, end_time: updates.end_time, reminders: updates.reminders }
+                : e
+        ))
+
+        // googleEventId が空の場合（楽観的イベント等）はAPI呼び出しをスキップ
+        if (!updates.googleEventId) {
+            return
+        }
+
+        // バックグラウンドでAPI呼び出し
         const res = await fetch(`/api/calendar/events/${eventId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -426,6 +460,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 end_time: updates.end_time,
                 googleEventId: updates.googleEventId,
                 calendarId: updates.calendarId,
+                reminders: updates.reminders,
             }),
         })
         if (!res.ok) {

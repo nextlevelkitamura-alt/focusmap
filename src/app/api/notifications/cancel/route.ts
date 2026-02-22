@@ -36,7 +36,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // 通知を削除（まだ送信されていないもののみ）
-    const { data, error, count } = await supabase
+    const { data, error } = await supabase
       .from('notification_queue')
       .delete()
       .eq('user_id', user.id)
@@ -45,11 +45,18 @@ export async function DELETE(request: NextRequest) {
       .eq('is_sent', false)
       .select();
 
-    if (error) throw error;
+    if (error) {
+      // テーブル未作成の場合は警告のみでスキップ
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        console.warn('[notifications/cancel] notification_queue table not found, skipping');
+        return NextResponse.json({ success: true, canceledCount: 0 });
+      }
+      throw error;
+    }
 
     return NextResponse.json({
       success: true,
-      canceledCount: count || 0,
+      canceledCount: data?.length || 0,
     });
   } catch (error: any) {
     console.error('Cancel notification error:', error);

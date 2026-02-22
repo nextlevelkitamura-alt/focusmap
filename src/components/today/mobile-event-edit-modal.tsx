@@ -5,6 +5,7 @@ import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Tim
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
+import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import type { TimeBlock } from "@/lib/time-block"
@@ -17,8 +18,8 @@ interface MobileEventEditModalProps {
     target: EditTarget | null
     isOpen: boolean
     onClose: () => void
-    onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null }) => Promise<void>
-    onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string }) => Promise<void>
+    onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[] }) => Promise<void>
+    onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[] }) => Promise<void>
     onDeleteTask?: (taskId: string) => void
     onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
     availableCalendars: { id: string; name: string; background_color?: string }[]
@@ -31,11 +32,9 @@ function toTimeString(date: Date): string {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-
-const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120]
-
 const REMINDER_OPTIONS = [
-    { label: 'なし', value: 0 },
+    { label: 'なし', value: -1 },
+    { label: '予定の時刻', value: 0 },
     { label: '5分前', value: 5 },
     { label: '10分前', value: 10 },
     { label: '15分前', value: 15 },
@@ -99,6 +98,16 @@ export function MobileEventEditModal({
             const dur = Math.round((target.endTime.getTime() - target.startTime.getTime()) / 60000)
             setDuration(dur)
         }
+
+        // リマインダー初期値をイベントから取得
+        const eventReminders = target.originalEvent?.reminders
+        if (eventReminders && eventReminders.length > 0) {
+            setReminder(eventReminders[0])
+        } else if (eventReminders && eventReminders.length === 0) {
+            setReminder(-1) // 明示的に「なし」
+        } else {
+            setReminder(15) // デフォルト
+        }
     }, [target])
 
     // Handle swipe down to close
@@ -141,6 +150,7 @@ export function MobileEventEditModal({
                 estimated_time: duration,
                 calendar_id: calendarId || undefined,
                 memo: memo || null,
+                reminders: reminder >= 0 ? [reminder] : [],
             }).catch(err => {
                 console.error('[MobileEventEditModal] Save task error:', err)
             })
@@ -151,15 +161,16 @@ export function MobileEventEditModal({
                 title,
                 start_time: scheduledDate.toISOString(),
                 end_time: newEnd.toISOString(),
-                googleEventId: target.googleEventId!,
-                calendarId: target.calendarId!,
+                googleEventId: target.googleEventId || '',
+                calendarId: target.calendarId || '',
+                reminders: reminder >= 0 ? [reminder] : [],
             }).catch(err => {
                 console.error('[MobileEventEditModal] Save event error:', err)
             })
         }
 
-        // リマインダーのスケジュール
-        if (reminder > 0 && onScheduleReminder && scheduledDate) {
+        // リマインダーのスケジュール（reminder >= 0: 「予定の時刻」(0) もスケジュール対象）
+        if (reminder >= 0 && onScheduleReminder && scheduledDate) {
             const targetType = target.source === 'task' ? 'task' as const : 'event' as const
             const targetId = target.source === 'task' ? target.taskId! : target.id
             const reminderAt = new Date(scheduledDate.getTime() - reminder * 60000)
@@ -269,18 +280,19 @@ export function MobileEventEditModal({
                             <Clock className="w-3.5 h-3.5" />
                             所要時間
                         </label>
-                        <select
-                            value={duration}
-                            onChange={(e) => setDuration(Number(e.target.value))}
-                            className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none cursor-pointer"
-                            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
-                        >
-                            {DURATION_OPTIONS.map(d => (
-                                <option key={d} value={d}>
-                                    {d >= 60 ? `${d / 60}時間` : `${d}分`}
-                                </option>
-                            ))}
-                        </select>
+                        <DurationWheelPicker
+                            duration={duration}
+                            onDurationChange={setDuration}
+                            trigger={
+                                <button
+                                    type="button"
+                                    className="w-full flex items-center justify-between px-3 py-2.5 text-sm border rounded-lg bg-background hover:bg-muted transition-colors"
+                                >
+                                    <span>{formatDuration(duration)}</span>
+                                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                </button>
+                            }
+                        />
                         <p className="text-[10px] text-muted-foreground">
                             終了: {endTimeStr}
                         </p>

@@ -15,8 +15,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { PRIORITY_OPTIONS, type Priority } from "@/components/ui/priority-select"
-import { ESTIMATED_TIME_OPTIONS, formatEstimatedTime } from "@/components/ui/estimated-time-select"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
+import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import type { Project } from "@/types/database"
 
 export interface QuickTaskData {
@@ -195,21 +195,24 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
                                 <Timer className="w-3 h-3" />
                                 見積もり時間
                             </label>
-                            <select
-                                value={estimatedTime}
-                                onChange={(e) => setEstimatedTime(Number(e.target.value))}
-                                className={cn(
-                                    "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                                    "focus:outline-none focus:ring-2 focus:ring-ring"
-                                )}
-                            >
-                                <option value={0}>なし</option>
-                                {ESTIMATED_TIME_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                        {opt.label}
-                                    </option>
-                                ))}
-                            </select>
+                            <DurationWheelPicker
+                                duration={estimatedTime || 30}
+                                onDurationChange={setEstimatedTime}
+                                trigger={
+                                    <button
+                                        type="button"
+                                        className={cn(
+                                            "w-full h-10 px-3 rounded-md border border-input bg-background text-sm text-left",
+                                            "focus:outline-none focus:ring-2 focus:ring-ring",
+                                            "flex items-center gap-2",
+                                            estimatedTime === 0 && "text-muted-foreground"
+                                        )}
+                                    >
+                                        <Timer className="w-4 h-4 flex-shrink-0" />
+                                        {estimatedTime > 0 ? formatDuration(estimatedTime) : "選択"}
+                                    </button>
+                                }
+                            />
                         </div>
 
                         {/* Calendar + Priority (side by side) */}
