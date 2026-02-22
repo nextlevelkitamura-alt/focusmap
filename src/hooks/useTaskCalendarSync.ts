@@ -154,6 +154,13 @@ export function useTaskCalendarSync({
         setStatus('error')
         setError(error)
         onSyncError?.(error)
+        // エラーでもprevRefを更新して無限リトライループを防止
+        prevRef.current = {
+          scheduled_at,
+          estimated_time,
+          calendar_id,
+          google_event_id
+        }
       }
     }
   }

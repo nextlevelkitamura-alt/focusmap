@@ -200,8 +200,9 @@ export async function syncTaskToCalendar(
         if (searchResult.data.items && searchResult.data.items.length > 0) {
           existingEventId = searchResult.data.items[0].id!;
         }
-      } catch {
-        // 検索失敗は無視して新規作成に進む
+      } catch (searchErr) {
+        // 検索失敗をログに記録（重複イベント作成のリスクがあるため）
+        console.warn('[syncTaskToCalendar] Extended Properties search failed, proceeding with insert:', searchErr);
       }
 
       if (existingEventId) {
@@ -222,10 +223,22 @@ export async function syncTaskToCalendar(
       }
 
       // google_event_id をタスクに保存
-      await supabase
+      const { error: saveError } = await supabase
         .from('tasks')
         .update({ google_event_id: googleEventId })
-        .eq('id', taskId);
+        .eq('id', taskId)
+        .eq('user_id', userId);
+      if (saveError) {
+        console.error('[syncTaskToCalendar] Failed to save google_event_id:', saveError);
+        // google_event_id が保存されないと次回重複イベントが作成される可能性があるため、
+        // 作成したイベントを削除してエラーとする
+        try {
+          await calendar.events.delete({ calendarId, eventId: googleEventId });
+        } catch (cleanupErr) {
+          console.error('[syncTaskToCalendar] Cleanup deletion failed:', cleanupErr);
+        }
+        throw new Error(`Failed to save google_event_id: ${saveError.message}`);
+      }
     }
 
     // 同期ログを記録

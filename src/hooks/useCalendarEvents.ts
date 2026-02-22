@@ -19,7 +19,7 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes（ゴーストイベント残留を最小化）
 const inflightRequests = new Map<string, Promise<CalendarEvent[]>>();
 
 // Backoff state for quota errors

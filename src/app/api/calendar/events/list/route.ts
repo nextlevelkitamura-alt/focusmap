@@ -155,14 +155,14 @@ export async function GET(request: NextRequest) {
       .map(e => e.google_event_id);
     if (orphanGoogleEventIds.length > 0) {
       console.log('[events/list] Cleaning up orphan DB events:', orphanGoogleEventIds.length);
-      supabase
+      const { error: orphanDelErr } = await supabase
         .from('calendar_events')
         .delete()
         .eq('user_id', user.id)
-        .in('google_event_id', orphanGoogleEventIds)
-        .then(({ error: delErr }) => {
-          if (delErr) console.error('[events/list] Orphan cleanup failed:', delErr);
-        });
+        .in('google_event_id', orphanGoogleEventIds);
+      if (orphanDelErr) {
+        console.error('[events/list] Orphan cleanup failed:', orphanDelErr);
+      }
     }
 
     console.log('[events/list] Local-only events (no google_event_id):', localOnlyEvents.length);
@@ -261,21 +261,19 @@ export async function GET(request: NextRequest) {
       synced_at: now
     }));
 
-    // 非同期でDBに保存（エラーがあってもログだけ出して続行）
+    // DBに保存（エラーがあってもレスポンスはブロックしないが、awaitでDB整合性を確保）
     if (eventsWithSyncTime.length > 0) {
-      supabase
+      const { error: upsertErr } = await supabase
         .from('calendar_events')
         .upsert(eventsWithSyncTime, {
           onConflict: 'user_id,google_event_id',
           ignoreDuplicates: false
-        })
-        .then(({ error }) => {
-          if (error) {
-            console.error('[events/list] Failed to upsert calendar events (non-blocking):', error);
-          } else {
-            console.log('[events/list] Successfully upserted', eventsWithSyncTime.length, 'events to database');
-          }
         });
+      if (upsertErr) {
+        console.error('[events/list] Failed to upsert calendar events:', upsertErr);
+      } else {
+        console.log('[events/list] Successfully upserted', eventsWithSyncTime.length, 'events to database');
+      }
     }
 
     return NextResponse.json({

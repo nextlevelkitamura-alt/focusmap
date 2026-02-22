@@ -231,7 +231,8 @@ export function useMultiTaskCalendarSync({
       await onRefreshCalendar?.()
     } catch (err) {
       console.error(`[useMultiTaskCalendarSync] ${method} failed for task ${taskId}:`, err)
-      // エラーは silent failure（UIには表示しない）
+      // エラー時: 楽観的イベントをクリーンアップ（ゴースト防止）
+      onRemoveOptimisticEvent?.(optimisticId)
     } finally {
       syncingTasksRef.current.delete(taskId)
     }
@@ -313,8 +314,11 @@ export function useMultiTaskCalendarSync({
       await onRefreshCalendar?.()
     } catch (err) {
       console.error('[useMultiTaskCalendarSync] Calendar change failed:', err)
-      // エラー時も楽観的イベントをクリーンアップ
+      // エラー時: 楽観的イベントをクリーンアップ
       onRemoveOptimisticEvent?.(optimisticId)
+      // カレンダー変更失敗をログ（google_event_idは既にnullの可能性あり）
+      // 次回のフルリフレッシュで正しい状態に同期されるよう、カレンダーを即更新
+      await onRefreshCalendar?.()
     } finally {
       syncingTasksRef.current.delete(taskId)
     }

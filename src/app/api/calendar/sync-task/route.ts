@@ -249,8 +249,14 @@ export async function DELETE(request: NextRequest) {
       .eq('user_id', user.id);
 
     if (updateError) {
-      console.error('[sync-task DELETE] Update error:', updateError);
-      return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
+      console.error('[sync-task DELETE] DB update failed after Google Calendar deletion:', updateError);
+      // Google Calendarからは削除済みなので、部分的成功として返す
+      // クライアント側で google_event_id をクリアしてもらう
+      return NextResponse.json({
+        success: true,
+        warning: 'Event deleted from Google Calendar but failed to update task in database. The task will be cleaned up on next sync.',
+        dbError: updateError.message,
+      });
     }
 
     return NextResponse.json({
