@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { Task } from '@/types/database'
 import { CalendarEvent } from '@/types/calendar'
+import { invalidateCalendarCache } from '@/hooks/useCalendarEvents'
 
 type SyncStatus = 'idle' | 'syncing' | 'success' | 'error'
 
@@ -227,6 +228,8 @@ export function useMultiTaskCalendarSync({
 
       // 楽観的イベントを削除してから実データで更新
       onRemoveOptimisticEvent?.(optimisticId)
+      // カレンダーキャッシュを無効化（他のカレンダー表示にも即座に反映）
+      invalidateCalendarCache()
       // カレンダーを更新（実データに置換）
       await onRefreshCalendar?.()
     } catch (err) {
@@ -311,6 +314,8 @@ export function useMultiTaskCalendarSync({
 
       // 楽観的イベントをクリーンアップして実データに置換
       onRemoveOptimisticEvent?.(optimisticId)
+      // カレンダーキャッシュを無効化
+      invalidateCalendarCache()
       await onRefreshCalendar?.()
     } catch (err) {
       console.error('[useMultiTaskCalendarSync] Calendar change failed:', err)

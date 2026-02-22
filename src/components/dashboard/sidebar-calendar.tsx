@@ -212,9 +212,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 }
             }
 
-            // 成功: キャッシュ無効化 → 最新データに同期
-            invalidateCalendarCache()
-            await refetch()
+            // 成功: キャッシュ無効化して最新データに同期（forceSync=trueでキャッシュをスキップ）
+            await refetch(true)
         } catch (err) {
             console.error('[handleEventSave] Failed:', err)
             // 失敗: ロールバック + エラー通知
@@ -263,6 +262,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 const data = await response.json()
 
                 if (data.success) {
+                    // 成功時: キャッシュ無効化（次回他のカレンダー取得時の整合性確保）
                     invalidateCalendarCache()
                     // API がリンク先の task_id を返した場合、タスク一覧も更新
                     if (data.task_id && onUpdateTask) {
@@ -314,7 +314,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 throw new Error(data.error?.message || '削除に失敗しました')
             }
             // 削除成功: キャッシュを無効化して次回フェッチで最新データを取得
-            invalidateCalendarCache()
+            invalidateCalendarCache() // refetchは呼ばず、楽観的削除済みのため不要
         } catch (err) {
             // 失敗時: イベントを復元
             setEvents(prev => [...prev, event].sort((a, b) =>

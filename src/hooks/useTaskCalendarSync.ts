@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { invalidateCalendarCache } from '@/hooks/useCalendarEvents'
 
 interface UseTaskCalendarSyncOptions {
   taskId: string
@@ -91,6 +92,8 @@ export function useTaskCalendarSync({
 
       setStatus('success')
       retryCountRef.current = 0
+      // 同期成功後にカレンダーキャッシュを無効化（他のカレンダー表示にも即座に反映）
+      invalidateCalendarCache()
       onSyncSuccess?.()
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error')

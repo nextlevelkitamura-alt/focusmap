@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
-import { useCalendarEvents } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails, getTodayDateString, formatDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
@@ -490,6 +490,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             const data = await res.json()
             throw new Error(data.error?.message || 'Failed to update event')
         }
+        // 成功時: カレンダーキャッシュを無効化（他のカレンダー表示にも即座に反映）
+        invalidateCalendarCache()
     }, [])
 
     // Delete task — dashboard-client 経由で quickTasks/taskOverrides も同期
@@ -512,9 +514,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         setLocalCalendarEvents(prev => prev.filter(e => e.id !== eventId))
         fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
             method: 'DELETE',
-        }).catch(err => {
-            console.error('[TodayView] Failed to delete event:', err)
         })
+            .then(res => res.ok && invalidateCalendarCache())
+            .catch(err => {
+                console.error('[TodayView] Failed to delete event:', err)
+            })
     }, [])
 
     // Writable calendars for the edit modal
