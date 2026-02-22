@@ -506,19 +506,24 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     }, [localCalendarEvents, syncNow])
 
     // Delete task — dashboard-client 経由で quickTasks/taskOverrides も同期
-    const handleDeleteTask = useCallback((taskId: string) => {
+    const handleDeleteTask = useCallback(async (taskId: string) => {
         // ローカル即時反映
         setLocalTasks(prev => prev.filter(t => t.id !== taskId))
+
         // 親コンポーネント経由でDB削除 + state同期
         if (onDeleteTaskProp) {
-            onDeleteTaskProp(taskId)
+            await onDeleteTaskProp(taskId)
         } else {
             // フォールバック: 直接API呼び出し
-            fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
+            await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
                 console.error('[TodayView] Failed to delete task:', err)
             })
         }
-    }, [onDeleteTaskProp])
+
+        // 削除後にカレンダーキャッシュを無効化して即座に再取得
+        invalidateCalendarCache()
+        await syncNow()
+    }, [onDeleteTaskProp, syncNow])
 
     // Delete event (optimistic UI + background API)
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
