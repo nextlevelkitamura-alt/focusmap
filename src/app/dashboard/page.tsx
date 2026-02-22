@@ -25,10 +25,11 @@ export default async function DashboardPage() {
         .select("*")
         .order("created_at", { ascending: false })
 
-    // 3. Tasks
+    // 3. Tasks (soft-deleteされたタスクを除外)
     const { data: tasks } = await supabase
         .from("tasks")
         .select("*")
+        .is("deleted_at", null)
         .order("priority", { ascending: false })
 
     return (

@@ -196,10 +196,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // イベント自動取り込み: カレンダーイベントをタスクとしてDBに保存（バックグラウンド）
     // 取り込み完了後、次回ロード時にタスクとして allTasks に含まれ dedup でイベント表示が置換される
-    const importDoneRef = useRef(false)
+    // イベント集合が変化したら再インポートを許可（削除検出のため）
+    const prevEventIdsRef = useRef<string>('')
     useEffect(() => {
-        if (eventsLoading || allFetchedEvents.length === 0 || importDoneRef.current || isImporting) return
-        importDoneRef.current = true
+        if (eventsLoading || allFetchedEvents.length === 0 || isImporting) return
+        const currentIds = allFetchedEvents.map(e => e.google_event_id).sort().join(',')
+        if (currentIds === prevEventIdsRef.current) return
+        prevEventIdsRef.current = currentIds
         importEvents(allFetchedEvents).catch(() => {}) // 次回起動時にリトライ
     }, [eventsLoading, allFetchedEvents, importEvents, isImporting])
 
@@ -228,6 +231,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     // NOTE: project_id を持つタスクも scheduled_at が今日なら表示する（MindMap→Today の橋渡し）
     const todayScheduledTasks = useMemo(() => {
         return localTasks.filter(t => {
+            if (t.deleted_at) return false
             if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
             if (!t.scheduled_at) return false
@@ -239,6 +243,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     // Previous day's tasks that overflow into current day (繰り越しタスク)
     const overflowTasks = useMemo(() => {
         return localTasks.filter(t => {
+            if (t.deleted_at) return false
             if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
             if (!t.scheduled_at) return false
@@ -255,6 +260,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     // Unscheduled tasks (no scheduled_at, no project_id, not habit children, not done)
     const unscheduledTasks = useMemo(() =>
         localTasks.filter(t =>
+            !t.deleted_at &&
             !t.scheduled_at &&
             !t.project_id &&
             !t.parent_task_id &&

@@ -72,11 +72,12 @@ export async function POST(request: NextRequest) {
       .gte('start_time', dayStart.toISOString())
       .lte('start_time', dayEnd.toISOString());
 
-    // スケジュール済みのタスクを取得
+    // スケジュール済みのタスクを取得（soft-delete済みを除外）
     const { data: tasks, error: tasksError } = await supabase
       .from('tasks')
       .select('scheduled_at, estimated_time')
       .eq('user_id', user.id)
+      .is('deleted_at', null)
       .not('scheduled_at', 'is', null)
       .gte('scheduled_at', dayStart.toISOString())
       .lte('scheduled_at', dayEnd.toISOString());

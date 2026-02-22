@@ -163,6 +163,20 @@ export async function GET(request: NextRequest) {
       if (orphanDelErr) {
         console.error('[events/list] Orphan cleanup failed:', orphanDelErr);
       }
+
+      // Google Calendarに存在しないイベントに対応するタスクもsoft-delete
+      const { error: taskOrphanErr } = await supabase
+        .from('tasks')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('user_id', user.id)
+        .eq('source', 'google_event')
+        .is('deleted_at', null)
+        .in('google_event_id', orphanGoogleEventIds);
+      if (taskOrphanErr) {
+        console.error('[events/list] Orphan task cleanup failed:', taskOrphanErr);
+      } else {
+        console.log('[events/list] Soft-deleted orphan tasks for', orphanGoogleEventIds.length, 'google events');
+      }
     }
 
     console.log('[events/list] Local-only events (no google_event_id):', localOnlyEvents.length);

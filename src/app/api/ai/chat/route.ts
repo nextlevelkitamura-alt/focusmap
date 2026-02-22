@@ -58,6 +58,7 @@ export async function POST(request: Request) {
       .select('id, title, project_id, priority, scheduled_at')
       .eq('user_id', user.id)
       .is('parent_task_id', null)
+      .is('deleted_at', null)
       .limit(30)
 
     // ユーザーのカレンダー設定を取得
