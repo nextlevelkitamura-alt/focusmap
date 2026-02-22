@@ -65,13 +65,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       })
     }
 
-    // 1. 既存の取り込み済みタスクを取得
-    const { data: existingTasks, error: selectError } = await supabase
+    // 1. 既存の取り込み済みタスクを取得（削除済みも含む — 復活させるため）
+    const { data: allExistingTasks, error: selectError } = await supabase
       .from('tasks')
       .select('id, google_event_id, google_event_fingerprint, updated_at, deleted_at')
       .eq('user_id', user.id)
       .eq('source', 'google_event')
-      .is('deleted_at', null)
 
     if (selectError) {
       console.error('[import-events] Select error:', selectError)
@@ -81,8 +80,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       )
     }
 
+    // アクティブなタスク（deleted_at = null）
+    const activeTasks = (allExistingTasks || []).filter(t => !t.deleted_at)
+    // 削除済みタスク（復活候補）
+    const deletedTaskMap = new Map(
+      (allExistingTasks || []).filter(t => t.deleted_at).map(t => [t.google_event_id, t])
+    )
+
     const existingMap = new Map(
-      (existingTasks || []).map(t => [t.google_event_id, t])
+      activeTasks.map(t => [t.google_event_id, t])
     )
     const incomingIds = new Set(events.map(e => e.google_event_id))
 
@@ -130,23 +136,44 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         })
         updated++
       } else {
-        // 新規 → INSERT（id を明示的に生成して upsert の null id を防ぐ）
-        toUpsert.push({
-          id: randomUUID(),
-          user_id: user.id,
-          title: event.title,
-          google_event_id: event.google_event_id,
-          calendar_id: event.calendar_id,
-          scheduled_at: event.start_time,
-          estimated_time: Math.round(
-            (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
-          ),
-          source: 'google_event',
-          stage: 'scheduled',
-          status: 'todo',
-          google_event_fingerprint: event.fingerprint,
-        })
-        inserted++
+        // 削除済みタスクが存在する場合は復活させる（重複作成防止）
+        const deletedTask = deletedTaskMap.get(event.google_event_id)
+        if (deletedTask) {
+          toUpsert.push({
+            id: deletedTask.id,
+            user_id: user.id,
+            title: event.title,
+            google_event_id: event.google_event_id,
+            calendar_id: event.calendar_id,
+            scheduled_at: event.start_time,
+            estimated_time: Math.round(
+              (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
+            ),
+            source: 'google_event',
+            stage: 'scheduled',
+            deleted_at: null, // 復活
+            google_event_fingerprint: event.fingerprint,
+          })
+          updated++
+        } else {
+          // 完全新規 → INSERT（id を明示的に生成して upsert の null id を防ぐ）
+          toUpsert.push({
+            id: randomUUID(),
+            user_id: user.id,
+            title: event.title,
+            google_event_id: event.google_event_id,
+            calendar_id: event.calendar_id,
+            scheduled_at: event.start_time,
+            estimated_time: Math.round(
+              (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
+            ),
+            source: 'google_event',
+            stage: 'scheduled',
+            status: 'todo',
+            google_event_fingerprint: event.fingerprint,
+          })
+          inserted++
+        }
       }
     }
 
@@ -168,15 +195,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       upsertedTasks = upsertData || []
     }
 
-    // 3. ソフトデリート: 既存にあるが incoming にないもの
-    const orphanIds = (existingTasks || [])
-      .filter(t => !incomingIds.has(t.google_event_id) && !t.deleted_at)
+    // 3. ソフトデリート: アクティブなタスクのうち incoming にないもの
+    const orphanIds = activeTasks
+      .filter(t => !incomingIds.has(t.google_event_id))
       .map(t => t.id)
 
     if (orphanIds.length > 0) {
       const { error: deleteError } = await supabase
         .from('tasks')
-        .update({ deleted_at: new Date().toISOString() })
+        .update({
+          deleted_at: new Date().toISOString(),
+          is_timer_running: false,
+          last_started_at: null,
+        })
         .eq('user_id', user.id)
         .in('id', orphanIds)
 

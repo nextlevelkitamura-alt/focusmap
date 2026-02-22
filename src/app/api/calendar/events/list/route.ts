@@ -164,10 +164,14 @@ export async function GET(request: NextRequest) {
         console.error('[events/list] Orphan cleanup failed:', orphanDelErr);
       }
 
-      // Google Calendarに存在しないイベントに対応するタスクもsoft-delete
+      // Google Calendarに存在しないイベントに対応するタスクもsoft-delete + タイマーリセット
       const { error: taskOrphanErr } = await supabase
         .from('tasks')
-        .update({ deleted_at: new Date().toISOString() })
+        .update({
+          deleted_at: new Date().toISOString(),
+          is_timer_running: false,
+          last_started_at: null,
+        })
         .eq('user_id', user.id)
         .eq('source', 'google_event')
         .is('deleted_at', null)
@@ -176,6 +180,16 @@ export async function GET(request: NextRequest) {
         console.error('[events/list] Orphan task cleanup failed:', taskOrphanErr);
       } else {
         console.log('[events/list] Soft-deleted orphan tasks for', orphanGoogleEventIds.length, 'google events');
+      }
+
+      // 孤児イベントの完了記録もクリーンアップ
+      const { error: completionErr } = await supabase
+        .from('event_completions')
+        .delete()
+        .eq('user_id', user.id)
+        .in('google_event_id', orphanGoogleEventIds);
+      if (completionErr) {
+        console.error('[events/list] Orphan event_completions cleanup failed:', completionErr);
       }
     }
 
@@ -200,6 +214,8 @@ export async function GET(request: NextRequest) {
       const { data: tasksWithEvents } = await supabase
         .from('tasks')
         .select('id, google_event_id, priority, estimated_time')
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
         .in('google_event_id', eventIdsToCheck)
         .not('google_event_id', 'is', null);
 

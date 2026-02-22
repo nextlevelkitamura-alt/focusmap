@@ -229,8 +229,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Today's scheduled tasks (excluding habits and groups)
     // NOTE: project_id を持つタスクも scheduled_at が今日なら表示する（MindMap→Today の橋渡し）
+    // google_event_id が同じタスクが複数存在する場合、最新のもののみ表示（重複排除）
     const todayScheduledTasks = useMemo(() => {
-        return localTasks.filter(t => {
+        const filtered = localTasks.filter(t => {
             if (t.deleted_at) return false
             if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
@@ -238,11 +239,19 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             const scheduled = new Date(t.scheduled_at)
             return scheduled >= today && scheduled < tomorrow
         })
+        // google_event_id による重複排除（同じイベントのタスクは1つだけ表示）
+        const seenGoogleEventIds = new Set<string>()
+        return filtered.filter(t => {
+            if (!t.google_event_id) return true
+            if (seenGoogleEventIds.has(t.google_event_id)) return false
+            seenGoogleEventIds.add(t.google_event_id)
+            return true
+        })
     }, [localTasks, habitGroupIds, today, tomorrow])
 
     // Previous day's tasks that overflow into current day (繰り越しタスク)
     const overflowTasks = useMemo(() => {
-        return localTasks.filter(t => {
+        const filtered = localTasks.filter(t => {
             if (t.deleted_at) return false
             if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
@@ -254,6 +263,14 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             const estimatedMin = t.estimated_time || 30
             const endTime = new Date(scheduled.getTime() + estimatedMin * 60 * 1000)
             return endTime > today
+        })
+        // google_event_id による重複排除
+        const seenGoogleEventIds = new Set<string>()
+        return filtered.filter(t => {
+            if (!t.google_event_id) return true
+            if (seenGoogleEventIds.has(t.google_event_id)) return false
+            seenGoogleEventIds.add(t.google_event_id)
+            return true
         })
     }, [localTasks, habitGroupIds, previousDay, today])
 
