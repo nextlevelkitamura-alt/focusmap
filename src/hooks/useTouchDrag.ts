@@ -79,6 +79,8 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
     const initialOffsetInItem = useRef(0)
     const dragItemRef = useRef<DragItem | null>(null)
     const isDraggingRef = useRef(false)
+    // ドロップ情報を保持するref（setDragState内でonDropを呼ぶのを避けるため）
+    const pendingDropRef = useRef<{ item: DragItem; startTime: Date; endTime: Date } | null>(null)
 
     // Cancel long press
     const cancelLongPress = useCallback(() => {
@@ -211,10 +213,8 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
                     gridRef.current.style.overflow = 'hidden'
                 }
 
-                // Haptic feedback (if available)
-                if (navigator.vibrate) {
-                    navigator.vibrate(30)
-                }
+                // Note: Vibration removed due to browser restrictions causing console warnings
+                // Visual feedback (drag preview) provides sufficient user feedback
             }, LONG_PRESS_MS)
         }
 
@@ -230,9 +230,9 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
                 return
             }
 
-            // We're dragging - prevent default scroll and update preview
-            e.preventDefault()
-            e.stopPropagation()
+            // We're dragging - update preview (CSS touch-action: none handles scroll prevention)
+            // Note: preventDefault is removed to avoid "passive event listener" errors
+            // The element has touch-none class which sets touch-action: none
 
             updatePreview(touch.clientY)
             runAutoScroll(touch.clientY)
@@ -242,10 +242,17 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             cancelLongPress()
             stopAutoScroll()
 
+            // Restore scroll FIRST (always execute, even if errors occur below)
+            if (gridRef.current) {
+                gridRef.current.style.overflow = ''
+            }
+
             if (isDraggingRef.current && dragItemRef.current) {
                 // Complete the drag
                 const item = dragItemRef.current
 
+                // setDragState 内で onDrop を呼ばず、情報を保存して非同期に呼び出す
+                // これにより「レンダリング中に別のコンポーネントを更新」するエラーを回避
                 setDragState(prev => {
                     if (prev.previewStartTime && prev.previewEndTime) {
                         // Only trigger drop if time actually changed
@@ -253,7 +260,12 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
                         const newMinutes = prev.previewStartTime.getHours() * 60 + prev.previewStartTime.getMinutes()
 
                         if (originalMinutes !== newMinutes) {
-                            onDrop(item, prev.previewStartTime, prev.previewEndTime)
+                            // onDrop を直接呼ばず、refに保存
+                            pendingDropRef.current = {
+                                item,
+                                startTime: prev.previewStartTime,
+                                endTime: prev.previewEndTime
+                            }
                         }
                     }
                     return {
@@ -264,11 +276,15 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
                         previewTop: 0,
                     }
                 })
-            }
 
-            // Restore scroll
-            if (gridRef.current) {
-                gridRef.current.style.overflow = ''
+                // setDragState の処理が完了してから onDrop を呼び出す
+                setTimeout(() => {
+                    if (pendingDropRef.current) {
+                        const { item: dropItem, startTime, endTime } = pendingDropRef.current
+                        onDrop(dropItem, startTime, endTime)
+                        pendingDropRef.current = null
+                    }
+                }, 0)
             }
 
             isDraggingRef.current = false

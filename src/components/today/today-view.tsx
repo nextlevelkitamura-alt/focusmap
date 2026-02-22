@@ -461,6 +461,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const handleSaveEvent = useCallback(async (eventId: string, updates: {
         title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]
     }) => {
+        // 更新前のイベントを保存（エラー時のロールバック用）
+        const previousEvents = localCalendarEvents
+
         // 楽観的UI更新: カレンダーイベントを即座に反映
         setLocalCalendarEvents(prev => prev.map(e =>
             e.id === eventId
@@ -473,26 +476,34 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             return
         }
 
-        // バックグラウンドでAPI呼び出し
-        const res = await fetch(`/api/calendar/events/${eventId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                title: updates.title,
-                start_time: updates.start_time,
-                end_time: updates.end_time,
-                googleEventId: updates.googleEventId,
-                calendarId: updates.calendarId,
-                reminders: updates.reminders,
-            }),
-        })
-        if (!res.ok) {
-            const data = await res.json()
-            throw new Error(data.error?.message || 'Failed to update event')
+        try {
+            // バックグラウンドでAPI呼び出し
+            const res = await fetch(`/api/calendar/events/${eventId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: updates.title,
+                    start_time: updates.start_time,
+                    end_time: updates.end_time,
+                    googleEventId: updates.googleEventId,
+                    calendarId: updates.calendarId,
+                    reminders: updates.reminders,
+                }),
+            })
+            if (!res.ok) {
+                const data = await res.json()
+                throw new Error(data.error?.message || 'Failed to update event')
+            }
+            // 成功時: カレンダーキャッシュを無効化 + 即座に再取得
+            invalidateCalendarCache()
+            await syncNow()
+        } catch (err) {
+            // エラー時: 楽観的更新をロールバック
+            console.error('[TodayView] Failed to update event, rolling back:', err)
+            setLocalCalendarEvents(previousEvents)
+            throw err
         }
-        // 成功時: カレンダーキャッシュを無効化（他のカレンダー表示にも即座に反映）
-        invalidateCalendarCache()
-    }, [])
+    }, [localCalendarEvents, syncNow])
 
     // Delete task — dashboard-client 経由で quickTasks/taskOverrides も同期
     const handleDeleteTask = useCallback((taskId: string) => {
@@ -535,7 +546,12 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Handle drag & drop time change (optimistic UI + sync indicator)
     const handleDragDrop = useCallback(async (item: DragItem, newStartTime: Date, newEndTime: Date) => {
+        // 更新前の状態を保存（エラー時のロールバック用）
+        const previousTasks = localTasks
+        const previousEvents = localCalendarEvents
+
         // Optimistic UI update FIRST
+        // Note: 元アイテムはドラッグ中に invisible になっているので、複製表示にはならない
         if (item.type === 'task') {
             setLocalTasks(prev => prev.map(t =>
                 t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
@@ -555,7 +571,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             } else {
                 const event = calendarEvents.find(e => e.id === item.id)
                 if (!event) return
-                await fetch(`/api/calendar/events/${item.id}`, {
+                const res = await fetch(`/api/calendar/events/${item.id}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -566,13 +582,27 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         calendarId: event.calendar_id,
                     }),
                 })
+                if (!res.ok) {
+                    const data = await res.json()
+                    throw new Error(data.error?.message || 'Failed to update event')
+                }
+                // 成功時: カレンダーキャッシュを無効化 + 即座に再取得
+                invalidateCalendarCache()
+                await syncNow()
             }
             setSyncState('done')
             setTimeout(() => setSyncState('idle'), 1500)
-        } catch {
+        } catch (err) {
+            // エラー時: 楽観的更新をロールバック
+            console.error('[TodayView] Failed to update via drag-drop, rolling back:', err)
+            if (item.type === 'task') {
+                setLocalTasks(previousTasks)
+            } else {
+                setLocalCalendarEvents(previousEvents)
+            }
             setSyncState('idle')
         }
-    }, [onUpdateTask, calendarEvents])
+    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask, syncNow])
 
     // Date header
     const dateFmt = format(today, 'M月d日(E)', { locale: ja })

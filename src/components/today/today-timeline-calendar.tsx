@@ -304,7 +304,7 @@ export function TodayTimelineCalendar({
                                     key={`${item.source}-${id}`}
                                     className={cn(
                                         "absolute touch-none select-none",
-                                        isDragTarget && "opacity-30",
+                                        isDragTarget && "invisible",
                                         isExpanded ? "z-30" : "z-20"
                                     )}
                                     style={{

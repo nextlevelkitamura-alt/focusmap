@@ -51,6 +51,16 @@ export async function DELETE(request: NextRequest) {
         console.warn('[notifications/cancel] notification_queue table not found, skipping');
         return NextResponse.json({ success: true, canceledCount: 0 });
       }
+      // RLSポリシー違反などの詳細なエラーログ
+      console.error('[notifications/cancel] Database error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        userId: user.id,
+        targetType,
+        targetId,
+      });
       throw error;
     }
 
@@ -59,9 +69,17 @@ export async function DELETE(request: NextRequest) {
       canceledCount: data?.length || 0,
     });
   } catch (error: any) {
-    console.error('Cancel notification error:', error);
+    console.error('[notifications/cancel] Unexpected error:', {
+      message: error?.message,
+      code: error?.code,
+      stack: error?.stack,
+      userId: user?.id,
+    });
     return NextResponse.json(
-      { error: error.message || 'Failed to cancel notification' },
+      {
+        error: error.message || 'Failed to cancel notification',
+        canceledCount: 0,
+      },
       { status: 500 }
     );
   }

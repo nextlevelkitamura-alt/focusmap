@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { HabitSettingsSheet } from "./habit-settings-sheet"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 
 // --- Types ---
 
@@ -287,15 +288,30 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                     </section>
                 )}
 
-                {/* Today's Habits */}
-                {todayHabits.length > 0 && (
-                    <section>
-                        <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
-                            <CalendarIcon className="h-3.5 w-3.5" />
+                {/* Habits Tabs */}
+                <Tabs defaultValue="today" className="w-full">
+                    <TabsList className="w-fit mx-auto">
+                        <TabsTrigger value="today" className="gap-2">
                             今日の習慣
-                        </h3>
-                        <div className="space-y-2">
-                            {todayHabits.map(item => (
+                            {todayHabits.length > 0 && (
+                                <span className="text-[10px] bg-primary/20 px-1.5 rounded-full">
+                                    {todayHabits.length}
+                                </span>
+                            )}
+                        </TabsTrigger>
+                        <TabsTrigger value="other" className="gap-2">
+                            その他の習慣
+                            {otherHabits.length > 0 && (
+                                <span className="text-[10px] bg-muted-foreground/20 px-1.5 rounded-full">
+                                    {otherHabits.length}
+                                </span>
+                            )}
+                        </TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="today" className="mt-4 space-y-2">
+                        {todayHabits.length > 0 ? (
+                            todayHabits.map(item => (
                                 <HabitCard
                                     key={item.habit.id}
                                     item={item}
@@ -310,20 +326,17 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onCancelDelete={() => setConfirmDeleteId(null)}
                                     onOpenSettings={() => setSettingsHabit(item.habit)}
                                 />
-                            ))}
-                        </div>
-                    </section>
-                )}
+                            ))
+                        ) : (
+                            <div className="text-center text-sm text-muted-foreground py-8">
+                                今日の習慣はありません
+                            </div>
+                        )}
+                    </TabsContent>
 
-                {/* Other Habits */}
-                {otherHabits.length > 0 && (
-                    <section>
-                        <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
-                            <Repeat className="h-3.5 w-3.5" />
-                            その他の習慣
-                        </h3>
-                        <div className="space-y-2">
-                            {otherHabits.map(item => (
+                    <TabsContent value="other" className="mt-4 space-y-2">
+                        {otherHabits.length > 0 ? (
+                            otherHabits.map(item => (
                                 <HabitCard
                                     key={item.habit.id}
                                     item={item}
@@ -338,10 +351,14 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onCancelDelete={() => setConfirmDeleteId(null)}
                                     onOpenSettings={() => setSettingsHabit(item.habit)}
                                 />
-                            ))}
-                        </div>
-                    </section>
-                )}
+                            ))
+                        ) : (
+                            <div className="text-center text-sm text-muted-foreground py-8">
+                                その他の習慣はありません
+                            </div>
+                        )}
+                    </TabsContent>
+                </Tabs>
             </div>
 
             {/* Habit Settings Sheet */}
