@@ -30,29 +30,26 @@ interface SidebarCalendarProps {
     onSelectionChange?: (calendarIds: string[]) => void
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     tasks?: Task[]
-    selectedDate?: Date         // External controlled date (from parent panel)
+    selectedDate?: Date
     onSelectedDateChange?: (date: Date) => void
 }
 
 export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarProps>(
-    ({ onTaskDrop, onSelectionChange, onUpdateTask, tasks = [], selectedDate: externalDate, onSelectedDateChange }, ref) => {
+    ({ onTaskDrop, onSelectionChange, onUpdateTask, tasks = [], selectedDate, onSelectedDateChange }, ref) => {
         // Default to 'day' view for sidebar as it's most useful for scheduling
         const [viewMode, setViewMode] = useState<ViewMode>('day')
-        const [currentDate, setCurrentDate] = useState(() => {
-            if (externalDate) return externalDate
+        const [currentDateInternal, setCurrentDateInternal] = useState(() => {
             const d = new Date(); d.setHours(0, 0, 0, 0); return d
         })
+
+        // Use external date if provided, otherwise internal
+        const currentDate = selectedDate || currentDateInternal
+        const updateCurrentDate = useCallback((d: Date) => {
+            if (onSelectedDateChange) onSelectedDateChange(d)
+            else setCurrentDateInternal(d)
+        }, [onSelectedDateChange])
         const [hourHeight, setHourHeight] = useState(HOUR_HEIGHT) // Zoom state
         const [isRefreshing, setIsRefreshing] = useState(false) // 更新ボタン用のローディング状態
-
-        // Sync external date → internal state when parent panel changes date
-        const prevExternalDateRef = useRef<Date | undefined>(externalDate)
-        if (externalDate && externalDate !== prevExternalDateRef.current) {
-            prevExternalDateRef.current = externalDate
-            if (externalDate.getTime() !== currentDate.getTime()) {
-                setCurrentDate(externalDate)
-            }
-        }
 
         // カレンダーリスト（編集モーダル用）
         const { calendars } = useCalendars()
@@ -78,7 +75,13 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
         // CalendarSelector の選択変更を受け取るハンドラー
+        // INFINITE LOOP PREVENTION: Compare content strings to avoid updating state if content is same
+        const lastVisibleIdsJsonRef = useRef<string>("")
         const handleVisibleCalendarIdsChange = useCallback((ids: string[]) => {
+            const json = JSON.stringify(ids)
+            if (json === lastVisibleIdsJsonRef.current) return
+            lastVisibleIdsJsonRef.current = json
+
             setVisibleCalendarIds(ids)
             onSelectionChange?.(ids)
         }, [onSelectionChange])
@@ -112,8 +115,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
         // Handlers
         const handleToday = useCallback(() => {
-            setCurrentDate(new Date())
-        }, [])
+            updateCurrentDate(new Date())
+        }, [updateCurrentDate])
 
         const handleRefresh = useCallback(async () => {
             setIsRefreshing(true)
@@ -125,8 +128,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         }, [refetch])
 
         const handleDateChange = useCallback((date: Date) => {
-            setCurrentDate(date)
-        }, [])
+            updateCurrentDate(date)
+        }, [updateCurrentDate])
 
         // イベントカードクリック → 直接編集モーダルを開く
         const handleEventClick = useCallback((eventId: string) => {

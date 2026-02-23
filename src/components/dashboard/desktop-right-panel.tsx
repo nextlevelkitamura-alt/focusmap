@@ -3,9 +3,9 @@
 import { useState, useCallback, useRef, forwardRef, useImperativeHandle, useMemo } from "react"
 import {
     ChevronLeft, ChevronRight, Target, ChevronDown, ChevronUp,
-    CheckSquare, Square, Flame, Play, Pause, CalendarDays, Check, RefreshCw
+    CheckSquare, Square, Flame, Play, Pause, CalendarDays
 } from "lucide-react"
-import { format, isSameDay } from "date-fns"
+import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { SidebarCalendar, SidebarCalendarRef } from "@/components/dashboard/sidebar-calendar"
@@ -32,7 +32,7 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
         const { toast, showToast, hideToast } = useCalendarToast()
         const calendarRef = useRef<SidebarCalendarRef>(null)
 
-        // — Date state (synced to SidebarCalendar)
+        // — Date state (synced to SidebarCalendar via selectedDate prop)
         const [selectedDate, setSelectedDate] = useState<Date>(() => {
             const d = new Date(); d.setHours(0, 0, 0, 0); return d
         })
