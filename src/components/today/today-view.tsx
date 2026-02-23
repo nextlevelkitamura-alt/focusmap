@@ -305,6 +305,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         return map
     }, [calendars])
 
+    // Prefer resolved event color (from /api/calendar/events/list) for imported event-tasks
+    const eventColorByGoogleId = useMemo(() => {
+        const map = new Map<string, string>()
+        for (const e of calendarEvents) {
+            if (e.google_event_id && e.background_color) {
+                map.set(e.google_event_id, e.background_color)
+            }
+        }
+        return map
+    }, [calendarEvents])
+
     // Child tasks grouped by parent (for subtask display)
     const childTasksMap = useMemo(() => {
         const map = new Map<string, Task[]>()
@@ -360,9 +371,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
         for (const task of todayScheduledTasks) {
             if (!task.scheduled_at) continue
-            // Imported events: use calendar color, manual tasks: use default
+            // Imported events: prefer resolved event color, fallback to calendar color
             const color = task.google_event_id && !task.project_id
-                ? calendarColorMap.get(task.calendar_id || '') : undefined
+                ? (eventColorByGoogleId.get(task.google_event_id) || calendarColorMap.get(task.calendar_id || ''))
+                : undefined
             const block = taskToTimeBlock(task, undefined, color)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
             if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
@@ -373,7 +385,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         const dayAfterTomorrow = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000)
         for (const task of overflowTasks) {
             const color = task.google_event_id && !task.project_id
-                ? calendarColorMap.get(task.calendar_id || '') : undefined
+                ? (eventColorByGoogleId.get(task.google_event_id) || calendarColorMap.get(task.calendar_id || ''))
+                : undefined
             const block = taskToTimeBlock(task, undefined, color)
             block.startTime = new Date(today)
             // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
@@ -385,7 +398,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         return items
-    }, [calendarEvents, todayScheduledTasks, overflowTasks, today, tomorrow])
+    }, [calendarEvents, eventColorByGoogleId, calendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
 
     // All-day events
     const allDayEvents = useMemo(() =>

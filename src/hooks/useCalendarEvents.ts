@@ -49,6 +49,11 @@ function isQuotaError(error: unknown): boolean {
          message.includes('rate limit');
 }
 
+function buildEventsListUrl(params: URLSearchParams): string {
+  // Browser fetch should stay same-origin (avoid hardcoded base URLs)
+  return `/api/calendar/events/list?${params.toString()}`;
+}
+
 async function fetchEventsShared(
   timeMin: Date,
   timeMax: Date,
@@ -89,13 +94,22 @@ async function fetchEventsShared(
         params.append('calendarId', calendarIds.join(','));
       }
 
-      const response = await fetch(`/api/calendar/events/list?${params}`);
+      const url = buildEventsListUrl(params);
+      console.info('[useCalendarEvents] fetching', {
+        url,
+        forceSync,
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+        calendarIds,
+      });
+
+      const response = await fetch(url);
 
       // 503 = トークンリフレッシュ済み、リトライ可能
       if (response.status === 503) {
         await new Promise(r => setTimeout(r, 1000));
         // Retry once
-        const retryResponse = await fetch(`/api/calendar/events/list?${params}`);
+        const retryResponse = await fetch(url);
         if (!retryResponse.ok) {
           throw new Error('Failed to fetch events after token refresh');
         }
@@ -205,7 +219,13 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       setLastSyncedAt(new Date());
     } catch (err) {
       setError(err as Error);
-      console.error('[useCalendarEvents] Error:', err);
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error('[useCalendarEvents] Error:', {
+        name: error.name,
+        message: error.message,
+        online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+        origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+      });
     } finally {
       if (!silent) {
         setIsLoading(false);
