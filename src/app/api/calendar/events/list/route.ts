@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     // カレンダーの色情報を取得
     const { data: userCalendars } = await supabase
       .from('user_calendars')
-      .select('google_calendar_id, background_color')
+      .select('google_calendar_id, background_color, name')
       .eq('user_id', user.id);
 
     // カレンダーIDから色へのマップを作成
@@ -99,6 +99,20 @@ export async function GET(request: NextRequest) {
         calendarColorMap.set(cal.google_calendar_id, cal.background_color);
       }
     });
+
+    // Holiday calendars are display-noise in timeline UI, so filter their events out.
+    const holidayCalendarIds = new Set(
+      (userCalendars || [])
+        .filter(cal => {
+          const name = (cal.name || '').toLowerCase();
+          return (
+            name.includes('祝日') ||
+            name.includes('holidays in') ||
+            name.includes('japanese holidays')
+          );
+        })
+        .map(cal => cal.google_calendar_id)
+    );
 
     console.log('[events/list] Calendar color map:', Object.fromEntries(calendarColorMap));
     console.log('[events/list] Google Calendar API events:', googleEvents.length);
@@ -255,8 +269,10 @@ export async function GET(request: NextRequest) {
       })
     ];
 
+    const visibleEvents = allEvents.filter(event => !holidayCalendarIds.has(event.calendar_id));
+
     // 色マッピングを追加
-    const eventsWithColor = allEvents.map(event => {
+    const eventsWithColor = visibleEvents.map(event => {
       const calendarColor = calendarColorMap.get(event.calendar_id);
 
       // calendar color only: event.colorId / event individual color は使わない
@@ -278,6 +294,7 @@ export async function GET(request: NextRequest) {
       total: eventsWithColor.length,
       fromGoogle: googleEvents.length,
       fromLocal: localOnlyEvents.length,
+      filteredHoliday: allEvents.length - visibleEvents.length,
       withMappedColor: eventsWithColor.filter(e => calendarColorMap.has(e.calendar_id)).length,
       withMissingColor: eventsWithColor.filter(e => !e.background_color).length,
     });
