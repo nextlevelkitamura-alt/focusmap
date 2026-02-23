@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
+import { encodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest } from '@/lib/google-oauth';
 
 /**
  * Google OAuth認証URLにリダイレクト
@@ -9,6 +10,7 @@ import { createClient } from '@/utils/supabase/server';
 export async function GET(request: NextRequest) {
   console.log('[Calendar Connect] Route hit. Starting OAuth flow...');
   const supabase = await createClient();
+  const nextPath = request.nextUrl.searchParams.get('next') || '/dashboard';
 
   // ログインユーザーを確認
   const { data: { user }, error } = await supabase.auth.getUser();
@@ -20,21 +22,24 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const redirectUri = resolveGoogleRedirectUriFromRequest(request);
+
   // OAuth2クライアントを作成
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    redirectUri
   );
 
   // 認証URLを生成
   const authUrl = oauth2Client.generateAuthUrl({
+    redirect_uri: redirectUri,
     access_type: 'offline', // refresh_tokenを取得
     prompt: 'consent', // 強制的に同意画面を表示してrefresh_tokenを再取得
     scope: [
       'https://www.googleapis.com/auth/calendar', // カレンダーリスト取得とイベント操作
     ],
-    state: user.id, // ユーザーIDをstateに含める（セキュリティ）
+    state: encodeCalendarOAuthState(user.id, nextPath),
   });
 
   console.log('[Calendar Connect] Generated Auth URL:', authUrl);

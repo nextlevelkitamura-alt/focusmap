@@ -20,8 +20,16 @@
 ### Google Cloud Console (OAuth 2.0 クライアント)
 - **承認済みの JavaScript 生成元**: `https://shikumika-app-364jgme3ja-an.a.run.app`
 - **承認済みのリダイレクト URI**:
+  - `https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback` (本番カレンダー連携用)
   - `http://localhost:3001/api/calendar/callback` (ローカル開発用)
   - `https://whsjsscgmkkkzgcwxjko.supabase.co/auth/v1/callback` (Supabase Auth用)
+
+### Cloud Run 環境変数（必須）
+- `NEXTAUTH_URL=https://shikumika-app-364jgme3ja-an.a.run.app`
+- `NEXTAUTH_SECRET=<固定値>`
+- `GOOGLE_CLIENT_ID=<Google OAuth Client ID>`
+- `GOOGLE_CLIENT_SECRET=<Google OAuth Client Secret>`
+- `GOOGLE_REDIRECT_URI=https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback`
 
 ---
 

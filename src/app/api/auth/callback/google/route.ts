@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
+import { decodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest } from '@/lib/google-oauth';
 
 /**
  * Google OAuth認証後のコールバック
@@ -9,7 +10,7 @@ import { createClient } from '@/utils/supabase/server';
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');
-  const state = searchParams.get('state'); // user_id
+  const state = searchParams.get('state');
 
   if (!code || !state) {
     return NextResponse.redirect(
@@ -17,23 +18,27 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const { userId: stateUserId, next: nextPath } = decodeCalendarOAuthState(state);
+
   const supabase = await createClient();
 
   // ユーザーIDを検証
   const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-  if (authError || !user || user.id !== state) {
+  if (authError || !user || user.id !== stateUserId) {
     return NextResponse.redirect(
       new URL('/dashboard?calendar_error=unauthorized', request.url)
     );
   }
 
   try {
+    const redirectUri = resolveGoogleRedirectUriFromRequest(request);
+
     // OAuth2クライアントを作成
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
+      redirectUri
     );
 
     // 認証コードをトークンに交換
@@ -87,8 +92,10 @@ export async function GET(request: NextRequest) {
     }
 
     // ダッシュボードにリダイレクト（成功）
+    const successUrl = new URL(nextPath || '/dashboard', request.url);
+    successUrl.searchParams.set('calendar_connected', 'true');
     return NextResponse.redirect(
-      new URL('/dashboard?calendar_connected=true', request.url)
+      successUrl
     );
   } catch (error: any) {
     console.error('Calendar callback error:', error);

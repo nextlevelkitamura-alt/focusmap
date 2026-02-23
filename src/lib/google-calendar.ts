@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
 import { CalendarEvent, GoogleCalendarEvent } from '@/types/calendar';
+import { resolveGoogleRedirectUriFromEnv } from '@/lib/google-oauth';
 
 /**
  * Google Calendar APIクライアントを取得
@@ -48,10 +49,11 @@ export async function getCalendarClient(userId: string) {
   }
 
   // OAuth2クライアントを作成
+  const redirectUri = resolveGoogleRedirectUriFromEnv();
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    redirectUri
   );
 
   // トークンをセット（expiry_dateを含めることでgoogleapisが自動リフレッシュできるようにする）

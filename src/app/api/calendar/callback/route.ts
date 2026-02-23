@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
+import { decodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest } from '@/lib/google-oauth';
 
 /**
  * Google OAuth認証後のコールバック
@@ -9,7 +10,7 @@ import { createClient } from '@/utils/supabase/server';
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');
-  const state = searchParams.get('state'); // user_id
+  const state = searchParams.get('state');
 
   if (!code || !state) {
     return NextResponse.redirect(
@@ -19,16 +20,18 @@ export async function GET(request: NextRequest) {
 
   const supabase = await createClient();
 
+  const { userId: stateUserId, next: nextPath } = decodeCalendarOAuthState(state);
+
   // ユーザーIDを検証
   const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-  if (authError || !user || user.id !== state) {
+  if (authError || !user || user.id !== stateUserId) {
     console.error('[Calendar Callback] Auth failed:', {
       authError: authError?.message || null,
       hasUser: !!user,
       userId: user?.id || 'none',
-      stateParam: state,
-      match: user?.id === state,
+      stateParam: stateUserId,
+      match: user?.id === stateUserId,
     });
     const reason = authError ? 'auth_error' : !user ? 'no_session' : 'user_mismatch';
     return NextResponse.redirect(
@@ -37,17 +40,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const redirectUri = resolveGoogleRedirectUriFromRequest(request);
+
     // OAuth2クライアントを作成
     console.log('[Calendar Callback] OAuth2 config:', {
       client_id: process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Missing',
       client_secret: process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'Missing',
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI
+      redirect_uri: redirectUri
     });
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
+      redirectUri
     );
 
     // 認証コードをトークンに交換
@@ -117,8 +122,10 @@ export async function GET(request: NextRequest) {
     });
 
     // ダッシュボードにリダイレクト（成功）
+    const successUrl = new URL(nextPath || '/dashboard', request.url);
+    successUrl.searchParams.set('calendar_connected', 'true');
     return NextResponse.redirect(
-      new URL('/dashboard?calendar_connected=true', request.url)
+      successUrl
     );
   } catch (error: any) {
     console.error('Calendar callback error:', error);

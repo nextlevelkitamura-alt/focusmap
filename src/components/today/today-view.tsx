@@ -217,6 +217,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Use localCalendarEvents for rendering (supports optimistic D&D updates)
     const calendarEvents = localCalendarEvents
+    const calendarReauthUrl = (eventsError as (Error & { reauthUrl?: string }) | null)?.reauthUrl || '/api/calendar/connect'
 
     // Habit task IDs (filter out from timeline)
     const habitGroupIds = useMemo(() => {
@@ -1065,7 +1066,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                     再読み込み
                                 </button>
                                 <button
-                                    onClick={() => window.location.href = '/api/calendar/connect'}
+                                    onClick={() => window.location.href = calendarReauthUrl}
                                     className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-md hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
                                 >
                                     再接続

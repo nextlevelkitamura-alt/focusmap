@@ -33,13 +33,17 @@ function mockFetchSuccess(events: CalendarEvent[] = []) {
   })
 }
 
-function mockFetchError(status: number, message: string) {
+function mockFetchError(
+  status: number,
+  message: string,
+  extras?: { code?: string; reauthUrl?: string }
+) {
   mockFetch.mockResolvedValueOnce({
     ok: false,
     status,
     statusText: 'Error',
     headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve({ error: { message } }),
+    json: () => Promise.resolve({ error: { message, ...extras } }),
   })
 }
 
@@ -126,6 +130,24 @@ describe('useCalendarEvents', () => {
       expect(result.current.error).not.toBeNull()
       expect(result.current.events).toEqual([])
       expect(result.current.isLoading).toBe(false)
+    })
+
+    test('401エラー時にreauthUrlをエラーオブジェクトへ保持する', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchError(401, 'Calendar authorization expired. Please reconnect.', {
+        code: 'CALENDAR_REAUTH_REQUIRED',
+        reauthUrl: '/api/calendar/connect?next=%2Fdashboard',
+      })
+
+      const { result } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      const errorWithReauth = result.current.error as (Error & { reauthUrl?: string }) | null
+      expect(errorWithReauth).not.toBeNull()
+      expect(errorWithReauth?.reauthUrl).toBe('/api/calendar/connect?next=%2Fdashboard')
     })
 
     test('calendarIds を指定してフェッチする', async () => {

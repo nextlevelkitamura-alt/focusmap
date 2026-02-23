@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
 import { classifyCalendarAuthError, shouldAttemptTokenRefresh } from '@/lib/calendar-auth-errors';
+import { buildCalendarReauthUrl } from '@/lib/google-oauth';
 
 /**
  * Googleカレンダーからイベントを取得
@@ -11,6 +12,7 @@ import { classifyCalendarAuthError, shouldAttemptTokenRefresh } from '@/lib/cale
  */
 export async function GET(request: NextRequest) {
   console.log('[events/list] API called');
+  const reauthUrl = buildCalendarReauthUrl(request, '/dashboard');
   const supabase = await createClient();
 
   // 認証チェック
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
   if (authError || !user) {
     console.log('[events/list] Unauthorized');
     return NextResponse.json(
-      { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } },
+      { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized', reauthUrl } },
       { status: 401 }
     );
   }
@@ -368,7 +370,8 @@ export async function GET(request: NextRequest) {
               success: false,
               error: {
                 code: refreshAuthError.code,
-                message: refreshAuthError.message
+                message: refreshAuthError.message,
+                reauthUrl,
               }
             },
             { status: refreshAuthError.status }
@@ -383,7 +386,8 @@ export async function GET(request: NextRequest) {
           success: false,
           error: {
             code: initialAuthError.code,
-            message: initialAuthError.message
+            message: initialAuthError.message,
+            reauthUrl,
           }
         },
         { status: initialAuthError.status }
