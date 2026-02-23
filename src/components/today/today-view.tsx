@@ -175,6 +175,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
         timeMin: fetchWindow.min,
         timeMax: fetchWindow.max,
+        enabled: !calendarsLoading,
         calendarIds: selectedCalendarIds,
     })
 

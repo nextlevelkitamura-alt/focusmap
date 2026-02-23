@@ -164,6 +164,26 @@ describe('useCalendarEvents', () => {
       expect(result.current.events[0].color).toBe('11')
       expect(result.current.events[0].background_color).toBe('#DC2127')
     })
+
+    test('enabled=false の間はフェッチしない', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([createMockEvent()])
+
+      const options = {
+        ...baseOptions,
+        enabled: false,
+      }
+
+      const { result } = renderHook(() => useCalendarEvents(options))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(mockFetch).toHaveBeenCalledTimes(0)
+      expect(result.current.isLoading).toBe(false)
+      expect(result.current.events).toEqual([])
+    })
   })
 
   // ===========================

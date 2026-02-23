@@ -7,6 +7,7 @@ interface UseCalendarEventsOptions {
   timeMin: Date;
   timeMax: Date;
   calendarIds?: string[];
+  enabled?: boolean;
   autoSync?: boolean;
   syncInterval?: number;  // ミリ秒（デフォルト: 600000 = 10分）
 }
@@ -37,10 +38,15 @@ export function invalidateCalendarCache() {
   inflightRequests.clear();
 }
 
-function isQuotaError(error: any): boolean {
-  return error?.message?.includes('Quota exceeded') ||
-         error?.message?.includes('quota') ||
-         error?.message?.includes('rate limit');
+function isQuotaError(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : (typeof error === 'object' && error && 'message' in error && typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : String(error));
+  return message.includes('Quota exceeded') ||
+         message.includes('quota') ||
+         message.includes('rate limit');
 }
 
 async function fetchEventsShared(
@@ -107,7 +113,7 @@ async function fetchEventsShared(
           } else {
             errorMessage = await response.text();
           }
-        } catch (e) {
+        } catch {
           // Ignore parsing errors
         }
 
@@ -171,6 +177,11 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   const fetchEvents = useCallback(async (
     forceSyncOrOptions: boolean | { forceSync?: boolean; silent?: boolean } = false
   ) => {
+    if (options.enabled === false) {
+      setIsLoading(false);
+      return;
+    }
+
     const forceSync = typeof forceSyncOrOptions === 'boolean'
       ? forceSyncOrOptions
       : !!forceSyncOrOptions.forceSync;
@@ -200,16 +211,20 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
         setIsLoading(false);
       }
     }
-  }, [timeRangeKey, calendarIdsKey]);
+  }, [timeRangeKey, calendarIdsKey, options.enabled]);
 
   // Initial fetch + calendarIds/timeMin/timeMax change detection
   useEffect(() => {
+    if (options.enabled === false) {
+      setIsLoading(false);
+      return;
+    }
     fetchEvents(false); // Use cache first
-  }, [fetchEvents]);
+  }, [fetchEvents, options.enabled]);
 
   // Auto-sync (10 minutes interval by default)
   useEffect(() => {
-    if (!options.autoSync) return;
+    if (!options.autoSync || options.enabled === false) return;
 
     const interval = setInterval(
       () => {
@@ -219,7 +234,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     );
 
     return () => clearInterval(interval);
-  }, [options.autoSync, options.syncInterval, fetchEvents]);
+  }, [options.autoSync, options.syncInterval, options.enabled, fetchEvents]);
 
   // Manual sync (force refresh)
   const syncNow = useCallback((options?: { silent?: boolean }) => {
