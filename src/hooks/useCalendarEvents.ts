@@ -120,10 +120,12 @@ async function fetchEventsShared(
       const contentType = response.headers.get("content-type");
       if (!response.ok) {
         let errorMessage = 'Failed to fetch events';
+        let errorCode: string | undefined;
         try {
           if (contentType && contentType.indexOf("application/json") !== -1) {
             const errorData = await response.json();
             errorMessage = errorData.error?.message || errorMessage;
+            errorCode = errorData.error?.code;
           } else {
             errorMessage = await response.text();
           }
@@ -139,7 +141,11 @@ async function fetchEventsShared(
           console.error(`[useCalendarEvents] Quota error, backing off for ${backoffTime}ms`);
         }
 
-        throw new Error(errorMessage);
+        const err = new Error(errorMessage);
+        if (errorCode) {
+          (err as Error & { code?: string }).code = errorCode;
+        }
+        throw err;
       }
 
       let events: CalendarEvent[] = [];
@@ -220,9 +226,11 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     } catch (err) {
       setError(err as Error);
       const error = err instanceof Error ? err : new Error(String(err));
+      const errorCode = (error as Error & { code?: string }).code;
       console.error('[useCalendarEvents] Error:', {
         name: error.name,
         message: error.message,
+        code: errorCode,
         online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
         origin: typeof window !== 'undefined' ? window.location.origin : undefined,
       });

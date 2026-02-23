@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
+import { classifyCalendarAuthError, shouldAttemptTokenRefresh } from '@/lib/calendar-auth-errors';
 
 /**
  * Googleカレンダーからイベントを取得
@@ -331,9 +332,10 @@ export async function GET(request: NextRequest) {
   } catch (error: unknown) {
     console.error('Calendar events list error:', error);
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const initialAuthError = classifyCalendarAuthError(errorMessage);
 
-    // トークン期限切れの場合、手動リフレッシュを試みる
-    if (errorMessage.includes('invalid_grant') || errorMessage.includes('Token')) {
+    // Access tokenの一時的失効が疑われる場合のみ、手動リフレッシュを試みる
+    if (shouldAttemptTokenRefresh(errorMessage)) {
       try {
         console.log('[events/list] Token expired, attempting manual refresh...');
         const { oauth2Client } = await getCalendarClient(user.id);
@@ -353,19 +355,38 @@ export async function GET(request: NextRequest) {
             { status: 503 }
           );
         }
-      } catch (refreshError) {
-        console.error('[events/list] Token refresh failed:', refreshError);
+      } catch (refreshError: unknown) {
+        const refreshMessage = refreshError instanceof Error ? refreshError.message : String(refreshError);
+        console.error('[events/list] Token refresh failed:', {
+          refreshMessage,
+          initialMessage: errorMessage,
+        });
+        const refreshAuthError = classifyCalendarAuthError(refreshMessage);
+        if (refreshAuthError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: refreshAuthError.code,
+                message: refreshAuthError.message
+              }
+            },
+            { status: refreshAuthError.status }
+          );
+        }
       }
+    }
 
+    if (initialAuthError) {
       return NextResponse.json(
         {
           success: false,
           error: {
-            code: 'TOKEN_EXPIRED',
-            message: 'Calendar access token expired. Please reconnect.'
+            code: initialAuthError.code,
+            message: initialAuthError.message
           }
         },
-        { status: 401 }
+        { status: initialAuthError.status }
       );
     }
 

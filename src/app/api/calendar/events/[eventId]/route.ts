@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { getCalendarClient } from '@/lib/google-calendar';
+import { classifyCalendarAuthError } from '@/lib/calendar-auth-errors';
 
 /**
  * カレンダーイベントを削除
@@ -120,20 +121,20 @@ export async function DELETE(
       message: 'Event deleted successfully'
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[events/delete] Error:', error);
-
-    // トークン期限切れのエラー
-    if (error.message.includes('invalid_grant') || error.message.includes('Token')) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const authError = classifyCalendarAuthError(errorMessage);
+    if (authError) {
       return NextResponse.json(
         {
           success: false,
           error: {
-            code: 'TOKEN_EXPIRED',
-            message: 'Calendar access token expired. Please reconnect.'
+            code: authError.code,
+            message: authError.message
           }
         },
-        { status: 401 }
+        { status: authError.status }
       );
     }
 
@@ -143,7 +144,7 @@ export async function DELETE(
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to delete event'
+          message: errorMessage || 'Failed to delete event'
         }
       },
       { status: 500 }
@@ -209,7 +210,7 @@ export async function PATCH(
     console.log('[events/update] Updating Google Calendar event:', googleEventId);
     const { calendar } = await getCalendarClient(user.id);
 
-    const googleEvent: any = {
+    const googleEvent: Record<string, unknown> = {
       summary: title,
       description: description || undefined,
       location: location || undefined,
@@ -281,7 +282,7 @@ export async function PATCH(
       const priorityMap: Record<string, number> = { high: 3, medium: 2, low: 1 };
 
       // タスクの全フィールドを更新（タイトル、予定時刻、所要時間、優先度、カレンダーID）
-      const taskUpdates: Record<string, any> = {
+      const taskUpdates: Record<string, unknown> = {
         title,
         scheduled_at: start_time,
         calendar_id: calendarId,
@@ -313,20 +314,20 @@ export async function PATCH(
       task_id: linkedTaskId,
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[events/update] Error:', error);
-
-    // トークン期限切れのエラー
-    if (error.message.includes('invalid_grant') || error.message.includes('Token')) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const authError = classifyCalendarAuthError(errorMessage);
+    if (authError) {
       return NextResponse.json(
         {
           success: false,
           error: {
-            code: 'TOKEN_EXPIRED',
-            message: 'Calendar access token expired. Please reconnect.'
+            code: authError.code,
+            message: authError.message
           }
         },
-        { status: 401 }
+        { status: authError.status }
       );
     }
 
@@ -336,7 +337,7 @@ export async function PATCH(
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to update event'
+          message: errorMessage || 'Failed to update event'
         }
       },
       { status: 500 }
