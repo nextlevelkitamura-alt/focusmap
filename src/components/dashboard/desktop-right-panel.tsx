@@ -132,75 +132,36 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
             <>
                 <div className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative overflow-hidden">
 
-                    {/* ① Date Navigation Header */}
-                    <div className="flex-shrink-0 border-b border-border/30 bg-background/80">
-                        {/* Row 1: Prev/Date label/Next + today shortcut */}
-                        <div className="flex items-center justify-between px-3 py-2">
-                            {/* Left: prev + date label + next */}
-                            <div className="flex items-center gap-1">
-                                <button
-                                    onClick={goToPrevDay}
-                                    className="p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
-                                >
-                                    <ChevronLeft className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => setCalendarOpen(prev => !prev)}
-                                    className={cn(
-                                        "flex items-center gap-1.5 px-1.5 py-0.5 rounded-md transition-colors text-sm font-semibold",
-                                        calendarOpen ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
-                                    )}
-                                >
-                                    <CalendarDays className="w-3.5 h-3.5" />
-                                    {dateLabel}
-                                </button>
-                                <button
-                                    onClick={goToNextDay}
-                                    className="p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
-                                >
-                                    <ChevronRight className="w-4 h-4" />
-                                </button>
-                            </div>
-
-                            {/* Right: Today button */}
-                            <div className="flex items-center gap-1.5">
-                                {!isToday && (
-                                    <button
-                                        onClick={goToToday}
-                                        className="text-[10px] px-2 py-0.5 rounded-full border border-muted-foreground/30 text-muted-foreground hover:bg-muted/60 transition-colors"
-                                    >
-                                        今日
-                                    </button>
+                    {/* ① Compact Header: date nav + calendar selector */}
+                    <div className="flex-shrink-0 flex items-center justify-between px-2 py-1.5 border-b border-border/30 bg-background/80 gap-2">
+                        {/* Date navigation */}
+                        <div className="flex items-center gap-0.5">
+                            <button
+                                onClick={goToPrevDay}
+                                className="p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
+                            >
+                                <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setCalendarOpen(prev => !prev)}
+                                className={cn(
+                                    "flex items-center gap-1 px-2 py-0.5 rounded-md transition-colors text-sm font-semibold",
+                                    calendarOpen ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
                                 )}
-                            </div>
+                            >
+                                <CalendarDays className="w-3.5 h-3.5" />
+                                {dateLabel}
+                            </button>
+                            <button
+                                onClick={goToNextDay}
+                                className="p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
+                            >
+                                <ChevronRight className="w-4 h-4" />
+                            </button>
                         </div>
 
-                        {/* Row 2: View mode tabs + Calendar selector */}
-                        <div className="flex items-center justify-between px-3 pb-2">
-                            {/* View mode tabs */}
-                            <div className="flex items-center bg-muted/30 rounded-md p-0.5 border border-border/40">
-                                {(['day', '3day', 'week', 'month'] as const).map((mode) => (
-                                    <button
-                                        key={mode}
-                                        onClick={() => setViewMode(mode)}
-                                        className={cn(
-                                            "px-2 py-0.5 text-[11px] font-medium rounded transition-all",
-                                            viewMode === mode
-                                                ? "bg-background text-foreground shadow-sm"
-                                                : "text-muted-foreground hover:text-foreground"
-                                        )}
-                                    >
-                                        {mode === 'day' && '日'}
-                                        {mode === '3day' && '3日'}
-                                        {mode === 'week' && '週'}
-                                        {mode === 'month' && '月'}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {/* Calendar selector */}
-                            <CalendarSelector compact />
-                        </div>
+                        {/* Calendar selector */}
+                        <CalendarSelector compact />
                     </div>
 
                     {/* ② Collapsible mini-calendar */}
