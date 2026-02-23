@@ -14,6 +14,8 @@ import ReactFlow, {
     NodeMouseHandler,
     SelectionMode,
     useReactFlow,
+    applyNodeChanges,
+    NodeChange,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Task, Project } from "@/types/database";
@@ -1139,6 +1141,10 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const lastUserActionAtRef = useRef<number>(0);
     const selectedNodeIdRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
+
+    // Local node state for smooth drag tracking (decoupled from static dagre layout)
+    const [nodes, setNodes] = useState<Node[]>([]);
+
     // Hold latest callbacks in a ref so they don't invalidate useMemos
     const callbacksRef = useRef<Record<string, any>>({});
     const markUserAction = useCallback(() => {
@@ -1806,6 +1812,16 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         });
     }, [structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id]);
 
+    // Sync computed static layout to controllable local state
+    useEffect(() => {
+        setNodes(layoutNodes);
+    }, [layoutNodes]);
+
+    // Intercept ReactFlow drag events and update local state for smooth mouse tracking
+    const onNodesChange = useCallback((changes: NodeChange[]) => {
+        setNodes((nds) => applyNodeChanges(changes, nds));
+    }, []);
+
     // DOM 直接操作でドロップターゲットの CSS クラスを切り替え（React 再レンダリングなし）
     const DROP_CLASSES = ['drop-target-above', 'drop-target-below', 'drop-target-child'] as const;
     const clearDropTargetDOM = useCallback(() => {
@@ -2208,7 +2224,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             </div>
 
             <ReactFlow
-                nodes={layoutNodes}
+                nodes={nodes}
+                onNodesChange={onNodesChange}
                 edges={edges}
                 nodeTypes={nodeTypes}
                 defaultViewport={defaultViewport}
