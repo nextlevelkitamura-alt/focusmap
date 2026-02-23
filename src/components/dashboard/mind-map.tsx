@@ -135,8 +135,8 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
                 setIsEditing(true);
                 if (inputRef.current) {
                     inputRef.current.setSelectionRange(0, inputRef.current.value.length);
-            }
-            return;
+                }
+                return;
             }
         }
 
@@ -703,8 +703,8 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             // クリーンアップ
             setTimeout(() => ghost.remove(), 0)
 
-            // DragContextに通知（data経由で呼び出し）
-            ;(data as any)?.onDragStart?.(taskId, editValue || 'タスク')
+                // DragContextに通知（data経由で呼び出し）
+                ; (data as any)?.onDragStart?.(taskId, editValue || 'タスク')
 
         }
     }, [isEditing, isDraggable, data, editValue])
@@ -712,7 +712,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
     // ドラッグ終了時の処理
     const handleDragEnd = useCallback(() => {
         // DragContextに通知（data経由で呼び出し）
-        ;(data as any)?.onDragEnd?.()
+        ; (data as any)?.onDragEnd?.()
     }, [])
 
     const settings = data?.displaySettings || { showStatus: true, showPriority: true, showScheduledAt: true, showEstimatedTime: true, showProgress: true, showCollapseButton: true };
@@ -844,9 +844,9 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
                             title="タスク詳細設定"
                         >
                             <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
-                                <rect x="1" y="2" width="10" height="1.2" rx="0.6"/>
-                                <rect x="1" y="5.4" width="10" height="1.2" rx="0.6"/>
-                                <rect x="1" y="8.8" width="10" height="1.2" rx="0.6"/>
+                                <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
+                                <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
+                                <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
                             </svg>
                         </button>
                     </PopoverTrigger>
@@ -1328,9 +1328,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             .filter(n => n.id !== dragged.id);
 
         // 純粋な距離ベース: 最も近いノードをドロップターゲットにする
-        // （overlap判定だとY方向に離れたグループ間の移動ができない）
-        // 500px: 2階層目(x=700)からグループ(x≈300)への距離をカバー
-        const MAX_DIST = 500;
+        // 150px: かなり近づけないと吸い付かないようにして精度を上げる
+        const MAX_DIST = 150;
         let best: { node: Node; dist: number; position: 'above' | 'below' | 'as-child' } | null = null;
 
         for (const candidate of candidates) {
@@ -1351,13 +1350,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 const relativeY = draggedRect.centerY - rect.top;
                 const relativeX = draggedRect.centerX - rect.centerX;
 
-                // LR layout: as-child は、ドラッグ位置がターゲットの右寄りの場合のみ
-                // （左 or 同じ位置 = 兄弟として above/below）
+                // X軸でターゲットの右側 30% 以上にカーソルがある場合は「子要素（as-child）」として扱う
+                // それ以外（左側や重なっている場合）は「兄弟要素（above/below）」として扱う
                 if (relativeX > rect.width * 0.3) {
-                    // ターゲットより右にいる → as-child 可能
-                    if (relativeY < rect.height * 0.33) {
+                    // もしターゲットの下側により近い場合は 'below' になるのを防ぎ、右側なら常に child 優先気味にする
+                    if (relativeY < rect.height * 0.25) {
                         position = 'above';
-                    } else if (relativeY > rect.height * 0.67) {
+                    } else if (relativeY > rect.height * 0.75) {
                         position = 'below';
                     } else {
                         position = 'as-child';
@@ -1782,7 +1781,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                                 await cbs.onUpdateProject(project.id, newTitle);
                             }
                         },
-                        onDelete: () => {}
+                        onDelete: () => { }
                     },
                 };
             }
