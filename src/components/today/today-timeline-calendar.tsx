@@ -327,6 +327,7 @@ export function TodayTimelineCalendar({
                                                 isExpanded={isExpanded}
                                                 onToggleExpand={onCreateSubTask ? () => setExpandedTaskId(prev => prev === id ? null : id) : undefined}
                                                 projectName={item.projectId ? projectNameMap?.get(item.projectId) : undefined}
+                                                accentColor={item.source === 'google_event' ? item.color : undefined}
                                             />
                                             {isExpanded && onCreateSubTask && (
                                                 <div className="relative z-40">
@@ -463,6 +464,7 @@ function TaskBlock({
     isExpanded = false,
     onToggleExpand,
     projectName,
+    accentColor,
 }: {
     task: Task
     currentTime: Date
@@ -477,6 +479,7 @@ function TaskBlock({
     isExpanded?: boolean
     onToggleExpand?: () => void
     projectName?: string
+    accentColor?: string
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
     const isPast = currentTime >= endTime
@@ -486,9 +489,10 @@ function TaskBlock({
 
     const startStr = format(startTime, 'HH:mm')
 
-    // EventBlock と完全に同じ rgba 方式でタスク色を定義
-    const TASK_HEX = '#F97316' // orange-500
-    const TASK_RGB = { r: 249, g: 115, b: 22 }
+    // Google由来タスクはカレンダー色、通常タスクは既存オレンジ
+    const TASK_HEX = accentColor || '#F97316'
+    const fallbackRgb = { r: 249, g: 115, b: 22 }
+    const TASK_RGB = hexToRgb(TASK_HEX) || fallbackRgb
     const taskBg = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.25)`
     const taskBgNow = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.35)`
 

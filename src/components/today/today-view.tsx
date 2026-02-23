@@ -362,7 +362,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             // Imported events: use calendar color, manual tasks: use default
             const color = task.google_event_id && !task.project_id
                 ? calendarColorMap.get(task.calendar_id || '') : undefined
-            const block = taskToTimeBlock(task, color)
+            const block = taskToTimeBlock(task, undefined, color)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
             if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
             items.push(block)
@@ -373,7 +373,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         for (const task of overflowTasks) {
             const color = task.google_event_id && !task.project_id
                 ? calendarColorMap.get(task.calendar_id || '') : undefined
-            const block = taskToTimeBlock(task, color)
+            const block = taskToTimeBlock(task, undefined, color)
             block.startTime = new Date(today)
             // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
             if (block.endTime.getTime() > dayAfterTomorrow.getTime()) {

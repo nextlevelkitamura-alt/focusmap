@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
+import { resolveCalendarEventColor } from '@/lib/calendar-color';
 
 /**
  * Googleカレンダーからイベントを取得
@@ -102,6 +103,21 @@ export async function GET(request: NextRequest) {
 
     console.log('[events/list] Calendar color map:', Object.fromEntries(calendarColorMap));
     console.log('[events/list] Google Calendar API events:', googleEvents.length);
+
+    // Google Colors API（event.colorId -> hex）
+    let eventColorPalette = new Map<string, string>();
+    try {
+      const { calendar } = await getCalendarClient(user.id);
+      const colorRes = await calendar.colors.get();
+      const eventColors = colorRes.data.event || {};
+      eventColorPalette = new Map(
+        Object.entries(eventColors)
+          .filter(([, c]) => !!c?.background)
+          .map(([id, c]) => [id, c!.background as string])
+      );
+    } catch {
+      console.warn('[events/list] Failed to fetch Google event color palette, fallback to calendar/default color');
+    }
 
     // Google Calendar API のイベントに id を付与し、重複を排除
     // 複数カレンダーから同じイベント（同じ google_event_id）が返される場合があるため
@@ -209,7 +225,7 @@ export async function GET(request: NextRequest) {
       return 'low';
     }
 
-    let taskMap = new Map<string, { id: string; priority: number | null; estimated_time: number | null }>();
+    const taskMap = new Map<string, { id: string; priority: number | null; estimated_time: number | null }>();
     if (eventIdsToCheck.length > 0) {
       const { data: tasksWithEvents } = await supabase
         .from('tasks')
@@ -257,11 +273,16 @@ export async function GET(request: NextRequest) {
 
     // 色マッピングを追加
     const eventsWithColor = allEvents.map(event => {
-      const mappedColor = calendarColorMap.get(event.calendar_id);
-      const finalColor = mappedColor || event.background_color || '#039BE5';
+      const calendarColor = calendarColorMap.get(event.calendar_id);
+      const finalColor = resolveCalendarEventColor({
+        eventColor: event.color,
+        eventBackgroundColor: event.background_color,
+        calendarBackgroundColor: calendarColor,
+        eventColorPalette,
+      });
 
       // 色マッピングが見つからないイベントをログ
-      if (!mappedColor && !event.background_color) {
+      if (!event.color && !calendarColor && !event.background_color) {
         console.log('[events/list] No color found for event:', {
           eventId: event.google_event_id,
           calendarId: event.calendar_id,
@@ -313,11 +334,12 @@ export async function GET(request: NextRequest) {
       fromCache: false
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Calendar events list error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     // トークン期限切れの場合、手動リフレッシュを試みる
-    if (error.message.includes('invalid_grant') || error.message.includes('Token')) {
+    if (errorMessage.includes('invalid_grant') || errorMessage.includes('Token')) {
       try {
         console.log('[events/list] Token expired, attempting manual refresh...');
         const { oauth2Client } = await getCalendarClient(user.id);
@@ -359,7 +381,7 @@ export async function GET(request: NextRequest) {
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to fetch calendar events'
+          message: errorMessage || 'Failed to fetch calendar events'
         }
       },
       { status: 500 }

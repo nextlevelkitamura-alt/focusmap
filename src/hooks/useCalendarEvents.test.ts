@@ -146,6 +146,24 @@ describe('useCalendarEvents', () => {
       const url = mockFetch.mock.calls[0][0] as string
       expect(url).toContain('calendarId=cal-1%2Ccal-2')
     })
+
+    test('APIから返った色情報を保持する', async () => {
+      const useCalendarEvents = await getHook()
+      const events = [createMockEvent({
+        color: '11',
+        background_color: '#DC2127',
+      })]
+      mockFetchSuccess(events)
+
+      const { result } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(result.current.events[0].color).toBe('11')
+      expect(result.current.events[0].background_color).toBe('#DC2127')
+    })
   })
 
   // ===========================
