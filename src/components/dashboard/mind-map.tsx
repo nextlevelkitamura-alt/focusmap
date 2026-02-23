@@ -378,11 +378,6 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
     // Guard: prevent focus operations from triggering onChange → edit mode
     const justFocusedRef = useRef(false);
 
-    // Drag sensitivity: prevent accidental drag on click
-    const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
-    const [isDraggable, setIsDraggable] = useState<boolean>(false);
-    const DRAG_THRESHOLD = 25; // 25px threshold (prevents accidental drag)
-
     // Trigger edit from external
     useEffect(() => {
         if (data?.triggerEdit && !isEditing) {
@@ -630,10 +625,6 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
         // Record whether node was already selected before this click
         wasSelectedRef.current = !!selected;
 
-        // Drag sensitivity: record start position
-        dragStartPosRef.current = { x: e.clientX, y: e.clientY };
-        setIsDraggable(false);
-
         // Keep focus on wrapper for keyboard shortcuts (Return, Tab, etc.)
         // Only move focus to input when entering edit mode via double-click or F2
         if (!isEditing) {
@@ -645,34 +636,12 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
         }
     }, [isEditing, selected]);
 
-    // Mouse move handler to detect drag threshold
-    const handleWrapperMouseMove = useCallback((e: React.MouseEvent) => {
-        if (!dragStartPosRef.current || isDraggable) return;
-
-        const dx = e.clientX - dragStartPosRef.current.x;
-        const dy = e.clientY - dragStartPosRef.current.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance > DRAG_THRESHOLD) {
-            setIsDraggable(true);
-        }
-    }, [isDraggable, DRAG_THRESHOLD]);
-
-    // Mouse up handler to reset drag state
-    const handleWrapperMouseUp = useCallback(() => {
-        dragStartPosRef.current = null;
-        setIsDraggable(false);
-    }, []);
-
     // ドラッグ開始時の処理（カレンダーにドロップするため）
     const handleDragStart = useCallback((e: React.DragEvent) => {
-        if (isEditing) {
-            e.preventDefault()
-            return
-        }
+        // Note: Prevent parent logic (like dragging text content)
+        e.stopPropagation();
 
-        // CRITICAL: Prevent drag if threshold not exceeded
-        if (!isDraggable) {
+        if (isEditing) {
             e.preventDefault()
             return
         }
@@ -707,7 +676,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                 ; (data as any)?.onDragStart?.(taskId, editValue || 'タスク')
 
         }
-    }, [isEditing, isDraggable, data, editValue])
+    }, [isEditing, data, editValue])
 
     // ドラッグ終了時の処理
     const handleDragEnd = useCallback(() => {
@@ -737,15 +706,9 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                 data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
             )}
             tabIndex={0}
-            draggable={!isEditing && isDraggable}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
             onKeyDown={handleWrapperKeyDown}
             onDoubleClick={handleDoubleClick}
             onMouseDown={handleWrapperMouseDown}
-            onMouseMove={handleWrapperMouseMove}
-            onMouseUp={handleWrapperMouseUp}
-            onMouseLeave={handleWrapperMouseUp}
         >
             {/* Drop position indicators */}
             {data?.isDropTarget && data?.dropPosition === 'above' && (
@@ -771,7 +734,16 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                 )}
                 <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-1 !h-1" />
 
-                <GripVertical className="w-3 h-3 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
+                {/* Calendar Drag Handle (HTML5 Drag) */}
+                <div
+                    draggable={!isEditing}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
+                    className="nodrag nopan cursor-grab active:cursor-grabbing w-4 h-4 text-muted-foreground/30 hover:text-blue-500 transition-colors shrink-0 flex items-center justify-center p-0.5 rounded hover:bg-muted"
+                    title="ドラッグしてカレンダーへ配置"
+                >
+                    <GripVertical className="w-3 h-3" />
+                </div>
 
                 {settings.showStatus && (() => {
                     const taskDone = data?.is_habit
@@ -966,108 +938,110 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
             </div>
 
             {/* Row 2: メタデータ（値が設定されている場合のみ表示） */}
-            {hasInfoRow && (
-                <div className="nodrag nopan flex items-center gap-1.5 pl-5 flex-wrap">
-                    {/* Estimated Time Badge */}
-                    {hasEstimatedTime && (
-                        <>
-                            <EstimatedTimePopover
-                                valueMinutes={data.estimatedDisplayMinutes}
-                                onChangeMinutes={(minutes) => data?.onUpdateEstimatedTime?.(minutes)}
-                                isOverridden={!!data?.estimatedIsOverride}
-                                autoMinutes={data?.estimatedAutoMinutes}
-                                onResetAuto={data?.hasChildren ? () => data?.onUpdateEstimatedTime?.(0) : undefined}
-                                trigger={
-                                    <span className="cursor-pointer" onClick={(e) => e.stopPropagation()}>
-                                        <EstimatedTimeBadge
-                                            minutes={data.estimatedDisplayMinutes}
-                                            title={
-                                                data?.hasChildren
-                                                    ? (data?.estimatedIsOverride
-                                                        ? `手動設定（自動集計: ${data.estimatedAutoMinutes ? formatEstimatedTime(data.estimatedAutoMinutes) : "0分"}）`
-                                                        : `子孫合計: ${formatEstimatedTime(data.estimatedDisplayMinutes)}`)
-                                                    : `見積もり: ${formatEstimatedTime(data.estimatedDisplayMinutes)}`
-                                            }
-                                        />
-                                    </span>
-                                }
-                            />
-                            {(!data?.hasChildren || data?.estimatedIsOverride) && (
+            {
+                hasInfoRow && (
+                    <div className="nodrag nopan flex items-center gap-1.5 pl-5 flex-wrap">
+                        {/* Estimated Time Badge */}
+                        {hasEstimatedTime && (
+                            <>
+                                <EstimatedTimePopover
+                                    valueMinutes={data.estimatedDisplayMinutes}
+                                    onChangeMinutes={(minutes) => data?.onUpdateEstimatedTime?.(minutes)}
+                                    isOverridden={!!data?.estimatedIsOverride}
+                                    autoMinutes={data?.estimatedAutoMinutes}
+                                    onResetAuto={data?.hasChildren ? () => data?.onUpdateEstimatedTime?.(0) : undefined}
+                                    trigger={
+                                        <span className="cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                                            <EstimatedTimeBadge
+                                                minutes={data.estimatedDisplayMinutes}
+                                                title={
+                                                    data?.hasChildren
+                                                        ? (data?.estimatedIsOverride
+                                                            ? `手動設定（自動集計: ${data.estimatedAutoMinutes ? formatEstimatedTime(data.estimatedAutoMinutes) : "0分"}）`
+                                                            : `子孫合計: ${formatEstimatedTime(data.estimatedDisplayMinutes)}`)
+                                                        : `見積もり: ${formatEstimatedTime(data.estimatedDisplayMinutes)}`
+                                                }
+                                            />
+                                        </span>
+                                    }
+                                />
+                                {(!data?.hasChildren || data?.estimatedIsOverride) && (
+                                    <button
+                                        className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            data?.onUpdateEstimatedTime?.(0)
+                                        }}
+                                        title={data?.hasChildren ? "自動集計に戻す" : "見積もり時間を削除"}
+                                    >
+                                        <X className="w-2.5 h-2.5" />
+                                    </button>
+                                )}
+                            </>
+                        )}
+
+                        {/* Priority Badge */}
+                        {hasPriority && (
+                            <>
+                                <PriorityPopover
+                                    value={data.priority as Priority}
+                                    onChange={(priority) => data?.onUpdatePriority?.(priority)}
+                                    trigger={
+                                        <span className="cursor-pointer">
+                                            <PriorityBadge value={data.priority as Priority} />
+                                        </span>
+                                    }
+                                />
                                 <button
                                     className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
                                     onClick={(e) => {
                                         e.stopPropagation()
-                                        data?.onUpdateEstimatedTime?.(0)
+                                        data?.onUpdatePriority?.(undefined as any)
                                     }}
-                                    title={data?.hasChildren ? "自動集計に戻す" : "見積もり時間を削除"}
+                                    title="優先度を削除"
                                 >
                                     <X className="w-2.5 h-2.5" />
                                 </button>
-                            )}
-                        </>
-                    )}
+                            </>
+                        )}
 
-                    {/* Priority Badge */}
-                    {hasPriority && (
-                        <>
-                            <PriorityPopover
-                                value={data.priority as Priority}
-                                onChange={(priority) => data?.onUpdatePriority?.(priority)}
-                                trigger={
-                                    <span className="cursor-pointer">
-                                        <PriorityBadge value={data.priority as Priority} />
-                                    </span>
-                                }
-                            />
-                            <button
-                                className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    data?.onUpdatePriority?.(undefined as any)
-                                }}
-                                title="優先度を削除"
-                            >
-                                <X className="w-2.5 h-2.5" />
-                            </button>
-                        </>
-                    )}
+                        {/* Memo indicator */}
+                        {hasMemo && (
+                            <StickyNote className="w-3 h-3 text-muted-foreground" />
+                        )}
 
-                    {/* Memo indicator */}
-                    {hasMemo && (
-                        <StickyNote className="w-3 h-3 text-muted-foreground" />
-                    )}
-
-                    {/* DateTime（右寄せ） */}
-                    {hasScheduledAt && (
-                        <div className="ml-auto">
-                            <DateTimePicker
-                                date={new Date(data.scheduled_at)}
-                                setDate={(date) => data?.onUpdateDate?.(date ? date.toISOString() : null)}
-                                trigger={
-                                    <div className="flex items-center gap-1">
-                                        <span className="text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer">
-                                            {format(new Date(data.scheduled_at), 'M/d HH:mm')}
-                                        </span>
-                                        <button
-                                            className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                data?.onUpdateDate?.(null)
-                                            }}
-                                            title="日時設定を削除"
-                                        >
-                                            <X className="w-2.5 h-2.5" />
-                                        </button>
-                                    </div>
-                                }
-                            />
-                        </div>
-                    )}
-                </div>
-            )}
+                        {/* DateTime（右寄せ） */}
+                        {hasScheduledAt && (
+                            <div className="ml-auto">
+                                <DateTimePicker
+                                    date={new Date(data.scheduled_at)}
+                                    setDate={(date) => data?.onUpdateDate?.(date ? date.toISOString() : null)}
+                                    trigger={
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer">
+                                                {format(new Date(data.scheduled_at), 'M/d HH:mm')}
+                                            </span>
+                                            <button
+                                                className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    data?.onUpdateDate?.(null)
+                                                }}
+                                                title="日時設定を削除"
+                                            >
+                                                <X className="w-2.5 h-2.5" />
+                                            </button>
+                                        </div>
+                                    }
+                                />
+                            </div>
+                        )}
+                    </div>
+                )
+            }
 
             <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-1 !h-1" />
-        </div>
+        </div >
     );
 });
 TaskNode.displayName = 'TaskNode';
