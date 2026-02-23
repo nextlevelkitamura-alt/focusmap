@@ -287,6 +287,16 @@ export function useMindMapSync({
             },
         })
 
+        // CRITICAL FIX: Ensure any pending POST request for this group finishes before we PATCH
+        const pendingInsert = pendingInserts.current.get(groupId)
+        if (pendingInsert) {
+            try {
+                await pendingInsert
+            } catch (e) {
+                console.error('[Sync] updateGroupTitle: pending insert failed, continuing with PATCH anyway', e)
+            }
+        }
+
         try {
             const response = await fetch(`/api/tasks/${groupId}`, {
                 method: 'PATCH',
@@ -315,6 +325,16 @@ export function useMindMapSync({
         }
 
         setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...updates } : t))
+
+        // CRITICAL FIX: Ensure any pending POST request for this group finishes before we PATCH
+        const pendingInsert = pendingInserts.current.get(groupId)
+        if (pendingInsert) {
+            try {
+                await pendingInsert
+            } catch (e) {
+                console.error('[Sync] updateGroup: pending insert failed, continuing with PATCH anyway', e)
+            }
+        }
 
         try {
             const response = await fetch(`/api/tasks/${groupId}`, {
@@ -378,6 +398,16 @@ export function useMindMapSync({
         const allIds = new Set(allCaptured.map(t => t.id))
 
         setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+
+        // CRITICAL FIX: Ensure any pending POST request for this group finishes before we DELETE
+        const pendingInsert = pendingInserts.current.get(groupId)
+        if (pendingInsert) {
+            try {
+                await pendingInsert
+            } catch (e) {
+                console.error('[Sync] deleteGroup: pending insert failed, continuing with DELETE anyway', e)
+            }
+        }
 
         try {
             const response = await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
@@ -575,6 +605,16 @@ export function useMindMapSync({
 
         if (!beforeTask) {
             // Task not in current project state (e.g. habit child from another project)
+            // CRITICAL FIX: Ensure any pending POST request for this task finishes before we PATCH
+            const pendingInsert = pendingInserts.current.get(taskId)
+            if (pendingInsert) {
+                try {
+                    await pendingInsert
+                } catch (e) {
+                    console.error('[Sync] updateTask: pending insert failed, continuing with PATCH anyway', e)
+                }
+            }
+
             // Still perform DB update via API route
             try {
                 const response = await fetch(`/api/tasks/${taskId}`, {
@@ -596,6 +636,16 @@ export function useMindMapSync({
         let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
 
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
+
+        // CRITICAL FIX: Ensure any pending POST request for this task finishes before we PATCH
+        const pendingInsert = pendingInserts.current.get(taskId)
+        if (pendingInsert) {
+            try {
+                await pendingInsert
+            } catch (e) {
+                console.error('[Sync] updateTask: pending insert failed, continuing with PATCH anyway', e)
+            }
+        }
 
         try {
             const response = await fetch(`/api/tasks/${taskId}`, {
@@ -776,6 +826,16 @@ export function useMindMapSync({
             console.error('[Notification] Failed to cancel notifications:', error);
         }
 
+        // CRITICAL FIX: Ensure any pending POST request for this task finishes before we DELETE
+        const pendingInsert = pendingInserts.current.get(taskId)
+        if (pendingInsert) {
+            try {
+                await pendingInsert
+            } catch (e) {
+                console.error('[Sync] deleteTask: pending insert failed, continuing with DELETE anyway', e)
+            }
+        }
+
         try {
             const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
             if (!response.ok) {
@@ -914,7 +974,7 @@ export function useMindMapSync({
                 setAllTasks(prev => prev.filter(t => !allSelectedIds.has(t.id)))
                 // ルートタスクを削除すれば CASCADE で子も消える
                 for (const id of [...groupIds, ...taskIds]) {
-                    try { await fetch(`/api/tasks/${id}`, { method: 'DELETE' }) } catch {}
+                    try { await fetch(`/api/tasks/${id}`, { method: 'DELETE' }) } catch { }
                 }
             },
         })
