@@ -120,6 +120,7 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
@@ -146,11 +147,13 @@
 }
 
 /* ReactFlow: ドラッグ中のノード — 浮遊感+掴んでいる感 */
-/* NOTE: transform のトランジションを無効化（ドラッグ追従を妨げる） */
+/* NOTE: transform のトランジションを無効化（ドラッグ追従を妨げる）例外としてscaleを追加 */
 .react-flow__node.dragging {
-  transition: filter 0.15s ease, opacity 0.15s ease !important;
-  opacity: 0.9;
-  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.5)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+  transition: filter 0.15s ease, opacity 0.15s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+  transform: scale(1.05);
+  /* 掴んでいる感を強調 */
+  opacity: 0.95;
+  filter: drop-shadow(0 15px 30px rgba(0, 0, 0, 0.3)) drop-shadow(0 5px 15px rgba(0, 0, 0, 0.2));
   z-index: 1000 !important;
   cursor: grabbing;
 }
@@ -165,27 +168,68 @@
 ========================================= */
 
 @keyframes dropPulseChild {
-  0% { box-shadow: inset 0 0 0 2px rgba(14, 165, 233, 0.5), 0 0 10px rgba(14, 165, 233, 0.3); }
-  50% { box-shadow: inset 0 0 0 4px rgba(14, 165, 233, 0.9), 0 0 20px rgba(14, 165, 233, 0.6); }
-  100% { box-shadow: inset 0 0 0 2px rgba(14, 165, 233, 0.5), 0 0 10px rgba(14, 165, 233, 0.3); }
+  0% {
+    box-shadow: inset 0 0 0 2px rgba(14, 165, 233, 0.5), 0 0 10px rgba(14, 165, 233, 0.3);
+    background-color: rgba(14, 165, 233, 0.05);
+  }
+
+  50% {
+    box-shadow: inset 0 0 0 4px rgba(14, 165, 233, 0.9), 0 0 20px rgba(14, 165, 233, 0.6);
+    background-color: rgba(14, 165, 233, 0.2);
+  }
+
+  100% {
+    box-shadow: inset 0 0 0 2px rgba(14, 165, 233, 0.5), 0 0 10px rgba(14, 165, 233, 0.3);
+    background-color: rgba(14, 165, 233, 0.05);
+  }
 }
 
 @keyframes dropPulseLine {
-  0% { box-shadow: 0 0 5px rgba(56, 189, 248, 0.5); opacity: 0.8; }
-  50% { box-shadow: 0 0 15px rgba(56, 189, 248, 1); opacity: 1; }
-  100% { box-shadow: 0 0 5px rgba(56, 189, 248, 0.5); opacity: 0.8; }
+  0% {
+    box-shadow: 0 0 5px rgba(56, 189, 248, 0.5);
+    opacity: 0.8;
+  }
+
+  50% {
+    box-shadow: 0 0 15px rgba(56, 189, 248, 1);
+    opacity: 1;
+  }
+
+  100% {
+    box-shadow: 0 0 5px rgba(56, 189, 248, 0.5);
+    opacity: 0.8;
+  }
+}
+
+@keyframes dropPulseBackgroundOnly {
+  0% {
+    background-color: rgba(14, 165, 233, 0.05);
+  }
+
+  50% {
+    background-color: rgba(14, 165, 233, 0.15);
+  }
+
+  100% {
+    background-color: rgba(14, 165, 233, 0.05);
+  }
 }
 
 /* ドロップターゲット: as-child（子になる） */
-.react-flow__node.drop-target-child > div {
-  outline: none; /* remove old outline */
-  background-color: rgba(14, 165, 233, 0.1);
+.react-flow__node.drop-target-child>div {
+  outline: none;
+  /* remove old outline */
   border-radius: 8px;
-  animation: dropPulseChild 1s infinite ease-in-out;
+  animation: dropPulseChild 1.2s infinite ease-in-out;
   transition: background-color 0.1s ease;
 }
 
 /* ドロップターゲット: above（上に挿入） */
+.react-flow__node.drop-target-above>div {
+  animation: dropPulseBackgroundOnly 1.2s infinite ease-in-out;
+  border-radius: 8px;
+}
+
 .react-flow__node.drop-target-above::before {
   content: '';
   position: absolute;
@@ -195,12 +239,17 @@
   height: 4px;
   background: rgb(56, 189, 248);
   border-radius: 9999px;
-  animation: dropPulseLine 1s infinite ease-in-out;
+  animation: dropPulseLine 1.2s infinite ease-in-out;
   pointer-events: none;
   z-index: 10;
 }
 
 /* ドロップターゲット: below（下に挿入） */
+.react-flow__node.drop-target-below>div {
+  animation: dropPulseBackgroundOnly 1.2s infinite ease-in-out;
+  border-radius: 8px;
+}
+
 .react-flow__node.drop-target-below::after {
   content: '';
   position: absolute;
@@ -210,7 +259,7 @@
   height: 4px;
   background: rgb(56, 189, 248);
   border-radius: 9999px;
-  animation: dropPulseLine 1s infinite ease-in-out;
+  animation: dropPulseLine 1.2s infinite ease-in-out;
   pointer-events: none;
   z-index: 10;
 }
