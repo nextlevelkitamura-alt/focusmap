@@ -362,7 +362,7 @@ function HabitSettingsPanel({ data }: { data: any }) {
 }
 
 // TASK NODE
-const TaskNode = React.memo(({ data, selected }: NodeProps) => {
+const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -729,6 +729,7 @@ const TaskNode = React.memo(({ data, selected }: NodeProps) => {
             className={cn(
                 "relative w-[225px] px-2 py-1.5 rounded bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all outline-none min-h-[30px] group",
                 !isEditing && "cursor-grab active:cursor-grabbing",
+                dragging && "is-dragging-active",
                 (data?.is_habit || data?.parentIsHabit) && "border-blue-400",
                 (selected || data?.isSelected) && (data?.is_habit || data?.parentIsHabit)
                     ? "ring-2 ring-blue-400 ring-offset-2 ring-offset-background"
@@ -1927,10 +1928,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         dragPositionsRef.current[node.id] = node.position;
         // Save initial position to calculate drag distance later
         dragStartPositionRef.current = { x: node.position.x, y: node.position.y };
-
-        // --- Grabbing Animation: Add CSS class to scale and shadow the node ---
-        const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
-        if (el) el.classList.add('is-dragging-active');
     }, []);
 
     const handleNodeDrag = useCallback((_: React.MouseEvent, node: Node) => {
@@ -1973,10 +1970,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const handleNodeDragStop = useCallback((_evt: React.MouseEvent, node: Node) => {
         isDraggingRef.current = false;
         if (node.type === 'projectNode') return;
-
-        // --- Grabbing Animation: Remove CSS class ---
-        const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
-        if (el) el.classList.remove('is-dragging-active');
 
         // Calculate drag distance from start position
         const startPos = dragStartPositionRef.current;
@@ -2053,21 +2046,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // Selection drag handlers for multi-node move
     const handleSelectionDragStart = useCallback((_: React.MouseEvent, nodes: Node[]) => {
         isDraggingRef.current = true;
-        nodes.forEach(node => {
-            if (node.type === 'projectNode') return;
-            const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
-            if (el) el.classList.add('is-dragging-active');
-        });
     }, []);
 
     const handleSelectionDragStop = useCallback((_: React.MouseEvent, nodes: Node[]) => {
         isDraggingRef.current = false;
         clearDropTargetDOM();
-
-        nodes.forEach(node => {
-            const el = document.querySelector(`.react-flow__node[data-id="${node.id}"]`);
-            if (el) el.classList.remove('is-dragging-active');
-        });
 
         // Filter out project nodes from selection
         const draggedNodes = nodes.filter(n => n.type !== 'projectNode');
