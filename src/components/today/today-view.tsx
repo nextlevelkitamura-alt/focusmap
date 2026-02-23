@@ -9,7 +9,7 @@ import { useHabits, HabitWithDetails, getTodayDateString, formatDateString } fro
 import { useEventImport } from "@/hooks/useEventImport"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2
 } from "lucide-react"
 import { isSameDay, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -74,13 +74,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const scrollPositionRef = useRef<number | undefined>(undefined)
     const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
-
-    // Sync local tasks with prop changes (render-time sync for instant updates)
-    const [prevAllTasks, setPrevAllTasks] = useState(allTasks)
-    if (allTasks !== prevAllTasks) {
-        setPrevAllTasks(allTasks)
+    // Sync local tasks with prop changes
+    useEffect(() => {
         setLocalTasks(allTasks)
-    }
+    }, [allTasks])
 
     // Selected date (ssr:false なのでクライアント直接初期化OK)
     const [selectedDate, setSelectedDate] = useState<Date>(() => {
@@ -203,13 +200,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         const currentIds = allFetchedEvents.map(e => e.google_event_id).sort().join(',')
         if (currentIds === prevEventIdsRef.current) return
         prevEventIdsRef.current = currentIds
-        importEvents(allFetchedEvents).catch(() => {}) // 次回起動時にリトライ
+        importEvents(allFetchedEvents).catch(() => { }) // 次回起動時にリトライ
     }, [eventsLoading, allFetchedEvents, importEvents, isImporting])
 
     // カレンダー同期（今日のビューのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
         tasks: localTasks,
-        onRefreshCalendar: syncNow,
+        onRefreshCalendar: () => syncNow({ silent: true }),
         onUpdateTask,
         onAddOptimisticEvent: addOptimisticEvent,
         onRemoveOptimisticEvent: removeOptimisticEvent,
@@ -329,6 +326,16 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         [todayScheduledTasks, overflowTasks]
     )
     const taskGoogleIds = new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!))
+    // Fallback dedup key for cases where task.google_event_id update is delayed
+    const eventLikeTaskKeys = new Set(
+        [...todayScheduledTasks, ...overflowTasks]
+            .filter(t => t.source === 'google_event' && !!t.scheduled_at)
+            .map(t => {
+                const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
+                const title = t.title.trim().toLowerCase()
+                return `${t.calendar_id || ''}|${title}|${minute}`
+            })
+    )
 
     const timelineItems: TimeBlock[] = useMemo(() => {
         const items: TimeBlock[] = []
@@ -337,6 +344,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             if (event.is_all_day) continue
             // Skip calendar events that have a matching task (task takes priority)
             if (taskGoogleIds.has(event.google_event_id)) continue
+            const eventMinute = Math.floor(new Date(event.start_time).getTime() / 60000)
+            const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
+            if (eventLikeTaskKeys.has(eventKey)) continue
 
             const block = eventToTimeBlock(event)
             // 前日からの繰り越し: startTimeを0:00にクランプ
@@ -382,10 +392,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         [calendarEvents]
     )
 
-    // Gate timeline display: show items only after calendar events finish loading
-    // This prevents the "two-stage render" where tasks appear first, then events pop in
-    const displayItems = eventsLoading ? [] : timelineItems
-    const displayAllDayEvents = eventsLoading ? [] : allDayEvents
+    // Keep previous timeline visible while refreshing events
+    const displayItems = timelineItems
+    const displayAllDayEvents = allDayEvents
 
     // Toggle task completion
     const toggleTask = useCallback(async (taskId: string) => {
@@ -496,7 +505,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             }
             // 成功時: カレンダーキャッシュを無効化 + 即座に再取得
             invalidateCalendarCache()
-            await syncNow()
+            await syncNow({ silent: true })
         } catch (err) {
             // エラー時: 楽観的更新をロールバック
             console.error('[TodayView] Failed to update event, rolling back:', err)
@@ -530,7 +539,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
         // 削除後にカレンダーキャッシュを無効化して即座に再取得（Google側の状態と同期）
         invalidateCalendarCache()
-        await syncNow()
+        await syncNow({ silent: true })
     }, [onDeleteTaskProp, syncNow, localTasks])
 
     // Delete event (optimistic UI + background API)
@@ -550,7 +559,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             .catch(err => {
                 console.error('[TodayView] Failed to delete event:', err)
                 // エラー時は再取得して復元
-                syncNow()
+                syncNow({ silent: true })
             })
     }, [removeOptimisticEvent, syncNow])
 
@@ -610,7 +619,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 }
                 // 成功時: カレンダーキャッシュを無効化 + 即座に再取得
                 invalidateCalendarCache()
-                await syncNow()
+                await syncNow({ silent: true })
             }
             setSyncState('done')
             setTimeout(() => setSyncState('idle'), 1500)
@@ -688,9 +697,15 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                     <CalendarDays className="w-5 h-5" />
                                 </button>
                             </div>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                {displayItems.length}件のスケジュール
-                                {dateHabits.length > 0 && ` · ${doneHabitCount}/${dateHabits.length} 習慣完了`}
+                            <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                                {eventsLoading ? (
+                                    <><Loader2 className="w-3 h-3 animate-spin" /><span>取得中...</span></>
+                                ) : (
+                                    <>
+                                        {displayItems.length}件のスケジュール
+                                        {dateHabits.length > 0 && ` · ${doneHabitCount}/${dateHabits.length} 習慣完了`}
+                                    </>
+                                )}
                             </p>
                         </div>
                         <button
@@ -702,39 +717,39 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
                     {/* Sync indicator + Timeline mode toggle */}
                     <div className="flex items-center gap-2">
-                    {syncState !== 'idle' && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            {syncState === 'syncing' ? (
-                                <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                            ) : (
-                                <Check className="w-3.5 h-3.5 text-green-500" />
-                            )}
+                        {syncState !== 'idle' && (
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                {syncState === 'syncing' ? (
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                ) : (
+                                    <Check className="w-3.5 h-3.5 text-green-500" />
+                                )}
+                            </div>
+                        )}
+                        <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+                            <button
+                                onClick={() => setTimelineMode('calendar')}
+                                className={cn(
+                                    "p-1.5 rounded-md transition-colors",
+                                    timelineMode === 'calendar'
+                                        ? "bg-background shadow-sm text-foreground"
+                                        : "text-muted-foreground"
+                                )}
+                            >
+                                <LayoutGrid className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setTimelineMode('cards')}
+                                className={cn(
+                                    "p-1.5 rounded-md transition-colors",
+                                    timelineMode === 'cards'
+                                        ? "bg-background shadow-sm text-foreground"
+                                        : "text-muted-foreground"
+                                )}
+                            >
+                                <List className="w-4 h-4" />
+                            </button>
                         </div>
-                    )}
-                    <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
-                        <button
-                            onClick={() => setTimelineMode('calendar')}
-                            className={cn(
-                                "p-1.5 rounded-md transition-colors",
-                                timelineMode === 'calendar'
-                                    ? "bg-background shadow-sm text-foreground"
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            <LayoutGrid className="w-4 h-4" />
-                        </button>
-                        <button
-                            onClick={() => setTimelineMode('cards')}
-                            className={cn(
-                                "p-1.5 rounded-md transition-colors",
-                                timelineMode === 'cards'
-                                    ? "bg-background shadow-sm text-foreground"
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            <List className="w-4 h-4" />
-                        </button>
-                    </div>
                     </div>
                 </div>
             </div>
@@ -752,8 +767,24 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 </div>
             )}
 
-            {/* Habit Bar (fixed) + Expandable Detail — any date with habits */}
-            {!habitsLoading && dateHabits.length > 0 && (
+            {/* Habit Bar (fixed) + Expandable Detail */}
+            {habitsLoading ? (
+                <div className="flex-shrink-0 border-b px-4 py-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                        <Target className="w-3.5 h-3.5 text-primary/40 flex-shrink-0" />
+                        <span className="text-xs font-medium text-muted-foreground/50">主の習慣</span>
+                    </div>
+                    <div className="flex gap-2">
+                        {[72, 96, 84].map((w, i) => (
+                            <div
+                                key={i}
+                                className="h-8 rounded-full bg-muted/50 animate-pulse flex-shrink-0"
+                                style={{ width: w, animationDelay: `${i * 0.1}s` }}
+                            />
+                        ))}
+                    </div>
+                </div>
+            ) : dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
@@ -919,104 +950,104 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     )}
                 </div>
-            )}
+            ) : null}
 
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
-              <div
-                key={selectedDate.getTime()}
-                className={cn(
-                    "flex-1 flex flex-col overflow-hidden",
-                    slideDirection === 'left' && "animate-in slide-in-from-right-12 duration-250",
-                    slideDirection === 'right' && "animate-in slide-in-from-left-12 duration-250"
-                )}
-                onAnimationEnd={() => setSlideDirection(null)}
-              >
-                {/* Calendar Connection Required */}
-                {!eventsLoading && !calendarsLoading && calendars.length === 0 && (
-                    <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
-                        <div className="flex items-start gap-2">
-                            <div className="flex-1">
-                                <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                                    カレンダーに接続されていません
-                                </p>
-                                <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                                    Googleカレンダーと連携すると、予定を自動で表示できます
-                                </p>
+                <div
+                    key={selectedDate.getTime()}
+                    className={cn(
+                        "flex-1 flex flex-col overflow-hidden",
+                        slideDirection === 'left' && "animate-in slide-in-from-right-12 duration-250",
+                        slideDirection === 'right' && "animate-in slide-in-from-left-12 duration-250"
+                    )}
+                    onAnimationEnd={() => setSlideDirection(null)}
+                >
+                    {/* Calendar Connection Required */}
+                    {!eventsLoading && !calendarsLoading && calendars.length === 0 && (
+                        <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+                            <div className="flex items-start gap-2">
+                                <div className="flex-1">
+                                    <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                                        カレンダーに接続されていません
+                                    </p>
+                                    <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                                        Googleカレンダーと連携すると、予定を自動で表示できます
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-3">
+                                <button
+                                    onClick={() => window.location.href = '/api/calendar/connect'}
+                                    className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                >
+                                    カレンダーを接続
+                                </button>
                             </div>
                         </div>
-                        <div className="mt-3">
-                            <button
-                                onClick={() => window.location.href = '/api/calendar/connect'}
-                                className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                            >
-                                カレンダーを接続
-                            </button>
-                        </div>
-                    </div>
-                )}
+                    )}
 
-                {/* Calendar Events Error */}
-                {eventsError && calendars.length > 0 && (
-                    <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
-                        <div className="flex items-start gap-2">
-                            <div className="flex-1">
-                                <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                                    カレンダーデータの取得に失敗しました
-                                </p>
-                                <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
-                                    {eventsError.message}
-                                </p>
+                    {/* Calendar Events Error */}
+                    {eventsError && calendars.length > 0 && (
+                        <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                            <div className="flex items-start gap-2">
+                                <div className="flex-1">
+                                    <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                                        カレンダーデータの取得に失敗しました
+                                    </p>
+                                    <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                                        {eventsError.message}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-3 flex gap-2">
+                                <button
+                                    onClick={() => window.location.reload()}
+                                    className="px-3 py-1.5 text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                                >
+                                    再読み込み
+                                </button>
+                                <button
+                                    onClick={() => window.location.href = '/api/calendar/connect'}
+                                    className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-md hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                                >
+                                    再接続
+                                </button>
                             </div>
                         </div>
-                        <div className="mt-3 flex gap-2">
-                            <button
-                                onClick={() => window.location.reload()}
-                                className="px-3 py-1.5 text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
-                            >
-                                再読み込み
-                            </button>
-                            <button
-                                onClick={() => window.location.href = '/api/calendar/connect'}
-                                className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-md hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
-                            >
-                                再接続
-                            </button>
-                        </div>
-                    </div>
-                )}
+                    )}
 
-                {timelineMode === 'calendar' ? (
-                    <TodayTimelineCalendar
-                        timelineItems={displayItems}
-                        allDayEvents={displayAllDayEvents}
-                        eventsLoading={eventsLoading}
-                        currentTime={currentTime}
-                        onToggleTask={toggleTask}
-                        onItemTap={handleItemTap}
-                        onDragDrop={handleDragDrop}
-                        childTasksMap={childTasksMap}
-                        onCreateSubTask={onCreateSubTaskProp}
-                        onDeleteSubTask={handleDeleteTask}
-                        projectNameMap={projectNameMap}
-                        initialScrollTop={scrollPositionRef.current}
-                        onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
-                    />
-                ) : (
-                    <div className="flex-1 overflow-y-auto no-scrollbar">
-                        <TodayTimelineCards
+                    {timelineMode === 'calendar' ? (
+                        <TodayTimelineCalendar
                             timelineItems={displayItems}
                             allDayEvents={displayAllDayEvents}
                             eventsLoading={eventsLoading}
                             currentTime={currentTime}
                             onToggleTask={toggleTask}
                             onItemTap={handleItemTap}
+                            onDragDrop={handleDragDrop}
+                            childTasksMap={childTasksMap}
+                            onCreateSubTask={onCreateSubTaskProp}
+                            onDeleteSubTask={handleDeleteTask}
                             projectNameMap={projectNameMap}
+                            initialScrollTop={scrollPositionRef.current}
+                            onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
                         />
-                        <div className="h-4" />
-                    </div>
-                )}
-              </div>
+                    ) : (
+                        <div className="flex-1 overflow-y-auto no-scrollbar">
+                            <TodayTimelineCards
+                                timelineItems={displayItems}
+                                allDayEvents={displayAllDayEvents}
+                                eventsLoading={eventsLoading}
+                                currentTime={currentTime}
+                                onToggleTask={toggleTask}
+                                onItemTap={handleItemTap}
+                                projectNameMap={projectNameMap}
+                            />
+                            <div className="h-4" />
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Unscheduled Tasks */}

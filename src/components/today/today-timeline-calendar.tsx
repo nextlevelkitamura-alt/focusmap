@@ -190,31 +190,31 @@ export function TodayTimelineCalendar({
 
             {/* Active Timer Banner */}
             {timer.runningTask && (
-                <div className="mx-2 mt-2 p-2.5 rounded-lg bg-primary/5 border border-primary/20 dark:bg-primary/10 dark:border-primary/30 flex-shrink-0">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
-                            <span className="text-xs font-medium truncate">{timer.runningTask.title}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                            <span className="text-sm font-mono font-bold text-primary tabular-nums">
-                                {formatTime(timer.currentElapsedSeconds)}
-                            </span>
-                            <button
-                                onClick={() => timer.pauseTimer()}
-                                aria-label="タイマーを一時停止"
-                                className="p-1 rounded-full bg-primary/10 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-                            >
-                                <Pause className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                                onClick={() => timer.completeTimer()}
-                                aria-label="タスクを完了"
-                                className="p-1 rounded-full bg-green-500/10 active:bg-green-500/20 text-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                            >
-                                <Check className="w-3.5 h-3.5" />
-                            </button>
-                        </div>
+                <div className="mx-2 mt-2 mb-1 rounded-xl border border-primary/30 bg-primary/8 dark:bg-primary/12 overflow-hidden flex-shrink-0">
+                    <div className="flex items-center gap-2 px-3 py-2">
+                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0 shadow-[0_0_6px_rgba(var(--color-primary-rgb,99,102,241),0.8)]" />
+                        <span className="text-xs font-medium truncate flex-1">{timer.runningTask.title}</span>
+                        <span className="text-sm font-mono font-bold text-primary tabular-nums flex-shrink-0">
+                            {formatTime(timer.currentElapsedSeconds)}
+                        </span>
+                        <button
+                            onClick={() => timer.pauseTimer()}
+                            aria-label="タイマーを一時停止"
+                            className="p-1.5 rounded-full bg-primary/15 active:bg-primary/25 text-primary focus:outline-none flex-shrink-0"
+                        >
+                            <Pause className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                            onClick={() => timer.completeTimer()}
+                            aria-label="タスクを完了"
+                            className="p-1.5 rounded-full bg-emerald-500/15 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 focus:outline-none flex-shrink-0"
+                        >
+                            <Check className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                    {/* Shimmer progress bar (loops every 8s to indicate running) */}
+                    <div className="h-[2px] bg-primary/20 overflow-hidden">
+                        <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_2s_linear_infinite] rounded-full" />
                     </div>
                 </div>
             )}
@@ -364,10 +364,16 @@ export function TodayTimelineCalendar({
                             />
                         )}
 
-                        {/* Loading indicator */}
-                        {eventsLoading && layoutItems.length === 0 && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="text-xs text-muted-foreground">読み込み中...</span>
+                        {/* Loading indicator — skeleton blocks */}
+                        {eventsLoading && timelineItems.length === 0 && (
+                            <div className="absolute inset-0 pointer-events-none">
+                                {[{ top: 120, h: 56 }, { top: 224, h: 84 }, { top: 364, h: 56 }, { top: 476, h: 112 }].map((s, i) => (
+                                    <div
+                                        key={i}
+                                        className="absolute left-[14px] right-[2px] rounded-md bg-muted/40 animate-pulse"
+                                        style={{ top: s.top, height: s.h, animationDelay: `${i * 0.12}s` }}
+                                    />
+                                ))}
                             </div>
                         )}
                     </div>
@@ -501,11 +507,11 @@ function TaskBlock({
         <div
             onClick={onTap}
             className={cn(
-            "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
-            onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
-            isRunning && "ring-1",
-            isDone && !isRunning && "opacity-40",
-            isNow && !isRunning && "ring-1"
+                "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+                onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
+                isRunning && "ring-1",
+                isDone && !isRunning && "opacity-40",
+                isNow && !isRunning && "ring-1"
             )}
             style={isRunning
                 ? { borderLeftColor: 'var(--color-primary)', backgroundColor: 'rgba(var(--color-primary-rgb, 59,130,246), 0.15)', boxShadow: '0 0 0 1px rgba(var(--color-primary-rgb, 59,130,246), 0.4)' }
@@ -638,7 +644,9 @@ function TaskBlock({
                         </div>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] font-medium text-muted-foreground">{startStr}</span>
+                        <span className="text-[10px] font-medium text-muted-foreground tabular-nums">
+                            {startStr}–{format(endTime, 'HH:mm')}
+                        </span>
                         {task.estimated_time > 0 && (
                             <span className="text-[9px] text-muted-foreground">⏱ {task.estimated_time}分</span>
                         )}

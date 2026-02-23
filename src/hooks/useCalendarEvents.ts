@@ -168,8 +168,19 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   );
 
   // Fetch events with proper caching
-  const fetchEvents = useCallback(async (forceSync = false) => {
-    setIsLoading(true);
+  const fetchEvents = useCallback(async (
+    forceSyncOrOptions: boolean | { forceSync?: boolean; silent?: boolean } = false
+  ) => {
+    const forceSync = typeof forceSyncOrOptions === 'boolean'
+      ? forceSyncOrOptions
+      : !!forceSyncOrOptions.forceSync;
+    const silent = typeof forceSyncOrOptions === 'boolean'
+      ? false
+      : !!forceSyncOrOptions.silent;
+
+    if (!silent) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {
@@ -185,7 +196,9 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       setError(err as Error);
       console.error('[useCalendarEvents] Error:', err);
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [timeRangeKey, calendarIdsKey]);
 
@@ -209,8 +222,8 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   }, [options.autoSync, options.syncInterval, fetchEvents]);
 
   // Manual sync (force refresh)
-  const syncNow = useCallback(() => {
-    return fetchEvents(true);
+  const syncNow = useCallback((options?: { silent?: boolean }) => {
+    return fetchEvents({ forceSync: true, silent: !!options?.silent });
   }, [fetchEvents]);
 
   // Optimistic event: add immediately to UI, then sync will replace with real data
