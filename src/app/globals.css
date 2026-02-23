@@ -148,7 +148,7 @@
 
 /* ReactFlow: ドラッグ中のノード — 浮遊感+掴んでいる感 */
 /* NOTE: transform のトランジションを無効化（ドラッグ追従を妨げる）例外としてscaleを追加 */
-.react-flow__node.dragging {
+.react-flow__node.is-dragging-active {
   transition: filter 0.15s ease, opacity 0.15s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
   transform: scale(1.05);
   /* 掴んでいる感を強調 */
@@ -159,7 +159,7 @@
 }
 
 /* ReactFlow: 範囲選択中もトランジション無効化 */
-.react-flow__node.selected.dragging {
+.react-flow__node.selected.is-dragging-active {
   transition: filter 0.15s ease, opacity 0.15s ease !important;
 }
 
