@@ -15,6 +15,8 @@ import { CalendarEvent } from "@/types/calendar"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { useHabits, formatDateString } from "@/hooks/useHabits"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
+import { CalendarSelector } from "@/components/calendar/calendar-selector"
+import type { ViewMode } from "@/components/calendar/calendar-header"
 
 export interface DesktopRightPanelRef {
     refreshCalendar: () => Promise<void>
@@ -38,6 +40,9 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
         })
         const [calendarOpen, setCalendarOpen] = useState(false)
         const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
+
+        // — Calendar view mode (controlled here, passed down to SidebarCalendar)
+        const [viewMode, setViewMode] = useState<ViewMode>('day')
 
         // — Habit state
         const { getHabitsForDate, isLoading: habitsLoading, toggleCompletion, toggleChildTaskCompletion } = useHabits()
@@ -128,8 +133,9 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                 <div className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative overflow-hidden">
 
                     {/* ① Date Navigation Header */}
-                    <div className="flex-shrink-0 px-3 py-2 border-b border-border/30 bg-background/80">
-                        <div className="flex items-center justify-between">
+                    <div className="flex-shrink-0 border-b border-border/30 bg-background/80">
+                        {/* Row 1: Prev/Date label/Next + today shortcut */}
+                        <div className="flex items-center justify-between px-3 py-2">
                             {/* Left: prev + date label + next */}
                             <div className="flex items-center gap-1">
                                 <button
@@ -156,14 +162,8 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                                 </button>
                             </div>
 
-                            {/* Right: Today button + habit count */}
-                            <div className="flex items-center gap-2">
-                                {dateHabits.length > 0 && (
-                                    <span className="text-[10px] text-muted-foreground">
-                                        <Target className="w-2.5 h-2.5 inline mr-0.5 text-primary" />
-                                        {doneHabitCount}/{dateHabits.length}
-                                    </span>
-                                )}
+                            {/* Right: Today button */}
+                            <div className="flex items-center gap-1.5">
                                 {!isToday && (
                                     <button
                                         onClick={goToToday}
@@ -173,6 +173,33 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                                     </button>
                                 )}
                             </div>
+                        </div>
+
+                        {/* Row 2: View mode tabs + Calendar selector */}
+                        <div className="flex items-center justify-between px-3 pb-2">
+                            {/* View mode tabs */}
+                            <div className="flex items-center bg-muted/30 rounded-md p-0.5 border border-border/40">
+                                {(['day', '3day', 'week', 'month'] as const).map((mode) => (
+                                    <button
+                                        key={mode}
+                                        onClick={() => setViewMode(mode)}
+                                        className={cn(
+                                            "px-2 py-0.5 text-[11px] font-medium rounded transition-all",
+                                            viewMode === mode
+                                                ? "bg-background text-foreground shadow-sm"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        )}
+                                    >
+                                        {mode === 'day' && '日'}
+                                        {mode === '3day' && '3日'}
+                                        {mode === 'week' && '週'}
+                                        {mode === 'month' && '月'}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Calendar selector */}
+                            <CalendarSelector compact />
                         </div>
                     </div>
 
@@ -372,7 +399,7 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                         </div>
                     )}
 
-                    {/* ⑤ SidebarCalendar (full calendar view with day/week/month toggle) */}
+                    {/* ⑤ SidebarCalendar (full calendar view — header is hidden here, controlled by panel) */}
                     <div className="flex-1 min-h-0 overflow-hidden">
                         <SidebarCalendar
                             ref={calendarRef}
@@ -381,6 +408,9 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                             tasks={tasks}
                             selectedDate={selectedDate}
                             onSelectedDateChange={setSelectedDate}
+                            hideHeader
+                            viewMode={viewMode}
+                            onViewModeChange={setViewMode}
                         />
                     </div>
                 </div>

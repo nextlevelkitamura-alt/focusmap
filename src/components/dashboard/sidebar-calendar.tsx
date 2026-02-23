@@ -32,12 +32,26 @@ interface SidebarCalendarProps {
     tasks?: Task[]
     selectedDate?: Date
     onSelectedDateChange?: (date: Date) => void
+    /** When true, hides the built-in SidebarCalendarHeader (date nav + view tabs) */
+    hideHeader?: boolean
+    /** Controlled view mode from outside */
+    viewMode?: ViewMode
+    onViewModeChange?: (mode: ViewMode) => void
+    onVisibleCalendarIdsChange?: (ids: string[]) => void
 }
 
 export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarProps>(
-    ({ onTaskDrop, onSelectionChange, onUpdateTask, tasks = [], selectedDate, onSelectedDateChange }, ref) => {
-        // Default to 'day' view for sidebar as it's most useful for scheduling
-        const [viewMode, setViewMode] = useState<ViewMode>('day')
+    ({ onTaskDrop, onSelectionChange, onUpdateTask, tasks = [], selectedDate, onSelectedDateChange,
+        hideHeader = false, viewMode: viewModeProp, onViewModeChange: onViewModeChangeProp,
+        onVisibleCalendarIdsChange: onVisibleCalendarIdsChangeProp }, ref) => {
+        // View mode: controlled from outside if prop provided, otherwise internal
+        const [viewModeInternal, setViewModeInternal] = useState<ViewMode>('day')
+        const viewMode = viewModeProp ?? viewModeInternal
+        const setViewMode = useCallback((mode: ViewMode) => {
+            if (onViewModeChangeProp) onViewModeChangeProp(mode)
+            else setViewModeInternal(mode)
+        }, [onViewModeChangeProp])
+
         const [currentDateInternal, setCurrentDateInternal] = useState(() => {
             const d = new Date(); d.setHours(0, 0, 0, 0); return d
         })
@@ -84,7 +98,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
             setVisibleCalendarIds(ids)
             onSelectionChange?.(ids)
-        }, [onSelectionChange])
+            onVisibleCalendarIdsChangeProp?.(ids)
+        }, [onSelectionChange, onVisibleCalendarIdsChangeProp])
 
         // Calculate display range
         const { timeMin, timeMax } = useMemo(() => {
@@ -384,17 +399,19 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
 
         return (
             <div className="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
-                {/* Compact Header */}
-                <SidebarCalendarHeader
-                    viewMode={viewMode}
-                    currentDate={currentDate}
-                    onViewModeChange={setViewMode}
-                    onDateChange={handleDateChange}
-                    onToday={handleToday}
-                    onRefresh={handleRefresh}
-                    isRefreshing={isRefreshing}
-                    onVisibleCalendarIdsChange={handleVisibleCalendarIdsChange}
-                />
+                {/* Compact Header — hidden when parent controls the header */}
+                {!hideHeader && (
+                    <SidebarCalendarHeader
+                        viewMode={viewMode}
+                        currentDate={currentDate}
+                        onViewModeChange={setViewMode}
+                        onDateChange={handleDateChange}
+                        onToday={handleToday}
+                        onRefresh={handleRefresh}
+                        isRefreshing={isRefreshing}
+                        onVisibleCalendarIdsChange={handleVisibleCalendarIdsChange}
+                    />
+                )}
 
                 {/* Main Content - No Screen-Size Based Sidebar here */}
                 <div
