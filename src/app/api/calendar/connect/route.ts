@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
-import { encodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest } from '@/lib/google-oauth';
+import { encodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest, resolveOriginFromRequest } from '@/lib/google-oauth';
 
 /**
  * Google OAuth認証URLにリダイレクト
@@ -17,8 +17,9 @@ export async function GET(request: NextRequest) {
 
   if (error || !user) {
     console.error('[Calendar Connect] User not authenticated:', error?.message);
+    const origin = resolveOriginFromRequest(request);
     return NextResponse.redirect(
-      new URL('/login?redirect=/dashboard&calendar_error=not_authenticated', request.url)
+      new URL('/login?redirect=/dashboard&calendar_error=not_authenticated', origin)
     );
   }
 

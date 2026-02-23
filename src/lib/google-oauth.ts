@@ -86,11 +86,23 @@ export function decodeCalendarOAuthState(state: string): CalendarOAuthState {
   return { userId: state, next: '/dashboard' };
 }
 
-export function buildCalendarReauthUrl(request: Request, next = '/dashboard'): string {
+/**
+ * Cloud Run 上で正しい外部オリジンを返す。
+ * x-forwarded-host > NEXTAUTH_URL > request.url の優先順。
+ */
+export function resolveOriginFromRequest(request: Request): string {
   const forwardedOrigin = getForwardedOrigin(request.headers);
-  const origin = forwardedOrigin && isValidAbsoluteUrl(forwardedOrigin)
-    ? forwardedOrigin
-    : new URL(request.url).origin;
+  if (isValidAbsoluteUrl(forwardedOrigin)) {
+    return trimTrailingSlash(forwardedOrigin);
+  }
+  if (isValidAbsoluteUrl(process.env.NEXTAUTH_URL)) {
+    return trimTrailingSlash(process.env.NEXTAUTH_URL);
+  }
+  return new URL(request.url).origin;
+}
+
+export function buildCalendarReauthUrl(request: Request, next = '/dashboard'): string {
+  const origin = resolveOriginFromRequest(request);
   const url = new URL('/api/calendar/connect', origin);
   url.searchParams.set('next', next);
   return `${url.pathname}${url.search}`;

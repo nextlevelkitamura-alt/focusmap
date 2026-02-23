@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
-import { decodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest } from '@/lib/google-oauth';
+import { decodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest, resolveOriginFromRequest } from '@/lib/google-oauth';
 
 /**
  * Google OAuth認証後のコールバック
@@ -12,9 +12,11 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const state = searchParams.get('state');
 
+  const origin = resolveOriginFromRequest(request);
+
   if (!code || !state) {
     return NextResponse.redirect(
-      new URL('/dashboard?calendar_error=missing_params', request.url)
+      new URL('/dashboard?calendar_error=missing_params', origin)
     );
   }
 
@@ -35,7 +37,7 @@ export async function GET(request: NextRequest) {
     });
     const reason = authError ? 'auth_error' : !user ? 'no_session' : 'user_mismatch';
     return NextResponse.redirect(
-      new URL(`/dashboard?calendar_error=unauthorized&reason=${reason}`, request.url)
+      new URL(`/dashboard?calendar_error=unauthorized&reason=${reason}`, origin)
     );
   }
 
@@ -122,15 +124,13 @@ export async function GET(request: NextRequest) {
     });
 
     // ダッシュボードにリダイレクト（成功）
-    const successUrl = new URL(nextPath || '/dashboard', request.url);
+    const successUrl = new URL(nextPath || '/dashboard', origin);
     successUrl.searchParams.set('calendar_connected', 'true');
-    return NextResponse.redirect(
-      successUrl
-    );
+    return NextResponse.redirect(successUrl);
   } catch (error: any) {
     console.error('Calendar callback error:', error);
     return NextResponse.redirect(
-      new URL(`/dashboard?calendar_error=${encodeURIComponent(error.message)}`, request.url)
+      new URL(`/dashboard?calendar_error=${encodeURIComponent(error.message)}`, origin)
     );
   }
 }
