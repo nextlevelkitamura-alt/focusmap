@@ -23,21 +23,32 @@ function getForwardedOrigin(headers: Headers): string | null {
 }
 
 export function resolveGoogleRedirectUriFromRequest(request: Request): string {
+  // Priority 1: 明示的な環境変数（最優先）
   if (isValidAbsoluteUrl(process.env.GOOGLE_REDIRECT_URI)) {
+    console.log('[resolveGoogleRedirectUri] Using GOOGLE_REDIRECT_URI env:', process.env.GOOGLE_REDIRECT_URI);
     return process.env.GOOGLE_REDIRECT_URI;
   }
 
-  if (isValidAbsoluteUrl(process.env.NEXTAUTH_URL)) {
-    return `${trimTrailingSlash(process.env.NEXTAUTH_URL)}${GOOGLE_CALLBACK_PATH}`;
-  }
-
+  // Priority 2: x-forwarded-host（Cloud Run が付与する実際のサービスURL）
   const forwardedOrigin = getForwardedOrigin(request.headers);
   if (isValidAbsoluteUrl(forwardedOrigin)) {
-    return `${trimTrailingSlash(forwardedOrigin)}${GOOGLE_CALLBACK_PATH}`;
+    const uri = `${trimTrailingSlash(forwardedOrigin)}${GOOGLE_CALLBACK_PATH}`;
+    console.log('[resolveGoogleRedirectUri] Using x-forwarded-host:', uri);
+    return uri;
   }
 
+  // Priority 3: NEXTAUTH_URL（ローカル開発等のフォールバック）
+  if (isValidAbsoluteUrl(process.env.NEXTAUTH_URL)) {
+    const uri = `${trimTrailingSlash(process.env.NEXTAUTH_URL)}${GOOGLE_CALLBACK_PATH}`;
+    console.log('[resolveGoogleRedirectUri] Using NEXTAUTH_URL:', uri);
+    return uri;
+  }
+
+  // Priority 4: リクエストURLのorigin（最後の手段）
   const requestOrigin = new URL(request.url).origin;
-  return `${trimTrailingSlash(requestOrigin)}${GOOGLE_CALLBACK_PATH}`;
+  const uri = `${trimTrailingSlash(requestOrigin)}${GOOGLE_CALLBACK_PATH}`;
+  console.log('[resolveGoogleRedirectUri] Using request.url origin:', uri);
+  return uri;
 }
 
 export function resolveGoogleRedirectUriFromEnv(): string | undefined {

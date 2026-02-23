@@ -24,6 +24,15 @@ export async function GET(request: NextRequest) {
 
   const redirectUri = resolveGoogleRedirectUriFromRequest(request);
 
+  console.log('[Calendar Connect] Resolved redirect_uri:', redirectUri);
+  console.log('[Calendar Connect] Environment check:', {
+    GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI ? '[SET]' : '[NOT SET]',
+    NEXTAUTH_URL: process.env.NEXTAUTH_URL ? '[SET]' : '[NOT SET]',
+    xForwardedHost: request.headers.get('x-forwarded-host') || '[NOT SET]',
+    xForwardedProto: request.headers.get('x-forwarded-proto') || '[NOT SET]',
+    requestUrlOrigin: new URL(request.url).origin,
+  });
+
   // OAuth2クライアントを作成
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,

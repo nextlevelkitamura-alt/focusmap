@@ -63,7 +63,8 @@ jobs:
             --set-env-vars NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }} \
             --set-env-vars NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} \
             --set-env-vars GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-            --set-env-vars GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+            --set-env-vars GROQ_API_KEY=${{ secrets.GROQ_API_KEY }} \
+            --set-env-vars GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}
 
       - name: Show service URL
         run: |
