@@ -327,7 +327,7 @@ export function TodayTimelineCalendar({
                                                 isExpanded={isExpanded}
                                                 onToggleExpand={onCreateSubTask ? () => setExpandedTaskId(prev => prev === id ? null : id) : undefined}
                                                 projectName={item.projectId ? projectNameMap?.get(item.projectId) : undefined}
-                                                accentColor={item.source === 'google_event' ? item.color : undefined}
+                                                accentColor={item.googleEventId ? item.color : undefined}
                                             />
                                             {isExpanded && onCreateSubTask && (
                                                 <div className="relative z-40">

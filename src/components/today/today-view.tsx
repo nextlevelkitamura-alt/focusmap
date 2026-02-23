@@ -73,6 +73,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     })
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const scrollPositionRef = useRef<number | undefined>(undefined)
+    const stableCalendarColorMapRef = useRef<Map<string, string>>(new Map())
     const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
     // Sync local tasks with prop changes
     useEffect(() => {
@@ -305,16 +306,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         return map
     }, [calendars])
 
-    // Prefer resolved event color (from /api/calendar/events/list) for imported event-tasks
-    const eventColorByGoogleId = useMemo(() => {
-        const map = new Map<string, string>()
-        for (const e of calendarEvents) {
-            if (e.google_event_id && e.background_color) {
-                map.set(e.google_event_id, e.background_color)
-            }
+    // Keep previously resolved calendar colors during reloads to avoid color flicker
+    const stableCalendarColorMap = useMemo(() => {
+        const merged = new Map(stableCalendarColorMapRef.current)
+        for (const [calendarId, color] of calendarColorMap) {
+            merged.set(calendarId, color)
         }
-        return map
-    }, [calendarEvents])
+        return merged
+    }, [calendarColorMap])
+    useEffect(() => {
+        stableCalendarColorMapRef.current = stableCalendarColorMap
+    }, [stableCalendarColorMap])
 
     // Child tasks grouped by parent (for subtask display)
     const childTasksMap = useMemo(() => {
@@ -360,7 +362,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
             if (eventLikeTaskKeys.has(eventKey)) continue
 
-            const block = eventToTimeBlock(event)
+            const calendarColor = stableCalendarColorMap.get(event.calendar_id || '')
+            // Calendar color only: skip until color is known (no temporary blue/gray fallback)
+            if (!calendarColor) continue
+            const block = eventToTimeBlock({ ...event, background_color: calendarColor })
             // 前日からの繰り越し: startTimeを0:00にクランプ
             if (block.startTime.getTime() < today.getTime()) block.startTime = new Date(today)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
@@ -371,10 +376,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
         for (const task of todayScheduledTasks) {
             if (!task.scheduled_at) continue
-            // Imported events: prefer resolved event color, fallback to calendar color
-            const color = task.google_event_id && !task.project_id
-                ? (eventColorByGoogleId.get(task.google_event_id) || calendarColorMap.get(task.calendar_id || ''))
-                : undefined
+            // Calendar color only for imported Google event tasks
+            let color: string | undefined
+            if (task.google_event_id && task.calendar_id) {
+                color = stableCalendarColorMap.get(task.calendar_id || '')
+                // Skip until calendar color is known
+                if (!color) continue
+            }
             const block = taskToTimeBlock(task, undefined, color)
             // 日付をまたぐ場合: endTimeを24:00にクランプ
             if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
@@ -384,9 +392,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         // 前日からの繰り越しタスク（0:00から残り時間分を表示）
         const dayAfterTomorrow = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000)
         for (const task of overflowTasks) {
-            const color = task.google_event_id && !task.project_id
-                ? (eventColorByGoogleId.get(task.google_event_id) || calendarColorMap.get(task.calendar_id || ''))
-                : undefined
+            let color: string | undefined
+            if (task.google_event_id && task.calendar_id) {
+                color = stableCalendarColorMap.get(task.calendar_id || '')
+                if (!color) continue
+            }
             const block = taskToTimeBlock(task, undefined, color)
             block.startTime = new Date(today)
             // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
@@ -398,13 +408,20 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         return items
-    }, [calendarEvents, eventColorByGoogleId, calendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
+    }, [calendarEvents, stableCalendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
 
     // All-day events
-    const allDayEvents = useMemo(() =>
-        calendarEvents.filter(e => e.is_all_day),
-        [calendarEvents]
-    )
+    const allDayEvents = useMemo(() => {
+        return calendarEvents
+            .filter(e => e.is_all_day)
+            .map(e => {
+                const calendarColor = stableCalendarColorMap.get(e.calendar_id || '')
+                return calendarColor
+                    ? { ...e, background_color: calendarColor }
+                    : null
+            })
+            .filter((e): e is CalendarEvent => e !== null)
+    }, [calendarEvents, stableCalendarColorMap])
 
     // Keep previous timeline visible while refreshing events
     const displayItems = timelineItems

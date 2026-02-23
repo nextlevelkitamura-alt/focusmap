@@ -2,38 +2,26 @@ import { describe, expect, test } from 'vitest'
 import { resolveCalendarEventColor } from './calendar-color'
 
 describe('resolveCalendarEventColor', () => {
-  test('event.colorId がある場合は event 色を優先する', () => {
-    const eventColorPalette = new Map<string, string>([
-      ['11', '#DC2127'],
-    ])
-
+  test('event個別色は無視し、calendar色のみを使う', () => {
     const color = resolveCalendarEventColor({
-      eventColor: '11',
       calendarBackgroundColor: '#7CB342',
-      eventBackgroundColor: '#039BE5',
-      eventColorPalette,
     })
 
-    expect(color).toBe('#DC2127')
+    expect(color).toBe('#7CB342')
   })
 
-  test('event.colorId がない場合は calendar 色を使う', () => {
+  test('calendar色が3桁HEXでも正規化して返す', () => {
     const color = resolveCalendarEventColor({
-      calendarBackgroundColor: '#4285F4',
-      eventBackgroundColor: '#039BE5',
-      eventColorPalette: new Map(),
+      calendarBackgroundColor: '#abc',
     })
 
-    expect(color).toBe('#4285F4')
+    expect(color).toBe('#AABBCC')
   })
 
-  test('色情報が無い場合はデフォルト色になる', () => {
+  test('calendar色が無い場合は undefined を返す', () => {
     const color = resolveCalendarEventColor({
-      eventColor: 'unknown',
-      eventColorPalette: new Map(),
     })
 
-    expect(color).toBe('#039BE5')
+    expect(color).toBeUndefined()
   })
 })
-

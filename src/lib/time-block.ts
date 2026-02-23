@@ -61,14 +61,17 @@ export function taskToTimeBlock(
   else if (task.priority === 2) priority = 'medium'
   else if (task.priority === 1) priority = 'low'
 
-  // Imported events use calendar color, manual tasks use project color
-  const color = task.source === 'google_event'
+  // Treat any Google-linked task as calendar-backed for color consistency.
+  const isGoogleLinked = !!task.google_event_id
+
+  // Google-linked tasks use calendar color, manual tasks use project color
+  const color = isGoogleLinked
     ? (calendarColor || DEFAULT_EVENT_COLOR)
     : (projectColor || DEFAULT_TASK_COLOR)
 
   return {
     id: task.id,
-    source: task.source === 'google_event' ? 'google_event' : 'task',
+    source: isGoogleLinked ? 'google_event' : 'task',
     title: task.title,
     startTime: start,
     endTime: end,

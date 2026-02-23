@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
-import { resolveCalendarEventColor } from '@/lib/calendar-color';
 
 /**
  * Googleカレンダーからイベントを取得
@@ -103,21 +102,6 @@ export async function GET(request: NextRequest) {
 
     console.log('[events/list] Calendar color map:', Object.fromEntries(calendarColorMap));
     console.log('[events/list] Google Calendar API events:', googleEvents.length);
-
-    // Google Colors API（event.colorId -> hex）
-    let eventColorPalette = new Map<string, string>();
-    try {
-      const { calendar } = await getCalendarClient(user.id);
-      const colorRes = await calendar.colors.get();
-      const eventColors = colorRes.data.event || {};
-      eventColorPalette = new Map(
-        Object.entries(eventColors)
-          .filter(([, c]) => !!c?.background)
-          .map(([id, c]) => [id, c!.background as string])
-      );
-    } catch {
-      console.warn('[events/list] Failed to fetch Google event color palette, fallback to calendar/default color');
-    }
 
     // Google Calendar API のイベントに id を付与し、重複を排除
     // 複数カレンダーから同じイベント（同じ google_event_id）が返される場合があるため
@@ -274,15 +258,9 @@ export async function GET(request: NextRequest) {
     // 色マッピングを追加
     const eventsWithColor = allEvents.map(event => {
       const calendarColor = calendarColorMap.get(event.calendar_id);
-      const finalColor = resolveCalendarEventColor({
-        eventColor: event.color,
-        eventBackgroundColor: event.background_color,
-        calendarBackgroundColor: calendarColor,
-        eventColorPalette,
-      });
 
-      // 色マッピングが見つからないイベントをログ
-      if (!event.color && !calendarColor && !event.background_color) {
+      // calendar color only: event.colorId / event individual color は使わない
+      if (!calendarColor) {
         console.log('[events/list] No color found for event:', {
           eventId: event.google_event_id,
           calendarId: event.calendar_id,
@@ -292,7 +270,7 @@ export async function GET(request: NextRequest) {
 
       return {
         ...event,
-        background_color: finalColor
+        background_color: calendarColor
       };
     });
 
@@ -301,8 +279,7 @@ export async function GET(request: NextRequest) {
       fromGoogle: googleEvents.length,
       fromLocal: localOnlyEvents.length,
       withMappedColor: eventsWithColor.filter(e => calendarColorMap.has(e.calendar_id)).length,
-      withOwnColor: eventsWithColor.filter(e => e.background_color && e.background_color !== '#039BE5').length,
-      withDefaultColor: eventsWithColor.filter(e => e.background_color === '#039BE5').length
+      withMissingColor: eventsWithColor.filter(e => !e.background_color).length,
     });
 
     // DBに非同期で保存（エラーがあっても返却をブロックしない）

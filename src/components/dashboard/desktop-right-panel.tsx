@@ -178,7 +178,23 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                     )}
 
                     {/* ③ Habit Bar */}
-                    {!habitsLoading && dateHabits.length > 0 && (
+                    {habitsLoading ? (
+                        <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-3 py-1.5">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                                <Target className="w-3 h-3 text-primary/40 flex-shrink-0" />
+                                <span className="text-[10px] font-medium text-muted-foreground/40">主の習慣</span>
+                            </div>
+                            <div className="flex gap-1.5">
+                                {[60, 80, 68].map((w, i) => (
+                                    <div
+                                        key={i}
+                                        className="h-7 rounded-full bg-muted/50 animate-pulse flex-shrink-0"
+                                        style={{ width: w, animationDelay: `${i * 0.1}s` }}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    ) : dateHabits.length > 0 ? (
                         <div className="flex-shrink-0 border-b border-border/30 bg-background/40">
                             <div className="px-3 py-1.5">
                                 {/* Habit header */}
@@ -337,25 +353,30 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                                 </div>
                             )}
                         </div>
-                    )}
+                    ) : null}
 
-                    {/* ④ Active Timer Banner — shown only when a timer is running */}
+
+                    {/* ⑤ Active Timer Banner — shown only when a timer is running */}
                     {timer.runningTaskId && (
-                        <div className="flex-shrink-0 px-3 py-1.5 border-b border-border/30 bg-primary/5">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
+                        <div className="flex-shrink-0 border-b border-border/30 overflow-hidden">
+                            <div className="flex items-center gap-2 px-3 py-1.5">
+                                <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0 shadow-[0_0_5px_rgba(var(--color-primary-rgb,99,102,241),0.7)]" />
                                 <span className="text-xs text-foreground flex-1 truncate">
                                     {runningTask?.title || 'タイマー実行中'}
                                 </span>
-                                <span className="text-xs font-mono text-primary font-semibold flex-shrink-0">
+                                <span className="text-xs font-mono text-primary font-bold tabular-nums flex-shrink-0">
                                     {formatTime(timer.currentElapsedSeconds)}
                                 </span>
                                 <button
                                     onClick={() => timer.pauseTimer()}
-                                    className="p-1 rounded-full bg-primary text-white hover:bg-primary/80 transition-colors flex-shrink-0"
+                                    className="p-1 rounded-full bg-primary/15 text-primary hover:bg-primary/25 transition-colors flex-shrink-0"
                                 >
                                     <Pause className="w-3 h-3" />
                                 </button>
+                            </div>
+                            {/* Shimmer progress bar */}
+                            <div className="h-[2px] bg-primary/15 overflow-hidden">
+                                <div className="h-full w-1/3 bg-primary/50 animate-[shimmer_2s_linear_infinite] rounded-full" />
                             </div>
                         </div>
                     )}

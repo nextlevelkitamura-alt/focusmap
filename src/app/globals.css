@@ -272,3 +272,14 @@
   pointer-events: none;
   z-index: 10;
 }
+
+/* Shimmer animation for timer progress bar */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-200%);
+  }
+
+  100% {
+    transform: translateX(400%);
+  }
+}
