@@ -147,9 +147,15 @@
 }
 
 /* ReactFlow: ドラッグ中のノード — 浮遊感+掴んでいる感 */
-/* NOTE: transform のトランジションを無効化（ドラッグ追従を妨げる）例外としてscaleを追加 */
-.react-flow__node.is-dragging-active {
-  transition: filter 0.15s ease, opacity 0.15s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+/* 
+   NOTE: 
+   1. transform のトランジションを無効化（ドラッグ時のカーソル追従の遅れを防ぐため）例外としてscaleを追加 
+   2. セレクタは、ReactFlowが生成する外枠（.react-flow__node）の**「内側の要素」**を対象にする
+   3. :active 疑似クラスを追加し、ドラッグ判定を待たずに「マウスをカチッと押し込んだ瞬間」に即座に拡大させる
+*/
+.react-flow__node .is-dragging-active,
+.react-flow__node .active\:cursor-grabbing:active {
+  transition: filter 0.1s ease, opacity 0.1s ease, transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
   transform: scale(1.05);
   /* 掴んでいる感を強調 */
   opacity: 0.95;
@@ -159,8 +165,9 @@
 }
 
 /* ReactFlow: 範囲選択中もトランジション無効化 */
-.react-flow__node.selected.is-dragging-active {
-  transition: filter 0.15s ease, opacity 0.15s ease !important;
+.react-flow__node.selected .is-dragging-active,
+.react-flow__node.selected .active\:cursor-grabbing:active {
+  transition: filter 0.1s ease, opacity 0.1s ease !important;
 }
 
 /* =========================================
