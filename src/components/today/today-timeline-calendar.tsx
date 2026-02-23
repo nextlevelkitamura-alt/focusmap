@@ -67,7 +67,6 @@ export function TodayTimelineCalendar({
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
-    const timeLabelRef = useRef<HTMLDivElement>(null)
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
 
     // Touch drag & drop
@@ -87,18 +86,13 @@ export function TodayTimelineCalendar({
         if (gridRef.current) {
             gridRef.current.scrollTop = scrollTo
         }
-        if (timeLabelRef.current) {
-            timeLabelRef.current.scrollTop = scrollTo
-        }
     }, [])
 
-    // Sync scroll between time labels and grid + notify parent
-    const handleGridScroll = () => {
-        if (gridRef.current && timeLabelRef.current) {
-            timeLabelRef.current.scrollTop = gridRef.current.scrollTop
-            onScrollPositionChange?.(gridRef.current.scrollTop)
-        }
-    }
+    // Notify parent about current scroll position (for restoring position after date switch)
+    const handleGridScroll = useCallback(() => {
+        if (!gridRef.current) return
+        onScrollPositionChange?.(gridRef.current.scrollTop)
+    }, [onScrollPositionChange])
 
     // Current time position
     const currentTimeTop = useMemo(() => getTopPx(currentTime), [currentTime])
@@ -220,13 +214,14 @@ export function TodayTimelineCalendar({
             )}
 
             {/* Calendar Day Grid */}
-            <div className="flex flex-1 overflow-hidden">
-                {/* Time Labels */}
-                <div
-                    ref={timeLabelRef}
-                    className="w-12 flex-shrink-0 overflow-hidden"
-                >
-                    <div className="relative" style={{ height: TOTAL_HEIGHT }}>
+            <div
+                ref={gridRef}
+                className={cn("flex-1 overflow-y-auto overflow-x-hidden", dragState.isDragging && "select-none")}
+                onScroll={handleGridScroll}
+            >
+                <div className="flex min-w-0" style={{ height: TOTAL_HEIGHT }}>
+                    {/* Time Labels (same scroll container as grid to avoid sync lag) */}
+                    <div className="w-12 flex-shrink-0 relative bg-background/90 pointer-events-none select-none" aria-hidden="true">
                         {HOURS.map((hour) => (
                             <div
                                 key={hour}
@@ -237,15 +232,9 @@ export function TodayTimelineCalendar({
                             </div>
                         ))}
                     </div>
-                </div>
 
-                {/* Main Grid */}
-                <div
-                    ref={gridRef}
-                    className={cn("flex-1 overflow-y-auto overflow-x-hidden", dragState.isDragging && "select-none")}
-                    onScroll={handleGridScroll}
-                >
-                    <div className="relative" style={{ height: TOTAL_HEIGHT }}>
+                    {/* Main Grid */}
+                    <div className="relative flex-1 min-w-0" style={{ height: TOTAL_HEIGHT }}>
                         {/* Hour Grid Lines */}
                         {HOURS.map((hour) => (
                             <div
