@@ -520,7 +520,7 @@ function TaskBlock({
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
                         aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
-                        className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                        className="no-tap-highlight flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                     >
                         {isDone ? (
                             <CheckSquare className="w-4 h-4 text-primary" />
@@ -580,7 +580,7 @@ function TaskBlock({
                             <button
                                 onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
                                 aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
-                                className="flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                                className="no-tap-highlight flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
                             >
                                 {isDone ? (
                                     <CheckSquare className="w-4.5 h-4.5 text-primary" />

@@ -298,6 +298,7 @@ export interface Database {
                     background_color: string | null
                     google_created_at: string | null
                     google_updated_at: string | null
+                    reminders: number[] | null
                     synced_at: string
                     created_at: string
                     updated_at: string
@@ -320,6 +321,7 @@ export interface Database {
                     background_color?: string | null
                     google_created_at?: string | null
                     google_updated_at?: string | null
+                    reminders?: number[] | null
                     synced_at?: string
                     created_at?: string
                     updated_at?: string
@@ -342,6 +344,7 @@ export interface Database {
                     background_color?: string | null
                     google_created_at?: string | null
                     google_updated_at?: string | null
+                    reminders?: number[] | null
                     synced_at?: string
                     created_at?: string
                     updated_at?: string

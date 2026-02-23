@@ -343,6 +343,19 @@ export async function fetchCalendarEvents(
   const calendarId = options.calendarId || 'primary';
 
   try {
+    let calendarDefaultReminders: number[] = [];
+    try {
+      const calendarInfo = await calendar.calendarList.get({ calendarId });
+      calendarDefaultReminders = (calendarInfo.data.defaultReminders || [])
+        .filter((r: any) => r.method === 'popup')
+        .map((r: any) => r.minutes as number);
+    } catch (calendarInfoError) {
+      console.warn('[fetchCalendarEvents] Failed to fetch calendar default reminders:', {
+        calendarId,
+        error: calendarInfoError,
+      });
+    }
+
     // Google Calendar APIからイベントを取得
     const response = await calendar.events.list({
       calendarId,
@@ -360,11 +373,16 @@ export async function fetchCalendarEvents(
       const isAllDay = !!event.start?.date; // dateフィールドがあれば終日イベント
 
       // リマインダー情報を抽出
-      const reminders: number[] | undefined = event.reminders?.overrides
-        ? event.reminders.overrides
-            .filter((r: any) => r.method === 'popup')
-            .map((r: any) => r.minutes as number)
-        : undefined;
+      const reminderOverrides = (event.reminders?.overrides || [])
+        .filter((r: any) => r.method === 'popup')
+        .map((r: any) => r.minutes as number);
+
+      const usesCalendarDefault = event.reminders === undefined || event.reminders?.useDefault === true;
+      const reminders: number[] = reminderOverrides.length > 0
+        ? reminderOverrides
+        : usesCalendarDefault
+          ? calendarDefaultReminders
+          : [];
 
       return {
         user_id: userId,

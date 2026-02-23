@@ -76,6 +76,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
     const scrollPositionRef = useRef<number | undefined>(undefined)
     const stableCalendarColorMapRef = useRef<Map<string, string>>(new Map())
     const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
+    const [prefetchedEventReminders, setPrefetchedEventReminders] = useState<Record<string, number[]>>({})
+    const reminderPrefetchInFlightRef = useRef<Set<string>>(new Set())
     // Sync local tasks with prop changes
     useEffect(() => {
         setLocalTasks(allTasks)
@@ -191,8 +193,25 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         })
     }, [allFetchedEvents, today, tomorrow])
 
-    const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEvents)
-    useEffect(() => { setLocalCalendarEvents(fetchedCalendarEvents) }, [fetchedCalendarEvents])
+    const fetchedCalendarEventsWithPrefetchedReminders = useMemo(() => {
+        return fetchedCalendarEvents.map(event => {
+            const key = `${event.calendar_id}::${event.google_event_id}`
+            const prefetched = prefetchedEventReminders[key]
+            if (!prefetched) return event
+            return { ...event, reminders: prefetched }
+        })
+    }, [fetchedCalendarEvents, prefetchedEventReminders])
+
+    const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEventsWithPrefetchedReminders)
+    useEffect(() => { setLocalCalendarEvents(fetchedCalendarEventsWithPrefetchedReminders) }, [fetchedCalendarEventsWithPrefetchedReminders])
+
+    const eventByGoogleKey = useMemo(() => {
+        const map = new Map<string, CalendarEvent>()
+        for (const event of allFetchedEvents) {
+            map.set(`${event.calendar_id}::${event.google_event_id}`, event)
+        }
+        return map
+    }, [allFetchedEvents])
 
     // イベント自動取り込み: カレンダーイベントをタスクとしてDBに保存（バックグラウンド）
     // 取り込み完了後、次回ロード時にタスクとして allTasks に含まれ dedup でイベント表示が置換される
@@ -215,8 +234,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onRemoveOptimisticEvent: removeOptimisticEvent,
     })
 
-    // Use localCalendarEvents for rendering (supports optimistic D&D updates)
     const calendarEvents = localCalendarEvents
+    const reminderKeyForEvent = useCallback((event: { calendar_id: string; google_event_id: string }) =>
+        `${event.calendar_id}::${event.google_event_id}`,
+        []
+    )
     const calendarReauthUrl = (eventsError as (Error & { reauthUrl?: string }) | null)?.reauthUrl || '/api/calendar/connect'
 
     // Habit task IDs (filter out from timeline)
@@ -456,11 +478,102 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         }
     }, [onUpdateTask, toggleChildTaskCompletion])
 
-    // Handle item tap (open edit modal)
+    // 背景先読み済み通知を優先してモーダル初期値を確定（開く瞬間に待たない）
     const handleItemTap = useCallback((item: TimeBlock) => {
-        setEditTarget(item)
+        const reminderKey = item.googleEventId && item.calendarId
+            ? `${item.calendarId}::${item.googleEventId}`
+            : null
+        const prefetchedReminders = reminderKey ? prefetchedEventReminders[reminderKey] : undefined
+        const fetchedEvent = reminderKey ? eventByGoogleKey.get(reminderKey) : undefined
+        const fetchedReminders = fetchedEvent?.reminders
+
+        const resolvedReminders = prefetchedReminders ?? fetchedReminders
+
+        const targetWithReminder = resolvedReminders !== undefined
+            ? {
+                ...item,
+                originalEvent: item.originalEvent
+                    ? { ...item.originalEvent, reminders: resolvedReminders }
+                    : {
+                        id: item.id,
+                        user_id: '',
+                        google_event_id: item.googleEventId!,
+                        calendar_id: item.calendarId!,
+                        title: item.title,
+                        start_time: item.startTime.toISOString(),
+                        end_time: item.endTime.toISOString(),
+                        is_all_day: false,
+                        timezone: 'Asia/Tokyo',
+                        synced_at: new Date().toISOString(),
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                        reminders: resolvedReminders,
+                    },
+            }
+            : item
+
+        setEditTarget(targetWithReminder)
         setIsEditModalOpen(true)
-    }, [])
+    }, [prefetchedEventReminders, eventByGoogleKey])
+
+    // Google予定の通知をバックグラウンド先読み（昨日/今日/明日を優先）
+    useEffect(() => {
+        const now = new Date()
+        now.setHours(0, 0, 0, 0)
+        const priorityMin = new Date(now)
+        priorityMin.setDate(priorityMin.getDate() - 1) // 昨日
+        const priorityMax = new Date(now)
+        priorityMax.setDate(priorityMax.getDate() + 2) // 明後日0時（今日/明日まで）
+
+        const candidates = allFetchedEvents.filter(event => event.google_event_id && event.calendar_id)
+        if (candidates.length === 0) return
+
+        const sortedCandidates = [...candidates].sort((a, b) => {
+            const aStart = new Date(a.start_time)
+            const bStart = new Date(b.start_time)
+            const aPriority = aStart >= priorityMin && aStart < priorityMax ? 0 : 1
+            const bPriority = bStart >= priorityMin && bStart < priorityMax ? 0 : 1
+            if (aPriority !== bPriority) return aPriority - bPriority
+            return aStart.getTime() - bStart.getTime()
+        })
+
+        sortedCandidates.forEach((event) => {
+            const key = reminderKeyForEvent(event)
+            if (event.reminders !== undefined || prefetchedEventReminders[key]) return
+            if (reminderPrefetchInFlightRef.current.has(key)) return
+
+            reminderPrefetchInFlightRef.current.add(key)
+            fetch(`/api/calendar/events/${event.id}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`)
+                .then(async (res) => {
+                    if (!res.ok) return null
+                    const data = await res.json()
+                    return Array.isArray(data.reminders) ? data.reminders as number[] : null
+                })
+                .then((reminders) => {
+                    if (!reminders) return
+                    setPrefetchedEventReminders(prev => {
+                        if (prev[key]) return prev
+                        return { ...prev, [key]: reminders }
+                    })
+                    setLocalCalendarEvents(prev => prev.map(e =>
+                        e.google_event_id === event.google_event_id && e.calendar_id === event.calendar_id
+                            ? { ...e, reminders }
+                            : e
+                    ))
+                })
+                .catch((err) => {
+                    console.warn('[TodayView] Failed to prefetch reminders in background:', err)
+                    // 失敗時も空配列で確定させ、表示ゲートが永遠に閉じないようにする
+                    setPrefetchedEventReminders(prev => {
+                        if (prev[key] !== undefined) return prev
+                        return { ...prev, [key]: [] }
+                    })
+                })
+                .finally(() => {
+                    reminderPrefetchInFlightRef.current.delete(key)
+                })
+        })
+    }, [allFetchedEvents, prefetchedEventReminders, reminderKeyForEvent])
 
     const handleCloseEditModal = useCallback(() => {
         setIsEditModalOpen(false)
@@ -577,24 +690,34 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
     // Delete event (optimistic UI + background API)
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
-        // 楽観的削除: フックのメソッドを使う（fetchedCalendarEventsからも削除される）
+        const previousEvents = localCalendarEvents
+        const previousTasks = localTasks
+
+        // 楽観的削除: イベントと Google由来タスクを即座に非表示
         removeOptimisticEvent(eventId, googleEventId)
+        setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== googleEventId && e.id !== eventId))
+        setLocalTasks(prev => prev.filter(t => !(t.google_event_id === googleEventId && t.source === 'google_event')))
 
         // バックグラウンドでAPI呼び出し
         fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
             method: 'DELETE',
         })
-            .then(res => {
-                if (res.ok) {
-                    invalidateCalendarCache()
+            .then(async (res) => {
+                if (!res.ok) {
+                    const data = await res.json().catch(() => null)
+                    throw new Error(data?.error?.message || 'Failed to delete event')
                 }
+                invalidateCalendarCache()
+                await syncNow({ silent: true })
             })
             .catch(err => {
                 console.error('[TodayView] Failed to delete event:', err)
-                // エラー時は再取得して復元
+                // エラー時はロールバックして再取得
+                setLocalCalendarEvents(previousEvents)
+                setLocalTasks(previousTasks)
                 syncNow({ silent: true })
             })
-    }, [removeOptimisticEvent, syncNow])
+    }, [removeOptimisticEvent, syncNow, localCalendarEvents, localTasks])
 
     // Writable calendars for the edit modal
     const writableCalendars = useMemo(() =>
@@ -943,7 +1066,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                 >
                                                     {isToday ? (
                                                         <button
-                                                            className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
+                                                            className="no-tap-highlight flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
                                                             onClick={() => toggleChildTask(child.id, child.status || 'todo', expandedHabit)}
                                                         >
                                                             {isDoneForDate ? (

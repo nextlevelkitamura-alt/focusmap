@@ -262,7 +262,7 @@ function TimelineCard({
             )}
             <button
                 onClick={(e) => { e.stopPropagation(); onToggleTask(item.id) }}
-                className="flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                className="no-tap-highlight flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
             >
                 {isDone ? (
                     <CheckSquare className="w-5 h-5 text-primary" />

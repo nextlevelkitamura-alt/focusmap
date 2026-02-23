@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 
+function isMissingTableError(error: { code?: string; message?: string | null } | null): boolean {
+  if (!error) return false;
+  const message = error.message || '';
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    error.code === 'PGRST204' ||
+    message.includes('does not exist') ||
+    message.includes('Could not find the table')
+  );
+}
+
 /**
  * 通知をキャンセル
  * DELETE /api/notifications/cancel
@@ -47,7 +59,7 @@ export async function DELETE(request: NextRequest) {
 
     if (error) {
       // テーブル未作成の場合は警告のみでスキップ
-      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      if (isMissingTableError(error)) {
         console.warn('[notifications/cancel] notification_queue table not found, skipping');
         return NextResponse.json({ success: true, canceledCount: 0 });
       }
@@ -68,16 +80,19 @@ export async function DELETE(request: NextRequest) {
       success: true,
       canceledCount: data?.length || 0,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : undefined;
+    const stack = error instanceof Error ? error.stack : undefined;
     console.error('[notifications/cancel] Unexpected error:', {
-      message: error?.message,
-      code: error?.code,
-      stack: error?.stack,
+      message,
+      code,
+      stack,
       userId: user?.id,
     });
     return NextResponse.json(
       {
-        error: error.message || 'Failed to cancel notification',
+        error: message || 'Failed to cancel notification',
         canceledCount: 0,
       },
       { status: 500 }

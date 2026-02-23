@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
@@ -32,9 +32,10 @@ function toTimeString(date: Date): string {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-const REMINDER_OPTIONS = [
+const BASE_REMINDER_OPTIONS = [
     { label: 'なし', value: -1 },
     { label: '予定の時刻', value: 0 },
+    { label: '1分前', value: 1 },
     { label: '5分前', value: 5 },
     { label: '10分前', value: 10 },
     { label: '15分前', value: 15 },
@@ -60,7 +61,7 @@ export function MobileEventEditModal({
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
     const [memo, setMemo] = useState('')
-    const [reminder, setReminder] = useState(15)
+    const [reminder, setReminder] = useState(-1)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -69,6 +70,15 @@ export function MobileEventEditModal({
     const dragStartY = useRef(0)
     const currentTranslateY = useRef(0)
     const openedAtRef = useRef(0)
+    const reminderOptions = useMemo(() => {
+        if (BASE_REMINDER_OPTIONS.some(opt => opt.value === reminder)) {
+            return BASE_REMINDER_OPTIONS
+        }
+        if (reminder < 0) {
+            return BASE_REMINDER_OPTIONS
+        }
+        return [...BASE_REMINDER_OPTIONS, { label: `${reminder}分前`, value: reminder }]
+    }, [reminder])
 
     // モーダルが開いた瞬間を記録（ゴーストクリック防止）+ 確認リセット
     useEffect(() => {
@@ -99,14 +109,16 @@ export function MobileEventEditModal({
             setDuration(dur)
         }
 
-        // リマインダー初期値をイベントから取得
+        // Googleイベント: 未設定は「なし」、設定済みはその値を表示
         const eventReminders = target.originalEvent?.reminders
-        if (eventReminders && eventReminders.length > 0) {
-            setReminder(eventReminders[0])
-        } else if (eventReminders && eventReminders.length === 0) {
-            setReminder(-1) // 明示的に「なし」
+        if (target.source === 'google_event') {
+            if (eventReminders && eventReminders.length > 0) {
+                setReminder(eventReminders[0])
+            } else {
+                setReminder(-1)
+            }
         } else {
-            setReminder(15) // デフォルト
+            setReminder(15)
         }
     }, [target])
 
@@ -426,7 +438,7 @@ export function MobileEventEditModal({
                             className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none cursor-pointer"
                             style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
                         >
-                            {REMINDER_OPTIONS.map(opt => (
+                            {reminderOptions.map(opt => (
                                 <option key={opt.value} value={opt.value}>
                                     {opt.label}
                                 </option>

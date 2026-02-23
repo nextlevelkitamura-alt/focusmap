@@ -3,6 +3,112 @@ import { createClient } from '@/utils/supabase/server';
 import { getCalendarClient } from '@/lib/google-calendar';
 import { classifyCalendarAuthError } from '@/lib/calendar-auth-errors';
 
+function popupReminderMinutes(
+  reminders: Array<{ method?: string | null; minutes?: number | null }> | null | undefined
+): number[] {
+  return (reminders || [])
+    .filter((r) => r.method === 'popup')
+    .map((r) => r.minutes)
+    .filter((minutes): minutes is number => typeof minutes === 'number');
+}
+
+/**
+ * カレンダーイベントの詳細取得（通知設定確認用）
+ * GET /api/calendar/events/[eventId]?googleEventId=xxx&calendarId=yyy
+ */
+export async function GET(
+  request: NextRequest
+) {
+  const supabase = await createClient();
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json(
+      { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } },
+      { status: 401 }
+    );
+  }
+
+  const searchParams = request.nextUrl.searchParams;
+  const googleEventId = searchParams.get('googleEventId');
+  const calendarId = searchParams.get('calendarId') || 'primary';
+
+  if (!googleEventId) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'googleEventId is required'
+        }
+      },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const { calendar } = await getCalendarClient(user.id);
+
+    const response = await calendar.events.get({
+      calendarId,
+      eventId: googleEventId,
+    });
+
+    const event = response.data;
+    const reminderOverrides = popupReminderMinutes(event.reminders?.overrides);
+    const usesCalendarDefault = event.reminders === undefined || event.reminders?.useDefault === true;
+    let calendarDefaultReminders: number[] = [];
+    if (usesCalendarDefault && reminderOverrides.length === 0) {
+      try {
+        const calendarInfo = await calendar.calendarList.get({ calendarId });
+        calendarDefaultReminders = popupReminderMinutes(calendarInfo.data.defaultReminders);
+      } catch (calendarInfoError) {
+        console.warn('[events/get] Failed to fetch calendar default reminders:', {
+          calendarId,
+          error: calendarInfoError,
+        });
+      }
+    }
+
+    const reminders = reminderOverrides.length > 0
+      ? reminderOverrides
+      : usesCalendarDefault
+        ? calendarDefaultReminders
+        : [];
+
+    return NextResponse.json({
+      success: true,
+      reminders,
+    });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const authErrorInfo = classifyCalendarAuthError(errorMessage);
+    if (authErrorInfo) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: authErrorInfo.code,
+            message: authErrorInfo.message
+          }
+        },
+        { status: authErrorInfo.status }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'API_ERROR',
+          message: errorMessage || 'Failed to fetch event details'
+        }
+      },
+      { status: 500 }
+    );
+  }
+}
+
 /**
  * カレンダーイベントを削除
  * DELETE /api/calendar/events/[eventId]
@@ -92,27 +198,55 @@ export async function DELETE(
     // 関連するタスクの google_event_id と calendar_id をクリア
     const { data: relatedTasks } = await supabase
       .from('tasks')
-      .select('id')
+      .select('id, source')
       .eq('user_id', user.id)
       .eq('google_event_id', googleEventId);
 
     if (relatedTasks && relatedTasks.length > 0) {
       console.log('[events/delete] Found related tasks:', relatedTasks.length);
 
-      const { error: taskUpdateError } = await supabase
-        .from('tasks')
-        .update({
-          google_event_id: null,
-          calendar_id: null,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', user.id)
-        .eq('google_event_id', googleEventId);
+      const importedTaskIds = relatedTasks
+        .filter(task => task.source === 'google_event')
+        .map(task => task.id);
+      const manualTaskIds = relatedTasks
+        .filter(task => task.source !== 'google_event')
+        .map(task => task.id);
 
-      if (taskUpdateError) {
-        console.error('[events/delete] Failed to update tasks:', taskUpdateError);
-      } else {
-        console.log('[events/delete] Cleared google_event_id from tasks');
+      if (importedTaskIds.length > 0) {
+        const { error: importedTaskDeleteError } = await supabase
+          .from('tasks')
+          .update({
+            deleted_at: new Date().toISOString(),
+            is_timer_running: false,
+            last_started_at: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .in('id', importedTaskIds);
+
+        if (importedTaskDeleteError) {
+          console.error('[events/delete] Failed to soft-delete imported tasks:', importedTaskDeleteError);
+        } else {
+          console.log('[events/delete] Soft-deleted imported tasks:', importedTaskIds.length);
+        }
+      }
+
+      if (manualTaskIds.length > 0) {
+        const { error: manualTaskUpdateError } = await supabase
+          .from('tasks')
+          .update({
+            google_event_id: null,
+            calendar_id: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .in('id', manualTaskIds);
+
+        if (manualTaskUpdateError) {
+          console.error('[events/delete] Failed to detach manual tasks from deleted event:', manualTaskUpdateError);
+        } else {
+          console.log('[events/delete] Detached manual tasks from deleted event:', manualTaskIds.length);
+        }
       }
     }
 

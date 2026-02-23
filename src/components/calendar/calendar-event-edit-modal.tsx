@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { Trash2, X } from 'lucide-react';
 import { format, addMinutes } from 'date-fns';
-import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 
 interface CalendarEventEditModalProps {
   event: CalendarEvent | null;
@@ -41,9 +40,10 @@ const DURATION_OPTIONS = [
   { label: 'カスタム', value: -1 },
 ];
 
-const REMINDER_OPTIONS = [
+const BASE_REMINDER_OPTIONS = [
   { label: 'なし', value: -1 },
   { label: '予定の時刻', value: 0 },
+  { label: '1分前', value: 1 },
   { label: '5分前', value: 5 },
   { label: '10分前', value: 10 },
   { label: '15分前', value: 15 },
@@ -66,22 +66,12 @@ export function CalendarEventEditModal({
   const [customHours, setCustomHours] = useState(1);
   const [customMinutes, setCustomMinutes] = useState(0);
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
-  const [reminder, setReminder] = useState<number>(15);
+  const [reminder, setReminder] = useState<number>(-1);
   const [calendarId, setCalendarId] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const { settings: notificationSettings } = useNotificationSettings();
-
   const isTaskLinked = !!event?.task_id;
-
-  // 通知設定のデフォルト値を取得
-  const defaultReminderMinutes = useMemo(() => {
-    const eventStartSetting = notificationSettings.find(
-      s => s.notification_type === 'event_start' && s.is_enabled
-    );
-    return eventStartSetting?.advance_minutes ?? 15;
-  }, [notificationSettings]);
 
   // 実際の所要時間（分）：カスタムの場合はcustomHours/customMinutesから計算
   const effectiveDuration = isCustomDuration ? (customHours * 60 + customMinutes) : duration;
@@ -107,6 +97,16 @@ export function CalendarEventEditModal({
     return addMinutes(startDate, effectiveDuration || 60);
   }, [startDate, effectiveDuration]);
 
+  const reminderOptions = useMemo(() => {
+    if (BASE_REMINDER_OPTIONS.some(opt => opt.value === reminder)) {
+      return BASE_REMINDER_OPTIONS;
+    }
+    if (reminder < 0) {
+      return BASE_REMINDER_OPTIONS;
+    }
+    return [...BASE_REMINDER_OPTIONS, { label: `${reminder}分前`, value: reminder }];
+  }, [reminder]);
+
   // イベントが変更されたらフォームを初期化
   useEffect(() => {
     if (event && isOpen) {
@@ -114,13 +114,11 @@ export function CalendarEventEditModal({
       setStartDate(new Date(event.start_time));
       setPriority(event.priority || 'medium');
       setCalendarId(event.calendar_id);
-      // Google Calendarのリマインダーがあればそれを使用、なければデフォルト
+      // Googleイベント: 未設定は「なし」、設定済みはその値を表示
       if (event.reminders && event.reminders.length > 0) {
         setReminder(event.reminders[0]); // 最初のリマインダー値を使用（0=予定の時刻）
-      } else if (event.reminders && event.reminders.length === 0) {
-        setReminder(-1); // 空配列 = なし
       } else {
-        setReminder(defaultReminderMinutes);
+        setReminder(-1);
       }
       setError(null);
 
@@ -141,7 +139,7 @@ export function CalendarEventEditModal({
       setCustomHours(Math.floor(dur / 60));
       setCustomMinutes(dur % 60);
     }
-  }, [event, isOpen, defaultReminderMinutes]);
+  }, [event, isOpen]);
 
   // Escapeキーで閉じる
   useEffect(() => {
@@ -366,7 +364,7 @@ export function CalendarEventEditModal({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {REMINDER_OPTIONS.map((opt) => (
+                {reminderOptions.map((opt) => (
                   <SelectItem key={opt.value} value={String(opt.value)}>
                     {opt.label}
                   </SelectItem>

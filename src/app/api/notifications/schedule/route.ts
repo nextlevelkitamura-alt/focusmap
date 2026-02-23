@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 
+function isMissingTableError(error: { code?: string; message?: string | null } | null): boolean {
+  if (!error) return false;
+  const message = error.message || '';
+  return (
+    error.code === '42P01' ||
+    error.code === 'PGRST205' ||
+    error.code === 'PGRST204' ||
+    message.includes('does not exist') ||
+    message.includes('Could not find the table')
+  );
+}
+
 /**
  * 通知をスケジュール登録
  * POST /api/notifications/schedule
@@ -60,7 +72,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     // テーブル未作成等のエラーはスキップ
-    if (settingError && (settingError.code === '42P01' || settingError.message?.includes('does not exist'))) {
+    if (settingError && isMissingTableError(settingError)) {
       console.warn('[notifications/schedule] notification_settings table not found, skipping');
       return NextResponse.json({ success: true, notificationId: null, skipped: true, reason: 'Table not found' });
     }
@@ -92,7 +104,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      if (isMissingTableError(error)) {
         console.warn('[notifications/schedule] notification_queue table not found, skipping');
         return NextResponse.json({ success: true, notificationId: null, skipped: true, reason: 'Table not found' });
       }
@@ -103,10 +115,11 @@ export async function POST(request: NextRequest) {
       success: true,
       notificationId: notification.id,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Schedule notification error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to schedule notification' },
+      { error: message || 'Failed to schedule notification' },
       { status: 500 }
     );
   }

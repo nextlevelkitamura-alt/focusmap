@@ -283,3 +283,9 @@
     transform: translateX(400%);
   }
 }
+
+/* iOS tap residue on checkbox-like buttons */
+.no-tap-highlight {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
