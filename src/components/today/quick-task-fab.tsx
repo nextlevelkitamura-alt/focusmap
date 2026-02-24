@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Plus, Clock, Timer, Calendar, Star } from "lucide-react"
+import { Plus, Clock, Timer, Calendar, Star, Bell, ChevronDown } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -24,6 +24,7 @@ export interface QuickTaskData {
     project_id: string | null
     scheduled_at: string | null
     estimated_time: number
+    reminders: number[]
     calendar_id: string | null
     priority: number
 }
@@ -40,6 +41,26 @@ interface QuickTaskFabProps {
     onCreateTask: (data: QuickTaskData) => Promise<void>
 }
 
+const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
+    { label: "5分", value: 5 },
+    { label: "15分", value: 15 },
+    { label: "30分", value: 30 },
+    { label: "45分", value: 45 },
+    { label: "1時間", value: 60 },
+    { label: "1時間30分", value: 90 },
+    { label: "2時間", value: 120 },
+]
+
+const REMINDER_OPTIONS: Array<{ label: string; value: number }> = [
+    { label: "開始時刻", value: 0 },
+    { label: "5分前", value: 5 },
+    { label: "10分前", value: 10 },
+    { label: "15分前", value: 15 },
+    { label: "30分前", value: 30 },
+    { label: "1時間前", value: 60 },
+    { label: "通知なし", value: -1 },
+]
+
 export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFabProps) {
     const [isOpen, setIsOpen] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
@@ -48,7 +69,10 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
     const [title, setTitle] = useState("")
     const [projectId, setProjectId] = useState<string | null>(null)
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
-    const [estimatedTime, setEstimatedTime] = useState(0)
+    const [estimatedTime, setEstimatedTime] = useState(30)
+    const [reminder, setReminder] = useState<number | null>(null)
+    const [isDurationPickerOpen, setIsDurationPickerOpen] = useState(false)
+    const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
     const [calendarId, setCalendarId] = useState<string | null>(null)
     const [priority, setPriority] = useState<Priority>(3)
 
@@ -65,9 +89,20 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
         setTitle("")
         setProjectId(null)
         setScheduledDate(undefined)
-        setEstimatedTime(0)
+        setEstimatedTime(30)
+        setReminder(null)
+        setIsDurationPickerOpen(false)
+        setIsDatePickerOpen(false)
         setCalendarId(null)
         setPriority(3)
+    }, [])
+
+    const handleScheduledDateChange = useCallback((nextDate: Date | undefined) => {
+        setScheduledDate(nextDate)
+        setReminder(prev => {
+            if (!nextDate) return null
+            return prev === null ? 0 : prev
+        })
     }, [])
 
     const handleSubmit = useCallback(() => {
@@ -81,6 +116,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
             project_id: projectId,
             scheduled_at: scheduledDate ? scheduledDate.toISOString() : null,
             estimated_time: estimatedTime,
+            reminders: scheduledDate && reminder !== null && reminder >= 0 ? [reminder] : [],
             calendar_id: calendarId,
             priority,
         })
@@ -88,7 +124,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
         resetForm()
         setIsOpen(false)
         setIsSubmitting(false)
-    }, [title, projectId, scheduledDate, estimatedTime, calendarId, priority, isSubmitting, onCreateTask, resetForm])
+    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, isSubmitting, onCreateTask, resetForm])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey && title.trim()) {
@@ -96,6 +132,17 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
             handleSubmit()
         }
     }, [handleSubmit, title])
+
+    const selectedDurationOption = DURATION_OPTIONS.find(option => option.value === estimatedTime)
+    const durationSelectValue = selectedDurationOption ? String(selectedDurationOption.value) : "custom"
+
+    const handleDurationSelect = useCallback((value: string) => {
+        if (value === "custom") {
+            setIsDurationPickerOpen(true)
+            return
+        }
+        setEstimatedTime(Number(value))
+    }, [])
 
     return (
         <>
@@ -168,7 +215,9 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
                             </label>
                             <DateTimePicker
                                 date={scheduledDate}
-                                setDate={setScheduledDate}
+                                setDate={handleScheduledDateChange}
+                                open={isDatePickerOpen}
+                                onOpenChange={setIsDatePickerOpen}
                                 trigger={
                                     <button
                                         type="button"
@@ -195,24 +244,82 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
                                 <Timer className="w-3 h-3" />
                                 見積もり時間
                             </label>
+                            <div className="relative">
+                                <select
+                                    value={durationSelectValue}
+                                    onChange={(e) => handleDurationSelect(e.target.value)}
+                                    className={cn(
+                                        "w-full h-10 px-3 pr-9 rounded-md border border-input bg-background text-sm",
+                                        "focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
+                                    )}
+                                >
+                                    {DURATION_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                    <option value="custom">
+                                        {durationSelectValue === "custom"
+                                            ? `カスタム (${formatDuration(estimatedTime)})`
+                                            : "カスタム"
+                                        }
+                                    </option>
+                                </select>
+                                <ChevronDown className="w-4 h-4 text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+                            </div>
                             <DurationWheelPicker
-                                duration={estimatedTime || 30}
+                                duration={estimatedTime}
                                 onDurationChange={setEstimatedTime}
-                                trigger={
-                                    <button
-                                        type="button"
+                                open={isDurationPickerOpen}
+                                onOpenChange={setIsDurationPickerOpen}
+                                trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
+                            />
+                        </div>
+
+                        {/* Reminder */}
+                        <div>
+                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                                <Bell className="w-3 h-3" />
+                                通知
+                            </label>
+                            {scheduledDate ? (
+                                <div className="relative">
+                                    <select
+                                        value={reminder ?? 0}
+                                        onChange={(e) => setReminder(Number(e.target.value))}
                                         className={cn(
-                                            "w-full h-10 px-3 rounded-md border border-input bg-background text-sm text-left",
-                                            "focus:outline-none focus:ring-2 focus:ring-ring",
-                                            "flex items-center gap-2",
-                                            estimatedTime === 0 && "text-muted-foreground"
+                                            "w-full h-10 px-3 pr-9 rounded-md border border-input bg-background text-sm",
+                                            "focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
                                         )}
                                     >
-                                        <Timer className="w-4 h-4 flex-shrink-0" />
-                                        {estimatedTime > 0 ? formatDuration(estimatedTime) : "選択"}
-                                    </button>
+                                        {REMINDER_OPTIONS.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="w-4 h-4 text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsDatePickerOpen(true)}
+                                    className={cn(
+                                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm text-left",
+                                        "focus:outline-none focus:ring-2 focus:ring-ring",
+                                        "flex items-center justify-between gap-2 text-muted-foreground"
+                                    )}
+                                >
+                                    <span>開始日時を設定して通知を有効化</span>
+                                    <ChevronDown className="w-4 h-4 flex-shrink-0" />
+                                </button>
+                            )}
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                                {!scheduledDate
+                                    ? "通知を設定するには開始日時が必要です。タップで日時入力を開けます"
+                                    : "開始日時を設定すると通知は「開始時刻」で自動ONになります"
                                 }
-                            />
+                            </p>
                         </div>
 
                         {/* Calendar + Priority (side by side) */}

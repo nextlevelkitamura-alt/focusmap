@@ -13,6 +13,8 @@ interface DateTimePickerProps {
     date: Date | undefined
     setDate: (date: Date | undefined) => void
     trigger?: React.ReactNode
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
 }
 
 // ----------------------------------------------------------------------
@@ -199,8 +201,14 @@ function TimeWheel({
 // Main DateTimePicker Component
 // - Uses a bottom sheet overlay for reliable mobile touch/z-index
 // ----------------------------------------------------------------------
-export function DateTimePicker({ date, setDate, trigger }: DateTimePickerProps) {
-    const [isOpen, setIsOpen] = React.useState(false)
+export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: DateTimePickerProps) {
+    const [internalOpen, setInternalOpen] = React.useState(false)
+    const isControlled = open !== undefined
+    const isOpen = isControlled ? open : internalOpen
+    const setIsOpen = React.useCallback((nextOpen: boolean) => {
+        if (!isControlled) setInternalOpen(nextOpen)
+        onOpenChange?.(nextOpen)
+    }, [isControlled, onOpenChange])
     const [currentMonth, setCurrentMonth] = React.useState<Date>(new Date())
     const [tempDate, setTempDate] = React.useState<Date | undefined>(date)
     const [isMounted, setIsMounted] = React.useState(false)

@@ -8,6 +8,8 @@ interface DurationWheelPickerProps {
     duration: number // minutes
     onDurationChange: (minutes: number) => void
     trigger: React.ReactNode
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
 }
 
 const ITEM_HEIGHT = 32
@@ -190,8 +192,14 @@ function DurationWheel({
     )
 }
 
-export function DurationWheelPicker({ duration, onDurationChange, trigger }: DurationWheelPickerProps) {
-    const [isOpen, setIsOpen] = React.useState(false)
+export function DurationWheelPicker({ duration, onDurationChange, trigger, open, onOpenChange }: DurationWheelPickerProps) {
+    const [internalOpen, setInternalOpen] = React.useState(false)
+    const isControlled = open !== undefined
+    const isOpen = isControlled ? open : internalOpen
+    const setIsOpen = React.useCallback((nextOpen: boolean) => {
+        if (!isControlled) setInternalOpen(nextOpen)
+        onOpenChange?.(nextOpen)
+    }, [isControlled, onOpenChange])
     const [tempHours, setTempHours] = React.useState(Math.floor(duration / 60))
     const [tempMinutes, setTempMinutes] = React.useState(duration % 60)
 

@@ -319,6 +319,7 @@ export function DashboardClient({
         project_id: string | null
         scheduled_at: string | null
         estimated_time: number
+        reminders: number[]
         calendar_id: string | null
         priority: number
     }) => {
@@ -386,6 +387,26 @@ export function DashboardClient({
                     return
                 }
 
+                // ブラウザ通知（task_start）を作成時に即登録
+                if (taskData.scheduled_at && taskData.reminders.length > 0) {
+                    const advanceMinutes = taskData.reminders[0]
+                    const reminderAt = new Date(new Date(taskData.scheduled_at).getTime() - advanceMinutes * 60000)
+                    fetch('/api/notifications/schedule', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            targetType: 'task',
+                            targetId: optimisticId,
+                            notificationType: 'task_start',
+                            scheduledAt: reminderAt.toISOString(),
+                            title: `リマインダー: ${taskData.title}`,
+                            body: advanceMinutes === 0 ? '開始時刻です' : `${advanceMinutes}分後に開始します`,
+                        }),
+                    }).catch((err) => {
+                        console.warn('[QuickTask] Failed to schedule notification:', err)
+                    })
+                }
+
                 // Google Calendar 同期
                 if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
                     const syncRes = await fetch('/api/calendar/sync-task', {
@@ -396,6 +417,7 @@ export function DashboardClient({
                             scheduled_at: taskData.scheduled_at,
                             estimated_time: taskData.estimated_time,
                             calendar_id: taskData.calendar_id,
+                            reminders: taskData.reminders,
                         }),
                     })
                     if (syncRes.ok) {
@@ -872,4 +894,3 @@ export function DashboardClient({
         </DragProvider>
     )
 }
-
