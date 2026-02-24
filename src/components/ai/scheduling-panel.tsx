@@ -2,13 +2,14 @@
 
 import { useState, useCallback, useEffect, useRef } from "react"
 import {
-  Sparkles, Send, X, RotateCcw, Loader2,
+  CalendarClock, Send, X, RotateCcw, Loader2,
   Mic, Square, CheckCircle2, XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
+import { TimeSlotCards, type TimeSlot } from "@/components/ai/time-slot-cards"
 
 interface ChatOption {
   label: string
@@ -27,6 +28,8 @@ interface ChatMessage {
   actionStatus?: 'pending' | 'executing' | 'success' | 'error'
   options?: ChatOption[]
   optionsUsed?: boolean
+  slots?: TimeSlot[]
+  slotsUsed?: boolean
 }
 
 interface CalendarEventData {
@@ -37,28 +40,28 @@ interface CalendarEventData {
   calendar_id?: string | null
 }
 
-interface AiChatPanelProps {
-  activeNoteId?: string | null
-  activeProjectId?: string | null
+interface SchedulingPanelProps {
   hideFab?: boolean
   onCalendarEventCreated?: (eventData?: CalendarEventData) => void
   isOpen?: boolean
   onOpenChange?: (open: boolean) => void
 }
 
-const MAX_RALLIES = 7
+const MAX_RALLIES = 15
 
-export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
-  const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const isControlled = controlledIsOpen !== undefined
-  const isOpen = isControlled ? controlledIsOpen : internalIsOpen
-  const setIsOpen = useCallback((v: boolean) => {
-    if (isControlled) {
-      onOpenChange?.(v)
-    } else {
-      setInternalIsOpen(v)
-    }
-  }, [isControlled, onOpenChange])
+const INITIAL_SUGGESTIONS = [
+  "会議を入れて",
+  "打ち合わせを調整して",
+  "来週中にミーティング",
+]
+
+export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpenProp, onOpenChange }: SchedulingPanelProps) {
+  const [isOpenInternal, setIsOpenInternal] = useState(false)
+  const isOpen = isOpenProp !== undefined ? isOpenProp : isOpenInternal
+  const setIsOpen = (v: boolean) => {
+    setIsOpenInternal(v)
+    onOpenChange?.(v)
+  }
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -72,7 +75,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
   const { isRecording, isTranscribing, analyserRef, startRecording, stopRecording } = useVoiceRecorder(handleTranscribed)
 
-  // ラリー数カウント
   const rallyCount = messages.filter(m => m.role === 'user').length
 
   // 自動スクロール
@@ -87,7 +89,35 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     }
   }, [isOpen])
 
-  // メッセージ送信（共通ロジック）
+  // API呼び出し共通ロジック
+  const callSchedulingApi = useCallback(async (text: string, currentMessages: ChatMessage[]) => {
+    const res = await fetch('/api/ai/scheduling', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: currentMessages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
+      }),
+    })
+
+    if (!res.ok) {
+      const { error } = await res.json()
+      throw new Error(error || 'Scheduling API failed')
+    }
+
+    return res.json() as Promise<{
+      reply: string
+      action?: ChatMessage['action']
+      slots?: TimeSlot[]
+      options?: ChatOption[]
+      shouldReset?: boolean
+    }>
+  }, [])
+
+  // メッセージ送信
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim()
     if (!trimmed || isLoading) return
@@ -104,28 +134,16 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     setIsLoading(true)
 
     try {
-      const res = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: trimmed,
-          history: updatedMessages.map(m => ({
-            role: m.role,
-            content: m.content,
-          })),
-          context: {
-            activeNoteId: activeNoteId || undefined,
-            activeProjectId: activeProjectId || undefined,
-          },
-        }),
-      })
+      const { reply, action, slots, options, shouldReset } = await callSchedulingApi(trimmed, updatedMessages)
 
-      if (!res.ok) {
-        const { error } = await res.json()
-        throw new Error(error || 'Chat failed')
+      if (shouldReset) {
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: reply,
+        }])
+        return
       }
-
-      const { reply, action, options } = await res.json()
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -134,21 +152,20 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         action,
         actionStatus: action ? 'pending' : undefined,
         options: options?.length ? options : undefined,
+        slots: slots?.length ? slots : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
     } catch (error) {
-      const errMessage: ChatMessage = {
+      setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: error instanceof Error ? error.message : 'エラーが発生しました。もう一度お試しください。',
-      }
-      setMessages(prev => [...prev, errMessage])
+      }])
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, activeNoteId, activeProjectId])
+  }, [isLoading, messages, callSchedulingApi])
 
-  // テキスト入力から送信
   const handleSend = useCallback(() => {
     sendMessage(input)
   }, [input, sendMessage])
@@ -163,7 +180,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     ))
 
     try {
-      const res = await fetch('/api/ai/chat/execute', {
+      const res = await fetch('/api/ai/scheduling/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: msg.action }),
@@ -182,7 +199,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         },
       ])
 
-      // カレンダーイベント作成成功時に楽観的更新
       if (success && msg.action?.type === 'add_calendar_event') {
         onCalendarEventCreated?.(eventData)
       }
@@ -191,79 +207,97 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
       ))
     }
-  }, [messages])
+  }, [messages, onCalendarEventCreated])
 
-  // アクションキャンセル
   const handleCancelAction = useCallback((messageId: string) => {
     setMessages(prev => prev.map(m =>
       m.id === messageId ? { ...m, action: undefined, actionStatus: undefined } : m
     ))
   }, [])
 
-  // 選択肢ボタンクリック
+  // 選択肢ボタン選択
   const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
-    // 選択肢を使用済みにする
     setMessages(prev => prev.map(m =>
       m.id === messageId ? { ...m, optionsUsed: true } : m
     ))
 
     if (option.value) {
-      // valueをユーザーメッセージとして送信
-      setInput(option.value)
-      // 次のティックで送信（inputが更新されてから）
-      setTimeout(() => {
-        setInput('')
-        const userMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: option.value,
-        }
-        setMessages(prev => [...prev, userMessage])
-        // handleSend相当の処理を直接実行
-        setIsLoading(true)
-        fetch('/api/ai/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: option.value,
-            history: [...messages.filter(m => !m.optionsUsed || m.role === 'user'), userMessage].map(m => ({
-              role: m.role,
-              content: m.content,
-            })),
-            context: {
-              activeNoteId: activeNoteId || undefined,
-              activeProjectId: activeProjectId || undefined,
-            },
-          }),
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: option.value,
+      }
+      const allMessages = [...messages.map(m =>
+        m.id === messageId ? { ...m, optionsUsed: true } : m
+      ), userMessage]
+      setMessages(allMessages)
+      setIsLoading(true)
+
+      callSchedulingApi(option.value, allMessages)
+        .then(({ reply, action, slots, options: opts }) => {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: reply,
+            action,
+            actionStatus: action ? 'pending' : undefined,
+            options: opts?.length ? opts : undefined,
+            slots: slots?.length ? slots : undefined,
+          }])
         })
-          .then(res => res.json())
-          .then(({ reply, action, options: opts }) => {
-            const aiMsg: ChatMessage = {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: reply,
-              action,
-              actionStatus: action ? 'pending' : undefined,
-              options: opts?.length ? opts : undefined,
-            }
-            setMessages(prev => [...prev, aiMsg])
-          })
-          .catch(() => {
-            setMessages(prev => [...prev, {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: 'エラーが発生しました。もう一度お試しください。',
-            }])
-          })
-          .finally(() => setIsLoading(false))
-      }, 0)
+        .catch(() => {
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: 'エラーが発生しました。もう一度お試しください。',
+          }])
+        })
+        .finally(() => setIsLoading(false))
     } else {
-      // 「自分で入力」→ 入力欄にフォーカス
       inputRef.current?.focus()
     }
-  }, [messages, activeNoteId, activeProjectId])
+  }, [messages, callSchedulingApi])
 
-  // リセット
+  // タイムスロット選択
+  const handleSlotSelect = useCallback((messageId: string, slot: TimeSlot) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, slotsUsed: true } : m
+    ))
+
+    // ラベルをユーザーメッセージとして送信
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: slot.label + 'でお願いします',
+    }
+    const allMessages = [...messages.map(m =>
+      m.id === messageId ? { ...m, slotsUsed: true } : m
+    ), userMessage]
+    setMessages(allMessages)
+    setIsLoading(true)
+
+    callSchedulingApi(userMessage.content, allMessages)
+      .then(({ reply, action, slots: newSlots, options: opts }) => {
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: reply,
+          action,
+          actionStatus: action ? 'pending' : undefined,
+          options: opts?.length ? opts : undefined,
+          slots: newSlots?.length ? newSlots : undefined,
+        }])
+      })
+      .catch(() => {
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: 'エラーが発生しました。もう一度お試しください。',
+        }])
+      })
+      .finally(() => setIsLoading(false))
+  }, [messages, callSchedulingApi])
+
   const handleReset = useCallback(() => {
     setMessages([])
     setInput("")
@@ -282,9 +316,10 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       {!isOpen && !hideFab && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-20 right-4 z-50 w-12 h-12 bg-primary text-primary-foreground rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform md:bottom-6"
+          className="fixed bottom-20 right-20 z-50 w-12 h-12 bg-secondary text-secondary-foreground border border-border rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform md:bottom-6 md:right-[5rem]"
+          title="スケジュール調整"
         >
-          <Sparkles className="w-5 h-5" />
+          <CalendarClock className="w-5 h-5" />
         </button>
       )}
 
@@ -299,14 +334,14 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
           <div className={cn(
             "fixed z-50 bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
-            "bottom-0 left-0 right-0 h-[60vh]",
-            "md:bottom-6 md:right-6 md:left-auto md:w-[400px] md:h-[520px]",
+            "bottom-0 left-0 right-0 h-[65vh]",
+            "md:bottom-6 md:right-[5rem] md:left-auto md:w-[400px] md:h-[560px]",
           )}>
             {/* ヘッダー */}
             <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-primary" />
-                <span className="font-semibold text-sm">AIアシスタント</span>
+                <CalendarClock className="w-4 h-4 text-primary" />
+                <span className="font-semibold text-sm">スケジュール調整</span>
                 <span className="text-xs text-muted-foreground">
                   ({rallyCount}/{MAX_RALLIES})
                 </span>
@@ -325,11 +360,11 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
               {messages.length === 0 && (
                 <div className="text-center text-muted-foreground text-sm py-6">
-                  <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p>AIに話しかけてみましょう</p>
-                  <p className="text-xs mt-1 opacity-70">テキストでも音声でもOK</p>
+                  <CalendarClock className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                  <p>空き時間を確認しながら</p>
+                  <p className="text-xs mt-0.5 opacity-70">予定を入れましょう</p>
                   <div className="flex flex-wrap gap-2 justify-center mt-4">
-                    {["マップに追加して", "予定に入れて", "メモを整理して"].map(suggestion => (
+                    {INITIAL_SUGGESTIONS.map(suggestion => (
                       <button
                         key={suggestion}
                         onClick={() => sendMessage(suggestion)}
@@ -351,12 +386,22 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                   )}
                 >
                   <div className={cn(
-                    "max-w-[85%] rounded-2xl px-3 py-2 text-sm",
+                    "max-w-[90%] rounded-2xl px-3 py-2 text-sm",
                     msg.role === 'user'
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted"
                   )}>
                     <p className="whitespace-pre-wrap">{msg.content}</p>
+
+                    {/* タイムスロットカード */}
+                    {msg.slots && (
+                      <TimeSlotCards
+                        slots={msg.slots}
+                        onSelect={(slot) => handleSlotSelect(msg.id, slot)}
+                        disabled={isLoading}
+                        used={msg.slotsUsed}
+                      />
+                    )}
 
                     {/* アクション確認ボタン */}
                     {msg.action && msg.actionStatus === 'pending' && (
@@ -369,7 +414,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                             onClick={() => handleExecuteAction(msg.id)}
                           >
                             <CheckCircle2 className="w-3 h-3" />
-                            実行する
+                            登録する
                           </Button>
                           <Button
                             size="sm"
@@ -388,7 +433,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                     {msg.actionStatus === 'executing' && (
                       <div className="mt-2 flex items-center gap-1 text-xs opacity-80">
                         <Loader2 className="w-3 h-3 animate-spin" />
-                        実行中...
+                        登録中...
                       </div>
                     )}
 
@@ -425,9 +470,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                     )}
 
                     {msg.optionsUsed && msg.options && (
-                      <div className="mt-1 text-xs opacity-50">
-                        選択済み
-                      </div>
+                      <p className="mt-1 text-xs opacity-50">選択済み</p>
                     )}
                   </div>
                 </div>
@@ -449,11 +492,11 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
               <div ref={messagesEndRef} />
             </div>
 
-            {/* 7ラリー制限警告 */}
-            {rallyCount >= 5 && rallyCount < MAX_RALLIES && (
+            {/* ラリー残数警告 */}
+            {rallyCount >= 11 && rallyCount < MAX_RALLIES && (
               <div className="px-4 pb-1">
                 <p className="text-xs text-amber-600 text-center">
-                  残り{MAX_RALLIES - rallyCount}ラリー
+                  残り{MAX_RALLIES - rallyCount}ターン
                 </p>
               </div>
             )}
@@ -462,9 +505,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             <div className="px-3 py-2.5 border-t shrink-0">
               {rallyCount >= MAX_RALLIES ? (
                 <div className="text-center space-y-2 py-1">
-                  <p className="text-sm text-muted-foreground">
-                    会話が上限に達しました
-                  </p>
+                  <p className="text-sm text-muted-foreground">会話が上限に達しました</p>
                   <Button size="sm" onClick={handleReset} className="gap-1">
                     <RotateCcw className="w-3.5 h-3.5" />
                     リセット
@@ -472,7 +513,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                 </div>
               ) : (
                 <>
-                  {/* 録音中インジケーター */}
                   {isRecording && (
                     <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-red-500/10 rounded-lg">
                       <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0" />
@@ -493,7 +533,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                   )}
 
                   <div className="flex items-end gap-2">
-                    {/* 音声入力ボタン */}
                     <Button
                       variant={isRecording ? "destructive" : "ghost"}
                       size="sm"
@@ -511,19 +550,17 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       )}
                     </Button>
 
-                    {/* テキスト入力 */}
                     <textarea
                       ref={inputRef}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder="メッセージを入力..."
+                      placeholder="予定の内容を入力..."
                       className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-24 min-h-[36px]"
                       rows={1}
                       disabled={isLoading}
                     />
 
-                    {/* 送信ボタン */}
                     <Button
                       size="sm"
                       className="h-9 w-9 p-0 shrink-0"

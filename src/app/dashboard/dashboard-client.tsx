@@ -20,6 +20,7 @@ import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
 import { MemoView } from "@/components/memo/memo-view"
 import { AiChatPanel } from "@/components/ai/ai-chat-panel"
+import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -101,6 +102,11 @@ export function DashboardClient({
     // --- View State ---
     // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
     const { activeView, isViewReady } = useView()
+
+    // AI Chat open state (controlled from desktop panel FAB)
+    const [isAiChatOpen, setIsAiChatOpen] = useState(false)
+    // Scheduling panel open state
+    const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
 
     // --- MindMap Sync Hook ---
     // STABLE reference for initial groups (root tasks) using useMemo
@@ -751,6 +757,7 @@ export function DashboardClient({
                             onCreateQuickTask={handleCreateQuickTask}
                             onCreateSubTask={handleCreateSubTask}
                             onDeleteTask={handleDeleteTaskFromToday}
+                            onOpenScheduling={() => setIsSchedulingOpen(true)}
                         />
                     </div>
                 )}
@@ -885,11 +892,22 @@ export function DashboardClient({
                     className="flex-none overflow-hidden h-full"
                     style={{ width: rightSidebarWidth }}
                 >
-                    <RightSidebar ref={rightSidebarRef} onUpdateTask={updateTask} tasks={allTasksMerged} />
+                    <RightSidebar
+                        ref={rightSidebarRef}
+                        onUpdateTask={handleUpdateTaskWithQuickSync}
+                        tasks={allTasksMerged}
+                        projects={projects}
+                        onCreateQuickTask={handleCreateQuickTask}
+                        onCreateSubTask={handleCreateSubTask}
+                        onDeleteTask={handleDeleteTaskFromToday}
+                        onOpenAiChat={() => setIsAiChatOpen(true)}
+                    />
                 </div>
             </div>
             {/* AI Chat Floating Panel */}
-            <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} />
+            <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
+            {/* Scheduling AI Panel */}
+            <SchedulingPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             </TimerProvider>
         </DragProvider>
     )

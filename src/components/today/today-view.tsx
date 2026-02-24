@@ -1,34 +1,24 @@
 "use client"
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react"
-import { Task, HabitCompletion, Project } from "@/types/database"
-import { CalendarEvent } from "@/types/calendar"
-import { useCalendarEvents, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
-import { useCalendars } from "@/hooks/useCalendars"
-import { useHabits, HabitWithDetails, getTodayDateString, formatDateString } from "@/hooks/useHabits"
-import { useEventImport } from "@/hooks/useEventImport"
+import { useRef } from "react"
+import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, CalendarClock
 } from "lucide-react"
-import { isSameDay, format } from "date-fns"
+import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
-import { MobileEventEditModal, EditTarget } from "./mobile-event-edit-modal"
+import { MobileEventEditModal } from "./mobile-event-edit-modal"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
-import { DragItem } from "@/hooks/useTouchDrag"
-import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync"
-import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
-import { taskToTimeBlock, eventToTimeBlock, type TimeBlock } from "@/lib/time-block"
-import { useNotificationScheduler } from "@/hooks/useNotificationScheduler"
+import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
+import { formatTime } from "@/contexts/TimerContext"
 
 // --- Types ---
-
-type TimelineMode = 'calendar' | 'cards'
 
 interface TodayViewProps {
     allTasks: Task[]
@@ -37,800 +27,28 @@ interface TodayViewProps {
     onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
-}
-
-// --- Helper: compute week dots from completions ---
-
-function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
-    const completedDates = new Set(completions.map(c => c.completed_date))
-    const dots: boolean[] = []
-    for (let i = 6; i >= 0; i--) {
-        const d = new Date(today)
-        d.setDate(d.getDate() - i)
-        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-        dots.push(completedDates.has(dateStr))
-    }
-    return dots
+    onOpenScheduling?: () => void
 }
 
 // --- Main Component ---
 
-export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask: onCreateSubTaskProp, onDeleteTask: onDeleteTaskProp }: TodayViewProps) {
-    const { selectedCalendarIds, calendars, isLoading: calendarsLoading } = useCalendars()
-    const { todayHabits, toggleCompletion, toggleChildTaskCompletion, updateChildTaskStatus, getHabitsForDate, isCompletedForDate, isLoading: habitsLoading } = useHabits()
-    const { importEvents, isImporting } = useEventImport()
-    const timer = useTimer()
-    const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
-    const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
-    const [timelineMode, setTimelineMode] = useState<TimelineMode>('calendar')
-    const [habitsExpanded, setHabitsExpanded] = useState(false)
-    const [expandedHabitId, setExpandedHabitId] = useState<string | null>(null)
-    const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
-    const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
-    const [isEditModalOpen, setIsEditModalOpen] = useState(false)
-    const [calendarOpen, setCalendarOpen] = useState(false)
-    const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
-        const d = new Date(); d.setHours(0, 0, 0, 0); return d
-    })
+export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenScheduling }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
-    const scrollPositionRef = useRef<number | undefined>(undefined)
-    const stableCalendarColorMapRef = useRef<Map<string, string>>(new Map())
-    const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
-    const [prefetchedEventReminders, setPrefetchedEventReminders] = useState<Record<string, number[]>>({})
-    const reminderPrefetchInFlightRef = useRef<Set<string>>(new Set())
-    // Sync local tasks with prop changes
-    useEffect(() => {
-        setLocalTasks(allTasks)
-    }, [allTasks])
 
-    // Selected date (ssr:false なのでクライアント直接初期化OK)
-    const [selectedDate, setSelectedDate] = useState<Date>(() => {
-        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    const logic = useTodayViewLogic({
+        allTasks,
+        onUpdateTask,
+        projects,
+        onCreateSubTask,
+        onDeleteTask,
     })
-
-    // 1ヶ月間フェッチウィンドウ（-7日〜+30日）- カレンダーイベント自動取り込み用
-    const [fetchWindow, setFetchWindow] = useState(() => {
-        const now = new Date()
-        now.setHours(0, 0, 0, 0)
-        const min = new Date(now)
-        min.setDate(min.getDate() - 7)
-        const max = new Date(now)
-        max.setDate(max.getDate() + 30)
-        return { min, max }
-    })
-
-    // selectedDateがウィンドウ外に出たらウィンドウを再計算
-    useEffect(() => {
-        if (selectedDate < fetchWindow.min || selectedDate >= fetchWindow.max) {
-            const min = new Date(selectedDate)
-            min.setDate(min.getDate() - 7)
-            const max = new Date(selectedDate)
-            max.setDate(max.getDate() + 30)
-            setFetchWindow({ min, max })
-        }
-    }, [selectedDate, fetchWindow.min, fetchWindow.max])
-
-    const today = selectedDate
-
-    const isToday = useMemo(() => {
-        const now = new Date()
-        now.setHours(0, 0, 0, 0)
-        return today.getTime() === now.getTime()
-    }, [today])
-
-    const tomorrow = useMemo(() => {
-        const d = new Date(today)
-        d.setDate(d.getDate() + 1)
-        return d
-    }, [today])
-
-    const previousDay = useMemo(() => {
-        const d = new Date(today)
-        d.setDate(d.getDate() - 1)
-        return d
-    }, [today])
-
-    // Date navigation
-    const goToPrevDay = useCallback(() => {
-        setSlideDirection('right')
-        setSelectedDate(prev => {
-            const d = new Date(prev)
-            d.setDate(d.getDate() - 1)
-            return d
-        })
-    }, [])
-
-    const goToNextDay = useCallback(() => {
-        setSlideDirection('left')
-        setSelectedDate(prev => {
-            const d = new Date(prev)
-            d.setDate(d.getDate() + 1)
-            return d
-        })
-    }, [])
-
-    const goToToday = useCallback(() => {
-        setSlideDirection('right')
-        const d = new Date()
-        d.setHours(0, 0, 0, 0)
-        setSelectedDate(d)
-        setCalendarMonth(new Date())
-        setCalendarOpen(false)
-    }, [])
-
-    // Calendar panel date selection
-    const handleDateSelect = useCallback((date: Date | undefined) => {
-        if (!date) return
-        const normalized = new Date(date)
-        normalized.setHours(0, 0, 0, 0)
-        setSlideDirection(normalized > selectedDate ? 'left' : 'right')
-        setSelectedDate(normalized)
-        setCalendarOpen(false)
-    }, [selectedDate])
 
     // Swipe left/right to change date
     useSwipeNavigation({
         containerRef: timelineContainerRef,
-        onSwipeLeft: goToNextDay,
-        onSwipeRight: goToPrevDay,
+        onSwipeLeft: logic.goToNextDay,
+        onSwipeRight: logic.goToPrevDay,
     })
-
-    // Fetch calendar events (1ヶ月分を一括取得、日付切り替え時はクライアントフィルタで即座表示)
-    const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
-        timeMin: fetchWindow.min,
-        timeMax: fetchWindow.max,
-        enabled: !calendarsLoading,
-        calendarIds: selectedCalendarIds,
-    })
-
-    // 7日分のイベントから selectedDate のイベントだけ抽出
-    const fetchedCalendarEvents = useMemo(() => {
-        return allFetchedEvents.filter(e => {
-            const start = new Date(e.start_time)
-            const end = new Date(e.end_time)
-            // イベントが selectedDate 〜 tomorrow と重なるか判定
-            return end.getTime() > today.getTime() && start.getTime() < tomorrow.getTime()
-        })
-    }, [allFetchedEvents, today, tomorrow])
-
-    const fetchedCalendarEventsWithPrefetchedReminders = useMemo(() => {
-        return fetchedCalendarEvents.map(event => {
-            const key = `${event.calendar_id}::${event.google_event_id}`
-            const prefetched = prefetchedEventReminders[key]
-            if (!prefetched) return event
-            return { ...event, reminders: prefetched }
-        })
-    }, [fetchedCalendarEvents, prefetchedEventReminders])
-
-    const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEventsWithPrefetchedReminders)
-    useEffect(() => { setLocalCalendarEvents(fetchedCalendarEventsWithPrefetchedReminders) }, [fetchedCalendarEventsWithPrefetchedReminders])
-
-    const eventByGoogleKey = useMemo(() => {
-        const map = new Map<string, CalendarEvent>()
-        for (const event of allFetchedEvents) {
-            map.set(`${event.calendar_id}::${event.google_event_id}`, event)
-        }
-        return map
-    }, [allFetchedEvents])
-
-    // イベント自動取り込み: カレンダーイベントをタスクとしてDBに保存（バックグラウンド）
-    // 取り込み完了後、次回ロード時にタスクとして allTasks に含まれ dedup でイベント表示が置換される
-    // イベント集合が変化したら再インポートを許可（削除検出のため）
-    const prevEventIdsRef = useRef<string>('')
-    useEffect(() => {
-        if (eventsLoading || allFetchedEvents.length === 0 || isImporting) return
-        const currentIds = allFetchedEvents.map(e => e.google_event_id).sort().join(',')
-        if (currentIds === prevEventIdsRef.current) return
-        prevEventIdsRef.current = currentIds
-        importEvents(allFetchedEvents).catch(() => { }) // 次回起動時にリトライ
-    }, [eventsLoading, allFetchedEvents, importEvents, isImporting])
-
-    // カレンダー同期（今日のビューのタスク全体）+ 楽観的UI更新
-    useMultiTaskCalendarSync({
-        tasks: localTasks,
-        onRefreshCalendar: () => syncNow({ silent: true }),
-        onUpdateTask,
-        onAddOptimisticEvent: addOptimisticEvent,
-        onRemoveOptimisticEvent: removeOptimisticEvent,
-    })
-
-    const calendarEvents = localCalendarEvents
-    const reminderKeyForEvent = useCallback((event: { calendar_id: string; google_event_id: string }) =>
-        `${event.calendar_id}::${event.google_event_id}`,
-        []
-    )
-    const calendarReauthUrl = (eventsError as (Error & { reauthUrl?: string }) | null)?.reauthUrl || '/api/calendar/connect'
-
-    // Habit task IDs (filter out from timeline)
-    const habitGroupIds = useMemo(() => {
-        const ids = new Set<string>()
-        for (const t of localTasks) {
-            if (t.is_habit) ids.add(t.id)
-        }
-        return ids
-    }, [localTasks])
-
-    // Today's scheduled tasks (excluding habits and groups)
-    // NOTE: project_id を持つタスクも scheduled_at が今日なら表示する（MindMap→Today の橋渡し）
-    // google_event_id が同じタスクが複数存在する場合、最新のもののみ表示（重複排除）
-    const todayScheduledTasks = useMemo(() => {
-        const filtered = localTasks.filter(t => {
-            if (t.deleted_at) return false
-            if (t.is_group) return false
-            if (habitGroupIds.has(t.parent_task_id ?? '')) return false
-            if (!t.scheduled_at) return false
-            const scheduled = new Date(t.scheduled_at)
-            return scheduled >= today && scheduled < tomorrow
-        })
-        // google_event_id による重複排除（同じイベントのタスクは1つだけ表示）
-        const seenGoogleEventIds = new Set<string>()
-        return filtered.filter(t => {
-            if (!t.google_event_id) return true
-            if (seenGoogleEventIds.has(t.google_event_id)) return false
-            seenGoogleEventIds.add(t.google_event_id)
-            return true
-        })
-    }, [localTasks, habitGroupIds, today, tomorrow])
-
-    // Previous day's tasks that overflow into current day (繰り越しタスク)
-    const overflowTasks = useMemo(() => {
-        const filtered = localTasks.filter(t => {
-            if (t.deleted_at) return false
-            if (t.is_group) return false
-            if (habitGroupIds.has(t.parent_task_id ?? '')) return false
-            if (!t.scheduled_at) return false
-            const scheduled = new Date(t.scheduled_at)
-            // Only tasks from previous day
-            if (!(scheduled >= previousDay && scheduled < today)) return false
-            // Check if task extends past midnight into today
-            const estimatedMin = t.estimated_time || 30
-            const endTime = new Date(scheduled.getTime() + estimatedMin * 60 * 1000)
-            return endTime > today
-        })
-        // google_event_id による重複排除
-        const seenGoogleEventIds = new Set<string>()
-        return filtered.filter(t => {
-            if (!t.google_event_id) return true
-            if (seenGoogleEventIds.has(t.google_event_id)) return false
-            seenGoogleEventIds.add(t.google_event_id)
-            return true
-        })
-    }, [localTasks, habitGroupIds, previousDay, today])
-
-    // Unscheduled tasks (no scheduled_at, no project_id, not habit children, not done)
-    const unscheduledTasks = useMemo(() =>
-        localTasks.filter(t =>
-            !t.deleted_at &&
-            !t.scheduled_at &&
-            !t.project_id &&
-            !t.parent_task_id &&
-            !t.is_habit &&
-            t.status !== 'done'
-        ),
-        [localTasks]
-    )
-
-    // Project name map (for displaying project badge on task blocks)
-    const projectNameMap = useMemo(() => {
-        const map = new Map<string, string>()
-        for (const p of projects) {
-            map.set(p.id, p.title)
-        }
-        return map
-    }, [projects])
-
-    // Calendar color map (for imported event tasks)
-    const calendarColorMap = useMemo(() => {
-        const map = new Map<string, string>()
-        for (const cal of calendars) {
-            if (cal.background_color) {
-                map.set(cal.google_calendar_id, cal.background_color)
-            }
-        }
-        return map
-    }, [calendars])
-
-    // Keep previously resolved calendar colors during reloads to avoid color flicker
-    const stableCalendarColorMap = useMemo(() => {
-        const merged = new Map(stableCalendarColorMapRef.current)
-        for (const [calendarId, color] of calendarColorMap) {
-            merged.set(calendarId, color)
-        }
-        return merged
-    }, [calendarColorMap])
-    useEffect(() => {
-        stableCalendarColorMapRef.current = stableCalendarColorMap
-    }, [stableCalendarColorMap])
-
-    // Child tasks grouped by parent (for subtask display)
-    const childTasksMap = useMemo(() => {
-        const map = new Map<string, Task[]>()
-        for (const task of localTasks) {
-            if (task.parent_task_id && !task.is_habit) {
-                const children = map.get(task.parent_task_id) || []
-                children.push(task)
-                map.set(task.parent_task_id, children)
-            }
-        }
-        return map
-    }, [localTasks])
-
-
-    // Merge calendar events + scheduled tasks into timeline
-    // When a task has a matching google_event_id, prefer showing it as a task (green, with timer)
-    // Collect google_event_ids from ALL tasks (today + overflow) to skip matching calendar events
-    const allTasksWithGoogleEvent = useMemo(() =>
-        [...todayScheduledTasks, ...overflowTasks].filter(t => t.google_event_id),
-        [todayScheduledTasks, overflowTasks]
-    )
-    const taskGoogleIds = new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!))
-    // Fallback dedup key for cases where task.google_event_id update is delayed
-    const eventLikeTaskKeys = new Set(
-        [...todayScheduledTasks, ...overflowTasks]
-            .filter(t => t.source === 'google_event' && !!t.scheduled_at)
-            .map(t => {
-                const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
-                const title = t.title.trim().toLowerCase()
-                return `${t.calendar_id || ''}|${title}|${minute}`
-            })
-    )
-
-    const timelineItems: TimeBlock[] = useMemo(() => {
-        const items: TimeBlock[] = []
-
-        for (const event of calendarEvents) {
-            if (event.is_all_day) continue
-            // Skip calendar events that have a matching task (task takes priority)
-            if (taskGoogleIds.has(event.google_event_id)) continue
-            const eventMinute = Math.floor(new Date(event.start_time).getTime() / 60000)
-            const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
-            if (eventLikeTaskKeys.has(eventKey)) continue
-
-            const calendarColor = stableCalendarColorMap.get(event.calendar_id || '')
-            // Calendar color only: skip until color is known (no temporary blue/gray fallback)
-            if (!calendarColor) continue
-            const block = eventToTimeBlock({ ...event, background_color: calendarColor })
-            // 前日からの繰り越し: startTimeを0:00にクランプ
-            if (block.startTime.getTime() < today.getTime()) block.startTime = new Date(today)
-            // 日付をまたぐ場合: endTimeを24:00にクランプ
-            if (block.endTime.getTime() > tomorrow.getTime()) block.endTime = new Date(tomorrow)
-
-            items.push(block)
-        }
-
-        for (const task of todayScheduledTasks) {
-            if (!task.scheduled_at) continue
-            // Calendar color only for imported Google event tasks
-            let color: string | undefined
-            if (task.google_event_id && task.calendar_id) {
-                color = stableCalendarColorMap.get(task.calendar_id || '')
-                // Skip until calendar color is known
-                if (!color) continue
-            }
-            const block = taskToTimeBlock(task, undefined, color)
-            // 日付をまたぐ場合: endTimeを24:00にクランプ
-            if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
-            items.push(block)
-        }
-
-        // 前日からの繰り越しタスク（0:00から残り時間分を表示）
-        const dayAfterTomorrow = new Date(tomorrow.getTime() + 24 * 60 * 60 * 1000)
-        for (const task of overflowTasks) {
-            let color: string | undefined
-            if (task.google_event_id && task.calendar_id) {
-                color = stableCalendarColorMap.get(task.calendar_id || '')
-                if (!color) continue
-            }
-            const block = taskToTimeBlock(task, undefined, color)
-            block.startTime = new Date(today)
-            // originalEndが翌日24:00を超える場合、翌日24:00でクランプ
-            if (block.endTime.getTime() > dayAfterTomorrow.getTime()) {
-                block.endTime = new Date(dayAfterTomorrow)
-            }
-            items.push(block)
-        }
-
-        items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
-        return items
-    }, [calendarEvents, stableCalendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
-
-    // All-day events
-    const allDayEvents = useMemo(() => {
-        return calendarEvents
-            .filter(e => e.is_all_day)
-            .map(e => {
-                const calendarColor = stableCalendarColorMap.get(e.calendar_id || '')
-                return calendarColor
-                    ? { ...e, background_color: calendarColor }
-                    : null
-            })
-            .filter((e): e is CalendarEvent => e !== null)
-    }, [calendarEvents, stableCalendarColorMap])
-
-    // Keep previous timeline visible while refreshing events
-    const displayItems = timelineItems
-    const displayAllDayEvents = allDayEvents
-
-    // Toggle task completion
-    const toggleTask = useCallback(async (taskId: string) => {
-        const task = localTasks.find(t => t.id === taskId)
-        if (!task) return
-        const newStatus = task.status === 'done' ? 'todo' : 'done'
-        setLocalTasks(prev => prev.map(t =>
-            t.id === taskId ? { ...t, status: newStatus } : t
-        ))
-        await onUpdateTask(taskId, { status: newStatus })
-    }, [localTasks, onUpdateTask])
-
-    // Toggle child task: use date-based completion for habit children
-    const toggleChildTask = useCallback(async (
-        taskId: string,
-        currentStatus: string,
-        habitItem?: HabitWithDetails
-    ) => {
-        if (habitItem) {
-            // 日次完了ベース: habit_task_completions テーブルで管理
-            await toggleChildTaskCompletion(habitItem.habit.id, taskId)
-        } else {
-            // 通常タスク（習慣外）: 従来の status 更新
-            const newStatus = currentStatus === 'done' ? 'todo' : 'done'
-            await onUpdateTask(taskId, { status: newStatus })
-        }
-    }, [onUpdateTask, toggleChildTaskCompletion])
-
-    // 背景先読み済み通知を優先してモーダル初期値を確定（開く瞬間に待たない）
-    const handleItemTap = useCallback((item: TimeBlock) => {
-        const reminderKey = item.googleEventId && item.calendarId
-            ? `${item.calendarId}::${item.googleEventId}`
-            : null
-        const prefetchedReminders = reminderKey ? prefetchedEventReminders[reminderKey] : undefined
-        const fetchedEvent = reminderKey ? eventByGoogleKey.get(reminderKey) : undefined
-        const fetchedReminders = fetchedEvent?.reminders
-
-        const resolvedReminders = prefetchedReminders ?? fetchedReminders
-
-        const targetWithReminder = resolvedReminders !== undefined
-            ? {
-                ...item,
-                originalEvent: item.originalEvent
-                    ? { ...item.originalEvent, reminders: resolvedReminders }
-                    : {
-                        id: item.id,
-                        user_id: '',
-                        google_event_id: item.googleEventId!,
-                        calendar_id: item.calendarId!,
-                        title: item.title,
-                        start_time: item.startTime.toISOString(),
-                        end_time: item.endTime.toISOString(),
-                        is_all_day: false,
-                        timezone: 'Asia/Tokyo',
-                        synced_at: new Date().toISOString(),
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString(),
-                        reminders: resolvedReminders,
-                    },
-            }
-            : item
-
-        setEditTarget(targetWithReminder)
-        setIsEditModalOpen(true)
-    }, [prefetchedEventReminders, eventByGoogleKey])
-
-    // Google予定の通知をバックグラウンド先読み（昨日/今日/明日を優先）
-    useEffect(() => {
-        const now = new Date()
-        now.setHours(0, 0, 0, 0)
-        const priorityMin = new Date(now)
-        priorityMin.setDate(priorityMin.getDate() - 1) // 昨日
-        const priorityMax = new Date(now)
-        priorityMax.setDate(priorityMax.getDate() + 2) // 明後日0時（今日/明日まで）
-
-        const candidates = allFetchedEvents.filter(event => event.google_event_id && event.calendar_id)
-        if (candidates.length === 0) return
-
-        const sortedCandidates = [...candidates].sort((a, b) => {
-            const aStart = new Date(a.start_time)
-            const bStart = new Date(b.start_time)
-            const aPriority = aStart >= priorityMin && aStart < priorityMax ? 0 : 1
-            const bPriority = bStart >= priorityMin && bStart < priorityMax ? 0 : 1
-            if (aPriority !== bPriority) return aPriority - bPriority
-            return aStart.getTime() - bStart.getTime()
-        })
-
-        sortedCandidates.forEach((event) => {
-            const key = reminderKeyForEvent(event)
-            if (event.reminders !== undefined || prefetchedEventReminders[key]) return
-            if (reminderPrefetchInFlightRef.current.has(key)) return
-
-            reminderPrefetchInFlightRef.current.add(key)
-            fetch(`/api/calendar/events/${event.id}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`)
-                .then(async (res) => {
-                    if (!res.ok) return null
-                    const data = await res.json()
-                    return Array.isArray(data.reminders) ? data.reminders as number[] : null
-                })
-                .then((reminders) => {
-                    if (!reminders) return
-                    setPrefetchedEventReminders(prev => {
-                        if (prev[key]) return prev
-                        return { ...prev, [key]: reminders }
-                    })
-                    setLocalCalendarEvents(prev => prev.map(e =>
-                        e.google_event_id === event.google_event_id && e.calendar_id === event.calendar_id
-                            ? { ...e, reminders }
-                            : e
-                    ))
-                })
-                .catch((err) => {
-                    console.warn('[TodayView] Failed to prefetch reminders in background:', err)
-                    // 失敗時も空配列で確定させ、表示ゲートが永遠に閉じないようにする
-                    setPrefetchedEventReminders(prev => {
-                        if (prev[key] !== undefined) return prev
-                        return { ...prev, [key]: [] }
-                    })
-                })
-                .finally(() => {
-                    reminderPrefetchInFlightRef.current.delete(key)
-                })
-        })
-    }, [allFetchedEvents, prefetchedEventReminders, reminderKeyForEvent])
-
-    const handleCloseEditModal = useCallback(() => {
-        setIsEditModalOpen(false)
-        setEditTarget(null)
-    }, [])
-
-    // Save task via existing onUpdateTask (with optimistic update for calendar sync)
-    const handleSaveTask = useCallback(async (taskId: string, updates: {
-        title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[]
-    }) => {
-        const { reminders, ...taskUpdates } = updates
-        // Optimistic update so useMultiTaskCalendarSync picks up changes immediately
-        setLocalTasks(prev => prev.map(t =>
-            t.id === taskId ? { ...t, ...taskUpdates } : t
-        ))
-        await onUpdateTask(taskId, taskUpdates)
-
-        // タスクが Google Calendar に同期済みの場合、リマインダーを直接更新
-        if (reminders !== undefined) {
-            const task = localTasks.find(t => t.id === taskId)
-            if (task?.google_event_id && task?.calendar_id) {
-                fetch('/api/calendar/sync-task', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        taskId,
-                        scheduled_at: updates.scheduled_at || task.scheduled_at,
-                        estimated_time: updates.estimated_time || task.estimated_time,
-                        calendar_id: updates.calendar_id || task.calendar_id,
-                        reminders,
-                    }),
-                }).catch(err => {
-                    console.error('[TodayView] Failed to update calendar reminder:', err)
-                })
-            }
-        }
-    }, [onUpdateTask, localTasks])
-
-    // Save event via PATCH /api/calendar/events/[eventId] (楽観的UI + バックグラウンド更新)
-    const handleSaveEvent = useCallback(async (eventId: string, updates: {
-        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]
-    }) => {
-        // 更新前のイベントを保存（エラー時のロールバック用）
-        const previousEvents = localCalendarEvents
-
-        // 楽観的UI更新: カレンダーイベントを即座に反映
-        setLocalCalendarEvents(prev => prev.map(e =>
-            e.id === eventId
-                ? { ...e, title: updates.title, start_time: updates.start_time, end_time: updates.end_time, reminders: updates.reminders }
-                : e
-        ))
-
-        // googleEventId が空の場合（楽観的イベント等）はAPI呼び出しをスキップ
-        if (!updates.googleEventId) {
-            return
-        }
-
-        try {
-            // バックグラウンドでAPI呼び出し
-            const res = await fetch(`/api/calendar/events/${eventId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    title: updates.title,
-                    start_time: updates.start_time,
-                    end_time: updates.end_time,
-                    googleEventId: updates.googleEventId,
-                    calendarId: updates.calendarId,
-                    reminders: updates.reminders,
-                }),
-            })
-            if (!res.ok) {
-                const data = await res.json()
-                throw new Error(data.error?.message || 'Failed to update event')
-            }
-            // 成功時: カレンダーキャッシュを無効化 + 即座に再取得
-            invalidateCalendarCache()
-            await syncNow({ silent: true })
-        } catch (err) {
-            // エラー時: 楽観的更新をロールバック
-            console.error('[TodayView] Failed to update event, rolling back:', err)
-            setLocalCalendarEvents(previousEvents)
-            throw err
-        }
-    }, [localCalendarEvents, syncNow])
-
-    // Delete task — dashboard-client 経由で quickTasks/taskOverrides も同期
-    const handleDeleteTask = useCallback(async (taskId: string) => {
-        // 削除対象のタスクを取得（google_event_id の確認のため）
-        const taskToDelete = localTasks.find(t => t.id === taskId)
-
-        // ローカル即時反映（タスクを削除）
-        setLocalTasks(prev => prev.filter(t => t.id !== taskId))
-
-        // Googleカレンダーに同期されているイベントをローカルstateからも即座に削除（楽観的UI）
-        if (taskToDelete?.google_event_id) {
-            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== taskToDelete.google_event_id))
-        }
-
-        // 親コンポーネント経由でDB削除 + state同期
-        if (onDeleteTaskProp) {
-            await onDeleteTaskProp(taskId)
-        } else {
-            // フォールバック: 直接API呼び出し
-            await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
-                console.error('[TodayView] Failed to delete task:', err)
-            })
-        }
-
-        // 削除後にカレンダーキャッシュを無効化して即座に再取得（Google側の状態と同期）
-        invalidateCalendarCache()
-        await syncNow({ silent: true })
-    }, [onDeleteTaskProp, syncNow, localTasks])
-
-    // Delete event (optimistic UI + background API)
-    const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
-        const previousEvents = localCalendarEvents
-        const previousTasks = localTasks
-
-        // 楽観的削除: イベントと Google由来タスクを即座に非表示
-        removeOptimisticEvent(eventId, googleEventId)
-        setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== googleEventId && e.id !== eventId))
-        setLocalTasks(prev => prev.filter(t => !(t.google_event_id === googleEventId && t.source === 'google_event')))
-
-        // バックグラウンドでAPI呼び出し
-        fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
-            method: 'DELETE',
-        })
-            .then(async (res) => {
-                if (!res.ok) {
-                    const data = await res.json().catch(() => null)
-                    throw new Error(data?.error?.message || 'Failed to delete event')
-                }
-                invalidateCalendarCache()
-                await syncNow({ silent: true })
-            })
-            .catch(err => {
-                console.error('[TodayView] Failed to delete event:', err)
-                // エラー時はロールバックして再取得
-                setLocalCalendarEvents(previousEvents)
-                setLocalTasks(previousTasks)
-                syncNow({ silent: true })
-            })
-    }, [removeOptimisticEvent, syncNow, localCalendarEvents, localTasks])
-
-    // Writable calendars for the edit modal
-    const writableCalendars = useMemo(() =>
-        calendars
-            .filter(c => c.access_level === 'owner' || c.access_level === 'writer')
-            .map(c => ({
-                id: c.google_calendar_id,
-                name: c.name,
-                background_color: c.background_color || undefined,
-            })),
-        [calendars]
-    )
-
-    // Handle drag & drop time change (optimistic UI + sync indicator)
-    const handleDragDrop = useCallback(async (item: DragItem, newStartTime: Date, newEndTime: Date) => {
-        // 更新前の状態を保存（エラー時のロールバック用）
-        const previousTasks = localTasks
-        const previousEvents = localCalendarEvents
-
-        // Optimistic UI update FIRST
-        // Note: 元アイテムはドラッグ中に invisible になっているので、複製表示にはならない
-        if (item.type === 'task') {
-            setLocalTasks(prev => prev.map(t =>
-                t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
-            ))
-        } else {
-            setLocalCalendarEvents(prev => prev.map(e =>
-                e.id === item.id ? { ...e, start_time: newStartTime.toISOString(), end_time: newEndTime.toISOString() } : e
-            ))
-        }
-
-        // Show sync indicator
-        setSyncState('syncing')
-
-        try {
-            if (item.type === 'task') {
-                await onUpdateTask(item.id, { scheduled_at: newStartTime.toISOString() })
-            } else {
-                const event = calendarEvents.find(e => e.id === item.id)
-                if (!event) return
-                const res = await fetch(`/api/calendar/events/${item.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: event.title,
-                        start_time: newStartTime.toISOString(),
-                        end_time: newEndTime.toISOString(),
-                        googleEventId: event.google_event_id,
-                        calendarId: event.calendar_id,
-                    }),
-                })
-                if (!res.ok) {
-                    const data = await res.json()
-                    throw new Error(data.error?.message || 'Failed to update event')
-                }
-                // 成功時: カレンダーキャッシュを無効化 + 即座に再取得
-                invalidateCalendarCache()
-                await syncNow({ silent: true })
-            }
-            setSyncState('done')
-            setTimeout(() => setSyncState('idle'), 1500)
-        } catch (err) {
-            // エラー時: 楽観的更新をロールバック
-            console.error('[TodayView] Failed to update via drag-drop, rolling back:', err)
-            if (item.type === 'task') {
-                setLocalTasks(previousTasks)
-            } else {
-                setLocalCalendarEvents(previousEvents)
-            }
-            setSyncState('idle')
-        }
-    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask, syncNow])
-
-    // Date header
-    const dateFmt = format(today, 'M月d日(E)', { locale: ja })
-
-    // Current time (SSR-safe: midnight初期値 → マウント後に実時刻に更新)
-    const [currentTime, setCurrentTime] = useState(() => {
-        const d = new Date(); d.setHours(0, 0, 0, 0); return d
-    })
-    useEffect(() => {
-        setCurrentTime(new Date())
-        const interval = setInterval(() => setCurrentTime(new Date()), 60000)
-        return () => clearInterval(interval)
-    }, [])
-
-    // 選択日の習慣リストと完了数
-    const dateHabits = useMemo(() => getHabitsForDate(selectedDate), [getHabitsForDate, selectedDate])
-    const selectedDateStr = useMemo(() => formatDateString(selectedDate), [selectedDate])
-    const doneHabitCount = useMemo(() => {
-        return dateHabits.filter(h => {
-            if (isToday) return h.isCompletedToday
-            return h.completions.some(c => c.completed_date === selectedDateStr)
-        }).length
-    }, [dateHabits, isToday, selectedDateStr])
-
-    // Keep expanded habit across date changes only when the same habit exists on the new date.
-    useEffect(() => {
-        if (!expandedHabitId) return
-        const stillVisible = dateHabits.some(h => h.habit.id === expandedHabitId && h.childTasks.length > 0)
-        if (!stillVisible) setExpandedHabitId(null)
-    }, [dateHabits, expandedHabitId])
-
-    // Week day labels for expanded habits
-    const weekDayLabels = useMemo(() => {
-        const labels: string[] = []
-        for (let i = 6; i >= 0; i--) {
-            const d = new Date(today)
-            d.setDate(d.getDate() - i)
-            labels.push(format(d, 'EEEEE', { locale: ja }))
-        }
-        return labels
-    }, [today])
 
     return (
         <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
@@ -839,24 +57,24 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 <div className="flex items-center justify-between gap-2 min-h-[56px]">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
                         <button
-                            onClick={goToPrevDay}
+                            onClick={logic.goToPrevDay}
                             className="p-1 rounded-full active:bg-muted transition-colors text-muted-foreground flex-shrink-0"
                         >
                             <ChevronLeft className="w-4 h-4" />
                         </button>
                         <div className="min-w-0">
                             <div className="flex items-center gap-1.5 min-w-0">
-                                {isToday && (
+                                {logic.isToday && (
                                     <span className="inline-flex items-center rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary leading-none flex-shrink-0">
                                         今日
                                     </span>
                                 )}
-                                <h1 className="text-lg font-bold leading-tight truncate whitespace-nowrap">{dateFmt}</h1>
+                                <h1 className="text-lg font-bold leading-tight truncate whitespace-nowrap">{logic.dateFmt}</h1>
                                 <button
-                                    onClick={() => setCalendarOpen(prev => !prev)}
+                                    onClick={() => logic.setCalendarOpen(prev => !prev)}
                                     className={cn(
                                         "p-1 rounded-md transition-colors flex-shrink-0",
-                                        calendarOpen
+                                        logic.calendarOpen
                                             ? "bg-primary/10 text-primary"
                                             : "text-muted-foreground hover:bg-muted/50"
                                     )}
@@ -865,18 +83,18 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                 </button>
                             </div>
                             <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate whitespace-nowrap min-h-[16px]">
-                                {eventsLoading ? (
+                                {logic.eventsLoading ? (
                                     <><Loader2 className="w-3 h-3 animate-spin" /><span>取得中...</span></>
                                 ) : (
                                     <>
-                                        {displayItems.length}件のスケジュール
-                                        {dateHabits.length > 0 && ` · ${doneHabitCount}/${dateHabits.length} 習慣完了`}
+                                        {logic.displayItems.length}件のスケジュール
+                                        {logic.dateHabits.length > 0 && ` · ${logic.doneHabitCount}/${logic.dateHabits.length} 習慣完了`}
                                     </>
                                 )}
                             </p>
                         </div>
                         <button
-                            onClick={goToNextDay}
+                            onClick={logic.goToNextDay}
                             className="p-1 rounded-full active:bg-muted transition-colors text-muted-foreground flex-shrink-0"
                         >
                             <ChevronRight className="w-4 h-4" />
@@ -884,10 +102,20 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
                     {/* Sync indicator + Timeline mode toggle */}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <div className="w-4 h-4 flex items-center justify-center text-xs text-muted-foreground" aria-hidden={syncState === 'idle'}>
-                            {syncState === 'syncing' ? (
+                        {/* スケジュール調整ボタン（モバイル今日ビュー） */}
+                        {onOpenScheduling && (
+                            <button
+                                onClick={onOpenScheduling}
+                                className="p-1.5 rounded-md text-muted-foreground hover:bg-muted/50 active:bg-muted transition-colors"
+                                title="スケジュール調整"
+                            >
+                                <CalendarClock className="w-4 h-4" />
+                            </button>
+                        )}
+                        <div className="w-4 h-4 flex items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
+                            {logic.syncState === 'syncing' ? (
                                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                            ) : syncState === 'done' ? (
+                            ) : logic.syncState === 'done' ? (
                                 <Check className="w-3.5 h-3.5 text-green-500" />
                             ) : (
                                 <span className="opacity-0">•</span>
@@ -895,10 +123,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                         <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
                             <button
-                                onClick={() => setTimelineMode('calendar')}
+                                onClick={() => logic.setTimelineMode('calendar')}
                                 className={cn(
                                     "p-1.5 rounded-md transition-colors",
-                                    timelineMode === 'calendar'
+                                    logic.timelineMode === 'calendar'
                                         ? "bg-background shadow-sm text-foreground"
                                         : "text-muted-foreground"
                                 )}
@@ -906,10 +134,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                 <LayoutGrid className="w-4 h-4" />
                             </button>
                             <button
-                                onClick={() => setTimelineMode('cards')}
+                                onClick={() => logic.setTimelineMode('cards')}
                                 className={cn(
                                     "p-1.5 rounded-md transition-colors",
-                                    timelineMode === 'cards'
+                                    logic.timelineMode === 'cards'
                                         ? "bg-background shadow-sm text-foreground"
                                         : "text-muted-foreground"
                                 )}
@@ -922,20 +150,20 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             </div>
 
             {/* Collapsible Calendar Panel */}
-            {calendarOpen && (
+            {logic.calendarOpen && (
                 <div className="flex-shrink-0 border-b px-4 py-3 animate-in slide-in-from-top-2 duration-200">
                     <SimpleCalendar
-                        selected={selectedDate}
-                        onSelect={handleDateSelect}
-                        month={calendarMonth}
-                        onMonthChange={setCalendarMonth}
+                        selected={logic.selectedDate}
+                        onSelect={logic.handleDateSelect}
+                        month={logic.calendarMonth}
+                        onMonthChange={logic.setCalendarMonth}
                         className="w-full"
                     />
                 </div>
             )}
 
             {/* Habit Bar (fixed) + Expandable Detail */}
-            {habitsLoading ? (
+            {logic.habitsLoading ? (
                 <div className="flex-shrink-0 border-b px-4 py-2">
                     <div className="flex items-center gap-2 mb-1.5">
                         <Target className="w-3.5 h-3.5 text-primary/40 flex-shrink-0" />
@@ -951,51 +179,50 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         ))}
                     </div>
                 </div>
-            ) : dateHabits.length > 0 ? (
+            ) : logic.dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
                         <button
-                            onClick={() => setHabitsExpanded(prev => !prev)}
+                            onClick={() => logic.setHabitsExpanded(prev => !prev)}
                             className="flex items-center gap-2 mb-1.5 w-full text-left"
                         >
                             <Target className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                             <span className="text-xs font-medium text-muted-foreground flex-1">
-                                {isToday ? '今日の習慣' : `${format(selectedDate, 'M/d', { locale: ja })}の習慣`}
+                                {logic.isToday ? '今日の習慣' : `${format(logic.selectedDate, 'M/d', { locale: ja })}の習慣`}
                             </span>
-                            {habitsExpanded ? (
+                            {logic.habitsExpanded ? (
                                 <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
                             ) : (
                                 <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                             )}
                         </button>
                         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
-                            {dateHabits.map(item => {
+                            {logic.dateHabits.map(item => {
                                 const hasChildren = item.childTasks.length > 0
-                                const isCompleted = isToday
+                                const isCompleted = logic.isToday
                                     ? item.isCompletedToday
-                                    : item.completions.some(c => c.completed_date === selectedDateStr)
-                                // 日次ベースの完了数を計算
+                                    : item.completions.some(c => c.completed_date === logic.selectedDateStr)
                                 const doneChildCount = hasChildren
-                                    ? item.childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === selectedDateStr)).length
+                                    ? item.childTasks.filter(c => item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === logic.selectedDateStr)).length
                                     : 0
                                 return (
                                     <button
                                         key={item.habit.id}
                                         onClick={() => {
                                             if (hasChildren) {
-                                                setHabitsExpanded(true)
-                                                setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
+                                                logic.setHabitsExpanded(true)
+                                                logic.setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
                                                 return
                                             }
-                                            if (isToday) toggleCompletion(item.habit.id)
+                                            if (logic.isToday) logic.toggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
                                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all flex-shrink-0 border",
-                                            !hasChildren && isToday && "active:scale-[0.98]",
+                                            !hasChildren && logic.isToday && "active:scale-[0.98]",
                                             isCompleted
                                                 ? "bg-primary/10 border-primary/30 dark:bg-primary/15"
-                                                : !hasChildren && isToday
+                                                : !hasChildren && logic.isToday
                                                     ? "border-border hover:bg-muted/40 active:bg-muted/60"
                                                     : "border-border"
                                         )}
@@ -1032,10 +259,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
 
                     {/* Expanded: Child tasks only (compact) */}
-                    {habitsExpanded && (
+                    {logic.habitsExpanded && (
                         <div className="px-4 pb-2 space-y-0.5 animate-in slide-in-from-top-2 duration-200">
                             {(() => {
-                                const expandedHabit = dateHabits.find(h => h.habit.id === expandedHabitId && h.childTasks.length > 0)
+                                const expandedHabit = logic.dateHabits.find(h => h.habit.id === logic.expandedHabitId && h.childTasks.length > 0)
                                 if (!expandedHabit) {
                                     return (
                                         <div className="px-2 py-1 text-[11px] text-muted-foreground">
@@ -1047,12 +274,12 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                 return (
                                     <div key={expandedHabit.habit.id} className="space-y-0">
                                         {expandedHabit.childTasks.map(child => {
-                                            const isRunning = isToday && timer.runningTaskId === child.id
+                                            const isRunning = logic.isToday && logic.timer.runningTaskId === child.id
                                             const isDoneForDate = expandedHabit.taskCompletions.some(
-                                                tc => tc.task_id === child.id && tc.completed_date === selectedDateStr
+                                                tc => tc.task_id === child.id && tc.completed_date === logic.selectedDateStr
                                             )
                                             const todayCompletion = expandedHabit.taskCompletions.find(
-                                                tc => tc.task_id === child.id && tc.completed_date === selectedDateStr
+                                                tc => tc.task_id === child.id && tc.completed_date === logic.selectedDateStr
                                             )
                                             const todayElapsed = todayCompletion?.elapsed_seconds ?? 0
                                             const hasElapsed = todayElapsed > 0
@@ -1064,10 +291,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                         isRunning && "bg-primary/10"
                                                     )}
                                                 >
-                                                    {isToday ? (
+                                                    {logic.isToday ? (
                                                         <button
                                                             className="no-tap-highlight flex items-center gap-1.5 flex-1 min-w-0 py-1.5 px-2 rounded-md active:bg-muted/50 transition-colors"
-                                                            onClick={() => toggleChildTask(child.id, child.status || 'todo', expandedHabit)}
+                                                            onClick={() => logic.toggleChildTask(child.id, child.status || 'todo', expandedHabit)}
                                                         >
                                                             {isDoneForDate ? (
                                                                 <CheckSquare className="w-3.5 h-3.5 text-primary flex-shrink-0" />
@@ -1096,11 +323,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                             </span>
                                                         </div>
                                                     )}
-                                                    {isToday && (
+                                                    {logic.isToday && (
                                                         <>
                                                             {isRunning ? (
                                                                 <span className="text-[10px] font-mono text-primary flex-shrink-0">
-                                                                    {formatTime(todayElapsed + (timer.currentElapsedSeconds - (child.total_elapsed_seconds ?? 0)))}
+                                                                    {formatTime(todayElapsed + (logic.timer.currentElapsedSeconds - (child.total_elapsed_seconds ?? 0)))}
                                                                 </span>
                                                             ) : hasElapsed ? (
                                                                 <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
@@ -1114,8 +341,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                                 )}
                                                                 onClick={(e) => {
                                                                     e.stopPropagation()
-                                                                    if (isRunning) timer.pauseTimer()
-                                                                    else timer.startTimer(child)
+                                                                    if (isRunning) logic.timer.pauseTimer()
+                                                                    else logic.timer.startTimer(child)
                                                                 }}
                                                             >
                                                                 {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
@@ -1136,16 +363,16 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
                 <div
-                    key={selectedDate.getTime()}
+                    key={logic.selectedDate.getTime()}
                     className={cn(
                         "flex-1 flex flex-col overflow-hidden",
-                        slideDirection === 'left' && "animate-in slide-in-from-right-12 duration-250",
-                        slideDirection === 'right' && "animate-in slide-in-from-left-12 duration-250"
+                        logic.slideDirection === 'left' && "animate-in slide-in-from-right-12 duration-250",
+                        logic.slideDirection === 'right' && "animate-in slide-in-from-left-12 duration-250"
                     )}
-                    onAnimationEnd={() => setSlideDirection(null)}
+                    onAnimationEnd={() => logic.setSlideDirection(null)}
                 >
                     {/* Calendar Connection Required */}
-                    {!eventsLoading && !calendarsLoading && calendars.length === 0 && (
+                    {!logic.eventsLoading && !logic.calendarsLoading && logic.calendars.length === 0 && (
                         <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
                             <div className="flex items-start gap-2">
                                 <div className="flex-1">
@@ -1169,7 +396,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     )}
 
                     {/* Calendar Events Error */}
-                    {eventsError && calendars.length > 0 && (
+                    {logic.eventsError && logic.calendars.length > 0 && (
                         <div className="mx-4 mt-3 py-4 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
                             <div className="flex items-start gap-2">
                                 <div className="flex-1">
@@ -1177,7 +404,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                         カレンダーデータの取得に失敗しました
                                     </p>
                                     <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
-                                        {eventsError.message}
+                                        {logic.eventsError.message}
                                     </p>
                                 </div>
                             </div>
@@ -1189,7 +416,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                     再読み込み
                                 </button>
                                 <button
-                                    onClick={() => window.location.href = calendarReauthUrl}
+                                    onClick={() => window.location.href = logic.calendarReauthUrl}
                                     className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-md hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
                                 >
                                     再接続
@@ -1198,32 +425,32 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     )}
 
-                    {timelineMode === 'calendar' ? (
+                    {logic.timelineMode === 'calendar' ? (
                         <TodayTimelineCalendar
-                            timelineItems={displayItems}
-                            allDayEvents={displayAllDayEvents}
-                            eventsLoading={eventsLoading}
-                            currentTime={currentTime}
-                            onToggleTask={toggleTask}
-                            onItemTap={handleItemTap}
-                            onDragDrop={handleDragDrop}
-                            childTasksMap={childTasksMap}
-                            onCreateSubTask={onCreateSubTaskProp}
-                            onDeleteSubTask={handleDeleteTask}
-                            projectNameMap={projectNameMap}
-                            initialScrollTop={scrollPositionRef.current}
-                            onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
+                            timelineItems={logic.displayItems}
+                            allDayEvents={logic.displayAllDayEvents}
+                            eventsLoading={logic.eventsLoading}
+                            currentTime={logic.currentTime}
+                            onToggleTask={logic.toggleTask}
+                            onItemTap={logic.handleItemTap}
+                            onDragDrop={logic.handleDragDrop}
+                            childTasksMap={logic.childTasksMap}
+                            onCreateSubTask={logic.onCreateSubTask}
+                            onDeleteSubTask={logic.handleDeleteTask}
+                            projectNameMap={logic.projectNameMap}
+                            initialScrollTop={logic.scrollPositionRef.current}
+                            onScrollPositionChange={(pos) => { logic.scrollPositionRef.current = pos }}
                         />
                     ) : (
                         <div className="flex-1 overflow-y-auto no-scrollbar">
                             <TodayTimelineCards
-                                timelineItems={displayItems}
-                                allDayEvents={displayAllDayEvents}
-                                eventsLoading={eventsLoading}
-                                currentTime={currentTime}
-                                onToggleTask={toggleTask}
-                                onItemTap={handleItemTap}
-                                projectNameMap={projectNameMap}
+                                timelineItems={logic.displayItems}
+                                allDayEvents={logic.displayAllDayEvents}
+                                eventsLoading={logic.eventsLoading}
+                                currentTime={logic.currentTime}
+                                onToggleTask={logic.toggleTask}
+                                onItemTap={logic.handleItemTap}
+                                projectNameMap={logic.projectNameMap}
                             />
                             <div className="h-4" />
                         </div>
@@ -1232,15 +459,15 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             </div>
 
             {/* Unscheduled Tasks */}
-            {unscheduledTasks.length > 0 && (
+            {logic.unscheduledTasks.length > 0 && (
                 <div className="flex-shrink-0 border-t px-4 py-2">
                     <p className="text-xs font-medium text-muted-foreground mb-1.5">未スケジュール</p>
                     <div className="max-h-32 overflow-y-auto space-y-0.5">
-                        {unscheduledTasks.map(task => (
+                        {logic.unscheduledTasks.map(task => (
                             <div key={task.id} className="flex items-center gap-2 py-1.5 px-1 rounded-md active:bg-muted/50 transition-colors">
                                 <button
                                     className="flex-shrink-0"
-                                    onClick={() => toggleTask(task.id)}
+                                    onClick={() => logic.toggleTask(task.id)}
                                 >
                                     <Square className="w-4 h-4 text-muted-foreground/40" />
                                 </button>
@@ -1253,17 +480,17 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             {/* Edit Modal */}
             <MobileEventEditModal
-                target={editTarget}
-                isOpen={isEditModalOpen}
-                onClose={handleCloseEditModal}
-                onSaveTask={handleSaveTask}
-                onSaveEvent={handleSaveEvent}
-                onDeleteTask={handleDeleteTask}
-                onDeleteEvent={handleDeleteEvent}
-                availableCalendars={writableCalendars}
+                target={logic.editTarget}
+                isOpen={logic.isEditModalOpen}
+                onClose={logic.handleCloseEditModal}
+                onSaveTask={logic.handleSaveTask}
+                onSaveEvent={logic.handleSaveEvent}
+                onDeleteTask={logic.handleDeleteTask}
+                onDeleteEvent={logic.handleDeleteEvent}
+                availableCalendars={logic.writableCalendars}
                 onScheduleReminder={async (targetType, targetId, scheduledAt, title, advanceMinutes) => {
-                    await cancelNotifications(targetType, targetId)
-                    await scheduleNotification({
+                    await logic.cancelNotifications(targetType, targetId)
+                    await logic.scheduleNotification({
                         targetType,
                         targetId,
                         notificationType: targetType === 'task' ? 'task_start' : 'event_start',
@@ -1278,7 +505,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             {onCreateQuickTask && (
                 <QuickTaskFab
                     projects={projects}
-                    calendars={writableCalendars}
+                    calendars={logic.writableCalendars}
                     onCreateTask={onCreateQuickTask}
                 />
             )}

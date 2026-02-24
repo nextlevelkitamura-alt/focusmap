@@ -70,9 +70,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
     const [projectId, setProjectId] = useState<string | null>(null)
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [estimatedTime, setEstimatedTime] = useState(30)
-    const [reminder, setReminder] = useState<number | null>(null)
+    const [reminder, setReminder] = useState(0)
     const [isDurationPickerOpen, setIsDurationPickerOpen] = useState(false)
-    const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
     const [calendarId, setCalendarId] = useState<string | null>(null)
     const [priority, setPriority] = useState<Priority>(3)
 
@@ -90,19 +89,14 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
         setProjectId(null)
         setScheduledDate(undefined)
         setEstimatedTime(30)
-        setReminder(null)
+        setReminder(0)
         setIsDurationPickerOpen(false)
-        setIsDatePickerOpen(false)
         setCalendarId(null)
         setPriority(3)
     }, [])
 
     const handleScheduledDateChange = useCallback((nextDate: Date | undefined) => {
         setScheduledDate(nextDate)
-        setReminder(prev => {
-            if (!nextDate) return null
-            return prev === null ? 0 : prev
-        })
     }, [])
 
     const handleSubmit = useCallback(() => {
@@ -116,7 +110,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
             project_id: projectId,
             scheduled_at: scheduledDate ? scheduledDate.toISOString() : null,
             estimated_time: estimatedTime,
-            reminders: scheduledDate && reminder !== null && reminder >= 0 ? [reminder] : [],
+            reminders: reminder >= 0 ? [reminder] : [],
             calendar_id: calendarId,
             priority,
         })
@@ -216,8 +210,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
                             <DateTimePicker
                                 date={scheduledDate}
                                 setDate={handleScheduledDateChange}
-                                open={isDatePickerOpen}
-                                onOpenChange={setIsDatePickerOpen}
                                 trigger={
                                     <button
                                         type="button"
@@ -282,42 +274,27 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
                                 <Bell className="w-3 h-3" />
                                 通知
                             </label>
-                            {scheduledDate ? (
-                                <div className="relative">
-                                    <select
-                                        value={reminder ?? 0}
-                                        onChange={(e) => setReminder(Number(e.target.value))}
-                                        className={cn(
-                                            "w-full h-10 px-3 pr-9 rounded-md border border-input bg-background text-sm",
-                                            "focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
-                                        )}
-                                    >
-                                        {REMINDER_OPTIONS.map((option) => (
-                                            <option key={option.value} value={option.value}>
-                                                {option.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <ChevronDown className="w-4 h-4 text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
-                                </div>
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => setIsDatePickerOpen(true)}
+                            <div className="relative">
+                                <select
+                                    value={reminder}
+                                    onChange={(e) => setReminder(Number(e.target.value))}
                                     className={cn(
-                                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm text-left",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring",
-                                        "flex items-center justify-between gap-2 text-muted-foreground"
+                                        "w-full h-10 px-3 pr-9 rounded-md border border-input bg-background text-sm",
+                                        "focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
                                     )}
                                 >
-                                    <span>開始日時を設定して通知を有効化</span>
-                                    <ChevronDown className="w-4 h-4 flex-shrink-0" />
-                                </button>
-                            )}
+                                    {REMINDER_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="w-4 h-4 text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+                            </div>
                             <p className="text-[11px] text-muted-foreground mt-1">
                                 {!scheduledDate
-                                    ? "通知を設定するには開始日時が必要です。タップで日時入力を開けます"
-                                    : "開始日時を設定すると通知は「開始時刻」で自動ONになります"
+                                    ? "通知タイミングは先に選べます。開始日時を設定するとその設定で有効になります"
+                                    : "通知は選択したタイミングで有効です"
                                 }
                             </p>
                         </div>

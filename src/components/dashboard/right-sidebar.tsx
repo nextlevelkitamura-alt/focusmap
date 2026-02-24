@@ -2,8 +2,9 @@
 
 import { forwardRef } from "react"
 import { DesktopRightPanel, DesktopRightPanelRef } from "@/components/dashboard/desktop-right-panel"
-import { Task } from "@/types/database"
+import { Task, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
+import { type QuickTaskData } from "@/components/today/quick-task-fab"
 
 export interface RightSidebarRef {
     refreshCalendar: () => Promise<void>
@@ -14,6 +15,11 @@ export interface RightSidebarRef {
 interface RightSidebarProps {
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     tasks?: Task[]
+    projects?: Project[]
+    onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
+    onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
+    onDeleteTask?: (taskId: string) => Promise<void>
+    onOpenAiChat?: () => void
 }
 
 export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(function RightSidebar(props, ref) {
