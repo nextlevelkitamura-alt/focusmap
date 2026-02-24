@@ -30,6 +30,7 @@ interface DesktopTodayPanelProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
+    onOpenScheduling?: () => void
 }
 
 // --- Component ---
@@ -42,6 +43,7 @@ export function DesktopTodayPanel({
     onCreateSubTask,
     onDeleteTask,
     onOpenAiChat,
+    onOpenScheduling,
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
     const [isTaskFormOpen, setIsTaskFormOpen] = useState(false)
@@ -518,6 +520,7 @@ export function DesktopTodayPanel({
             {onCreateQuickTask && onOpenAiChat && (
                 <DesktopPanelFab
                     onOpenAiChat={onOpenAiChat}
+                    onOpenScheduling={onOpenScheduling}
                     onOpenTaskForm={() => setIsTaskFormOpen(true)}
                     isTaskFormOpen={isTaskFormOpen}
                 />

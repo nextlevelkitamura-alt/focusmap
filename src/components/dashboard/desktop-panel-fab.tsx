@@ -1,16 +1,17 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Plus, Sparkles, CalendarPlus } from "lucide-react"
+import { Plus, Sparkles, CalendarPlus, CalendarClock } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface DesktopPanelFabProps {
     onOpenAiChat: () => void
     onOpenTaskForm: () => void
+    onOpenScheduling?: () => void
     isTaskFormOpen: boolean
 }
 
-export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, isTaskFormOpen }: DesktopPanelFabProps) {
+export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, onOpenScheduling, isTaskFormOpen }: DesktopPanelFabProps) {
     const [isExpanded, setIsExpanded] = useState(false)
     const fabRef = useRef<HTMLDivElement>(null)
 
@@ -40,6 +41,11 @@ export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, isTaskFormOpen }
         setIsExpanded(false)
         onOpenAiChat()
     }, [onOpenAiChat])
+
+    const handleSchedulingClick = useCallback(() => {
+        setIsExpanded(false)
+        onOpenScheduling?.()
+    }, [onOpenScheduling])
 
     const handleTaskClick = useCallback(() => {
         setIsExpanded(false)
@@ -77,10 +83,32 @@ export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, isTaskFormOpen }
                 </button>
             </div>
 
+            {/* Scheduling button */}
+            {onOpenScheduling && (
+                <div
+                    className={cn(
+                        "flex items-center gap-2 transition-all duration-200 ease-out delay-75",
+                        isExpanded
+                            ? "opacity-100 scale-100 translate-y-0"
+                            : "opacity-0 scale-75 translate-y-2 pointer-events-none"
+                    )}
+                >
+                    <span className="text-xs font-medium text-foreground bg-background/90 backdrop-blur-sm px-2 py-1 rounded-md shadow-sm whitespace-nowrap">
+                        スケジュール調整
+                    </span>
+                    <button
+                        onClick={handleSchedulingClick}
+                        className="w-10 h-10 rounded-full bg-emerald-500 text-white shadow-md flex items-center justify-center hover:bg-emerald-600 active:scale-95 transition-all"
+                    >
+                        <CalendarClock className="w-4 h-4" />
+                    </button>
+                </div>
+            )}
+
             {/* AI chat button */}
             <div
                 className={cn(
-                    "flex items-center gap-2 transition-all duration-200 ease-out delay-75",
+                    "flex items-center gap-2 transition-all duration-200 ease-out delay-[150ms]",
                     isExpanded
                         ? "opacity-100 scale-100 translate-y-0"
                         : "opacity-0 scale-75 translate-y-2 pointer-events-none"

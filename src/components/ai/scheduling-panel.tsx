@@ -316,7 +316,7 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
       {!isOpen && !hideFab && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-20 right-20 z-50 w-12 h-12 bg-secondary text-secondary-foreground border border-border rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform md:bottom-6 md:right-[5rem]"
+          className="fixed bottom-20 right-20 z-50 w-12 h-12 bg-secondary text-secondary-foreground border border-border rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform md:hidden"
           title="スケジュール調整"
         >
           <CalendarClock className="w-5 h-5" />

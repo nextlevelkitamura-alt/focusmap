@@ -758,6 +758,7 @@ export function DashboardClient({
                             onCreateSubTask={handleCreateSubTask}
                             onDeleteTask={handleDeleteTaskFromToday}
                             onOpenScheduling={() => setIsSchedulingOpen(true)}
+                            onOpenAiChat={() => setIsAiChatOpen(true)}
                         />
                     </div>
                 )}
@@ -901,6 +902,7 @@ export function DashboardClient({
                         onCreateSubTask={handleCreateSubTask}
                         onDeleteTask={handleDeleteTaskFromToday}
                         onOpenAiChat={() => setIsAiChatOpen(true)}
+                        onOpenScheduling={() => setIsSchedulingOpen(true)}
                     />
                 </div>
             </div>

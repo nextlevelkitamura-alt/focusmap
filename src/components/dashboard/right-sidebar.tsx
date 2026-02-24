@@ -20,6 +20,7 @@ interface RightSidebarProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
+    onOpenScheduling?: () => void
 }
 
 export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(function RightSidebar(props, ref) {
