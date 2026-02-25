@@ -58,6 +58,9 @@ interface ChatMessage {
   bestProposalStatus?: 'pending' | 'accepted' | 'editing'
   proposalCards?: ProposalCard[]
   proposalUsed?: boolean
+  durationPrompt?: boolean
+  durationOptions?: number[]
+  durationPromptUsed?: boolean
 }
 
 interface CalendarEventData {
@@ -105,6 +108,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [durationSelections, setDurationSelections] = useState<Record<string, string>>({})
+  const [executionNotice, setExecutionNotice] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -140,13 +145,19 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     const trimmed = text.trim()
     if (!trimmed || isLoading) return
 
+    const baseMessages = messages.map(m =>
+      m.durationPrompt && !m.durationPromptUsed
+        ? { ...m, durationPromptUsed: true }
+        : m
+    )
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       content: trimmed,
     }
 
-    const updatedMessages = [...messages, userMessage]
+    const updatedMessages = [...baseMessages, userMessage]
     setMessages(updatedMessages)
     setInput("")
     setIsLoading(true)
@@ -170,7 +181,16 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         throw new Error(error || 'Chat failed')
       }
 
-      const { reply, action, options, plannerState, bestProposal, proposalCards } = await res.json()
+      const {
+        reply,
+        action,
+        options,
+        plannerState,
+        bestProposal,
+        proposalCards,
+        durationPrompt,
+        durationOptions,
+      } = await res.json()
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -183,8 +203,16 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         bestProposal,
         bestProposalStatus: bestProposal ? 'pending' : undefined,
         proposalCards: proposalCards?.length ? proposalCards : undefined,
+        durationPrompt: durationPrompt === true,
+        durationOptions: Array.isArray(durationOptions) ? durationOptions : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
+      if (durationPrompt === true) {
+        const first = Array.isArray(durationOptions) && durationOptions.length > 0
+          ? String(durationOptions[0])
+          : '15'
+        setDurationSelections(prev => ({ ...prev, [aiMessage.id]: first }))
+      }
     } catch (error) {
       const errMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -234,6 +262,11 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       // カレンダーイベント作成成功時に楽観的更新
       if (success && msg.action?.type === 'add_calendar_event') {
         onCalendarEventCreated?.(eventData)
+        const registeredAt = eventData?.scheduled_at
+          ? new Date(eventData.scheduled_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : null
+        setExecutionNotice(registeredAt ? `予定を登録しました（${registeredAt}）` : '予定を登録しました')
+        setTimeout(() => setExecutionNotice(null), 4500)
       }
     } catch {
       setMessages(prev => prev.map(m =>
@@ -261,6 +294,14 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       inputRef.current?.focus()
     }
   }, [sendMessage])
+
+  const handleDurationSelect = useCallback((messageId: string) => {
+    const selected = durationSelections[messageId] || '15'
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, durationPromptUsed: true } : m
+    ))
+    sendMessage(`${selected}分くらいです`)
+  }, [durationSelections, sendMessage])
 
   // ベスト提案を承認
   const handleAcceptProposal = useCallback((messageId: string) => {
@@ -303,6 +344,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const handleReset = useCallback(() => {
     setMessages([])
     setInput("")
+    setDurationSelections({})
+    setExecutionNotice(null)
   }, [])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -356,6 +399,12 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                 </Button>
               </div>
             </div>
+
+            {executionNotice && (
+              <div className="mx-3 mt-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-300">
+                {executionNotice}
+              </div>
+            )}
 
             {/* メッセージエリア */}
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
@@ -530,6 +579,42 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                     {msg.optionsUsed && msg.options && (
                       <div className="mt-1 text-xs opacity-50">
                         選択済み
+                      </div>
+                    )}
+
+                    {/* 所要時間選択（プルダウン + 自由入力併用） */}
+                    {msg.durationPrompt && !msg.durationPromptUsed && (
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
+                        <p className="text-xs opacity-80">このくらいかかりますか？</p>
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={durationSelections[msg.id] || String(msg.durationOptions?.[0] ?? 15)}
+                            onChange={(e) => setDurationSelections(prev => ({ ...prev, [msg.id]: e.target.value }))}
+                            className="h-8 rounded-md border bg-background px-2 text-xs"
+                            disabled={isLoading}
+                          >
+                            {(msg.durationOptions || [5, 10, 15, 20, 30, 45, 60, 90]).map((m) => (
+                              <option key={m} value={String(m)}>{m}分</option>
+                            ))}
+                          </select>
+                          <Button
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => handleDurationSelect(msg.id)}
+                            disabled={isLoading}
+                          >
+                            この時間で送信
+                          </Button>
+                        </div>
+                        <p className="text-[11px] opacity-70">
+                          もしくは下の入力欄で自由に入力できます（例: 7分 / 1時間半）
+                        </p>
+                      </div>
+                    )}
+
+                    {msg.durationPrompt && msg.durationPromptUsed && (
+                      <div className="mt-1 text-xs opacity-50">
+                        所要時間入力済み
                       </div>
                     )}
 

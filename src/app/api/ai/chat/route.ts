@@ -126,6 +126,101 @@ function isValidDateString(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
 }
 
+function extractDurationFromTimeRange(text: string): number | undefined {
+  const rangeMatch = text.match(/([01]?\d|2[0-3])\s*[:：時]\s*([0-5]?\d)?\s*[〜~\-]\s*([01]?\d|2[0-3])\s*[:：時]\s*([0-5]?\d)?/)
+  if (!rangeMatch) return undefined
+
+  const sh = Number(rangeMatch[1])
+  const sm = Number(rangeMatch[2] || '0')
+  const eh = Number(rangeMatch[3])
+  const em = Number(rangeMatch[4] || '0')
+  if ([sh, sm, eh, em].some(v => !Number.isFinite(v))) return undefined
+
+  const start = sh * 60 + sm
+  const end = eh * 60 + em
+  const diff = end - start
+  if (diff <= 0) return undefined
+  return clampDuration(diff)
+}
+
+function extractDurationHints(texts: string[]): number | undefined {
+  const explicit = extractExplicitDurationMinutes(texts)
+  if (explicit) return explicit
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const fromRange = extractDurationFromTimeRange(texts[i])
+    if (fromRange) return fromRange
+  }
+  return undefined
+}
+
+function hasApprovalIntent(text: string): boolean {
+  return /(登録して|入れて|それで|それでお願い|それでOK|ok|ＯＫ|お願いします|決定|確定)/i.test(text)
+}
+
+function findJsonFragment(source: string, startIndex: number) {
+  let start = -1
+  for (let i = startIndex; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '{' || ch === '[') {
+      start = i
+      break
+    }
+  }
+  if (start < 0) return undefined
+
+  const stack: string[] = []
+  let inString = false
+  let escape = false
+
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i]
+
+    if (inString) {
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (ch === '\\') {
+        escape = true
+        continue
+      }
+      if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+
+    if (ch === '{' || ch === '[') {
+      stack.push(ch)
+      continue
+    }
+
+    if (ch === '}' || ch === ']') {
+      const open = stack[stack.length - 1]
+      if ((open === '{' && ch === '}') || (open === '[' && ch === ']')) {
+        stack.pop()
+      } else {
+        return undefined
+      }
+
+      if (stack.length === 0) {
+        return {
+          start,
+          end: i + 1,
+          raw: source.slice(start, i + 1),
+        }
+      }
+    }
+  }
+
+  return undefined
+}
+
 // POST /api/ai/chat - AIチャット対話
 export async function POST(request: Request) {
   try {
@@ -213,6 +308,20 @@ export async function POST(request: Request) {
     const isSchedulingIntent = SCHEDULING_KEYWORDS.some(kw =>
       allMessages.some(text => text.includes(kw))
     )
+    const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
+    const explicitDuration = extractDurationHints(allUserTexts)
+    const needsDurationPrompt =
+      isSchedulingIntent &&
+      !explicitDuration &&
+      !hasApprovalIntent(message)
+
+    if (needsDurationPrompt) {
+      return NextResponse.json({
+        reply: 'この予定、どのくらいかかりそうですか？下のプルダウンから選ぶか、入力欄で自由に教えてください。',
+        durationPrompt: true,
+        durationOptions: [5, 10, 15, 20, 30, 45, 60, 90],
+      })
+    }
 
     // スケジューリング意図があり、カレンダー連携済みの場合、空き時間を取得
     let freeTimeContext = ''
@@ -409,16 +518,34 @@ ${freeTimeContext}`
     const extractJsonBlock = (source: string, blockName: string) => {
       const regex = new RegExp(`\`\`\`${blockName}\\s*\\n([\\s\\S]*?)\\n\`\`\``)
       const match = source.match(regex)
-      if (!match) return { value: undefined as unknown, text: source }
+      if (match) {
+        try {
+          const value = JSON.parse(match[1])
+          return {
+            value,
+            text: source.replace(regex, '').trim(),
+          }
+        } catch {
+          return { value: undefined as unknown, text: source.replace(regex, '').trim() }
+        }
+      }
+
+      const keywordRegex = new RegExp(`(?:^|\\n)\\s*${blockName}\\s*\\n?`, 'i')
+      const keywordMatch = source.match(keywordRegex)
+      if (!keywordMatch || keywordMatch.index === undefined) {
+        return { value: undefined as unknown, text: source }
+      }
+
+      const fragment = findJsonFragment(source, keywordMatch.index + keywordMatch[0].length)
+      if (!fragment) return { value: undefined as unknown, text: source }
 
       try {
-        const value = JSON.parse(match[1])
-        return {
-          value,
-          text: source.replace(regex, '').trim(),
-        }
+        const value = JSON.parse(fragment.raw)
+        const start = keywordMatch.index
+        const text = (source.slice(0, start) + source.slice(fragment.end)).trim()
+        return { value, text }
       } catch {
-        return { value: undefined as unknown, text: source.replace(regex, '').trim() }
+        return { value: undefined as unknown, text: source }
       }
     }
 
@@ -489,8 +616,7 @@ ${freeTimeContext}`
 
     // --- Safety normalization layer ---
     // AIの揺らぎで不自然な時間・duration・calendar_idが出ても、サーバー側で補正する
-    const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
-    const explicitDuration = extractExplicitDurationMinutes(allUserTexts)
+    const explicitDurationForNormalization = extractDurationHints(allUserTexts)
     const lastUserText = allUserTexts[allUserTexts.length - 1] || ''
     const inferredCalendarFromText = resolveCalendarIdFromText(lastUserText, userCalendarsForResolution)
     const validCalendarIds = new Set(userCalendarsForResolution.map(c => c.id))
@@ -504,7 +630,7 @@ ${freeTimeContext}`
         const inferredDuration = endDate
           ? Math.round((endDate.getTime() - startDate.getTime()) / 60000)
           : bestProposal.duration
-        const normalizedDuration = clampDuration(explicitDuration ?? inferredDuration ?? 60)
+        const normalizedDuration = clampDuration(explicitDurationForNormalization ?? inferredDuration ?? 60)
         const normalizedEnd = new Date(normalizedStart.getTime() + normalizedDuration * 60 * 1000)
         const normalizedCalendarId = validCalendarIds.has(bestProposal.calendarId)
           ? bestProposal.calendarId
@@ -532,7 +658,7 @@ ${freeTimeContext}`
       const proposedDuration = Number.isFinite(proposedDurationRaw)
         ? proposedDurationRaw
         : (bestProposal?.duration ?? 60)
-      const normalizedDuration = clampDuration(explicitDuration ?? proposedDuration)
+      const normalizedDuration = clampDuration(explicitDurationForNormalization ?? proposedDuration)
 
       if (proposedStart) {
         let normalizedStart = snapToFiveMinutes(proposedStart)
