@@ -16,15 +16,26 @@ interface ChatOption {
   value: string
 }
 
+interface ChatAction {
+  type: string
+  params: Record<string, unknown>
+  description: string
+}
+
+interface CalendarChoice {
+  id: string
+  name: string
+  isDefault: boolean
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  action?: {
-    type: string
-    params: Record<string, unknown>
-    description: string
-  }
+  action?: ChatAction
+  pendingAction?: ChatAction
+  calendarChoices?: CalendarChoice[]
+  calendarChoiceUsed?: boolean
   actionStatus?: 'pending' | 'executing' | 'success' | 'error'
   options?: ChatOption[]
   optionsUsed?: boolean
@@ -111,6 +122,8 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
     return res.json() as Promise<{
       reply: string
       action?: ChatMessage['action']
+      pendingAction?: ChatMessage['pendingAction']
+      calendarChoices?: ChatMessage['calendarChoices']
       slots?: TimeSlot[]
       options?: ChatOption[]
       shouldReset?: boolean
@@ -134,7 +147,7 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
     setIsLoading(true)
 
     try {
-      const { reply, action, slots, options, shouldReset } = await callSchedulingApi(trimmed, updatedMessages)
+      const { reply, action, pendingAction, calendarChoices, slots, options, shouldReset } = await callSchedulingApi(trimmed, updatedMessages)
 
       if (shouldReset) {
         setMessages(prev => [...prev, {
@@ -150,7 +163,9 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
         role: 'assistant',
         content: reply,
         action,
-        actionStatus: action ? 'pending' : undefined,
+        pendingAction,
+        calendarChoices: calendarChoices?.length ? calendarChoices : undefined,
+        actionStatus: action || pendingAction ? 'pending' : undefined,
         options: options?.length ? options : undefined,
         slots: slots?.length ? slots : undefined,
       }
@@ -211,9 +226,59 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
 
   const handleCancelAction = useCallback((messageId: string) => {
     setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, action: undefined, actionStatus: undefined } : m
+      m.id === messageId ? { ...m, action: undefined, pendingAction: undefined, calendarChoices: undefined, actionStatus: undefined } : m
     ))
   }, [])
+
+  const handleCalendarChoiceSelect = useCallback(async (messageId: string, choice: CalendarChoice) => {
+    const msg = messages.find(m => m.id === messageId)
+    if (!msg?.pendingAction) return
+
+    const action: ChatAction = {
+      ...msg.pendingAction,
+      params: {
+        ...(msg.pendingAction.params || {}),
+        calendar_id: choice.id,
+      },
+    }
+
+    setMessages(prev => prev.map(m =>
+      m.id === messageId
+        ? { ...m, actionStatus: 'executing' as const, calendarChoiceUsed: true }
+        : m
+    ))
+
+    try {
+      const res = await fetch('/api/ai/scheduling/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+
+      const { success, message, eventData } = await res.json()
+
+      setMessages(prev => [
+        ...prev.map(m =>
+          m.id === messageId
+            ? { ...m, actionStatus: success ? 'success' as const : 'error' as const }
+            : m
+        ),
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant' as const,
+          content: message,
+        },
+      ])
+
+      if (success && action.type === 'add_calendar_event') {
+        onCalendarEventCreated?.(eventData)
+      }
+    } catch {
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
+      ))
+    }
+  }, [messages, onCalendarEventCreated])
 
   // 選択肢ボタン選択
   const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
@@ -234,13 +299,15 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
       setIsLoading(true)
 
       callSchedulingApi(option.value, allMessages)
-        .then(({ reply, action, slots, options: opts }) => {
+        .then(({ reply, action, pendingAction, calendarChoices, slots, options: opts }) => {
           setMessages(prev => [...prev, {
             id: crypto.randomUUID(),
             role: 'assistant',
             content: reply,
             action,
-            actionStatus: action ? 'pending' : undefined,
+            pendingAction,
+            calendarChoices: calendarChoices?.length ? calendarChoices : undefined,
+            actionStatus: action || pendingAction ? 'pending' : undefined,
             options: opts?.length ? opts : undefined,
             slots: slots?.length ? slots : undefined,
           }])
@@ -277,13 +344,15 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
     setIsLoading(true)
 
     callSchedulingApi(userMessage.content, allMessages)
-      .then(({ reply, action, slots: newSlots, options: opts }) => {
+      .then(({ reply, action, pendingAction, calendarChoices, slots: newSlots, options: opts }) => {
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           role: 'assistant',
           content: reply,
           action,
-          actionStatus: action ? 'pending' : undefined,
+          pendingAction,
+          calendarChoices: calendarChoices?.length ? calendarChoices : undefined,
+          actionStatus: action || pendingAction ? 'pending' : undefined,
           options: opts?.length ? opts : undefined,
           slots: newSlots?.length ? newSlots : undefined,
         }])
@@ -393,6 +462,26 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
                   )}>
                     <p className="whitespace-pre-wrap">{msg.content}</p>
 
+                    {msg.pendingAction && msg.calendarChoices && msg.actionStatus === 'pending' && !msg.calendarChoiceUsed && (
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
+                        <p className="text-xs opacity-80">保存先カレンダーを選んでください</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.calendarChoices.map((choice) => (
+                            <Button
+                              key={choice.id}
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => handleCalendarChoiceSelect(msg.id, choice)}
+                              disabled={isLoading}
+                            >
+                              {choice.name}{choice.isDefault ? ' (デフォルト)' : ''}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* タイムスロットカード */}
                     {msg.slots && (
                       <TimeSlotCards
@@ -449,6 +538,10 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
                         <XCircle className="w-3 h-3" />
                         失敗
                       </div>
+                    )}
+
+                    {msg.calendarChoiceUsed && msg.pendingAction && msg.actionStatus === 'pending' && (
+                      <p className="mt-1 text-xs opacity-50">カレンダー選択済み</p>
                     )}
 
                     {/* 選択肢ボタン */}

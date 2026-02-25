@@ -122,6 +122,17 @@ function resolveCalendarIdFromText(
   return undefined
 }
 
+function resolveCalendarIdFromTexts(
+  texts: string[],
+  calendars: Array<{ id: string; name: string }>,
+): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const found = resolveCalendarIdFromText(texts[i], calendars)
+    if (found) return found
+  }
+  return undefined
+}
+
 function isValidDateString(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
 }
@@ -618,8 +629,10 @@ ${freeTimeContext}`
     // AIの揺らぎで不自然な時間・duration・calendar_idが出ても、サーバー側で補正する
     const explicitDurationForNormalization = extractDurationHints(allUserTexts)
     const lastUserText = allUserTexts[allUserTexts.length - 1] || ''
-    const inferredCalendarFromText = resolveCalendarIdFromText(lastUserText, userCalendarsForResolution)
+    const inferredCalendarFromText = resolveCalendarIdFromTexts(allUserTexts, userCalendarsForResolution)
     const validCalendarIds = new Set(userCalendarsForResolution.map(c => c.id))
+    let pendingAction: ChatMessage['action'] | undefined
+    let calendarChoices: Array<{ id: string; name: string; isDefault: boolean }> | undefined
 
     if (bestProposal) {
       const startDate = isValidDateString(bestProposal.startAt) ? new Date(bestProposal.startAt) : null
@@ -668,20 +681,42 @@ ${freeTimeContext}`
       params.estimated_time = normalizedDuration
 
       const rawCalendarId = typeof params.calendar_id === 'string' ? params.calendar_id : undefined
+      const hasMultipleCalendars = validCalendarIds.size > 1
+      const explicitCalendarId = inferredCalendarFromText
       const normalizedCalendarId = rawCalendarId && validCalendarIds.has(rawCalendarId)
         ? rawCalendarId
-        : (inferredCalendarFromText || bestProposal?.calendarId || defaultCalendarId)
-      params.calendar_id = normalizedCalendarId
+        : (explicitCalendarId || bestProposal?.calendarId || defaultCalendarId)
 
-      action = {
-        ...action,
-        params,
+      if (hasMultipleCalendars && !explicitCalendarId) {
+        delete params.calendar_id
+        pendingAction = {
+          ...action,
+          params,
+          description: 'どのカレンダーに登録しますか？',
+        }
+        calendarChoices = userCalendarsForResolution.map((calendar) => ({
+          id: calendar.id,
+          name: calendar.name || calendar.id,
+          isDefault: calendar.id === defaultCalendarId,
+        }))
+        action = undefined
+        if (!replyText) {
+          replyText = '保存先カレンダーを選んでください。'
+        }
+      } else {
+        params.calendar_id = normalizedCalendarId
+        action = {
+          ...action,
+          params,
+        }
       }
     }
 
     return NextResponse.json({
       reply: replyText,
       action,
+      pendingAction,
+      calendarChoices,
       options,
       plannerState,
       bestProposal,

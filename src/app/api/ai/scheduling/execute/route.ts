@@ -35,6 +35,22 @@ export async function POST(request: Request) {
       project_id?: string
     }
 
+    if (calendar_id) {
+      const { data: ownedCalendar, error: calendarLookupError } = await supabase
+        .from('user_calendars')
+        .select('google_calendar_id')
+        .eq('user_id', user.id)
+        .eq('google_calendar_id', calendar_id)
+        .maybeSingle()
+      if (calendarLookupError) throw calendarLookupError
+      if (!ownedCalendar) {
+        return NextResponse.json(
+          { success: false, message: '❌ 選択したカレンダーは利用できません' },
+          { status: 400 }
+        )
+      }
+    }
+
     const taskId = crypto.randomUUID()
     const estMin = estimated_time || 60
 

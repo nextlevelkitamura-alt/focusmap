@@ -15,6 +15,18 @@ interface ChatOption {
   value: string
 }
 
+interface ChatAction {
+  type: string
+  params: Record<string, unknown>
+  description: string
+}
+
+interface CalendarChoice {
+  id: string
+  name: string
+  isDefault: boolean
+}
+
 interface ProposalCard {
   id: string
   title: string
@@ -45,11 +57,10 @@ interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  action?: {
-    type: string
-    params: Record<string, unknown>
-    description: string
-  }
+  action?: ChatAction
+  pendingAction?: ChatAction
+  calendarChoices?: CalendarChoice[]
+  calendarChoiceUsed?: boolean
   actionStatus?: 'pending' | 'executing' | 'success' | 'error'
   options?: ChatOption[]
   optionsUsed?: boolean
@@ -184,6 +195,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       const {
         reply,
         action,
+        pendingAction,
+        calendarChoices,
         options,
         plannerState,
         bestProposal,
@@ -197,7 +210,9 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         role: 'assistant',
         content: reply,
         action,
-        actionStatus: action ? 'pending' : undefined,
+        pendingAction,
+        calendarChoices: calendarChoices?.length ? calendarChoices : undefined,
+        actionStatus: action || pendingAction ? 'pending' : undefined,
         options: options?.length ? options : undefined,
         plannerState,
         bestProposal,
@@ -278,9 +293,64 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   // アクションキャンセル
   const handleCancelAction = useCallback((messageId: string) => {
     setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, action: undefined, actionStatus: undefined } : m
+      m.id === messageId ? { ...m, action: undefined, pendingAction: undefined, calendarChoices: undefined, actionStatus: undefined } : m
     ))
   }, [])
+
+  const handleCalendarChoiceSelect = useCallback(async (messageId: string, choice: CalendarChoice) => {
+    const msg = messages.find(m => m.id === messageId)
+    if (!msg?.pendingAction) return
+
+    const action: ChatAction = {
+      ...msg.pendingAction,
+      params: {
+        ...(msg.pendingAction.params || {}),
+        calendar_id: choice.id,
+      },
+    }
+
+    setMessages(prev => prev.map(m =>
+      m.id === messageId
+        ? { ...m, actionStatus: 'executing' as const, calendarChoiceUsed: true }
+        : m
+    ))
+
+    try {
+      const res = await fetch('/api/ai/chat/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+
+      const { success, message, eventData } = await res.json()
+
+      setMessages(prev => [
+        ...prev.map(m =>
+          m.id === messageId
+            ? { ...m, actionStatus: success ? 'success' as const : 'error' as const }
+            : m
+        ),
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant' as const,
+          content: message,
+        },
+      ])
+
+      if (success && action.type === 'add_calendar_event') {
+        onCalendarEventCreated?.(eventData)
+        const registeredAt = eventData?.scheduled_at
+          ? new Date(eventData.scheduled_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : null
+        setExecutionNotice(registeredAt ? `予定を登録しました（${registeredAt}）` : '予定を登録しました')
+        setTimeout(() => setExecutionNotice(null), 4500)
+      }
+    } catch {
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
+      ))
+    }
+  }, [messages, onCalendarEventCreated])
 
   // 選択肢ボタンクリック
   const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
@@ -443,6 +513,26 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                   )}>
                     <p className="whitespace-pre-wrap">{msg.content}</p>
 
+                    {msg.pendingAction && msg.calendarChoices && msg.actionStatus === 'pending' && !msg.calendarChoiceUsed && (
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
+                        <p className="text-xs opacity-80">保存先カレンダーを選んでください</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.calendarChoices.map((choice) => (
+                            <Button
+                              key={choice.id}
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => handleCalendarChoiceSelect(msg.id, choice)}
+                              disabled={isLoading}
+                            >
+                              {choice.name}{choice.isDefault ? ' (デフォルト)' : ''}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* アクション確認ボタン */}
                     {msg.action && msg.actionStatus === 'pending' && (
                       <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
@@ -488,6 +578,12 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       <div className="mt-1 flex items-center gap-1 text-xs text-red-600">
                         <XCircle className="w-3 h-3" />
                         失敗
+                      </div>
+                    )}
+
+                    {msg.calendarChoiceUsed && msg.pendingAction && msg.actionStatus === 'pending' && (
+                      <div className="mt-1 text-xs opacity-50">
+                        カレンダー選択済み
                       </div>
                     )}
 

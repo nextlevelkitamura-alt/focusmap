@@ -56,6 +56,22 @@ function snapToFiveMinutes(date: Date): Date {
   return d
 }
 
+function resolveCalendarIdFromTexts(
+  texts: string[],
+  calendars: Array<{ google_calendar_id: string; name: string | null }>,
+): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const latest = texts[i].toLowerCase()
+    for (const calendar of calendars) {
+      if (!calendar.google_calendar_id || !calendar.name) continue
+      if (latest.includes(calendar.name.toLowerCase())) {
+        return calendar.google_calendar_id
+      }
+    }
+  }
+  return undefined
+}
+
 // POST /api/ai/scheduling - スケジューリング特化AIチャット
 export async function POST(request: Request) {
   try {
@@ -293,14 +309,9 @@ ${freeTimeContext}`
     const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
     const explicitDuration = extractExplicitDurationMinutes(allUserTexts)
     const validCalendarIds = new Set(calendarIds)
-    const inferredCalendarId = (() => {
-      const latest = (allUserTexts[allUserTexts.length - 1] || '').toLowerCase()
-      for (const c of userCalendars || []) {
-        if (!c.google_calendar_id || !c.name) continue
-        if (latest.includes(c.name.toLowerCase())) return c.google_calendar_id
-      }
-      return undefined
-    })()
+    const inferredCalendarId = resolveCalendarIdFromTexts(allUserTexts, userCalendars || [])
+    let pendingAction: { type: string; params: Record<string, unknown>; description: string } | undefined
+    let calendarChoices: Array<{ id: string; name: string; isDefault: boolean }> | undefined
 
     if (action?.type === 'add_calendar_event') {
       const params = { ...(action.params || {}) } as Record<string, unknown>
@@ -314,16 +325,39 @@ ${freeTimeContext}`
       }
 
       const rawCalendar = typeof params.calendar_id === 'string' ? params.calendar_id : undefined
-      params.calendar_id = (rawCalendar && validCalendarIds.has(rawCalendar))
+      const normalizedCalendarId = (rawCalendar && validCalendarIds.has(rawCalendar))
         ? rawCalendar
         : (inferredCalendarId || defaultCalendarId)
-
-      action = { ...action, params }
+      const hasMultipleCalendars = validCalendarIds.size > 1
+      if (hasMultipleCalendars && !inferredCalendarId) {
+        delete params.calendar_id
+        pendingAction = {
+          ...action,
+          params,
+          description: 'どのカレンダーに登録しますか？',
+        }
+        calendarChoices = (userCalendars || [])
+          .filter(c => !!c.google_calendar_id)
+          .map((c) => ({
+            id: c.google_calendar_id,
+            name: c.name || c.google_calendar_id,
+            isDefault: c.google_calendar_id === defaultCalendarId,
+          }))
+        action = undefined
+        if (!replyText) {
+          replyText = '保存先カレンダーを選んでください。'
+        }
+      } else {
+        params.calendar_id = normalizedCalendarId
+        action = { ...action, params }
+      }
     }
 
     return NextResponse.json({
       reply: replyText,
       action,
+      pendingAction,
+      calendarChoices,
       slots,
       options,
     })
