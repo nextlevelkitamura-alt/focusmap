@@ -293,13 +293,13 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         <>
           {/* バックドロップ (モバイル) */}
           <div
-            className="fixed inset-0 bg-black/20 z-50 md:hidden"
+            className="fixed inset-0 bg-black/20 z-[80] md:hidden"
             onClick={() => setIsOpen(false)}
           />
 
           <div className={cn(
-            "fixed z-50 bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
-            "bottom-0 left-0 right-0 h-[60vh]",
+            "fixed z-[90] bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
+            "bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-0 right-0 h-[60dvh]",
             "md:bottom-6 md:right-6 md:left-auto md:w-[400px] md:h-[520px]",
           )}>
             {/* ヘッダー */}

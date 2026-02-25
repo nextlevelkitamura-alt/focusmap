@@ -328,13 +328,13 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
         <>
           {/* バックドロップ (モバイル) */}
           <div
-            className="fixed inset-0 bg-black/20 z-50 md:hidden"
+            className="fixed inset-0 bg-black/20 z-[80] md:hidden"
             onClick={() => setIsOpen(false)}
           />
 
           <div className={cn(
-            "fixed z-50 bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
-            "bottom-0 left-0 right-0 h-[65vh]",
+            "fixed z-[90] bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
+            "bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-0 right-0 h-[65dvh]",
             "md:bottom-6 md:right-[5rem] md:left-auto md:w-[400px] md:h-[560px]",
           )}>
             {/* ヘッダー */}
