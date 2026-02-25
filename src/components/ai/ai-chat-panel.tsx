@@ -15,6 +15,47 @@ interface ChatOption {
   value: string
 }
 
+interface UiControlOption {
+  label: string
+  value: string
+}
+
+type PlannerState =
+  | 'capture_intent'
+  | 'fill_required_slots'
+  | 'propose_slots'
+  | 'resolve_conflict'
+  | 'confirm_and_execute'
+
+interface UiControl {
+  type: 'select' | 'text'
+  key: 'scheduleWindow' | 'duration' | 'calendarId' | 'freeText'
+  label: string
+  required?: boolean
+  options?: UiControlOption[]
+  placeholder?: string
+  allowCustom?: boolean
+}
+
+interface ProposalCard {
+  id: string
+  title: string
+  startAt: string
+  endAt: string
+  calendarId: string
+  reason: string
+  impact?: string
+  value?: string
+}
+
+interface PlannerDraft {
+  scheduleWindow?: 'today' | 'within_3_days' | 'this_week' | 'this_month'
+  durationMinutes?: number
+  durationText?: string
+  calendarId?: string
+  freeText?: string
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -27,6 +68,11 @@ interface ChatMessage {
   actionStatus?: 'pending' | 'executing' | 'success' | 'error'
   options?: ChatOption[]
   optionsUsed?: boolean
+  plannerState?: PlannerState
+  uiControls?: UiControl[]
+  uiControlsUsed?: boolean
+  proposalCards?: ProposalCard[]
+  proposalUsed?: boolean
 }
 
 interface CalendarEventData {
@@ -62,6 +108,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [plannerDraft, setPlannerDraft] = useState<PlannerDraft>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -86,6 +133,20 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [isOpen])
+
+  const buildRequestContext = useCallback(() => ({
+    activeNoteId: activeNoteId || undefined,
+    activeProjectId: activeProjectId || undefined,
+    planner: {
+      mode: 'task_planner' as const,
+      draftPlan: {
+        scheduleWindow: plannerDraft.scheduleWindow,
+        durationMinutes: plannerDraft.durationMinutes,
+        durationText: plannerDraft.durationText,
+        calendarId: plannerDraft.calendarId,
+      },
+    },
+  }), [activeNoteId, activeProjectId, plannerDraft])
 
   // メッセージ送信（共通ロジック）
   const sendMessage = useCallback(async (text: string) => {
@@ -113,10 +174,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             role: m.role,
             content: m.content,
           })),
-          context: {
-            activeNoteId: activeNoteId || undefined,
-            activeProjectId: activeProjectId || undefined,
-          },
+          context: buildRequestContext(),
         }),
       })
 
@@ -125,7 +183,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         throw new Error(error || 'Chat failed')
       }
 
-      const { reply, action, options } = await res.json()
+      const { reply, action, options, plannerState, uiControls, proposalCards } = await res.json()
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -134,6 +192,9 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         action,
         actionStatus: action ? 'pending' : undefined,
         options: options?.length ? options : undefined,
+        plannerState,
+        uiControls: uiControls?.length ? uiControls : undefined,
+        proposalCards: proposalCards?.length ? proposalCards : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
     } catch (error) {
@@ -146,7 +207,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, activeNoteId, activeProjectId])
+  }, [isLoading, messages, buildRequestContext])
 
   // テキスト入力から送信
   const handleSend = useCallback(() => {
@@ -202,71 +263,81 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
   // 選択肢ボタンクリック
   const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
-    // 選択肢を使用済みにする
     setMessages(prev => prev.map(m =>
       m.id === messageId ? { ...m, optionsUsed: true } : m
     ))
 
     if (option.value) {
-      // valueをユーザーメッセージとして送信
-      setInput(option.value)
-      // 次のティックで送信（inputが更新されてから）
-      setTimeout(() => {
-        setInput('')
-        const userMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: option.value,
-        }
-        setMessages(prev => [...prev, userMessage])
-        // handleSend相当の処理を直接実行
-        setIsLoading(true)
-        fetch('/api/ai/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: option.value,
-            history: [...messages.filter(m => !m.optionsUsed || m.role === 'user'), userMessage].map(m => ({
-              role: m.role,
-              content: m.content,
-            })),
-            context: {
-              activeNoteId: activeNoteId || undefined,
-              activeProjectId: activeProjectId || undefined,
-            },
-          }),
-        })
-          .then(res => res.json())
-          .then(({ reply, action, options: opts }) => {
-            const aiMsg: ChatMessage = {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: reply,
-              action,
-              actionStatus: action ? 'pending' : undefined,
-              options: opts?.length ? opts : undefined,
-            }
-            setMessages(prev => [...prev, aiMsg])
-          })
-          .catch(() => {
-            setMessages(prev => [...prev, {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: 'エラーが発生しました。もう一度お試しください。',
-            }])
-          })
-          .finally(() => setIsLoading(false))
-      }, 0)
+      sendMessage(option.value)
     } else {
-      // 「自分で入力」→ 入力欄にフォーカス
       inputRef.current?.focus()
     }
-  }, [messages, activeNoteId, activeProjectId])
+  }, [sendMessage])
+
+  const handlePlannerControlChange = useCallback((key: UiControl['key'], value: string) => {
+    setPlannerDraft(prev => {
+      if (key === 'scheduleWindow') {
+        return { ...prev, scheduleWindow: value as PlannerDraft['scheduleWindow'] }
+      }
+      if (key === 'calendarId') {
+        return { ...prev, calendarId: value }
+      }
+      if (key === 'duration') {
+        if (value === '__custom__') {
+          return { ...prev, durationMinutes: undefined, durationText: prev.durationText || '' }
+        }
+        const parsed = Number(value)
+        if (!Number.isNaN(parsed) && parsed > 0) {
+          return { ...prev, durationMinutes: parsed, durationText: undefined }
+        }
+      }
+      return { ...prev, freeText: value }
+    })
+  }, [])
+
+  const handlePlannerCustomDurationChange = useCallback((value: string) => {
+    setPlannerDraft(prev => ({
+      ...prev,
+      durationMinutes: undefined,
+      durationText: value,
+    }))
+  }, [])
+
+  const handleApplyUiControls = useCallback((messageId: string, controls: UiControl[]) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, uiControlsUsed: true } : m
+    ))
+
+    const windowLabels: Record<string, string> = {
+      today: '今日',
+      within_3_days: '3日以内',
+      this_week: '今週',
+      this_month: '今月',
+    }
+    const scheduleWindow = plannerDraft.scheduleWindow ? windowLabels[plannerDraft.scheduleWindow] : '未指定'
+    const duration = plannerDraft.durationText?.trim()
+      || (plannerDraft.durationMinutes ? `${plannerDraft.durationMinutes}分` : '未指定')
+    const calendarName = controls
+      .find(c => c.key === 'calendarId')
+      ?.options?.find(o => o.value === plannerDraft.calendarId)?.label || '未指定'
+    const freeText = plannerDraft.freeText?.trim() ? ` 補足: ${plannerDraft.freeText.trim()}` : ''
+
+    sendMessage(`追加時期は${scheduleWindow}、所要時間は${duration}、カレンダーは${calendarName}で進めて。${freeText}`.trim())
+  }, [plannerDraft, sendMessage])
+
+  const handleProposalSelect = useCallback((messageId: string, proposal: ProposalCard) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, proposalUsed: true } : m
+    ))
+
+    sendMessage(proposal.value || `${proposal.title}を${proposal.startAt}開始で登録して`)
+  }, [sendMessage])
 
   // リセット
   const handleReset = useCallback(() => {
     setMessages([])
     setInput("")
+    setPlannerDraft({})
   }, [])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -428,6 +499,96 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       <div className="mt-1 text-xs opacity-50">
                         選択済み
                       </div>
+                    )}
+
+                    {/* プランナーUIコントロール */}
+                    {msg.uiControls && !msg.uiControlsUsed && (
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-2">
+                        {msg.uiControls.map((control, i) => (
+                          <div key={`${control.key}-${i}`} className="space-y-1">
+                            <p className="text-xs opacity-80">{control.label}{control.required ? ' *' : ''}</p>
+
+                            {control.type === 'select' ? (
+                              <>
+                                <select
+                                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                                  value={
+                                    control.key === 'scheduleWindow' ? (plannerDraft.scheduleWindow || '') :
+                                      control.key === 'calendarId' ? (plannerDraft.calendarId || '') :
+                                        control.key === 'duration' ? (plannerDraft.durationMinutes ? String(plannerDraft.durationMinutes) : plannerDraft.durationText ? '__custom__' : '') :
+                                          ''
+                                  }
+                                  onChange={(e) => handlePlannerControlChange(control.key, e.target.value)}
+                                >
+                                  <option value="">選択してください</option>
+                                  {control.options?.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                  {control.allowCustom && (
+                                    <option value="__custom__">自由入力</option>
+                                  )}
+                                </select>
+                                {control.allowCustom && (
+                                  <input
+                                    type="text"
+                                    value={plannerDraft.durationText || ''}
+                                    placeholder="例: 45分 / 6時間"
+                                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                                    onChange={(e) => handlePlannerCustomDurationChange(e.target.value)}
+                                  />
+                                )}
+                              </>
+                            ) : (
+                              <input
+                                type="text"
+                                value={plannerDraft.freeText || ''}
+                                placeholder={control.placeholder || '補足を入力'}
+                                className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                                onChange={(e) => handlePlannerControlChange(control.key, e.target.value)}
+                              />
+                            )}
+                          </div>
+                        ))}
+
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => handleApplyUiControls(msg.id, msg.uiControls || [])}
+                          disabled={isLoading}
+                        >
+                          この条件で提案を作る
+                        </Button>
+                      </div>
+                    )}
+
+                    {msg.uiControlsUsed && msg.uiControls && (
+                      <p className="mt-1 text-xs opacity-50">入力済み</p>
+                    )}
+
+                    {/* 候補時間カード */}
+                    {msg.proposalCards && !msg.proposalUsed && (
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
+                        {msg.proposalCards.map((proposal) => (
+                          <button
+                            key={proposal.id}
+                            className="w-full rounded-lg border border-border bg-background/60 px-2 py-1.5 text-left hover:bg-background"
+                            onClick={() => handleProposalSelect(msg.id, proposal)}
+                            disabled={isLoading}
+                          >
+                            <p className="text-xs font-medium">{proposal.title}</p>
+                            <p className="text-[11px] opacity-80">
+                              {new Date(proposal.startAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              {' - '}
+                              {new Date(proposal.endAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                            <p className="text-[11px] opacity-70">{proposal.reason}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {msg.proposalUsed && msg.proposalCards && (
+                      <p className="mt-1 text-xs opacity-50">候補選択済み</p>
                     )}
                   </div>
                 </div>
