@@ -69,9 +69,6 @@ interface ChatMessage {
   bestProposalStatus?: 'pending' | 'accepted' | 'editing'
   proposalCards?: ProposalCard[]
   proposalUsed?: boolean
-  durationPrompt?: boolean
-  durationOptions?: number[]
-  durationPromptUsed?: boolean
 }
 
 interface CalendarEventData {
@@ -91,7 +88,7 @@ interface AiChatPanelProps {
   onOpenChange?: (open: boolean) => void
 }
 
-const MAX_RALLIES = 7
+const MAX_RALLIES = 15
 
 function formatDateTimeRange(startAt: string, endAt: string): string {
   const start = new Date(startAt)
@@ -119,8 +116,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [durationSelections, setDurationSelections] = useState<Record<string, string>>({})
   const [executionNotice, setExecutionNotice] = useState<string | null>(null)
+  const [isSummarizing, setIsSummarizing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -156,19 +153,13 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     const trimmed = text.trim()
     if (!trimmed || isLoading) return
 
-    const baseMessages = messages.map(m =>
-      m.durationPrompt && !m.durationPromptUsed
-        ? { ...m, durationPromptUsed: true }
-        : m
-    )
-
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       content: trimmed,
     }
 
-    const updatedMessages = [...baseMessages, userMessage]
+    const updatedMessages = [...messages, userMessage]
     setMessages(updatedMessages)
     setInput("")
     setIsLoading(true)
@@ -201,9 +192,21 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         plannerState,
         bestProposal,
         proposalCards,
-        durationPrompt,
-        durationOptions,
+        shouldSummarize,
       } = await res.json()
+
+      // サーバーから要約指示が来た場合、自動要約を実行
+      if (shouldSummarize) {
+        const aiMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: reply,
+        }
+        setMessages(prev => [...prev, aiMessage])
+        // 自動要約をトリガー
+        await summarizeAndContinue([...updatedMessages, aiMessage])
+        return
+      }
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -218,16 +221,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         bestProposal,
         bestProposalStatus: bestProposal ? 'pending' : undefined,
         proposalCards: proposalCards?.length ? proposalCards : undefined,
-        durationPrompt: durationPrompt === true,
-        durationOptions: Array.isArray(durationOptions) ? durationOptions : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
-      if (durationPrompt === true) {
-        const first = Array.isArray(durationOptions) && durationOptions.length > 0
-          ? String(durationOptions[0])
-          : '15'
-        setDurationSelections(prev => ({ ...prev, [aiMessage.id]: first }))
-      }
     } catch (error) {
       const errMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -365,14 +360,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     }
   }, [sendMessage])
 
-  const handleDurationSelect = useCallback((messageId: string) => {
-    const selected = durationSelections[messageId] || '15'
-    setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, durationPromptUsed: true } : m
-    ))
-    sendMessage(`${selected}分くらいです`)
-  }, [durationSelections, sendMessage])
-
   // ベスト提案を承認
   const handleAcceptProposal = useCallback((messageId: string) => {
     const msg = messages.find(m => m.id === messageId)
@@ -410,13 +397,52 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     sendMessage(proposal.value || `${proposal.title}を${proposal.startAt}開始で登録して`)
   }, [sendMessage])
 
+  // 会話を要約して継続
+  const summarizeAndContinue = useCallback(async (messagesToSummarize: ChatMessage[]) => {
+    setIsSummarizing(true)
+    try {
+      const res = await fetch('/api/ai/chat/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: messagesToSummarize }),
+      })
+      if (res.ok) {
+        const { summary } = await res.json()
+        const contextMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `(前の会話の要約)\n${summary}\n\n引き続きお手伝いします！`,
+        }
+        setMessages([contextMessage])
+      } else {
+        // 要約失敗時はリセット
+        setMessages([])
+      }
+    } catch {
+      setMessages([])
+    } finally {
+      setIsSummarizing(false)
+    }
+  }, [])
+
   // リセット
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
+    // メッセージが2件以上ある場合は要約を保存
+    if (messages.length >= 2) {
+      try {
+        await fetch('/api/ai/chat/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages }),
+        })
+      } catch {
+        // 要約失敗しても会話リセットは続行
+      }
+    }
     setMessages([])
     setInput("")
-    setDurationSelections({})
     setExecutionNotice(null)
-  }, [])
+  }, [messages])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -678,42 +704,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       </div>
                     )}
 
-                    {/* 所要時間選択（プルダウン + 自由入力併用） */}
-                    {msg.durationPrompt && !msg.durationPromptUsed && (
-                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
-                        <p className="text-xs opacity-80">このくらいかかりますか？</p>
-                        <div className="flex items-center gap-1.5">
-                          <select
-                            value={durationSelections[msg.id] || String(msg.durationOptions?.[0] ?? 15)}
-                            onChange={(e) => setDurationSelections(prev => ({ ...prev, [msg.id]: e.target.value }))}
-                            className="h-8 rounded-md border bg-background px-2 text-xs"
-                            disabled={isLoading}
-                          >
-                            {(msg.durationOptions || [5, 10, 15, 20, 30, 45, 60, 90]).map((m) => (
-                              <option key={m} value={String(m)}>{m}分</option>
-                            ))}
-                          </select>
-                          <Button
-                            size="sm"
-                            className="h-8 text-xs"
-                            onClick={() => handleDurationSelect(msg.id)}
-                            disabled={isLoading}
-                          >
-                            この時間で送信
-                          </Button>
-                        </div>
-                        <p className="text-[11px] opacity-70">
-                          もしくは下の入力欄で自由に入力できます（例: 7分 / 1時間半）
-                        </p>
-                      </div>
-                    )}
-
-                    {msg.durationPrompt && msg.durationPromptUsed && (
-                      <div className="mt-1 text-xs opacity-50">
-                        所要時間入力済み
-                      </div>
-                    )}
-
                     {/* 候補時間カード（「他の候補」要求時） */}
                     {msg.proposalCards && !msg.proposalUsed && (
                       <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
@@ -759,26 +749,34 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
               <div ref={messagesEndRef} />
             </div>
 
-            {/* 7ラリー制限警告 */}
-            {rallyCount >= 5 && rallyCount < MAX_RALLIES && (
+            {/* ラリー制限警告 */}
+            {rallyCount >= 12 && rallyCount < MAX_RALLIES && (
               <div className="px-4 pb-1">
                 <p className="text-xs text-amber-600 text-center">
-                  残り{MAX_RALLIES - rallyCount}ラリー
+                  残り{MAX_RALLIES - rallyCount}ラリー（自動要約で続行します）
                 </p>
               </div>
             )}
 
             {/* 入力エリア */}
             <div className="px-3 py-2.5 border-t shrink-0">
-              {rallyCount >= MAX_RALLIES ? (
+              {isSummarizing ? (
                 <div className="text-center space-y-2 py-1">
                   <p className="text-sm text-muted-foreground">
-                    会話が上限に達しました
+                    会話を要約して続けます...
                   </p>
-                  <Button size="sm" onClick={handleReset} className="gap-1">
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    リセット
-                  </Button>
+                  <div className="flex justify-center">
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  </div>
+                </div>
+              ) : rallyCount >= MAX_RALLIES ? (
+                <div className="text-center space-y-2 py-1">
+                  <p className="text-sm text-muted-foreground">
+                    会話を要約して続けます...
+                  </p>
+                  <div className="flex justify-center">
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  </div>
                 </div>
               ) : (
                 <>
