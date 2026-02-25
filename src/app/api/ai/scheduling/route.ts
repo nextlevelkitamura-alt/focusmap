@@ -72,6 +72,67 @@ function resolveCalendarIdFromTexts(
   return undefined
 }
 
+function isValidDateString(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
+}
+
+function extractConfirmedDurationMinutes(texts: string[]): number | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const match = texts[i].match(/所要時間は(\d{1,3})分/)
+    if (!match) continue
+    return clampDuration(Number(match[1]))
+  }
+  return undefined
+}
+
+function extractConfirmedStartAt(texts: string[]): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const match = texts[i].match(/開始時間は([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\+09:00)/)
+    if (!match) continue
+    if (isValidDateString(match[1])) return match[1]
+  }
+  return undefined
+}
+
+function extractConfirmedCalendarId(texts: string[], validCalendarIds: Set<string>): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const match = texts[i].match(/カレンダーは([^\s]+)/)
+    if (!match) continue
+    const id = match[1].trim()
+    if (validCalendarIds.has(id)) return id
+  }
+  return undefined
+}
+
+function formatOptionDateLabel(startIso: string, durationMin: number): string {
+  const start = new Date(startIso)
+  const end = new Date(start.getTime() + durationMin * 60 * 1000)
+  const dayNames = ['日', '月', '火', '水', '木', '金', '土']
+  const day = dayNames[start.getDay()]
+  const startHHMM = start.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+  const endHHMM = end.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+  return `${start.getMonth() + 1}/${start.getDate()}(${day}) ${startHHMM}〜${endHHMM}`
+}
+
+function buildStartTimeOptions(baseStart: Date, durationMin: number): Array<{ label: string; value: string }> {
+  const offsets = [0, 60, 120, 180]
+  const seen = new Set<string>()
+  const options: Array<{ label: string; value: string }> = []
+
+  for (const offsetMinutes of offsets) {
+    const candidate = snapToFiveMinutes(new Date(baseStart.getTime() + offsetMinutes * 60 * 1000))
+    const iso = toJstIsoString(candidate)
+    if (seen.has(iso)) continue
+    seen.add(iso)
+    options.push({
+      label: formatOptionDateLabel(iso, durationMin),
+      value: `開始時間は${iso}`,
+    })
+  }
+
+  return options.slice(0, 4)
+}
+
 // POST /api/ai/scheduling - スケジューリング特化AIチャット
 export async function POST(request: Request) {
   try {
@@ -350,6 +411,82 @@ ${freeTimeContext}`
       } else {
         params.calendar_id = normalizedCalendarId
         action = { ...action, params }
+      }
+    }
+
+    // --- Structured scheduling guard ---
+    // 予定登録は「所要時間 -> 開始時間 -> カレンダー」を順に確定してから実行
+    const confirmedDurationMin = extractConfirmedDurationMinutes(allUserTexts) ?? explicitDuration
+    const confirmedStartAtFromOption = extractConfirmedStartAt(allUserTexts)
+    const confirmedCalendarFromOption = extractConfirmedCalendarId(allUserTexts, validCalendarIds)
+
+    const candidateStartRaw = confirmedStartAtFromOption
+      || (isValidDateString(action?.params?.scheduled_at) ? String(action?.params?.scheduled_at) : undefined)
+      || (slots?.[0]?.scheduled_at && isValidDateString(slots[0].scheduled_at) ? slots[0].scheduled_at : undefined)
+    const candidateStartAt = candidateStartRaw && isValidDateString(candidateStartRaw)
+      ? toJstIsoString(snapToFiveMinutes(new Date(candidateStartRaw)))
+      : undefined
+
+    const candidateCalendarId =
+      confirmedCalendarFromOption
+      || inferredCalendarId
+      || (typeof action?.params?.calendar_id === 'string' && validCalendarIds.has(action.params.calendar_id) ? action.params.calendar_id : undefined)
+      || (validCalendarIds.size === 1 ? [...validCalendarIds][0] : undefined)
+
+    const missingDuration = !Number.isFinite(confirmedDurationMin)
+    const missingStart = !candidateStartAt
+    const missingCalendar = !candidateCalendarId
+
+    if (missingDuration || missingStart || missingCalendar) {
+      action = undefined
+      pendingAction = undefined
+      calendarChoices = undefined
+      slots = undefined
+
+      if (missingDuration) {
+        replyText = '所要時間を先に決めましょう。近そうな時間を選んでください。'
+        options = [15, 30, 45, 60].map((m) => ({ label: `${m}分`, value: `所要時間は${m}分` }))
+      } else if (missingStart) {
+        const durationMin = confirmedDurationMin || 30
+        const baseStart = (() => {
+          const now = new Date()
+          const d = new Date(now)
+          d.setHours(10, 0, 0, 0)
+          if (d <= now) d.setDate(d.getDate() + 1)
+          return d
+        })()
+        options = buildStartTimeOptions(baseStart, durationMin)
+        replyText = '開始時間を決めましょう。候補から選んでください。'
+      } else if (missingCalendar) {
+        const candidates = (userCalendars || []).filter(c => !!c.google_calendar_id)
+        options = (candidates.length > 0 ? candidates : [{ google_calendar_id: defaultCalendarId, name: 'デフォルトカレンダー', is_primary: true }])
+          .slice(0, 4)
+          .map((c) => ({
+            label: c.name || c.google_calendar_id,
+            value: `カレンダーは${c.google_calendar_id}`,
+          }))
+        replyText = '保存先カレンダーを選んでください。'
+      }
+    } else {
+      const resolvedDuration = confirmedDurationMin || 30
+      const resolvedStartAt = candidateStartAt!
+      const resolvedCalendarId = candidateCalendarId!
+      const resolvedTitle = typeof action?.params?.title === 'string' && action.params.title.trim().length > 0
+        ? action.params.title
+        : '新しい予定'
+
+      action = {
+        type: 'add_calendar_event',
+        params: {
+          title: resolvedTitle,
+          scheduled_at: resolvedStartAt,
+          estimated_time: resolvedDuration,
+          calendar_id: resolvedCalendarId,
+        },
+        description: `📅 ${formatOptionDateLabel(resolvedStartAt, resolvedDuration)} ${resolvedTitle} を登録します`,
+      }
+      if (!/登録して|入れて|それで|お願いします|決定|確定|ok|ＯＫ/i.test(message)) {
+        replyText = '必要情報がそろいました。内容を確認して、問題なければ登録してください。'
       }
     }
 

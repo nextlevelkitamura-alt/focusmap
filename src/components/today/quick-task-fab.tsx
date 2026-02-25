@@ -170,7 +170,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
             )}
 
             {/* FAB group */}
-            <div ref={fabRef} className="fixed bottom-20 right-4 z-[70] md:hidden flex flex-col-reverse items-end gap-3">
+            <div ref={fabRef} className="fixed bottom-20 right-4 z-[70] md:hidden flex flex-col-reverse items-end gap-3 pointer-events-none">
                 {/* Main FAB Button */}
                 <button
                     onClick={handleFabClick}
@@ -178,7 +178,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
                         "w-14 h-14 rounded-full",
                         "bg-neutral-900 text-white",
                         "shadow-xl shadow-black/35 ring-1 ring-white/10",
-                        "flex items-center justify-center",
+                        "flex items-center justify-center pointer-events-auto",
                         "active:scale-95 transition-all duration-150",
                         "hover:bg-neutral-800"
                     )}
@@ -188,8 +188,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
 
                 {/* Expanded: Task add button */}
                 <div
-                    className={cn(
-                        "flex items-center gap-2 transition-all duration-200 ease-out",
+                        className={cn(
+                        "flex items-center gap-2 transition-all duration-200 ease-out pointer-events-auto",
                         isExpanded
                             ? "opacity-100 scale-100 translate-y-0"
                             : "opacity-0 scale-75 translate-y-2 pointer-events-none"
@@ -208,8 +208,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
 
                 {/* Expanded: AI chat button */}
                 <div
-                    className={cn(
-                        "flex items-center gap-2 transition-all duration-200 ease-out delay-75",
+                        className={cn(
+                        "flex items-center gap-2 transition-all duration-200 ease-out delay-75 pointer-events-auto",
                         isExpanded
                             ? "opacity-100 scale-100 translate-y-0"
                             : "opacity-0 scale-75 translate-y-2 pointer-events-none"

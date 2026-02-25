@@ -39,6 +39,8 @@ type PlannerState =
   | 'resolve_conflict'
   | 'confirm_and_execute'
 
+type MissingField = 'duration' | 'start_time' | 'calendar'
+
 // スケジューリング意図を検出するキーワード
 const SCHEDULING_KEYWORDS = ['予定', 'カレンダー', '入れて', 'スケジュール', '会議', 'ミーティング', 'ランチ', '追加して', '登録', '予約']
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -166,6 +168,63 @@ function extractDurationHints(texts: string[]): number | undefined {
 
 function hasApprovalIntent(text: string): boolean {
   return /(登録して|入れて|それで|それでお願い|それでOK|ok|ＯＫ|お願いします|決定|確定)/i.test(text)
+}
+
+function extractConfirmedDurationMinutes(texts: string[]): number | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const match = texts[i].match(/所要時間は(\d{1,3})分/)
+    if (!match) continue
+    return clampDuration(Number(match[1]))
+  }
+  return undefined
+}
+
+function extractConfirmedStartAt(texts: string[]): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const match = texts[i].match(/開始時間は([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\+09:00)/)
+    if (!match) continue
+    if (isValidDateString(match[1])) return match[1]
+  }
+  return undefined
+}
+
+function extractConfirmedCalendarId(texts: string[], validCalendarIds: Set<string>): string | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const match = texts[i].match(/カレンダーは([^\s]+)/)
+    if (!match) continue
+    const id = match[1].trim()
+    if (validCalendarIds.has(id)) return id
+  }
+  return undefined
+}
+
+function formatOptionDateLabel(startIso: string, durationMin: number): string {
+  const start = new Date(startIso)
+  const end = new Date(start.getTime() + durationMin * 60 * 1000)
+  const dayNames = ['日', '月', '火', '水', '木', '金', '土']
+  const day = dayNames[start.getDay()]
+  const startHHMM = start.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+  const endHHMM = end.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+  return `${start.getMonth() + 1}/${start.getDate()}(${day}) ${startHHMM}〜${endHHMM}`
+}
+
+function buildStartTimeOptions(baseStart: Date, durationMin: number): Array<{ label: string; value: string }> {
+  const offsets = [0, 60, 120, 180]
+  const seen = new Set<string>()
+  const options: Array<{ label: string; value: string }> = []
+
+  for (const offsetMinutes of offsets) {
+    const candidate = snapToFiveMinutes(new Date(baseStart.getTime() + offsetMinutes * 60 * 1000))
+    const iso = toJstIsoString(candidate)
+    if (seen.has(iso)) continue
+    seen.add(iso)
+    options.push({
+      label: formatOptionDateLabel(iso, durationMin),
+      value: `開始時間は${iso}`,
+    })
+  }
+
+  return options.slice(0, 4)
 }
 
 function findJsonFragment(source: string, startIndex: number) {
@@ -398,6 +457,11 @@ export async function POST(request: Request) {
 - 削除操作は実行不可。「削除はメモ画面から行ってください」と案内する
 - 簡潔に応答する（3文以内）
 - 日本語で応答する
+
+## 重要な実行前条件（最優先）
+- 予定登録前に **開始時間 / 所要時間 / カレンダー** の3項目を必ず確定する
+- 1つでも未確定なら action は返さず、options で1項目だけ質問する
+- 候補は2〜4件で提示し、ユーザーが選んでから次へ進む
 
 ## カレンダー予定追加（推論優先モード・最重要ルール）
 ユーザーが予定やタスクを追加したい場合、**必ず best_proposal ブロックで1案を提案する**。
@@ -633,6 +697,7 @@ ${freeTimeContext}`
     const validCalendarIds = new Set(userCalendarsForResolution.map(c => c.id))
     let pendingAction: ChatMessage['action'] | undefined
     let calendarChoices: Array<{ id: string; name: string; isDefault: boolean }> | undefined
+    let missingFields: MissingField[] | undefined
 
     if (bestProposal) {
       const startDate = isValidDateString(bestProposal.startAt) ? new Date(bestProposal.startAt) : null
@@ -712,6 +777,98 @@ ${freeTimeContext}`
       }
     }
 
+    // --- Structured scheduling guard ---
+    // 予定登録は「所要時間 -> 開始時間 -> カレンダー」を順に確定してから実行する
+    if (isSchedulingIntent) {
+      const confirmedDurationMin = extractConfirmedDurationMinutes(allUserTexts) ?? explicitDurationForNormalization
+      const confirmedStartAtFromOption = extractConfirmedStartAt(allUserTexts)
+      const confirmedCalendarFromOption = extractConfirmedCalendarId(allUserTexts, validCalendarIds)
+
+      const candidateStartRaw = confirmedStartAtFromOption
+        || (isValidDateString(action?.params?.scheduled_at) ? String(action?.params?.scheduled_at) : undefined)
+        || (bestProposal && isValidDateString(bestProposal.startAt) ? bestProposal.startAt : undefined)
+      const candidateStartAt = candidateStartRaw && isValidDateString(candidateStartRaw)
+        ? toJstIsoString(snapToFiveMinutes(new Date(candidateStartRaw)))
+        : undefined
+
+      const candidateCalendarId =
+        confirmedCalendarFromOption
+        || inferredCalendarFromText
+        || (typeof action?.params?.calendar_id === 'string' && validCalendarIds.has(action.params.calendar_id) ? action.params.calendar_id : undefined)
+        || (bestProposal && validCalendarIds.has(bestProposal.calendarId) ? bestProposal.calendarId : undefined)
+        || (validCalendarIds.size === 1 ? [...validCalendarIds][0] : undefined)
+
+      const hasKnownDuration = Number.isFinite(confirmedDurationMin)
+      const hasKnownStart = !!candidateStartAt
+      const hasKnownCalendar = !!candidateCalendarId
+
+      const nextMissing: MissingField[] = []
+      if (!hasKnownDuration) nextMissing.push('duration')
+      if (!hasKnownStart) nextMissing.push('start_time')
+      if (!hasKnownCalendar) nextMissing.push('calendar')
+
+      missingFields = nextMissing.length > 0 ? nextMissing : undefined
+
+      if (nextMissing.length > 0) {
+        action = undefined
+        pendingAction = undefined
+        calendarChoices = undefined
+        bestProposal = undefined
+        plannerState = 'capture_intent'
+
+        const firstMissing = nextMissing[0]
+        if (firstMissing === 'duration') {
+          replyText = '所要時間を先に決めましょう。近そうな時間を選んでください。'
+          options = [15, 30, 45, 60].map((m) => ({ label: `${m}分`, value: `所要時間は${m}分` }))
+        } else if (firstMissing === 'start_time') {
+          const durationMin = confirmedDurationMin || 30
+          const baseStart = candidateStartAt && isValidDateString(candidateStartAt)
+            ? new Date(candidateStartAt)
+            : (() => {
+              const now = new Date()
+              const d = new Date(now)
+              d.setHours(10, 0, 0, 0)
+              if (d <= now) d.setDate(d.getDate() + 1)
+              return d
+            })()
+          const startOptions = buildStartTimeOptions(baseStart, durationMin)
+          replyText = '開始時間を決めましょう。候補から選んでください。'
+          options = startOptions
+        } else if (firstMissing === 'calendar') {
+          const candidates = userCalendarsForResolution.length > 0
+            ? userCalendarsForResolution
+            : [{ id: defaultCalendarId, name: 'デフォルトカレンダー' }]
+          replyText = '保存先カレンダーを選んでください。'
+          options = candidates.slice(0, 4).map((c) => ({
+            label: c.name || c.id,
+            value: `カレンダーは${c.id}`,
+          }))
+        }
+      } else {
+        const resolvedDuration = confirmedDurationMin || 30
+        const resolvedStartAt = candidateStartAt!
+        const resolvedCalendarId = candidateCalendarId!
+        const resolvedTitle = typeof action?.params?.title === 'string' && action.params.title.trim().length > 0
+          ? action.params.title
+          : (bestProposal?.title || '新しい予定')
+
+        action = {
+          type: 'add_calendar_event',
+          params: {
+            title: resolvedTitle,
+            scheduled_at: resolvedStartAt,
+            estimated_time: resolvedDuration,
+            calendar_id: resolvedCalendarId,
+          },
+          description: `📅 ${formatOptionDateLabel(resolvedStartAt, resolvedDuration)} ${resolvedTitle} を登録します`,
+        }
+        plannerState = 'confirm_and_execute'
+        if (!hasApprovalIntent(lastUserText)) {
+          replyText = '必要情報がそろいました。内容を確認して、問題なければ実行してください。'
+        }
+      }
+    }
+
     return NextResponse.json({
       reply: replyText,
       action,
@@ -720,6 +877,7 @@ ${freeTimeContext}`
       options,
       plannerState,
       bestProposal,
+      missingFields,
     })
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error'
