@@ -1,10 +1,10 @@
 "use client"
 
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, Inbox, Trash2
 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -34,6 +34,7 @@ interface TodayViewProps {
 
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
+    const [activeTab, setActiveTab] = useState<'today' | 'inbox'>('today')
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -137,10 +138,38 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     </div>
                 </div>
+                <div className="mt-2">
+                    <div className="inline-flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
+                        <button
+                            onClick={() => setActiveTab('today')}
+                            className={cn(
+                                "px-2.5 py-1 text-xs rounded-md transition-colors",
+                                activeTab === 'today'
+                                    ? "bg-background text-foreground shadow-sm"
+                                    : "text-muted-foreground"
+                            )}
+                        >
+                            Today
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('inbox')}
+                            className={cn(
+                                "px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1",
+                                activeTab === 'inbox'
+                                    ? "bg-background text-foreground shadow-sm"
+                                    : "text-muted-foreground"
+                            )}
+                        >
+                            <Inbox className="w-3.5 h-3.5" />
+                            Inbox
+                            <span className="text-[10px] tabular-nums">({logic.unscheduledTasks.length})</span>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             {/* Collapsible Calendar Panel */}
-            {logic.calendarOpen && (
+            {activeTab === 'today' && logic.calendarOpen && (
                 <div className="flex-shrink-0 border-b px-4 py-3 animate-in slide-in-from-top-2 duration-200">
                     <SimpleCalendar
                         selected={logic.selectedDate}
@@ -153,7 +182,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             )}
 
             {/* Habit Bar (fixed) + Expandable Detail */}
-            {logic.habitsLoading ? (
+            {activeTab === 'today' && logic.habitsLoading ? (
                 <div className="flex-shrink-0 border-b px-4 py-2">
                     <div className="flex items-center gap-2 mb-1.5">
                         <Target className="w-3.5 h-3.5 text-primary/40 flex-shrink-0" />
@@ -169,7 +198,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         ))}
                     </div>
                 </div>
-            ) : logic.dateHabits.length > 0 ? (
+            ) : activeTab === 'today' && logic.dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
@@ -352,6 +381,45 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
+                {activeTab === 'inbox' ? (
+                    <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-3">
+                        {logic.unscheduledTasks.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                                Inbox は空です
+                            </div>
+                        ) : (
+                            <div className="space-y-1.5">
+                                {logic.unscheduledTasks.map(task => (
+                                    <div
+                                        key={task.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => logic.openTaskEditModal(task.id)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault()
+                                                logic.openTaskEditModal(task.id)
+                                            }
+                                        }}
+                                        className="flex items-center justify-between gap-2 py-2 px-2 rounded-md border border-border/60 bg-background/60 active:bg-muted/50 transition-colors"
+                                    >
+                                        <span className="text-sm truncate flex-1">{task.title}</span>
+                                        <button
+                                            className="p-1 rounded-md text-muted-foreground/70 active:bg-red-500/10 active:text-red-500 transition-colors flex-shrink-0"
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                logic.handleDeleteTask(task.id)
+                                            }}
+                                            aria-label={`${task.title}を削除`}
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ) : (
                 <div
                     key={logic.selectedDate.getTime()}
                     className={cn(
@@ -446,27 +514,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     )}
                 </div>
+                )}
             </div>
-
-            {/* Unscheduled Tasks */}
-            {logic.unscheduledTasks.length > 0 && (
-                <div className="flex-shrink-0 border-t px-4 py-2">
-                    <p className="text-xs font-medium text-muted-foreground mb-1.5">未スケジュール</p>
-                    <div className="max-h-32 overflow-y-auto space-y-0.5">
-                        {logic.unscheduledTasks.map(task => (
-                            <div key={task.id} className="flex items-center gap-2 py-1.5 px-1 rounded-md active:bg-muted/50 transition-colors">
-                                <button
-                                    className="flex-shrink-0"
-                                    onClick={() => logic.toggleTask(task.id)}
-                                >
-                                    <Square className="w-4 h-4 text-muted-foreground/40" />
-                                </button>
-                                <span className="text-sm truncate flex-1">{task.title}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* Edit Modal */}
             <MobileEventEditModal
@@ -492,7 +541,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             />
 
             {/* Quick Task FAB */}
-            {onCreateQuickTask && (
+            {onCreateQuickTask && !logic.isEditModalOpen && (
                 <QuickTaskFab
                     projects={projects}
                     calendars={logic.writableCalendars}

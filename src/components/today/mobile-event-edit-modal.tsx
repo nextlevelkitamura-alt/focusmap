@@ -63,7 +63,6 @@ export function MobileEventEditModal({
     const [memo, setMemo] = useState('')
     const [reminder, setReminder] = useState(-1)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
     const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
@@ -80,11 +79,10 @@ export function MobileEventEditModal({
         return [...BASE_REMINDER_OPTIONS, { label: `${reminder}分前`, value: reminder }]
     }, [reminder])
 
-    // モーダルが開いた瞬間を記録（ゴーストクリック防止）+ 確認リセット
+    // モーダルが開いた瞬間を記録（ゴーストクリック防止）
     useEffect(() => {
         if (isOpen) {
             openedAtRef.current = Date.now()
-            setShowDeleteConfirm(false)
         }
     }, [isOpen])
 
@@ -466,46 +464,29 @@ export function MobileEventEditModal({
 
                 {/* Footer: Save + Delete side by side */}
                 <div className="flex-shrink-0 px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] border-t">
-                    {showDeleteConfirm ? (
-                        <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleSave}
+                            disabled={!title.trim()}
+                            className={cn(
+                                "py-3 text-sm font-medium rounded-lg transition-colors",
+                                (onDeleteTask || onDeleteEvent) ? "basis-3/4" : "w-full",
+                                !title.trim()
+                                    ? "bg-muted text-muted-foreground cursor-not-allowed"
+                                    : "bg-primary text-primary-foreground active:bg-primary/90"
+                            )}
+                        >
+                            完了
+                        </button>
+                        {(onDeleteTask || onDeleteEvent) && (
                             <button
                                 onClick={handleDelete}
-                                className="flex-1 py-3 text-sm font-medium text-white bg-red-600 active:bg-red-700 rounded-lg transition-colors"
+                                className="basis-1/4 flex items-center justify-center gap-1 py-3 text-sm font-medium text-red-500 bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors"
                             >
-                                削除する
+                                <Trash2 className="w-4 h-4" />
                             </button>
-                            <button
-                                onClick={() => setShowDeleteConfirm(false)}
-                                className="flex-1 py-3 text-sm font-medium text-muted-foreground bg-muted rounded-lg transition-colors active:bg-muted/80"
-                            >
-                                キャンセル
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={handleSave}
-                                disabled={!title.trim()}
-                                className={cn(
-                                    "py-3 text-sm font-medium rounded-lg transition-colors",
-                                    (onDeleteTask || onDeleteEvent) ? "basis-3/4" : "w-full",
-                                    !title.trim()
-                                        ? "bg-muted text-muted-foreground cursor-not-allowed"
-                                        : "bg-primary text-primary-foreground active:bg-primary/90"
-                                )}
-                            >
-                                完了
-                            </button>
-                            {(onDeleteTask || onDeleteEvent) && (
-                                <button
-                                    onClick={() => setShowDeleteConfirm(true)}
-                                    className="basis-1/4 flex items-center justify-center gap-1 py-3 text-sm font-medium text-red-500 bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
-                            )}
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
             </div>
         </>

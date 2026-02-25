@@ -62,6 +62,7 @@ export function useTodayViewLogic({
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+    const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([])
     const [calendarOpen, setCalendarOpen] = useState(false)
     const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
@@ -74,8 +75,15 @@ export function useTodayViewLogic({
 
     // Sync local tasks with prop changes
     useEffect(() => {
-        setLocalTasks(allTasks)
-    }, [allTasks])
+        setLocalTasks(allTasks.filter(task => !pendingDeleteTaskIds.includes(task.id)))
+        setPendingDeleteTaskIds(prev => {
+            const next = prev.filter(id => allTasks.some(task => task.id === id))
+            if (next.length === prev.length && next.every((id, idx) => id === prev[idx])) {
+                return prev
+            }
+            return next
+        })
+    }, [allTasks, pendingDeleteTaskIds])
 
     // Selected date (ssr:false なのでクライアント直接初期化OK)
     const [selectedDate, setSelectedDate] = useState<Date>(() => {
@@ -541,15 +549,59 @@ export function useTodayViewLogic({
         setEditTarget(null)
     }, [])
 
+    const openTaskEditModal = useCallback((taskId: string) => {
+        const task = localTasks.find(t => t.id === taskId)
+        if (!task) return
+
+        const fallbackStart = new Date(selectedDate)
+        if (isSameDay(selectedDate, new Date())) {
+            const now = new Date()
+            const roundedMinutes = Math.ceil(now.getMinutes() / 5) * 5
+            now.setSeconds(0, 0)
+            now.setMinutes(roundedMinutes)
+            fallbackStart.setHours(now.getHours(), now.getMinutes(), 0, 0)
+        } else {
+            fallbackStart.setHours(9, 0, 0, 0)
+        }
+
+        const startTime = task.scheduled_at ? new Date(task.scheduled_at) : fallbackStart
+        const durationMinutes = task.estimated_time || 30
+        const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000)
+
+        setEditTarget({
+            id: task.id,
+            source: 'task',
+            title: task.title,
+            startTime,
+            endTime,
+            color: '#F97316',
+            isCompleted: task.status === 'done',
+            isTimerRunning: task.is_timer_running,
+            taskId: task.id,
+            calendarId: task.calendar_id || undefined,
+            projectId: task.project_id || undefined,
+            estimatedTime: task.estimated_time || 30,
+            totalElapsedSeconds: task.total_elapsed_seconds,
+            originalTask: task,
+        })
+        setIsEditModalOpen(true)
+    }, [localTasks, selectedDate])
+
     // Save task
     const handleSaveTask = useCallback(async (taskId: string, updates: {
         title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[]
     }) => {
         const { reminders, ...taskUpdates } = updates
+        const previousTasks = localTasks
         setLocalTasks(prev => prev.map(t =>
             t.id === taskId ? { ...t, ...taskUpdates } : t
         ))
-        await onUpdateTask(taskId, taskUpdates)
+        try {
+            await onUpdateTask(taskId, taskUpdates)
+        } catch (err) {
+            setLocalTasks(previousTasks)
+            throw err
+        }
 
         if (reminders !== undefined) {
             const task = localTasks.find(t => t.id === taskId)
@@ -616,6 +668,10 @@ export function useTodayViewLogic({
     // Delete task
     const handleDeleteTask = useCallback(async (taskId: string) => {
         const taskToDelete = localTasks.find(t => t.id === taskId)
+        const previousTasks = localTasks
+        const previousEvents = localCalendarEvents
+
+        setPendingDeleteTaskIds(prev => prev.includes(taskId) ? prev : [...prev, taskId])
 
         setLocalTasks(prev => prev.filter(t => t.id !== taskId))
 
@@ -623,17 +679,23 @@ export function useTodayViewLogic({
             setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== taskToDelete.google_event_id))
         }
 
-        if (onDeleteTaskProp) {
-            await onDeleteTaskProp(taskId)
-        } else {
-            await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
-                console.error('[useTodayViewLogic] Failed to delete task:', err)
-            })
-        }
+        try {
+            if (onDeleteTaskProp) {
+                await onDeleteTaskProp(taskId)
+            } else {
+                const res = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                if (!res.ok) throw new Error('Failed to delete task')
+            }
 
-        invalidateCalendarCache()
-        await syncNow({ silent: true })
-    }, [onDeleteTaskProp, syncNow, localTasks])
+            invalidateCalendarCache()
+            await syncNow({ silent: true })
+        } catch (err) {
+            console.error('[useTodayViewLogic] Failed to delete task:', err)
+            setLocalTasks(previousTasks)
+            setLocalCalendarEvents(previousEvents)
+            setPendingDeleteTaskIds(prev => prev.filter(id => id !== taskId))
+        }
+    }, [onDeleteTaskProp, syncNow, localTasks, localCalendarEvents])
 
     // Delete event
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
@@ -838,6 +900,7 @@ export function useTodayViewLogic({
         editTarget,
         isEditModalOpen,
         handleItemTap,
+        openTaskEditModal,
         handleCloseEditModal,
 
         // CRUD operations
