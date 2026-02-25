@@ -4,7 +4,7 @@ import { useRef } from "react"
 import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, CalendarClock
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2
 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -27,12 +27,12 @@ interface TodayViewProps {
     onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
-    onOpenScheduling?: () => void
+    onOpenAiChat?: () => void
 }
 
 // --- Main Component ---
 
-export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenScheduling }: TodayViewProps) {
+export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
 
     const logic = useTodayViewLogic({
@@ -102,16 +102,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
                     {/* Sync indicator + Timeline mode toggle */}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {/* スケジュール調整ボタン（モバイル今日ビュー） */}
-                        {onOpenScheduling && (
-                            <button
-                                onClick={onOpenScheduling}
-                                className="p-1.5 rounded-md text-muted-foreground hover:bg-muted/50 active:bg-muted transition-colors"
-                                title="スケジュール調整"
-                            >
-                                <CalendarClock className="w-4 h-4" />
-                            </button>
-                        )}
                         <div className="w-4 h-4 flex items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
                             {logic.syncState === 'syncing' ? (
                                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
@@ -507,6 +497,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     projects={projects}
                     calendars={logic.writableCalendars}
                     onCreateTask={onCreateQuickTask}
+                    onOpenAiChat={onOpenAiChat}
                 />
             )}
         </div>

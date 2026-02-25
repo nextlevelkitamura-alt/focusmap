@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Plus, Clock, Timer, Calendar, Star, Bell, ChevronDown } from "lucide-react"
+import { Plus, Clock, Timer, Calendar, Star, Bell, ChevronDown, CalendarPlus, Sparkles } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -39,6 +39,7 @@ interface QuickTaskFabProps {
     projects: Project[]
     calendars: CalendarOption[]
     onCreateTask: (data: QuickTaskData) => Promise<void>
+    onOpenAiChat?: () => void
 }
 
 const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
@@ -61,9 +62,11 @@ const REMINDER_OPTIONS: Array<{ label: string; value: number }> = [
     { label: "通知なし", value: -1 },
 ]
 
-export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFabProps) {
+export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }: QuickTaskFabProps) {
     const [isOpen, setIsOpen] = useState(false)
+    const [isExpanded, setIsExpanded] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const fabRef = useRef<HTMLDivElement>(null)
 
     // Form state
     const [title, setTitle] = useState("")
@@ -138,23 +141,91 @@ export function QuickTaskFab({ projects, calendars, onCreateTask }: QuickTaskFab
         setEstimatedTime(Number(value))
     }, [])
 
+    const handleFabClick = useCallback(() => {
+        if (onOpenAiChat) {
+            setIsExpanded(prev => !prev)
+        } else {
+            setIsOpen(true)
+        }
+    }, [onOpenAiChat])
+
+    const handleAiClick = useCallback(() => {
+        setIsExpanded(false)
+        onOpenAiChat?.()
+    }, [onOpenAiChat])
+
+    const handleTaskClick = useCallback(() => {
+        setIsExpanded(false)
+        setIsOpen(true)
+    }, [])
+
     return (
         <>
-            {/* FAB Button */}
-            <button
-                onClick={() => setIsOpen(true)}
-                className={cn(
-                    "fixed bottom-20 right-4 z-40 md:hidden",
-                    "w-14 h-14 rounded-full",
-                    "bg-primary text-primary-foreground",
-                    "shadow-lg shadow-primary/25",
-                    "flex items-center justify-center",
-                    "active:scale-95 transition-all duration-150",
-                    "hover:shadow-xl hover:shadow-primary/30"
+            {/* Backdrop when expanded */}
+            {isExpanded && (
+                <div
+                    className="fixed inset-0 bg-black/40 z-[60] md:hidden"
+                    onClick={() => setIsExpanded(false)}
+                />
+            )}
+
+            {/* FAB group */}
+            <div ref={fabRef} className="fixed bottom-20 right-4 z-[70] md:hidden flex flex-col-reverse items-end gap-3">
+                {/* Main FAB Button */}
+                <button
+                    onClick={handleFabClick}
+                    className={cn(
+                        "w-14 h-14 rounded-full",
+                        "bg-neutral-900 text-white",
+                        "shadow-xl shadow-black/35 ring-1 ring-white/10",
+                        "flex items-center justify-center",
+                        "active:scale-95 transition-all duration-150",
+                        "hover:bg-neutral-800"
+                    )}
+                >
+                    <Plus className={cn("w-6 h-6 transition-transform duration-200", isExpanded && "rotate-45")} />
+                </button>
+
+                {/* Expanded: Task add button */}
+                <div
+                    className={cn(
+                        "flex items-center gap-2 transition-all duration-200 ease-out",
+                        isExpanded
+                            ? "opacity-100 scale-100 translate-y-0"
+                            : "opacity-0 scale-75 translate-y-2 pointer-events-none"
                 )}
             >
-                <Plus className="w-6 h-6" />
-            </button>
+                    <span className="text-xs font-medium text-white bg-neutral-950 px-2.5 py-1 rounded-full shadow-md border border-white/10 whitespace-nowrap">
+                        タスク追加
+                    </span>
+                    <button
+                        onClick={handleTaskClick}
+                        className="w-11 h-11 rounded-full bg-blue-700 text-white shadow-lg shadow-blue-900/35 flex items-center justify-center hover:bg-blue-600 active:scale-95 transition-all"
+                    >
+                        <CalendarPlus className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {/* Expanded: AI chat button */}
+                <div
+                    className={cn(
+                        "flex items-center gap-2 transition-all duration-200 ease-out delay-75",
+                        isExpanded
+                            ? "opacity-100 scale-100 translate-y-0"
+                            : "opacity-0 scale-75 translate-y-2 pointer-events-none"
+                )}
+            >
+                    <span className="text-xs font-medium text-white bg-neutral-950 px-2.5 py-1 rounded-full shadow-md border border-white/10 whitespace-nowrap">
+                        AIチャット
+                    </span>
+                    <button
+                        onClick={handleAiClick}
+                        className="w-11 h-11 rounded-full bg-violet-700 text-white shadow-lg shadow-violet-900/35 flex items-center justify-center hover:bg-violet-600 active:scale-95 transition-all"
+                    >
+                        <Sparkles className="w-5 h-5" />
+                    </button>
+                </div>
+            </div>
 
             {/* Bottom Sheet */}
             <Sheet open={isOpen} onOpenChange={setIsOpen}>

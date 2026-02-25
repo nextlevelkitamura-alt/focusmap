@@ -20,7 +20,6 @@ interface DesktopRightPanelProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
-    onOpenScheduling?: () => void
 }
 
 export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPanelProps>(
@@ -32,7 +31,6 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
         onCreateSubTask,
         onDeleteTask,
         onOpenAiChat,
-        onOpenScheduling,
     }, ref) {
         // Ref interface is maintained for backward compatibility
         // DesktopTodayPanel uses useTodayViewLogic which manages its own calendar state
@@ -51,7 +49,6 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                 onCreateSubTask={onCreateSubTask}
                 onDeleteTask={onDeleteTask}
                 onOpenAiChat={onOpenAiChat}
-                onOpenScheduling={onOpenScheduling}
             />
         )
     }

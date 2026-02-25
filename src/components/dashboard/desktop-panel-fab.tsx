@@ -1,17 +1,16 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Plus, Sparkles, CalendarPlus, CalendarClock } from "lucide-react"
+import { Plus, Sparkles, CalendarPlus } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface DesktopPanelFabProps {
     onOpenAiChat: () => void
     onOpenTaskForm: () => void
-    onOpenScheduling?: () => void
     isTaskFormOpen: boolean
 }
 
-export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, onOpenScheduling, isTaskFormOpen }: DesktopPanelFabProps) {
+export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, isTaskFormOpen }: DesktopPanelFabProps) {
     const [isExpanded, setIsExpanded] = useState(false)
     const fabRef = useRef<HTMLDivElement>(null)
 
@@ -34,30 +33,25 @@ export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, onOpenScheduling
         }
     }, [isExpanded])
 
-    // Hide FAB when task form is open
-    if (isTaskFormOpen) return null
-
     const handleAiClick = useCallback(() => {
         setIsExpanded(false)
         onOpenAiChat()
     }, [onOpenAiChat])
-
-    const handleSchedulingClick = useCallback(() => {
-        setIsExpanded(false)
-        onOpenScheduling?.()
-    }, [onOpenScheduling])
 
     const handleTaskClick = useCallback(() => {
         setIsExpanded(false)
         onOpenTaskForm()
     }, [onOpenTaskForm])
 
+    // Hide FAB when task form is open
+    if (isTaskFormOpen) return null
+
     return (
-        <div ref={fabRef} className="absolute bottom-4 right-4 z-10 flex flex-col-reverse items-end gap-2">
+        <div ref={fabRef} className="absolute bottom-4 right-4 z-[80] flex flex-col-reverse items-end gap-2">
             {/* Main FAB button */}
             <button
                 onClick={() => setIsExpanded(prev => !prev)}
-                className="w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 active:scale-95 transition-all"
+                className="w-12 h-12 rounded-full bg-neutral-900 text-white shadow-xl shadow-black/30 ring-1 ring-white/10 flex items-center justify-center hover:bg-neutral-800 active:scale-95 transition-all"
             >
                 <Plus className={cn("w-5 h-5 transition-transform duration-200", isExpanded && "rotate-45")} />
             </button>
@@ -72,54 +66,32 @@ export function DesktopPanelFab({ onOpenAiChat, onOpenTaskForm, onOpenScheduling
                         : "opacity-0 scale-75 translate-y-2 pointer-events-none"
                 )}
             >
-                <span className="text-xs font-medium text-foreground bg-background/90 backdrop-blur-sm px-2 py-1 rounded-md shadow-sm whitespace-nowrap">
+                <span className="text-xs font-medium text-white bg-neutral-950 px-2 py-1 rounded-md shadow-md border border-white/10 whitespace-nowrap">
                     タスク追加
                 </span>
                 <button
                     onClick={handleTaskClick}
-                    className="w-10 h-10 rounded-full bg-blue-500 text-white shadow-md flex items-center justify-center hover:bg-blue-600 active:scale-95 transition-all"
+                    className="w-10 h-10 rounded-full bg-blue-700 text-white shadow-lg shadow-blue-900/30 flex items-center justify-center hover:bg-blue-600 active:scale-95 transition-all"
                 >
                     <CalendarPlus className="w-4 h-4" />
                 </button>
             </div>
 
-            {/* Scheduling button */}
-            {onOpenScheduling && (
-                <div
-                    className={cn(
-                        "flex items-center gap-2 transition-all duration-200 ease-out delay-75",
-                        isExpanded
-                            ? "opacity-100 scale-100 translate-y-0"
-                            : "opacity-0 scale-75 translate-y-2 pointer-events-none"
-                    )}
-                >
-                    <span className="text-xs font-medium text-foreground bg-background/90 backdrop-blur-sm px-2 py-1 rounded-md shadow-sm whitespace-nowrap">
-                        スケジュール調整
-                    </span>
-                    <button
-                        onClick={handleSchedulingClick}
-                        className="w-10 h-10 rounded-full bg-emerald-500 text-white shadow-md flex items-center justify-center hover:bg-emerald-600 active:scale-95 transition-all"
-                    >
-                        <CalendarClock className="w-4 h-4" />
-                    </button>
-                </div>
-            )}
-
             {/* AI chat button */}
             <div
                 className={cn(
-                    "flex items-center gap-2 transition-all duration-200 ease-out delay-[150ms]",
+                    "flex items-center gap-2 transition-all duration-200 ease-out delay-75",
                     isExpanded
                         ? "opacity-100 scale-100 translate-y-0"
                         : "opacity-0 scale-75 translate-y-2 pointer-events-none"
                 )}
             >
-                <span className="text-xs font-medium text-foreground bg-background/90 backdrop-blur-sm px-2 py-1 rounded-md shadow-sm whitespace-nowrap">
+                <span className="text-xs font-medium text-white bg-neutral-950 px-2 py-1 rounded-md shadow-md border border-white/10 whitespace-nowrap">
                     AIチャット
                 </span>
                 <button
                     onClick={handleAiClick}
-                    className="w-10 h-10 rounded-full bg-violet-500 text-white shadow-md flex items-center justify-center hover:bg-violet-600 active:scale-95 transition-all"
+                    className="w-10 h-10 rounded-full bg-violet-700 text-white shadow-lg shadow-violet-900/30 flex items-center justify-center hover:bg-violet-600 active:scale-95 transition-all"
                 >
                     <Sparkles className="w-4 h-4" />
                 </button>
