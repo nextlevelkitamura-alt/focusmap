@@ -15,28 +15,6 @@ interface ChatOption {
   value: string
 }
 
-interface UiControlOption {
-  label: string
-  value: string
-}
-
-type PlannerState =
-  | 'capture_intent'
-  | 'fill_required_slots'
-  | 'propose_slots'
-  | 'resolve_conflict'
-  | 'confirm_and_execute'
-
-interface UiControl {
-  type: 'select' | 'text'
-  key: 'scheduleWindow' | 'duration' | 'calendarId' | 'freeText'
-  label: string
-  required?: boolean
-  options?: UiControlOption[]
-  placeholder?: string
-  allowCustom?: boolean
-}
-
 interface ProposalCard {
   id: string
   title: string
@@ -48,13 +26,20 @@ interface ProposalCard {
   value?: string
 }
 
-interface PlannerDraft {
-  scheduleWindow?: 'today' | 'within_3_days' | 'this_week' | 'this_month'
-  durationMinutes?: number
-  durationText?: string
-  calendarId?: string
-  freeText?: string
+interface BestProposal {
+  title: string
+  startAt: string
+  endAt: string
+  calendarId: string
+  duration: number
+  reason: string
 }
+
+type PlannerState =
+  | 'capture_intent'
+  | 'propose'
+  | 'resolve_conflict'
+  | 'confirm_and_execute'
 
 interface ChatMessage {
   id: string
@@ -69,8 +54,8 @@ interface ChatMessage {
   options?: ChatOption[]
   optionsUsed?: boolean
   plannerState?: PlannerState
-  uiControls?: UiControl[]
-  uiControlsUsed?: boolean
+  bestProposal?: BestProposal
+  bestProposalStatus?: 'pending' | 'accepted' | 'editing'
   proposalCards?: ProposalCard[]
   proposalUsed?: boolean
 }
@@ -94,6 +79,18 @@ interface AiChatPanelProps {
 
 const MAX_RALLIES = 7
 
+function formatDateTimeRange(startAt: string, endAt: string): string {
+  const start = new Date(startAt)
+  const end = new Date(endAt)
+  const days = ['日', '月', '火', '水', '木', '金', '土']
+  const month = start.getMonth() + 1
+  const day = start.getDate()
+  const dow = days[start.getDay()]
+  const startTime = start.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+  const endTime = end.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+  return `${month}/${day}(${dow}) ${startTime}〜${endTime}`
+}
+
 export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const isControlled = controlledIsOpen !== undefined
@@ -108,8 +105,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [plannerDraft, setPlannerDraft] = useState<PlannerDraft>({})
-  const [freeInputByMessage, setFreeInputByMessage] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -138,16 +133,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const buildRequestContext = useCallback(() => ({
     activeNoteId: activeNoteId || undefined,
     activeProjectId: activeProjectId || undefined,
-    planner: {
-      mode: 'task_planner' as const,
-      draftPlan: {
-        scheduleWindow: plannerDraft.scheduleWindow,
-        durationMinutes: plannerDraft.durationMinutes,
-        durationText: plannerDraft.durationText,
-        calendarId: plannerDraft.calendarId,
-      },
-    },
-  }), [activeNoteId, activeProjectId, plannerDraft])
+  }), [activeNoteId, activeProjectId])
 
   // メッセージ送信（共通ロジック）
   const sendMessage = useCallback(async (text: string) => {
@@ -184,7 +170,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         throw new Error(error || 'Chat failed')
       }
 
-      const { reply, action, options, plannerState, uiControls, proposalCards } = await res.json()
+      const { reply, action, options, plannerState, bestProposal, proposalCards } = await res.json()
 
       const aiMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -194,7 +180,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         actionStatus: action ? 'pending' : undefined,
         options: options?.length ? options : undefined,
         plannerState,
-        uiControls: uiControls?.length ? uiControls : undefined,
+        bestProposal,
+        bestProposalStatus: bestProposal ? 'pending' : undefined,
         proposalCards: proposalCards?.length ? proposalCards : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
@@ -253,7 +240,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
       ))
     }
-  }, [messages])
+  }, [messages, onCalendarEventCreated])
 
   // アクションキャンセル
   const handleCancelAction = useCallback((messageId: string) => {
@@ -275,57 +262,35 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     }
   }, [sendMessage])
 
-  const handlePlannerControlChange = useCallback((key: UiControl['key'], value: string) => {
-    setPlannerDraft(prev => {
-      if (key === 'scheduleWindow') {
-        return { ...prev, scheduleWindow: value as PlannerDraft['scheduleWindow'] }
-      }
-      if (key === 'calendarId') {
-        return { ...prev, calendarId: value }
-      }
-      if (key === 'duration') {
-        if (value === '__custom__') {
-          return { ...prev, durationMinutes: undefined, durationText: prev.durationText || '' }
-        }
-        const parsed = Number(value)
-        if (!Number.isNaN(parsed) && parsed > 0) {
-          return { ...prev, durationMinutes: parsed, durationText: undefined }
-        }
-      }
-      return { ...prev, freeText: value }
-    })
-  }, [])
+  // ベスト提案を承認
+  const handleAcceptProposal = useCallback((messageId: string) => {
+    const msg = messages.find(m => m.id === messageId)
+    if (!msg?.bestProposal) return
 
-  const handlePlannerCustomDurationChange = useCallback((value: string) => {
-    setPlannerDraft(prev => ({
-      ...prev,
-      durationMinutes: undefined,
-      durationText: value,
-    }))
-  }, [])
-
-  const handleApplyUiControls = useCallback((messageId: string, controls: UiControl[]) => {
     setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, uiControlsUsed: true } : m
+      m.id === messageId ? { ...m, bestProposalStatus: 'accepted' as const } : m
     ))
 
-    const windowLabels: Record<string, string> = {
-      today: '今日',
-      within_3_days: '3日以内',
-      this_week: '今週',
-      this_month: '今月',
-    }
-    const scheduleWindow = plannerDraft.scheduleWindow ? windowLabels[plannerDraft.scheduleWindow] : '未指定'
-    const duration = plannerDraft.durationText?.trim()
-      || (plannerDraft.durationMinutes ? `${plannerDraft.durationMinutes}分` : '未指定')
-    const calendarName = controls
-      .find(c => c.key === 'calendarId')
-      ?.options?.find(o => o.value === plannerDraft.calendarId)?.label || '未指定'
-    const freeText = plannerDraft.freeText?.trim() ? ` 補足: ${plannerDraft.freeText.trim()}` : ''
+    const p = msg.bestProposal
+    sendMessage(`${p.title}を${formatDateTimeRange(p.startAt, p.endAt)}で登録して`)
+  }, [messages, sendMessage])
 
-    sendMessage(`追加時期は${scheduleWindow}、所要時間は${duration}、カレンダーは${calendarName}で進めて。${freeText}`.trim())
-  }, [plannerDraft, sendMessage])
+  // ベスト提案の編集モードに切り替え
+  const handleEditProposal = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, bestProposalStatus: 'editing' as const } : m
+    ))
+  }, [])
 
+  // 他の候補を要求
+  const handleRequestAlternatives = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, bestProposalStatus: 'accepted' as const } : m
+    ))
+    sendMessage('他の候補を見せて')
+  }, [sendMessage])
+
+  // 候補カード選択
   const handleProposalSelect = useCallback((messageId: string, proposal: ProposalCard) => {
     setMessages(prev => prev.map(m =>
       m.id === messageId ? { ...m, proposalUsed: true } : m
@@ -334,19 +299,10 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     sendMessage(proposal.value || `${proposal.title}を${proposal.startAt}開始で登録して`)
   }, [sendMessage])
 
-  const handlePerTurnFreeInputSend = useCallback((messageId: string) => {
-    const text = (freeInputByMessage[messageId] || '').trim()
-    if (!text) return
-    sendMessage(text)
-    setFreeInputByMessage(prev => ({ ...prev, [messageId]: '' }))
-  }, [freeInputByMessage, sendMessage])
-
   // リセット
   const handleReset = useCallback(() => {
     setMessages([])
     setInput("")
-    setPlannerDraft({})
-    setFreeInputByMessage({})
   }, [])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -486,6 +442,73 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       </div>
                     )}
 
+                    {/* ベスト提案カード (推論結果の1案) */}
+                    {msg.bestProposal && msg.bestProposalStatus === 'pending' && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-3 space-y-1.5">
+                          <p className="text-xs font-semibold text-primary">{msg.bestProposal.title}</p>
+                          <p className="text-sm font-bold">
+                            {formatDateTimeRange(msg.bestProposal.startAt, msg.bestProposal.endAt)}
+                          </p>
+                          <p className="text-[11px] opacity-70">{msg.bestProposal.reason}</p>
+                          <div className="flex gap-1.5 mt-2">
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              onClick={() => handleAcceptProposal(msg.id)}
+                              disabled={isLoading}
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              この予定で登録
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => handleEditProposal(msg.id)}
+                              disabled={isLoading}
+                            >
+                              変更する
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={() => handleRequestAlternatives(msg.id)}
+                              disabled={isLoading}
+                            >
+                              他の候補
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ベスト提案: 承認済み */}
+                    {msg.bestProposal && msg.bestProposalStatus === 'accepted' && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <div className="rounded-xl border border-border/50 bg-muted/50 p-2.5 opacity-70">
+                          <p className="text-xs font-medium">{msg.bestProposal.title}</p>
+                          <p className="text-[11px]">
+                            {formatDateTimeRange(msg.bestProposal.startAt, msg.bestProposal.endAt)}
+                          </p>
+                          <p className="text-[11px] opacity-50 mt-0.5">選択済み</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ベスト提案: 編集モード */}
+                    {msg.bestProposal && msg.bestProposalStatus === 'editing' && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <div className="rounded-xl border border-border p-3 space-y-2">
+                          <p className="text-xs font-medium opacity-70">変更したい内容を入力してください</p>
+                          <p className="text-[11px] opacity-50">
+                            例: 「午前中にして」「30分で」「来週にして」
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {/* 選択肢ボタン */}
                     {msg.options && !msg.optionsUsed && (
                       <div className="mt-2 pt-2 border-t border-border/30 flex flex-wrap gap-1.5">
@@ -510,71 +533,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       </div>
                     )}
 
-                    {/* プランナーUIコントロール */}
-                    {msg.uiControls && !msg.uiControlsUsed && (
-                      <div className="mt-2 pt-2 border-t border-border/30 space-y-2">
-                        {msg.uiControls.map((control, i) => (
-                          <div key={`${control.key}-${i}`} className="space-y-1">
-                            <p className="text-xs opacity-80">{control.label}{control.required ? ' *' : ''}</p>
-
-                            {control.type === 'select' ? (
-                              <>
-                                <select
-                                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                                  value={
-                                    control.key === 'scheduleWindow' ? (plannerDraft.scheduleWindow || '') :
-                                      control.key === 'calendarId' ? (plannerDraft.calendarId || '') :
-                                        control.key === 'duration' ? (plannerDraft.durationMinutes ? String(plannerDraft.durationMinutes) : plannerDraft.durationText ? '__custom__' : '') :
-                                          ''
-                                  }
-                                  onChange={(e) => handlePlannerControlChange(control.key, e.target.value)}
-                                >
-                                  <option value="">選択してください</option>
-                                  {control.options?.map(opt => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                  ))}
-                                  {control.allowCustom && (
-                                    <option value="__custom__">自由入力</option>
-                                  )}
-                                </select>
-                                {control.allowCustom && (
-                                  <input
-                                    type="text"
-                                    value={plannerDraft.durationText || ''}
-                                    placeholder="例: 45分 / 6時間"
-                                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                                    onChange={(e) => handlePlannerCustomDurationChange(e.target.value)}
-                                  />
-                                )}
-                              </>
-                            ) : (
-                              <input
-                                type="text"
-                                value={plannerDraft.freeText || ''}
-                                placeholder={control.placeholder || '補足を入力'}
-                                className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                                onChange={(e) => handlePlannerControlChange(control.key, e.target.value)}
-                              />
-                            )}
-                          </div>
-                        ))}
-
-                        <Button
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => handleApplyUiControls(msg.id, msg.uiControls || [])}
-                          disabled={isLoading}
-                        >
-                          この条件で提案を作る
-                        </Button>
-                      </div>
-                    )}
-
-                    {msg.uiControlsUsed && msg.uiControls && (
-                      <p className="mt-1 text-xs opacity-50">入力済み</p>
-                    )}
-
-                    {/* 候補時間カード */}
+                    {/* 候補時間カード（「他の候補」要求時） */}
                     {msg.proposalCards && !msg.proposalUsed && (
                       <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
                         {msg.proposalCards.map((proposal) => (
@@ -598,36 +557,6 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
                     {msg.proposalUsed && msg.proposalCards && (
                       <p className="mt-1 text-xs opacity-50">候補選択済み</p>
-                    )}
-
-                    {/* 毎ターン自由入力欄（選択式と併用） */}
-                    {msg.role === 'assistant' && (
-                      <div className="mt-2 pt-2 border-t border-border/30">
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={freeInputByMessage[msg.id] || ''}
-                            placeholder="自由に補足して送信"
-                            className="w-full h-7 rounded-md border border-border bg-background px-2 text-xs"
-                            onChange={(e) => setFreeInputByMessage(prev => ({ ...prev, [msg.id]: e.target.value }))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                handlePerTurnFreeInputSend(msg.id)
-                              }
-                            }}
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs px-2"
-                            onClick={() => handlePerTurnFreeInputSend(msg.id)}
-                            disabled={isLoading || !(freeInputByMessage[msg.id] || '').trim()}
-                          >
-                            送信
-                          </Button>
-                        </div>
-                      </div>
                     )}
                   </div>
                 </div>

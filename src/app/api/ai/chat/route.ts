@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { getFreeTimeContext } from '@/lib/free-time-context'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -12,19 +13,13 @@ interface ChatMessage {
   }
 }
 
-interface UiControlOption {
-  label: string
-  value: string
-}
-
-interface UiControl {
-  type: 'select' | 'text'
-  key: 'scheduleWindow' | 'duration' | 'calendarId' | 'freeText'
-  label: string
-  required?: boolean
-  options?: UiControlOption[]
-  placeholder?: string
-  allowCustom?: boolean
+interface BestProposal {
+  title: string
+  startAt: string
+  endAt: string
+  calendarId: string
+  duration: number
+  reason: string
 }
 
 interface ProposalCard {
@@ -40,10 +35,12 @@ interface ProposalCard {
 
 type PlannerState =
   | 'capture_intent'
-  | 'fill_required_slots'
-  | 'propose_slots'
+  | 'propose'
   | 'resolve_conflict'
   | 'confirm_and_execute'
+
+// スケジューリング意図を検出するキーワード
+const SCHEDULING_KEYWORDS = ['予定', 'カレンダー', '入れて', 'スケジュール', '会議', 'ミーティング', 'ランチ', '追加して', '登録', '予約']
 
 // POST /api/ai/chat - AIチャット対話
 export async function POST(request: Request) {
@@ -67,15 +64,6 @@ export async function POST(request: Request) {
       context: {
         activeNoteId?: string
         activeProjectId?: string
-        planner?: {
-          mode?: 'task_planner'
-          draftPlan?: {
-            scheduleWindow?: 'today' | 'within_3_days' | 'this_week' | 'this_month'
-            durationMinutes?: number
-            durationText?: string
-            calendarId?: string
-          }
-        }
       }
     }
 
@@ -114,7 +102,8 @@ export async function POST(request: Request) {
       .maybeSingle()
 
     let calendarsContext = ''
-    let calendarOptions: UiControlOption[] = []
+    let defaultCalendarId = 'primary'
+    let calendarCount = 0
     if (calendarSettings?.is_sync_enabled) {
       const { data: userCalendars } = await supabase
         .from('user_calendars')
@@ -123,13 +112,38 @@ export async function POST(request: Request) {
         .order('is_primary', { ascending: false })
 
       if (userCalendars && userCalendars.length > 0) {
+        calendarCount = userCalendars.length
         calendarsContext = userCalendars.map(c =>
           `- ${c.name} (ID: ${c.google_calendar_id})${c.is_primary ? ' [デフォルト]' : ''}`
         ).join('\n')
-        calendarOptions = userCalendars.map(c => ({
-          label: c.name,
-          value: c.google_calendar_id,
-        }))
+        defaultCalendarId = calendarSettings.default_calendar_id || userCalendars[0].google_calendar_id || 'primary'
+      }
+    }
+
+    // スケジューリング意図を検出
+    const allMessages = [...history.map(m => m.content), message]
+    const isSchedulingIntent = SCHEDULING_KEYWORDS.some(kw =>
+      allMessages.some(text => text.includes(kw))
+    )
+
+    // スケジューリング意図があり、カレンダー連携済みの場合、空き時間を取得
+    let freeTimeContext = ''
+    if (isSchedulingIntent && calendarSettings?.is_sync_enabled) {
+      const calendarIds = calendarsContext
+        .split('\n')
+        .map(line => {
+          const match = line.match(/ID: ([^)]+)/)
+          return match?.[1]
+        })
+        .filter(Boolean) as string[]
+
+      if (calendarIds.length > 0) {
+        try {
+          const result = await getFreeTimeContext(user.id, calendarIds, supabase)
+          freeTimeContext = result.contextText
+        } catch (err) {
+          console.error('[chat] Free time fetch failed:', err)
+        }
       }
     }
 
@@ -171,71 +185,69 @@ export async function POST(request: Request) {
 6. タスクの優先度変更 → action: update_priority
 7. タスクの締切設定 → action: set_deadline
 
-## 対話のルール（重要）
-- **必ず1つずつ確認しながら進める**。いきなりアクションを実行しない
-- 情報が足りない場合は選択肢付きで質問する
-- 例: 「マップに追加して」→ まずプロジェクトを聞く → 次に追加場所を聞く → 最後に実行
+## 対話の基本ルール
+- **推論優先**: 会話の文脈、メモの内容、空き時間データから可能な限り推論する。ユーザーに聞くのは本当に分からない情報だけ
 - 削除操作は実行不可。「削除はメモ画面から行ってください」と案内する
-- 曖昧な指示は質問して明確にする。その際、選択肢ブロックで候補を提示する
 - 簡潔に応答する（3文以内）
 - 日本語で応答する
 
-## タスク追加プランナー（重要）
-- ユーザーが予定追加したい意図の場合、以下の必須情報を埋める:
-  1) 追加時期: 今日 / 3日以内 / 今週 / 今月
-  2) 所要時間: 5分 / 15分 / 30分 / 1時間 / 2時間（必要なら自由入力）
-  3) カレンダー: どのカレンダーに入れるか
-- 足りない情報があるときは、説明だけで終わらせずに \`ui_controls\` を返す
-- 情報が揃ったら、具体的な候補時間を2〜3件提案し \`proposal_cards\` を返す
-- 候補が作れない場合は、\`resolve_conflict\` にして代替案（ずらす/別日/分割/見送り）を案内する
+## カレンダー予定追加（推論優先モード）
+ユーザーが予定を追加したい場合:
 
-## planner_state の指定方法
-応答末尾に以下を含める:
-\`\`\`planner_state
-"capture_intent" | "fill_required_slots" | "propose_slots" | "resolve_conflict" | "confirm_and_execute"
+### 推論のルール:
+1. **予定名**: 会話やメモから推論。不明なら聞く（これだけは必須質問）
+2. **日時**: 空き時間データから最適な1枠を自動選択。「明日」「来週」等のヒントがあれば優先
+3. **所要時間**: タスク種別から自動推定（会議=60分, ランチ=60分, 作業=60分, 外出=480分）
+4. **カレンダー**: ${calendarCount <= 1 ? 'カレンダーは1つなので自動選択する' : '複数カレンダーがある場合のみoptionsで聞く'}
+
+### 応答パターン:
+
+**A. 予定名+日時ヒントがある場合**（例:「明日企画書作成を入れて」）
+→ 空き時間データから最適枠を選び、best_proposalブロックを即座に返す
+
+**B. 予定名はあるが日時が曖昧**（例:「企画書作成を入れて」）
+→ 空き時間データから最適枠を推論し、best_proposalブロックを返す
+
+**C. 予定名が不明**（例:「予定を入れて」）
+→ 「どんな予定ですか？」とだけ聞く（1質問のみ）
+
+### best_proposal ブロック（最適1案の提案）
+空き時間データを参照し、最も適切な1枠を選んで以下を返す:
+\`\`\`best_proposal
+{"title":"予定名","startAt":"2026-02-26T14:00:00+09:00","endAt":"2026-02-26T15:00:00+09:00","calendarId":"${defaultCalendarId}","duration":60,"reason":"明日午後に1時間の空きがあります"}
+\`\`\`
+- startAt/endAt は必ず ISO8601 JST (+09:00) 形式
+- reason に「なぜこの時間を選んだか」を1文で書く
+- 空き時間データにある時間のみ提案すること
+- best_proposalを返すとき、actionブロックやoptionsブロックは返さない
+
+### ユーザーが提案を承認した場合
+「登録して」「OK」「それで」等の承認メッセージが来たら、actionブロックを返す:
+\`\`\`action
+{"type":"add_calendar_event","params":{"title":"予定名","scheduled_at":"ISO8601+09:00","estimated_time":60,"calendar_id":"${defaultCalendarId}"},"description":"📅 M/D(曜) HH:MM〜HH:MM 予定名 をカレンダーに登録します"}
 \`\`\`
 
-## UIコントロールの指定方法
-追加情報が必要なとき:
-\`\`\`ui_controls
-[
-  {"type":"select","key":"scheduleWindow","label":"いつ入れますか？","required":true,"options":[{"label":"今日","value":"today"},{"label":"3日以内","value":"within_3_days"},{"label":"今週","value":"this_week"},{"label":"今月","value":"this_month"}]},
-  {"type":"select","key":"duration","label":"所要時間","required":true,"allowCustom":true,"options":[{"label":"5分","value":"5"},{"label":"15分","value":"15"},{"label":"30分","value":"30"},{"label":"1時間","value":"60"},{"label":"2時間","value":"120"}]},
-  {"type":"select","key":"calendarId","label":"カレンダー","required":true,"options":[{"label":"Work","value":"work_calendar_id"}]}
-]
-\`\`\`
-
-## 候補カードの指定方法
-候補時間を提示する際:
+### ユーザーが「他の候補」を要求した場合
+proposal_cardsブロックで2〜3件の代替案を返す:
 \`\`\`proposal_cards
-[
-  {"id":"p1","title":"請求書処理","startAt":"2026-02-26T19:00:00+09:00","endAt":"2026-02-26T19:30:00+09:00","calendarId":"xxx","reason":"締切が近く30分で実施可能","value":"木曜19:00で追加して"},
-  {"id":"p2","title":"請求書処理","startAt":"2026-02-27T08:00:00+09:00","endAt":"2026-02-27T08:30:00+09:00","calendarId":"xxx","reason":"朝の空き時間を活用","value":"金曜8:00で追加して"}
-]
+[{"id":"p1","title":"予定名","startAt":"ISO8601","endAt":"ISO8601","calendarId":"xxx","reason":"理由","value":"この時間で登録して"}]
 \`\`\`
+
+## マップ追加・その他の操作
+- 情報が足りない場合は選択肢付きで質問する
+- 例: 「マップに追加して」→ プロジェクトが複数あるならoptionsで聞く
 
 ## 選択肢の指定方法
-ユーザーに選択を求める場合、応答の最後に以下のJSONブロックを含める:
 \`\`\`options
 [{"label": "表示テキスト", "value": "選択時に送信される値"}, ...]
 \`\`\`
 - 最大4つまで
-- プロジェクトやタスクを選ぶ場合は、コンテキストの一覧から候補を出す
-- 日時を選ぶ場合は、具体的な候補日時を出す
-
-例:
-ユーザー: 「マップに追加して」
-AI: どのプロジェクトに追加しますか？
-\`\`\`options
-[{"label": "プロジェクトA", "value": "プロジェクトAに追加して"}, {"label": "プロジェクトB", "value": "プロジェクトBに追加して"}]
-\`\`\`
 
 ## アクション指定方法
-すべての確認が完了して実行する段階で、応答の最後に以下のJSONブロックを含める:
 \`\`\`action
 {"type": "アクション名", "params": {パラメータ}, "description": "確認用の説明"}
 \`\`\`
-注意: actionブロックとoptionsブロックは同時に使わない。どちらか一方のみ。
+注意: actionブロックとoptionsブロックとbest_proposalブロックは同時に使わない。どれか1つのみ。
 
 アクション名と必要なパラメータ:
 - add_task: {"title": "タスク名", "project_id": "プロジェクトID(任意)", "parent_task_id": "親タスクID(任意)"}
@@ -246,52 +258,18 @@ AI: どのプロジェクトに追加しますか？
 - update_priority: {"task_id": "タスクID", "priority": 1-4}
 - set_deadline: {"task_id": "タスクID", "scheduled_at": "ISO8601日時", "estimated_time": 分数}
 
-## カレンダー予定追加の対話フロー（重要）
-ユーザーが予定を追加したい場合、**足りない情報だけを聞く**。すでに分かっている情報は確認不要。
-
-必要な情報:
-1. 予定名（何をするか）
-2. 日時（いつ）
-3. 所要時間（どのくらい）
-
-### パターン別の対応:
-
-**A. 情報が十分な場合**（例:「明日10時に会議を1時間」）
-→ 即座に最終確認。actionブロックを出力してOK。
-「📅 2/22(土) 10:00〜11:00 会議 をカレンダーに登録します」
-
-**B. 一部不足の場合**（例:「明日会議」→ 時間が不明）
-→ 不足分だけoptionsで聞く。
-「何時からですか？」+ options: 9:00, 10:00, 13:00, 14:00
-
-**C. 曖昧な場合**（例:「予定を入れて」→ 全部不明）
-→ まず「どんな予定ですか？」から聞く
-
-### 所要時間のデフォルト:
-- 会議・ミーティング: 1時間
-- ランチ・食事: 1時間
-- 旅行・外出: 終日(480分)
-- その他: 1時間
-- ユーザーが時間を言わなかった場合、デフォルトを適用して最終確認に進んでOK
-
-### 最終確認時のルール:
-- 要約を表示: 「📅 M/D(曜) HH:MM〜HH:MM タイトル をカレンダーに登録します」
-- scheduled_atはISO8601 JST形式（例: 2026-02-22T10:00:00+09:00）
-- 「明日」「来週」等は具体的な日付に変換して表示する
-${calendarsContext ? `- カレンダーが複数ある場合、optionsでどのカレンダーか聞く` : ''}
-
 ## コンテキスト
 今日の日付: ${new Date().toISOString().split('T')[0]}
 現在時刻: ${new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}
 タイムゾーン: Asia/Tokyo
-${calendarSettings?.is_sync_enabled ? `Googleカレンダー連携: 有効\nデフォルトカレンダーID: ${calendarSettings.default_calendar_id || 'primary'}${calendarsContext ? '\n利用可能なカレンダー:\n' + calendarsContext : ''}` : 'Googleカレンダー連携: 未設定'}
+${calendarSettings?.is_sync_enabled ? `Googleカレンダー連携: 有効\nデフォルトカレンダーID: ${defaultCalendarId}${calendarsContext ? '\n利用可能なカレンダー:\n' + calendarsContext : ''}` : 'Googleカレンダー連携: 未設定'}
 
 ユーザーのプロジェクト一覧:
 ${projectsContext || '(プロジェクトなし)'}
-${activeNoteContent}`
+${activeNoteContent}
+${freeTimeContext}`
 
-    const plannerContext = context.planner
-    const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}${plannerContext ? `## プランナーコンテキスト\n${JSON.stringify(plannerContext)}\n\n` : ''}ユーザー: ${message.trim()}`
+    const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
     // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
     const genAI = new GoogleGenerativeAI(apiKey)
@@ -309,7 +287,7 @@ ${activeNoteContent}`
             { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
           ],
           generationConfig: {
-            maxOutputTokens: 800,
+            maxOutputTokens: 1000,
             temperature: 0.7,
           },
         })
@@ -357,14 +335,21 @@ ${activeNoteContent}`
       action = actionBlock.value as ChatMessage['action']
     }
 
+    // best_proposal ブロックを抽出
+    const bestProposalBlock = extractJsonBlock(replyText, 'best_proposal')
+    let bestProposal: BestProposal | undefined
+    if (bestProposalBlock.value && typeof bestProposalBlock.value === 'object') {
+      bestProposal = bestProposalBlock.value as BestProposal
+    }
+    replyText = bestProposalBlock.text
+
     // planner_state ブロックを抽出
     const plannerStateBlock = extractJsonBlock(replyText, 'planner_state')
     let plannerState: PlannerState | undefined
     if (typeof plannerStateBlock.value === 'string') {
       const allowedStates: PlannerState[] = [
         'capture_intent',
-        'fill_required_slots',
-        'propose_slots',
+        'propose',
         'resolve_conflict',
         'confirm_and_execute',
       ]
@@ -374,15 +359,7 @@ ${activeNoteContent}`
     }
     replyText = plannerStateBlock.text
 
-    // UIコントロールブロックを抽出
-    const uiControlsBlock = extractJsonBlock(replyText, 'ui_controls')
-    let uiControls: UiControl[] | undefined
-    if (Array.isArray(uiControlsBlock.value)) {
-      uiControls = uiControlsBlock.value.filter(Boolean).slice(0, 4) as UiControl[]
-    }
-    replyText = uiControlsBlock.text
-
-    // 候補カードブロックを抽出
+    // 候補カードブロックを抽出（「他の候補」要求時に使用）
     const proposalCardsBlock = extractJsonBlock(replyText, 'proposal_cards')
     let proposalCards: ProposalCard[] | undefined
     if (Array.isArray(proposalCardsBlock.value)) {
@@ -399,71 +376,12 @@ ${activeNoteContent}`
     }
     replyText = optionsBlock.text
 
-    // プランナーモード時のフォールバック（選択UIが欠落した場合）
-    const shouldAddFallbackControls =
-      context.planner?.mode === 'task_planner' &&
-      rallyCount >= 1 &&
-      !action &&
-      (!options || options.length === 0) &&
-      (!uiControls || uiControls.length === 0) &&
-      (!proposalCards || proposalCards.length === 0)
-
-    if (shouldAddFallbackControls) {
-      plannerState = plannerState || 'fill_required_slots'
-      uiControls = [
-        {
-          type: 'select',
-          key: 'scheduleWindow',
-          label: 'いつ入れますか？',
-          required: true,
-          options: [
-            { label: '今日', value: 'today' },
-            { label: '3日以内', value: 'within_3_days' },
-            { label: '今週', value: 'this_week' },
-            { label: '今月', value: 'this_month' },
-          ],
-        },
-        {
-          type: 'select',
-          key: 'duration',
-          label: '所要時間',
-          required: true,
-          allowCustom: true,
-          options: [
-            { label: '5分', value: '5' },
-            { label: '15分', value: '15' },
-            { label: '30分', value: '30' },
-            { label: '1時間', value: '60' },
-            { label: '2時間', value: '120' },
-          ],
-        },
-        {
-          type: 'select',
-          key: 'calendarId',
-          label: 'カレンダー',
-          required: true,
-          options: calendarOptions.length > 0
-            ? calendarOptions
-            : [{ label: 'デフォルトカレンダー', value: 'primary' }],
-        },
-        {
-          type: 'text',
-          key: 'freeText',
-          label: '補足（任意）',
-          placeholder: '例: 17時ごろ、先方都合で前後可',
-        },
-      ]
-      if (!replyText.trim()) {
-        replyText = '不足情報を選択してください。必要なら自由入力で補足できます。'
-      }
-    }
-
     return NextResponse.json({
       reply: replyText,
       action,
       options,
       plannerState,
-      uiControls,
+      bestProposal,
       proposalCards,
     })
   } catch (error) {

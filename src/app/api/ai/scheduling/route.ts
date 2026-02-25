@@ -1,8 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import { getAllFreeSlots } from '@/lib/time-utils'
-import { format, addDays } from 'date-fns'
+import { getFreeTimeContext } from '@/lib/free-time-context'
+import { format } from 'date-fns'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -10,14 +10,6 @@ interface ChatMessage {
 }
 
 const MAX_RALLIES = 15
-const WORKING_HOURS = { start: '09:00', end: '20:00' }
-const TZ = 'Asia/Tokyo'
-
-// 日付を「M月d日(曜)」形式にフォーマット
-function formatDateLabel(date: Date): string {
-  const days = ['日', '月', '火', '水', '木', '金', '土']
-  return `${date.getMonth() + 1}月${date.getDate()}日(${days[date.getDay()]})`
-}
 
 // UTCのDateをJSTのDateに変換（+9時間）
 function toJstDate(date: Date): Date {
@@ -95,61 +87,8 @@ export async function POST(request: Request) {
 
     if (isFirstMessage && calendarIds.length > 0) {
       try {
-        const { fetchMultipleCalendarEvents } = await import('@/lib/google-calendar')
-        const nowJst = toJstDate(new Date())
-        const sevenDaysLater = addDays(nowJst, 7)
-
-        // Google Calendarイベントを取得
-        const calendarEvents = await fetchMultipleCalendarEvents(user.id, calendarIds, {
-          timeMin: nowJst,
-          timeMax: sevenDaysLater,
-        })
-
-        // スケジュール済みタスクも取得
-        const { data: scheduledTasks } = await supabase
-          .from('tasks')
-          .select('title, scheduled_at, estimated_time')
-          .eq('user_id', user.id)
-          .is('deleted_at', null)
-          .not('scheduled_at', 'is', null)
-          .gte('scheduled_at', nowJst.toISOString())
-          .lte('scheduled_at', sevenDaysLater.toISOString())
-
-        // TimeSlot形式に変換
-        const busySlots = [
-          ...calendarEvents.map(e => ({
-            start: new Date(e.start_time),
-            end: new Date(e.end_time),
-          })),
-          ...(scheduledTasks || []).map(t => {
-            const start = new Date(t.scheduled_at!)
-            const end = new Date(start.getTime() + (t.estimated_time || 60) * 60 * 1000)
-            return { start, end }
-          }),
-        ]
-
-        // 7日分の空き時間を計算
-        const lines: string[] = []
-        for (let i = 0; i < 7; i++) {
-          const targetDate = addDays(nowJst, i)
-          const dateLabel = formatDateLabel(targetDate)
-          const freeSlots = getAllFreeSlots(targetDate, busySlots, WORKING_HOURS)
-
-          if (freeSlots.length === 0) {
-            lines.push(`${dateLabel}: 空き時間なし`)
-          } else {
-            const slotTexts = freeSlots.map(s => {
-              const sh = String(s.start.getHours()).padStart(2, '0')
-              const sm = String(s.start.getMinutes()).padStart(2, '0')
-              const eh = String(s.end.getHours()).padStart(2, '0')
-              const em = String(s.end.getMinutes()).padStart(2, '0')
-              return `${sh}:${sm}-${eh}:${em}(${s.duration}分)`
-            })
-            lines.push(`${dateLabel}: ${slotTexts.join(', ')}`)
-          }
-        }
-
-        freeTimeContext = `\n## 今後7日間の空き時間（9:00-20:00の作業時間内）\n${lines.join('\n')}`
+        const result = await getFreeTimeContext(user.id, calendarIds, supabase)
+        freeTimeContext = result.contextText
       } catch (err) {
         console.error('[scheduling] Failed to fetch calendar events:', err)
         freeTimeContext = '\n## 空き時間情報\n（取得に失敗しました。日時を直接お伝えください）'
