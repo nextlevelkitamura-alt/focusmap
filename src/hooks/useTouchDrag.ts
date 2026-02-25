@@ -230,9 +230,9 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
                 return
             }
 
-            // We're dragging - update preview (CSS touch-action: none handles scroll prevention)
-            // Note: preventDefault is removed to avoid "passive event listener" errors
-            // The element has touch-none class which sets touch-action: none
+            // We're dragging - update preview.
+            // Scroll prevention is handled by temporarily setting the grid overflow to hidden
+            // when drag starts (instead of relying on non-passive preventDefault).
 
             updatePreview(touch.clientY)
             runAutoScroll(touch.clientY)

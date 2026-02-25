@@ -10,10 +10,50 @@ interface ChatMessage {
 }
 
 const MAX_RALLIES = 15
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 // UTCのDateをJSTのDateに変換（+9時間）
 function toJstDate(date: Date): Date {
   return new Date(date.getTime() + 9 * 60 * 60 * 1000)
+}
+
+function clampDuration(minutes: number): number {
+  if (!Number.isFinite(minutes)) return 60
+  return Math.max(5, Math.min(720, Math.round(minutes)))
+}
+
+function extractExplicitDurationMinutes(texts: string[]): number | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const text = texts[i]
+    const minuteMatches = [...text.matchAll(/(\d{1,3})\s*分/g)]
+    if (minuteMatches.length > 0) {
+      const value = Number(minuteMatches[minuteMatches.length - 1][1])
+      if (Number.isFinite(value) && value > 0) return clampDuration(value)
+    }
+    const hourMatches = [...text.matchAll(/(\d{1,2}(?:\.\d+)?)\s*時間/g)]
+    if (hourMatches.length > 0) {
+      const value = Number(hourMatches[hourMatches.length - 1][1])
+      if (Number.isFinite(value) && value > 0) return clampDuration(value * 60)
+    }
+  }
+  return undefined
+}
+
+function toJstIsoString(date: Date): string {
+  const jst = new Date(date.getTime() + JST_OFFSET_MS)
+  const year = jst.getUTCFullYear()
+  const month = String(jst.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(jst.getUTCDate()).padStart(2, '0')
+  const hour = String(jst.getUTCHours()).padStart(2, '0')
+  const minute = String(jst.getUTCMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}:${minute}:00+09:00`
+}
+
+function snapToFiveMinutes(date: Date): Date {
+  const d = new Date(date)
+  d.setSeconds(0, 0)
+  d.setMinutes(Math.round(d.getMinutes() / 5) * 5)
+  return d
 }
 
 // POST /api/ai/scheduling - スケジューリング特化AIチャット
@@ -123,6 +163,7 @@ export async function POST(request: Request) {
 ## 会話の進め方（重要）
 1. **予定タイトルの把握**：予定名が分からなければ「どんな予定ですか？」と聞く
 2. **所要時間の確認**：所要時間が不明なら optionsブロック で選択肢を提示
+   - ユーザーが「5分」「30分」「1時間」など明示した場合は、その時間を最優先する
    - デフォルト: 会議・打ち合わせ=60分, ランチ=60分, 作業=90分
    - 時間が明示されていればデフォルトを適用してスキップ可
 3. **時間候補の提示**：空き時間データから2〜4候補を slotsブロック で提示
@@ -246,6 +287,38 @@ ${freeTimeContext}`
         }
         replyText = replyText.replace(/```options\s*\n[\s\S]*?\n```/, '').trim()
       } catch { /* パース失敗時は無視 */ }
+    }
+
+    // 補正: 明示分数優先 + calendar_id/scheduled_at 正規化
+    const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
+    const explicitDuration = extractExplicitDurationMinutes(allUserTexts)
+    const validCalendarIds = new Set(calendarIds)
+    const inferredCalendarId = (() => {
+      const latest = (allUserTexts[allUserTexts.length - 1] || '').toLowerCase()
+      for (const c of userCalendars || []) {
+        if (!c.google_calendar_id || !c.name) continue
+        if (latest.includes(c.name.toLowerCase())) return c.google_calendar_id
+      }
+      return undefined
+    })()
+
+    if (action?.type === 'add_calendar_event') {
+      const params = { ...(action.params || {}) } as Record<string, unknown>
+      const rawDuration = typeof params.estimated_time === 'number'
+        ? params.estimated_time
+        : Number(params.estimated_time)
+      params.estimated_time = clampDuration(explicitDuration ?? (Number.isFinite(rawDuration) ? rawDuration : 60))
+
+      if (typeof params.scheduled_at === 'string' && !Number.isNaN(new Date(params.scheduled_at).getTime())) {
+        params.scheduled_at = toJstIsoString(snapToFiveMinutes(new Date(params.scheduled_at)))
+      }
+
+      const rawCalendar = typeof params.calendar_id === 'string' ? params.calendar_id : undefined
+      params.calendar_id = (rawCalendar && validCalendarIds.has(rawCalendar))
+        ? rawCalendar
+        : (inferredCalendarId || defaultCalendarId)
+
+      action = { ...action, params }
     }
 
     return NextResponse.json({

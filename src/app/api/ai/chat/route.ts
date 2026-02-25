@@ -41,6 +41,90 @@ type PlannerState =
 
 // スケジューリング意図を検出するキーワード
 const SCHEDULING_KEYWORDS = ['予定', 'カレンダー', '入れて', 'スケジュール', '会議', 'ミーティング', 'ランチ', '追加して', '登録', '予約']
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
+
+function clampDuration(minutes: number): number {
+  if (!Number.isFinite(minutes)) return 60
+  return Math.max(5, Math.min(720, Math.round(minutes)))
+}
+
+function extractExplicitDurationMinutes(texts: string[]): number | undefined {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const text = texts[i]
+
+    const minuteMatches = [...text.matchAll(/(\d{1,3})\s*分/g)]
+    if (minuteMatches.length > 0) {
+      const value = Number(minuteMatches[minuteMatches.length - 1][1])
+      if (Number.isFinite(value) && value > 0) return clampDuration(value)
+    }
+
+    const hourMatches = [...text.matchAll(/(\d{1,2}(?:\.\d+)?)\s*時間/g)]
+    if (hourMatches.length > 0) {
+      const value = Number(hourMatches[hourMatches.length - 1][1])
+      if (Number.isFinite(value) && value > 0) return clampDuration(value * 60)
+    }
+  }
+  return undefined
+}
+
+function toJstIsoString(date: Date): string {
+  const jst = new Date(date.getTime() + JST_OFFSET_MS)
+  const year = jst.getUTCFullYear()
+  const month = String(jst.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(jst.getUTCDate()).padStart(2, '0')
+  const hour = String(jst.getUTCHours()).padStart(2, '0')
+  const minute = String(jst.getUTCMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}:${minute}:00+09:00`
+}
+
+function snapToFiveMinutes(date: Date): Date {
+  const d = new Date(date)
+  d.setSeconds(0, 0)
+  const m = d.getMinutes()
+  d.setMinutes(Math.round(m / 5) * 5)
+  return d
+}
+
+function hasExplicitTimeMention(text: string): boolean {
+  return /([01]?\d|2[0-3])\s*[:：時]\s*[0-5]?\d?/.test(text) || /(午前|午後|朝|昼|夕方|夜)/.test(text)
+}
+
+function isVagueTimeRequest(text: string): boolean {
+  return /(いい感じ|適当|おすすめ|空いて|都合|任せ|ベスト|最適)/.test(text)
+}
+
+function keepWithinBusinessHoursForVagueRequest(date: Date, sourceText: string): Date {
+  if (hasExplicitTimeMention(sourceText) || !isVagueTimeRequest(sourceText)) return date
+  const d = new Date(date)
+  const hour = d.getHours()
+  if (hour >= 9 && hour <= 20) return d
+
+  if (hour < 9) {
+    d.setHours(10, 0, 0, 0)
+    return d
+  }
+
+  d.setDate(d.getDate() + 1)
+  d.setHours(10, 0, 0, 0)
+  return d
+}
+
+function resolveCalendarIdFromText(
+  text: string,
+  calendars: Array<{ id: string; name: string }>,
+): string | undefined {
+  const normalized = text.toLowerCase()
+  for (const cal of calendars) {
+    const name = cal.name.trim()
+    if (!name) continue
+    if (normalized.includes(name.toLowerCase())) return cal.id
+  }
+  return undefined
+}
+
+function isValidDateString(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
+}
 
 // POST /api/ai/chat - AIチャット対話
 export async function POST(request: Request) {
@@ -104,6 +188,7 @@ export async function POST(request: Request) {
     let calendarsContext = ''
     let defaultCalendarId = 'primary'
     let calendarCount = 0
+    let userCalendarsForResolution: Array<{ id: string; name: string }> = []
     if (calendarSettings?.is_sync_enabled) {
       const { data: userCalendars } = await supabase
         .from('user_calendars')
@@ -113,6 +198,9 @@ export async function POST(request: Request) {
 
       if (userCalendars && userCalendars.length > 0) {
         calendarCount = userCalendars.length
+        userCalendarsForResolution = userCalendars
+          .filter(c => !!c.google_calendar_id)
+          .map(c => ({ id: c.google_calendar_id, name: c.name || '' }))
         calendarsContext = userCalendars.map(c =>
           `- ${c.name} (ID: ${c.google_calendar_id})${c.is_primary ? ' [デフォルト]' : ''}`
         ).join('\n')
@@ -198,7 +286,9 @@ proposal_cards は絶対に使わない。best_proposal のみ使うこと。
 ### 推論のルール:
 1. **予定名**: 会話やメモから推論。不明なら聞く（これだけは必須質問）
 2. **日時**: 空き時間データがあればそこから最適な1枠を自動選択。なければ直近の一般的な時間を推定
-3. **所要時間**: 必ず以下のデフォルトを適用する。ユーザーに聞かない
+3. **所要時間**:
+   - ユーザーが「5分」「30分」「1時間」など明示した場合は、その時間を最優先で採用する
+   - 明示がない場合のみ以下のデフォルトを適用する。ユーザーに聞かない
    - 会議・ミーティング・打ち合わせ: 60分
    - ランチ・食事: 60分
    - 電話・通話: 15分
@@ -206,7 +296,9 @@ proposal_cards は絶対に使わない。best_proposal のみ使うこと。
    - 一般的な作業・タスク: 60分
    - 外出・旅行: 480分
    - 不明な場合: 60分
-4. **カレンダー**: ${calendarCount <= 1 ? 'カレンダーは1つなので自動選択する（ID: ' + defaultCalendarId + '）' : '複数カレンダーがある場合のみoptionsで聞く'}
+4. **カレンダー**:
+   - ユーザーがカレンダー名（例: 仕事/個人）を言ったらそれを優先
+   - それ以外は ${calendarCount <= 1 ? 'カレンダーは1つなので自動選択する（ID: ' + defaultCalendarId + '）' : '複数カレンダーがある場合は、推定できる時は推定し、推定できない時だけoptionsで聞く'}
 
 ### 応答パターン:
 - 予定名がわかる場合 → **即座にbest_proposalを返す**（他に何も聞かない）
@@ -394,6 +486,72 @@ ${freeTimeContext}`
 
     // 残存するJSONコードブロックをクリーンアップ（AIが中途半端なJSONを返した場合）
     replyText = replyText.replace(/```\w*\s*\n[\s\S]*?(\n```|$)/g, '').trim()
+
+    // --- Safety normalization layer ---
+    // AIの揺らぎで不自然な時間・duration・calendar_idが出ても、サーバー側で補正する
+    const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
+    const explicitDuration = extractExplicitDurationMinutes(allUserTexts)
+    const lastUserText = allUserTexts[allUserTexts.length - 1] || ''
+    const inferredCalendarFromText = resolveCalendarIdFromText(lastUserText, userCalendarsForResolution)
+    const validCalendarIds = new Set(userCalendarsForResolution.map(c => c.id))
+
+    if (bestProposal) {
+      const startDate = isValidDateString(bestProposal.startAt) ? new Date(bestProposal.startAt) : null
+      const endDate = isValidDateString(bestProposal.endAt) ? new Date(bestProposal.endAt) : null
+      if (startDate) {
+        let normalizedStart = snapToFiveMinutes(startDate)
+        normalizedStart = keepWithinBusinessHoursForVagueRequest(normalizedStart, lastUserText)
+        const inferredDuration = endDate
+          ? Math.round((endDate.getTime() - startDate.getTime()) / 60000)
+          : bestProposal.duration
+        const normalizedDuration = clampDuration(explicitDuration ?? inferredDuration ?? 60)
+        const normalizedEnd = new Date(normalizedStart.getTime() + normalizedDuration * 60 * 1000)
+        const normalizedCalendarId = validCalendarIds.has(bestProposal.calendarId)
+          ? bestProposal.calendarId
+          : (inferredCalendarFromText || defaultCalendarId)
+
+        bestProposal = {
+          ...bestProposal,
+          startAt: toJstIsoString(normalizedStart),
+          endAt: toJstIsoString(normalizedEnd),
+          duration: normalizedDuration,
+          calendarId: normalizedCalendarId,
+        }
+      }
+    }
+
+    if (action?.type === 'add_calendar_event') {
+      const params = { ...(action.params || {}) } as Record<string, unknown>
+      const proposedStart = isValidDateString(params.scheduled_at)
+        ? new Date(params.scheduled_at)
+        : (bestProposal && isValidDateString(bestProposal.startAt) ? new Date(bestProposal.startAt) : null)
+
+      const proposedDurationRaw = typeof params.estimated_time === 'number'
+        ? params.estimated_time
+        : Number(params.estimated_time)
+      const proposedDuration = Number.isFinite(proposedDurationRaw)
+        ? proposedDurationRaw
+        : (bestProposal?.duration ?? 60)
+      const normalizedDuration = clampDuration(explicitDuration ?? proposedDuration)
+
+      if (proposedStart) {
+        let normalizedStart = snapToFiveMinutes(proposedStart)
+        normalizedStart = keepWithinBusinessHoursForVagueRequest(normalizedStart, lastUserText)
+        params.scheduled_at = toJstIsoString(normalizedStart)
+      }
+      params.estimated_time = normalizedDuration
+
+      const rawCalendarId = typeof params.calendar_id === 'string' ? params.calendar_id : undefined
+      const normalizedCalendarId = rawCalendarId && validCalendarIds.has(rawCalendarId)
+        ? rawCalendarId
+        : (inferredCalendarFromText || bestProposal?.calendarId || defaultCalendarId)
+      params.calendar_id = normalizedCalendarId
+
+      action = {
+        ...action,
+        params,
+      }
+    }
 
     return NextResponse.json({
       reply: replyText,
