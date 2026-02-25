@@ -86,7 +86,7 @@ export function TodayTimelineCalendar({
         if (gridRef.current) {
             gridRef.current.scrollTop = scrollTo
         }
-    }, [])
+    }, [initialScrollTop])
 
     // Notify parent about current scroll position (for restoring position after date switch)
     const handleGridScroll = useCallback(() => {
@@ -319,6 +319,7 @@ export function TodayTimelineCalendar({
                                                 startTime={item.startTime}
                                                 endTime={item.endTime}
                                                 height={item.height}
+                                                totalColumns={item.totalColumns}
                                                 timer={timer}
                                                 onToggle={onToggleTask}
                                                 onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
@@ -456,6 +457,7 @@ function TaskBlock({
     startTime,
     endTime,
     height,
+    totalColumns,
     timer,
     onToggle,
     onTap,
@@ -471,6 +473,7 @@ function TaskBlock({
     startTime: Date
     endTime: Date
     height: number
+    totalColumns: number
     timer: ReturnType<typeof useTimer>
     onToggle: (taskId: string) => void
     onTap?: () => void
@@ -482,10 +485,9 @@ function TaskBlock({
     accentColor?: string
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
-    const isPast = currentTime >= endTime
     const isRunning = timer.runningTaskId === task.id
     const isDone = task.status === 'done'
-    const isCompact = height < 40
+    const isCompact = height < 40 || totalColumns >= 2
 
     const startStr = format(startTime, 'HH:mm')
 

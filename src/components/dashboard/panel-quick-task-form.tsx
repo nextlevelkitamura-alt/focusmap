@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Plus, X, Clock, Calendar, ChevronDown } from "lucide-react"
+import { Plus, X, Clock, ChevronDown } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -20,7 +20,8 @@ interface PanelQuickTaskFormProps {
     onClose?: () => void
 }
 
-export function PanelQuickTaskForm({ projects, calendars, onCreateTask, isOpen: controlledIsOpen, onClose }: PanelQuickTaskFormProps) {
+export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
+    const { calendars, onCreateTask, isOpen: controlledIsOpen, onClose } = props
     const [internalIsOpen, setInternalIsOpen] = useState(false)
     const isControlled = controlledIsOpen !== undefined
     const isOpen = isControlled ? controlledIsOpen : internalIsOpen
@@ -77,7 +78,7 @@ export function PanelQuickTaskForm({ projects, calendars, onCreateTask, isOpen: 
         } finally {
             setIsSubmitting(false)
         }
-    }, [title, scheduledDate, estimatedTime, calendarId, isSubmitting, onCreateTask, resetForm])
+    }, [title, scheduledDate, estimatedTime, calendarId, isSubmitting, onCreateTask, resetForm, setIsOpen])
 
     // Enter to submit, Escape to close
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -88,7 +89,7 @@ export function PanelQuickTaskForm({ projects, calendars, onCreateTask, isOpen: 
             setIsOpen(false)
             resetForm()
         }
-    }, [handleSubmit, title, resetForm])
+    }, [handleSubmit, title, resetForm, setIsOpen])
 
     if (!isOpen) {
         return (
@@ -103,38 +104,36 @@ export function PanelQuickTaskForm({ projects, calendars, onCreateTask, isOpen: 
     }
 
     return (
-        <div className="border-b border-border/30 bg-background/60 animate-in slide-in-from-top-2 duration-200">
-            <div className="px-3 py-2 space-y-2" onKeyDown={handleKeyDown}>
-                {/* Title input */}
-                <div className="flex items-center gap-1.5">
+        <div className="border-t border-border/40 bg-background/95 backdrop-blur-md animate-in slide-in-from-bottom-2 duration-200 shadow-[0_-8px_24px_rgba(0,0,0,0.24)]">
+            <div className="px-3 py-3 space-y-2.5" onKeyDown={handleKeyDown}>
+                <div className="flex items-center gap-2">
                     <input
                         ref={titleInputRef}
                         type="text"
                         value={title}
                         onChange={(e) => setTitle(e.target.value)}
-                        className="flex-1 px-2.5 py-1.5 text-xs border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        className="h-12 flex-1 px-4 text-xl border-2 border-border/80 rounded-2xl bg-background/95 focus:outline-none focus:ring-2 focus:ring-primary/70 focus:border-primary/50"
                         placeholder="タスク名を入力..."
                     />
                     <button
                         onClick={() => { setIsOpen(false); resetForm() }}
-                        className="p-1 rounded-full hover:bg-muted transition-colors text-muted-foreground flex-shrink-0"
+                        className="w-10 h-10 rounded-full hover:bg-muted transition-colors text-muted-foreground flex-shrink-0"
+                        aria-label="タスク追加フォームを閉じる"
                     >
-                        <X className="w-3.5 h-3.5" />
+                        <X className="w-5 h-5 mx-auto" />
                     </button>
                 </div>
 
-                {/* Options row */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                    {/* Date/Time */}
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,90px)_minmax(0,1fr)_84px] gap-2">
                     <DateTimePicker
                         date={scheduledDate}
                         setDate={setScheduledDate}
                         trigger={
                             <button
                                 type="button"
-                                className="flex items-center gap-1 px-2 py-1 text-[10px] border rounded-md bg-background hover:bg-muted transition-colors"
+                                className="h-10 min-w-0 flex items-center gap-1.5 px-3 text-base border rounded-xl bg-background hover:bg-muted transition-colors"
                             >
-                                <Clock className="w-3 h-3 text-muted-foreground" />
+                                <Clock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                                 {scheduledDate
                                     ? format(scheduledDate, "M/d HH:mm", { locale: ja })
                                     : "日時"
@@ -143,27 +142,25 @@ export function PanelQuickTaskForm({ projects, calendars, onCreateTask, isOpen: 
                         }
                     />
 
-                    {/* Duration */}
                     <DurationWheelPicker
                         duration={estimatedTime}
                         onDurationChange={setEstimatedTime}
                         trigger={
                             <button
                                 type="button"
-                                className="flex items-center gap-1 px-2 py-1 text-[10px] border rounded-md bg-background hover:bg-muted transition-colors"
+                                className="h-10 w-full min-w-0 flex items-center justify-center gap-1 px-2 text-base border rounded-xl bg-background hover:bg-muted transition-colors"
                             >
                                 {formatDuration(estimatedTime)}
-                                <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                                <ChevronDown className="w-4 h-4 text-muted-foreground" />
                             </button>
                         }
                     />
 
-                    {/* Calendar */}
                     {calendars.length > 0 && (
                         <select
                             value={calendarId || ''}
                             onChange={(e) => setCalendarId(e.target.value || null)}
-                            className="px-2 py-1 text-[10px] border rounded-md bg-background hover:bg-muted transition-colors appearance-none cursor-pointer max-w-[120px] truncate"
+                            className="h-10 min-w-0 px-3 text-base border rounded-xl bg-background hover:bg-muted transition-colors appearance-none cursor-pointer truncate"
                         >
                             <option value="">カレンダー</option>
                             {calendars.map(cal => (
@@ -171,13 +168,17 @@ export function PanelQuickTaskForm({ projects, calendars, onCreateTask, isOpen: 
                             ))}
                         </select>
                     )}
+                    {calendars.length === 0 && (
+                        <div className="h-10 min-w-0 px-3 text-base border rounded-xl bg-muted/30 text-muted-foreground flex items-center truncate">
+                            カレンダー
+                        </div>
+                    )}
 
-                    {/* Submit */}
                     <button
                         onClick={handleSubmit}
                         disabled={!title.trim() || isSubmitting}
                         className={cn(
-                            "ml-auto px-3 py-1 text-[10px] font-medium rounded-md transition-colors",
+                            "h-10 text-base font-medium rounded-xl transition-colors",
                             !title.trim() || isSubmitting
                                 ? "bg-muted text-muted-foreground cursor-not-allowed"
                                 : "bg-primary text-primary-foreground hover:bg-primary/90"
