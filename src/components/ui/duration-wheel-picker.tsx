@@ -16,6 +16,7 @@ const ITEM_HEIGHT = 32
 const VISIBLE_HEIGHT = 160
 
 const PRESETS = [
+    { label: '5分', value: 5 },
     { label: '15分', value: 15 },
     { label: '30分', value: 30 },
     { label: '1h', value: 60 },
@@ -48,6 +49,19 @@ function DurationWheel({
             behavior: smooth ? 'smooth' : 'auto',
         })
     }, [])
+
+    const handleItemSelect = React.useCallback((
+        type: "hour" | "minute",
+        value: number,
+        index: number
+    ) => {
+        if (type === "hour") {
+            scrollToIndex(hourScrollRef.current, index, true)
+        } else {
+            scrollToIndex(minuteScrollRef.current, index, true)
+        }
+        onWheelChange(type, value)
+    }, [onWheelChange, scrollToIndex])
 
     // 初期位置にスクロール
     React.useEffect(() => {
@@ -146,10 +160,11 @@ function DurationWheel({
                                 <div
                                     key={h}
                                     className={cn(
-                                        "w-10 flex items-center justify-center text-sm font-medium transition-colors shrink-0",
+                                        "w-10 flex items-center justify-center text-sm font-medium transition-colors shrink-0 cursor-pointer rounded-md hover:bg-muted/40",
                                         hours === h ? "text-primary font-bold" : "text-muted-foreground"
                                     )}
                                     style={{ height: ITEM_HEIGHT }}
+                                    onClick={() => handleItemSelect("hour", h, h)}
                                 >
                                     {h}h
                                 </div>
@@ -172,14 +187,15 @@ function DurationWheel({
                         }}
                     >
                         <div className="flex flex-col items-center" style={{ paddingTop: paddingY, paddingBottom: paddingY }}>
-                            {minuteValues.map((m) => (
+                            {minuteValues.map((m, idx) => (
                                 <div
                                     key={m}
                                     className={cn(
-                                        "w-10 flex items-center justify-center text-sm font-medium transition-colors shrink-0",
+                                        "w-10 flex items-center justify-center text-sm font-medium transition-colors shrink-0 cursor-pointer rounded-md hover:bg-muted/40",
                                         minutes === m ? "text-primary font-bold" : "text-muted-foreground"
                                     )}
                                     style={{ height: ITEM_HEIGHT }}
+                                    onClick={() => handleItemSelect("minute", m, idx)}
                                 >
                                     {m.toString().padStart(2, "0")}
                                 </div>

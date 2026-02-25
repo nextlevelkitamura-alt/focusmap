@@ -628,11 +628,28 @@ export function useTodayViewLogic({
         title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]
     }) => {
         const previousEvents = localCalendarEvents
+        const previousTasks = localTasks
+        const durationMinutes = Math.max(
+            1,
+            Math.round((new Date(updates.end_time).getTime() - new Date(updates.start_time).getTime()) / 60000)
+        )
 
         setLocalCalendarEvents(prev => prev.map(e =>
             e.id === eventId
                 ? { ...e, title: updates.title, start_time: updates.start_time, end_time: updates.end_time, reminders: updates.reminders }
                 : e
+        ))
+        // Google連携タスクは timeline 表示が task 側を優先するため、task も同時に更新して即時反映する
+        setLocalTasks(prev => prev.map(task =>
+            task.google_event_id === updates.googleEventId
+                ? {
+                    ...task,
+                    title: updates.title,
+                    scheduled_at: updates.start_time,
+                    estimated_time: durationMinutes,
+                    calendar_id: updates.calendarId || task.calendar_id,
+                }
+                : task
         ))
 
         if (!updates.googleEventId) {
@@ -661,9 +678,10 @@ export function useTodayViewLogic({
         } catch (err) {
             console.error('[useTodayViewLogic] Failed to update event, rolling back:', err)
             setLocalCalendarEvents(previousEvents)
+            setLocalTasks(previousTasks)
             throw err
         }
-    }, [localCalendarEvents, syncNow])
+    }, [localCalendarEvents, localTasks, syncNow])
 
     // Delete task
     const handleDeleteTask = useCallback(async (taskId: string) => {

@@ -50,6 +50,19 @@ function TimeWheel({
         })
     }, [])
 
+    const handleItemSelect = React.useCallback((
+        type: "hour" | "minute",
+        value: number,
+        index: number
+    ) => {
+        if (type === "hour") {
+            scrollToIndex(hourScrollRef.current, index, true)
+        } else {
+            scrollToIndex(minuteScrollRef.current, index, true)
+        }
+        onTimeChange(type, value)
+    }, [onTimeChange, scrollToIndex])
+
     React.useEffect(() => {
         if (selectedDate && isInitialMount.current) {
             setTimeout(() => {
@@ -142,12 +155,13 @@ function TimeWheel({
                                     <div
                                         key={h}
                                         className={cn(
-                                            "w-8 flex items-center justify-center text-xs font-medium transition-colors shrink-0",
+                                            "w-8 flex items-center justify-center text-xs font-medium transition-colors shrink-0 cursor-pointer rounded-md hover:bg-muted/40",
                                             isSelected
                                                 ? "text-primary font-bold"
                                                 : "text-muted-foreground"
                                         )}
                                         style={{ height: ITEM_HEIGHT }}
+                                        onClick={() => handleItemSelect("hour", h, h)}
                                     >
                                         {h.toString().padStart(2, "0")}
                                     </div>
@@ -171,19 +185,20 @@ function TimeWheel({
                         }}
                     >
                         <div className="flex flex-col items-center" style={{ paddingTop: paddingY, paddingBottom: paddingY }}>
-                            {minutes.map((m) => {
+                            {minutes.map((m, idx) => {
                                 const currentMin = selectedDate?.getMinutes() ?? 0
                                 const isSelected = currentMin === m
                                 return (
                                     <div
                                         key={m}
                                         className={cn(
-                                            "w-8 flex items-center justify-center text-xs font-medium transition-colors shrink-0",
+                                            "w-8 flex items-center justify-center text-xs font-medium transition-colors shrink-0 cursor-pointer rounded-md hover:bg-muted/40",
                                             isSelected
                                                 ? "text-primary font-bold"
                                                 : "text-muted-foreground"
                                         )}
                                         style={{ height: ITEM_HEIGHT }}
+                                        onClick={() => handleItemSelect("minute", m, idx)}
                                     >
                                         {m.toString().padStart(2, "0")}
                                     </div>

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
+import { DurationWheelPicker, formatDuration } from '@/components/ui/duration-wheel-picker';
 import { Trash2, X } from 'lucide-react';
 import { format, addMinutes } from 'date-fns';
 
@@ -28,17 +29,6 @@ export interface EventUpdatePayload {
   calendar_id?: string;
   estimated_time?: number; // 所要時間（分）
 }
-
-const DURATION_OPTIONS = [
-  { label: '15分', value: 15 },
-  { label: '30分', value: 30 },
-  { label: '45分', value: 45 },
-  { label: '1時間', value: 60 },
-  { label: '1.5時間', value: 90 },
-  { label: '2時間', value: 120 },
-  { label: '3時間', value: 180 },
-  { label: 'カスタム', value: -1 },
-];
 
 const BASE_REMINDER_OPTIONS = [
   { label: 'なし', value: -1 },
@@ -62,9 +52,6 @@ export function CalendarEventEditModal({
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [duration, setDuration] = useState<number>(60);
-  const [isCustomDuration, setIsCustomDuration] = useState(false);
-  const [customHours, setCustomHours] = useState(1);
-  const [customMinutes, setCustomMinutes] = useState(0);
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [reminder, setReminder] = useState<number>(-1);
   const [calendarId, setCalendarId] = useState<string>('');
@@ -73,29 +60,11 @@ export function CalendarEventEditModal({
 
   const isTaskLinked = !!event?.task_id;
 
-  // 実際の所要時間（分）：カスタムの場合はcustomHours/customMinutesから計算
-  const effectiveDuration = isCustomDuration ? (customHours * 60 + customMinutes) : duration;
-
-  // 現在のdurationがプリセットオプションにない場合、動的にオプションを追加
-  const durationOptions = useMemo(() => {
-    const opts = [...DURATION_OPTIONS];
-    const presetValues = DURATION_OPTIONS.map(o => o.value);
-    if (!isCustomDuration && duration > 0 && !presetValues.includes(duration)) {
-      const label = duration < 60
-        ? `${duration}分`
-        : duration % 60 === 0
-          ? `${duration / 60}時間`
-          : `${(duration / 60).toFixed(1)}時間`;
-      opts.splice(opts.length - 1, 0, { label, value: duration }); // カスタムの前に挿入
-    }
-    return opts;
-  }, [duration, isCustomDuration]);
-
   // 終了時刻の計算（プレビュー用）
   const endTime = useMemo(() => {
     if (!startDate) return null;
-    return addMinutes(startDate, effectiveDuration || 60);
-  }, [startDate, effectiveDuration]);
+    return addMinutes(startDate, duration || 60);
+  }, [startDate, duration]);
 
   const reminderOptions = useMemo(() => {
     if (BASE_REMINDER_OPTIONS.some(opt => opt.value === reminder)) {
@@ -108,6 +77,7 @@ export function CalendarEventEditModal({
   }, [reminder]);
 
   // イベントが変更されたらフォームを初期化
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (event && isOpen) {
       setTitle(event.title);
@@ -127,19 +97,10 @@ export function CalendarEventEditModal({
         (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
       );
       const dur = event.estimated_time || eventDuration || 60;
-      const presetValues = DURATION_OPTIONS.filter(o => o.value > 0).map(o => o.value);
-      if (presetValues.includes(dur)) {
-        setDuration(dur);
-        setIsCustomDuration(false);
-      } else {
-        // プリセットにない値はそのまま表示（動的追加される）
-        setDuration(dur);
-        setIsCustomDuration(false);
-      }
-      setCustomHours(Math.floor(dur / 60));
-      setCustomMinutes(dur % 60);
+      setDuration(dur);
     }
   }, [event, isOpen]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Escapeキーで閉じる
   useEffect(() => {
@@ -159,11 +120,7 @@ export function CalendarEventEditModal({
       return;
     }
 
-    const saveDuration = effectiveDuration || 60;
-    if (isCustomDuration && saveDuration <= 0) {
-      setError('所要時間を1分以上に設定してください');
-      return;
-    }
+    const saveDuration = Math.max(5, duration || 5);
 
     setError(null);
 
@@ -245,59 +202,17 @@ export function CalendarEventEditModal({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs">所要時間</Label>
-              <Select
-                value={isCustomDuration ? '-1' : String(duration)}
-                onValueChange={(v) => {
-                  if (v === '-1') {
-                    setIsCustomDuration(true);
-                    // 現在のdurationをカスタム初期値に
-                    const cur = duration > 0 ? duration : 60;
-                    setCustomHours(Math.floor(cur / 60));
-                    setCustomMinutes(cur % 60);
-                  } else {
-                    setIsCustomDuration(false);
-                    setDuration(Number(v));
-                  }
-                }}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {durationOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={String(opt.value)}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <DurationWheelPicker
+                duration={duration}
+                onDurationChange={setDuration}
+                trigger={
+                  <Button variant="outline" className="w-full justify-start text-left font-normal h-8 text-xs px-2">
+                    {formatDuration(duration)}
+                  </Button>
+                }
+              />
             </div>
           </div>
-
-          {/* カスタム所要時間入力 */}
-          {isCustomDuration && (
-            <div className="flex items-center gap-2 -mt-1">
-              <input
-                type="number"
-                min={0}
-                max={23}
-                value={customHours}
-                onChange={(e) => setCustomHours(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
-                className="w-14 h-8 text-xs text-center border rounded-md bg-background"
-              />
-              <span className="text-xs text-muted-foreground">時間</span>
-              <input
-                type="number"
-                min={0}
-                max={59}
-                step={5}
-                value={customMinutes}
-                onChange={(e) => setCustomMinutes(Math.max(0, Math.min(59, Number(e.target.value) || 0)))}
-                className="w-14 h-8 text-xs text-center border rounded-md bg-background"
-              />
-              <span className="text-xs text-muted-foreground">分</span>
-            </div>
-          )}
 
           {/* 終了時刻プレビュー */}
           {endTime && (
