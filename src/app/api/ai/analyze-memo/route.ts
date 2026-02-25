@@ -48,9 +48,10 @@ export async function POST(request: Request) {
       return `- ${p.name} (id: ${p.id})\n${tasks}`
     }).join('\n')
 
-    // Gemini API 呼び出し
+    // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
     const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.0-flash').trim()
+    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash'].filter(Boolean)))
 
     const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')
     const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][new Date().getDay()]
@@ -90,7 +91,30 @@ ${projectContext || '(プロジェクトなし)'}
 - 「明日」「来週」「今週末」等の相対的な表現は、今日(${today})を基準にYYYY-MM-DD形式の具体的な日付に変換すること
 - event_titleは日時情報を含めず、予定の本質的な名前だけを抽出すること`
 
-    const result = await model.generateContent(prompt)
+    let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
+    let lastModelError: unknown = null
+
+    for (const modelName of modelCandidates) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName })
+        result = await model.generateContent(prompt)
+        break
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error)
+        lastModelError = error
+        const isModelUnavailable =
+          errMsg.includes('404') ||
+          errMsg.toLowerCase().includes('not found') ||
+          errMsg.toLowerCase().includes('model')
+        if (!isModelUnavailable) {
+          throw error
+        }
+      }
+    }
+
+    if (!result) {
+      throw lastModelError || new Error('No available Gemini model')
+    }
     const responseText = result.response.text()
 
     // JSONを抽出（マークダウンのコードブロックを考慮）

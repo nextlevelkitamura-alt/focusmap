@@ -109,6 +109,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [plannerDraft, setPlannerDraft] = useState<PlannerDraft>({})
+  const [freeInputByMessage, setFreeInputByMessage] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -333,11 +334,19 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     sendMessage(proposal.value || `${proposal.title}を${proposal.startAt}開始で登録して`)
   }, [sendMessage])
 
+  const handlePerTurnFreeInputSend = useCallback((messageId: string) => {
+    const text = (freeInputByMessage[messageId] || '').trim()
+    if (!text) return
+    sendMessage(text)
+    setFreeInputByMessage(prev => ({ ...prev, [messageId]: '' }))
+  }, [freeInputByMessage, sendMessage])
+
   // リセット
   const handleReset = useCallback(() => {
     setMessages([])
     setInput("")
     setPlannerDraft({})
+    setFreeInputByMessage({})
   }, [])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -589,6 +598,36 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
                     {msg.proposalUsed && msg.proposalCards && (
                       <p className="mt-1 text-xs opacity-50">候補選択済み</p>
+                    )}
+
+                    {/* 毎ターン自由入力欄（選択式と併用） */}
+                    {msg.role === 'assistant' && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={freeInputByMessage[msg.id] || ''}
+                            placeholder="自由に補足して送信"
+                            className="w-full h-7 rounded-md border border-border bg-background px-2 text-xs"
+                            onChange={(e) => setFreeInputByMessage(prev => ({ ...prev, [msg.id]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                handlePerTurnFreeInputSend(msg.id)
+                              }
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs px-2"
+                            onClick={() => handlePerTurnFreeInputSend(msg.id)}
+                            disabled={isLoading || !(freeInputByMessage[msg.id] || '').trim()}
+                          >
+                            送信
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>

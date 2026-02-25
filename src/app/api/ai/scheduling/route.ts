@@ -232,19 +232,43 @@ ${freeTimeContext}`
 
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
-    // Gemini API 呼び出し
+    // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
     const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.0-flash').trim()
+    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash'].filter(Boolean)))
 
-    const result = await model.generateContent({
-      contents: [
-        { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
-      ],
-      generationConfig: {
-        maxOutputTokens: 1000,
-        temperature: 0.5,
-      },
-    })
+    let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
+    let lastModelError: unknown = null
+
+    for (const modelName of modelCandidates) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName })
+        result = await model.generateContent({
+          contents: [
+            { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
+          ],
+          generationConfig: {
+            maxOutputTokens: 1000,
+            temperature: 0.5,
+          },
+        })
+        break
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error)
+        lastModelError = error
+        const isModelUnavailable =
+          errMsg.includes('404') ||
+          errMsg.toLowerCase().includes('not found') ||
+          errMsg.toLowerCase().includes('model')
+        if (!isModelUnavailable) {
+          throw error
+        }
+      }
+    }
+
+    if (!result) {
+      throw lastModelError || new Error('No available Gemini model')
+    }
 
     const responseText = result.response.text()
     let replyText = responseText

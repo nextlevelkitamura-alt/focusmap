@@ -114,6 +114,7 @@ export async function POST(request: Request) {
       .maybeSingle()
 
     let calendarsContext = ''
+    let calendarOptions: UiControlOption[] = []
     if (calendarSettings?.is_sync_enabled) {
       const { data: userCalendars } = await supabase
         .from('user_calendars')
@@ -125,6 +126,10 @@ export async function POST(request: Request) {
         calendarsContext = userCalendars.map(c =>
           `- ${c.name} (ID: ${c.google_calendar_id})${c.is_primary ? ' [デフォルト]' : ''}`
         ).join('\n')
+        calendarOptions = userCalendars.map(c => ({
+          label: c.name,
+          value: c.google_calendar_id,
+        }))
       }
     }
 
@@ -288,19 +293,43 @@ ${activeNoteContent}`
     const plannerContext = context.planner
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}${plannerContext ? `## プランナーコンテキスト\n${JSON.stringify(plannerContext)}\n\n` : ''}ユーザー: ${message.trim()}`
 
-    // Gemini API 呼び出し
+    // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
     const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.0-flash').trim()
+    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash'].filter(Boolean)))
 
-    const result = await model.generateContent({
-      contents: [
-        { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
-      ],
-      generationConfig: {
-        maxOutputTokens: 800,
-        temperature: 0.7,
-      },
-    })
+    let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
+    let lastModelError: unknown = null
+
+    for (const modelName of modelCandidates) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName })
+        result = await model.generateContent({
+          contents: [
+            { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
+          ],
+          generationConfig: {
+            maxOutputTokens: 800,
+            temperature: 0.7,
+          },
+        })
+        break
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error)
+        lastModelError = error
+        const isModelUnavailable =
+          errMsg.includes('404') ||
+          errMsg.toLowerCase().includes('not found') ||
+          errMsg.toLowerCase().includes('model')
+        if (!isModelUnavailable) {
+          throw error
+        }
+      }
+    }
+
+    if (!result) {
+      throw lastModelError || new Error('No available Gemini model')
+    }
 
     const responseText = result.response.text()
 
@@ -320,18 +349,12 @@ ${activeNoteContent}`
       }
     }
 
-    // アクションブロックを抽出
-    const actionMatch = responseText.match(/```action\s*\n([\s\S]*?)\n```/)
+    // アクションブロックを抽出（失敗時も本文から除去）
+    const actionBlock = extractJsonBlock(responseText, 'action')
     let action: ChatMessage['action'] | undefined
-    let replyText = responseText
-
-    if (actionMatch) {
-      try {
-        action = JSON.parse(actionMatch[1])
-        replyText = replyText.replace(/```action\s*\n[\s\S]*?\n```/, '').trim()
-      } catch {
-        // JSON パース失敗時はアクションなしで続行
-      }
+    let replyText = actionBlock.text
+    if (actionBlock.value && typeof actionBlock.value === 'object') {
+      action = actionBlock.value as ChatMessage['action']
     }
 
     // planner_state ブロックを抽出
@@ -367,19 +390,71 @@ ${activeNoteContent}`
     }
     replyText = proposalCardsBlock.text
 
-    // 選択肢ブロックを抽出
-    const optionsMatch = replyText.match(/```options\s*\n([\s\S]*?)\n```/)
+    // 選択肢ブロックを抽出（失敗時も本文から除去）
+    const optionsBlock = extractJsonBlock(replyText, 'options')
     let options: { label: string; value: string }[] | undefined
 
-    if (optionsMatch) {
-      try {
-        const parsed = JSON.parse(optionsMatch[1])
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          options = parsed.slice(0, 4)
-        }
-        replyText = replyText.replace(/```options\s*\n[\s\S]*?\n```/, '').trim()
-      } catch {
-        // パース失敗時は選択肢なしで続行
+    if (Array.isArray(optionsBlock.value) && optionsBlock.value.length > 0) {
+      options = optionsBlock.value.slice(0, 4)
+    }
+    replyText = optionsBlock.text
+
+    // プランナーモード時のフォールバック（選択UIが欠落した場合）
+    const shouldAddFallbackControls =
+      context.planner?.mode === 'task_planner' &&
+      rallyCount >= 1 &&
+      !action &&
+      (!options || options.length === 0) &&
+      (!uiControls || uiControls.length === 0) &&
+      (!proposalCards || proposalCards.length === 0)
+
+    if (shouldAddFallbackControls) {
+      plannerState = plannerState || 'fill_required_slots'
+      uiControls = [
+        {
+          type: 'select',
+          key: 'scheduleWindow',
+          label: 'いつ入れますか？',
+          required: true,
+          options: [
+            { label: '今日', value: 'today' },
+            { label: '3日以内', value: 'within_3_days' },
+            { label: '今週', value: 'this_week' },
+            { label: '今月', value: 'this_month' },
+          ],
+        },
+        {
+          type: 'select',
+          key: 'duration',
+          label: '所要時間',
+          required: true,
+          allowCustom: true,
+          options: [
+            { label: '5分', value: '5' },
+            { label: '15分', value: '15' },
+            { label: '30分', value: '30' },
+            { label: '1時間', value: '60' },
+            { label: '2時間', value: '120' },
+          ],
+        },
+        {
+          type: 'select',
+          key: 'calendarId',
+          label: 'カレンダー',
+          required: true,
+          options: calendarOptions.length > 0
+            ? calendarOptions
+            : [{ label: 'デフォルトカレンダー', value: 'primary' }],
+        },
+        {
+          type: 'text',
+          key: 'freeText',
+          label: '補足（任意）',
+          placeholder: '例: 17時ごろ、先方都合で前後可',
+        },
+      ]
+      if (!replyText.trim()) {
+        replyText = '不足情報を選択してください。必要なら自由入力で補足できます。'
       }
     }
 
