@@ -66,9 +66,9 @@ export async function POST(request: Request) {
 
         // 2. Google Calendar同期
         let calendarSynced = false
+        let resolvedCalendarId: string | null = calendar_id || null
         if (scheduled_at && estMin > 0) {
-          let calId = calendar_id as string | undefined
-          if (!calId) {
+          if (!resolvedCalendarId) {
             // calendar_id未指定ならデフォルトカレンダーを使用
             const { data: settings } = await supabase
               .from('user_calendar_settings')
@@ -76,18 +76,18 @@ export async function POST(request: Request) {
               .eq('user_id', user.id)
               .maybeSingle()
             if (settings?.is_sync_enabled) {
-              calId = settings.default_calendar_id || 'primary'
-              await supabase.from('tasks').update({ calendar_id: calId }).eq('id', taskId)
+              resolvedCalendarId = settings.default_calendar_id || 'primary'
+              await supabase.from('tasks').update({ calendar_id: resolvedCalendarId }).eq('id', taskId)
             }
           }
-          if (calId) {
+          if (resolvedCalendarId) {
             try {
               const { syncTaskToCalendar } = await import('@/lib/google-calendar')
               await syncTaskToCalendar(user.id, taskId, {
                 title,
                 scheduled_at,
                 estimated_time: estMin,
-                calendar_id: calId,
+                calendar_id: resolvedCalendarId,
               })
               calendarSynced = true
             } catch (syncError) {
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
             title,
             scheduled_at,
             estimated_time: estMin,
-            calendar_id: calId || calendar_id || null,
+            calendar_id: resolvedCalendarId,
           },
         })
       }

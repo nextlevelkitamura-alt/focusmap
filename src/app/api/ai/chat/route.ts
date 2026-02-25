@@ -191,47 +191,50 @@ export async function POST(request: Request) {
 - 簡潔に応答する（3文以内）
 - 日本語で応答する
 
-## カレンダー予定追加（推論優先モード）
-ユーザーが予定を追加したい場合:
+## カレンダー予定追加（推論優先モード・最重要ルール）
+ユーザーが予定やタスクを追加したい場合、**必ず best_proposal ブロックで1案を提案する**。
+proposal_cards は絶対に使わない。best_proposal のみ使うこと。
 
 ### 推論のルール:
 1. **予定名**: 会話やメモから推論。不明なら聞く（これだけは必須質問）
-2. **日時**: 空き時間データから最適な1枠を自動選択。「明日」「来週」等のヒントがあれば優先
-3. **所要時間**: タスク種別から自動推定（会議=60分, ランチ=60分, 作業=60分, 外出=480分）
-4. **カレンダー**: ${calendarCount <= 1 ? 'カレンダーは1つなので自動選択する' : '複数カレンダーがある場合のみoptionsで聞く'}
+2. **日時**: 空き時間データがあればそこから最適な1枠を自動選択。なければ直近の一般的な時間を推定
+3. **所要時間**: 必ず以下のデフォルトを適用する。ユーザーに聞かない
+   - 会議・ミーティング・打ち合わせ: 60分
+   - ランチ・食事: 60分
+   - 電話・通話: 15分
+   - 短い作業（メール返信等）: 15分
+   - 一般的な作業・タスク: 60分
+   - 外出・旅行: 480分
+   - 不明な場合: 60分
+4. **カレンダー**: ${calendarCount <= 1 ? 'カレンダーは1つなので自動選択する（ID: ' + defaultCalendarId + '）' : '複数カレンダーがある場合のみoptionsで聞く'}
 
 ### 応答パターン:
+- 予定名がわかる場合 → **即座にbest_proposalを返す**（他に何も聞かない）
+- 予定名が不明 → 「どんな予定ですか？」とだけ聞く（1質問のみ）
 
-**A. 予定名+日時ヒントがある場合**（例:「明日企画書作成を入れて」）
-→ 空き時間データから最適枠を選び、best_proposalブロックを即座に返す
-
-**B. 予定名はあるが日時が曖昧**（例:「企画書作成を入れて」）
-→ 空き時間データから最適枠を推論し、best_proposalブロックを返す
-
-**C. 予定名が不明**（例:「予定を入れて」）
-→ 「どんな予定ですか？」とだけ聞く（1質問のみ）
-
-### best_proposal ブロック（最適1案の提案）
-空き時間データを参照し、最も適切な1枠を選んで以下を返す:
+### best_proposal ブロック（必須形式）
+予定を提案するときは**必ずこの形式のみ**を使う:
 \`\`\`best_proposal
-{"title":"予定名","startAt":"2026-02-26T14:00:00+09:00","endAt":"2026-02-26T15:00:00+09:00","calendarId":"${defaultCalendarId}","duration":60,"reason":"明日午後に1時間の空きがあります"}
+{"title":"予定名","startAt":"2026-02-26T14:00:00+09:00","endAt":"2026-02-26T15:00:00+09:00","calendarId":"${defaultCalendarId}","duration":60,"reason":"明日14時〜15時は空いており、作業に最適な時間帯です"}
 \`\`\`
+**絶対ルール**:
 - startAt/endAt は必ず ISO8601 JST (+09:00) 形式
-- reason に「なぜこの時間を選んだか」を1文で書く
-- 空き時間データにある時間のみ提案すること
-- best_proposalを返すとき、actionブロックやoptionsブロックは返さない
+- duration は分数（整数）
+- calendarId は必ず実際のカレンダーIDを入れる
+- reason は「なぜこの時間を選んだか」を具体的に書く（例: 「午前中の空き時間で集中しやすい」「電話なので15分の隙間に収まる」）
+- best_proposalを返すとき、actionブロックやoptionsブロックやproposal_cardsブロックは絶対に返さない
+- 空き時間データがない場合でも、常識的な時間帯（9:00-20:00）で推定して提案する
 
 ### ユーザーが提案を承認した場合
 「登録して」「OK」「それで」等の承認メッセージが来たら、actionブロックを返す:
 \`\`\`action
 {"type":"add_calendar_event","params":{"title":"予定名","scheduled_at":"ISO8601+09:00","estimated_time":60,"calendar_id":"${defaultCalendarId}"},"description":"📅 M/D(曜) HH:MM〜HH:MM 予定名 をカレンダーに登録します"}
 \`\`\`
+- estimated_time は分数（必ず含める）
+- calendar_id は必ず含める
 
-### ユーザーが「他の候補」を要求した場合
-proposal_cardsブロックで2〜3件の代替案を返す:
-\`\`\`proposal_cards
-[{"id":"p1","title":"予定名","startAt":"ISO8601","endAt":"ISO8601","calendarId":"xxx","reason":"理由","value":"この時間で登録して"}]
-\`\`\`
+### ユーザーが「他の候補」「変えたい」等を要求した場合
+別の時間帯で新しい best_proposal を返す（proposal_cardsは使わない）
 
 ## マップ追加・その他の操作
 - 情報が足りない場合は選択肢付きで質問する
@@ -359,11 +362,24 @@ ${freeTimeContext}`
     }
     replyText = plannerStateBlock.text
 
-    // 候補カードブロックを抽出（「他の候補」要求時に使用）
+    // 候補カードブロックを抽出（AIが旧形式で返した場合のフォールバック）
     const proposalCardsBlock = extractJsonBlock(replyText, 'proposal_cards')
-    let proposalCards: ProposalCard[] | undefined
-    if (Array.isArray(proposalCardsBlock.value)) {
-      proposalCards = proposalCardsBlock.value.filter(Boolean).slice(0, 3) as ProposalCard[]
+    if (Array.isArray(proposalCardsBlock.value) && proposalCardsBlock.value.length > 0 && !bestProposal) {
+      // proposal_cards が返ってきたが best_proposal がない → 最初の1件を bestProposal に変換
+      const first = proposalCardsBlock.value[0] as ProposalCard
+      if (first.title && first.startAt && first.endAt) {
+        const startDate = new Date(first.startAt)
+        const endDate = new Date(first.endAt)
+        const durationMin = Math.round((endDate.getTime() - startDate.getTime()) / 60000)
+        bestProposal = {
+          title: first.title,
+          startAt: first.startAt,
+          endAt: first.endAt,
+          calendarId: first.calendarId || defaultCalendarId,
+          duration: durationMin > 0 ? durationMin : 60,
+          reason: first.reason || '提案された時間帯です',
+        }
+      }
     }
     replyText = proposalCardsBlock.text
 
@@ -376,13 +392,15 @@ ${freeTimeContext}`
     }
     replyText = optionsBlock.text
 
+    // 残存するJSONコードブロックをクリーンアップ（AIが中途半端なJSONを返した場合）
+    replyText = replyText.replace(/```\w*\s*\n[\s\S]*?(\n```|$)/g, '').trim()
+
     return NextResponse.json({
       reply: replyText,
       action,
       options,
       plannerState,
       bestProposal,
-      proposalCards,
     })
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error'
