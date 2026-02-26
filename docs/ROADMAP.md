@@ -124,15 +124,14 @@
   - レイアウトロジック、ノードコンポーネント、Hooks の責務分離
 
 #### 機能拡張
-- 🔧 **AIメモ機能**（AI分析・音声入力・プロジェクト紐付け・チャット対話） → [計画](plans/features/ai-memo-feature.md)
-  - Phase 1: メニュー + メモUI + notes テーブル + API ✅
-  - Phase 2: AI分析（Gemini 2.5 Flash） ✅
-  - Phase 3: マップ/カレンダー連携（マップ追加 ✅ / カレンダー追加 ○）
-  - Phase 4: 音声入力（Groq Whisper） ✅
-  - Phase 5a: AIチャット型対話（基本UI + アクション実行） ✅
-  - Phase 5b: チャット改善（選択肢ボタン） ✅ → [設計](specs/ai-chat-phase5bc.md)
-  - Phase 5c: セッション管理（要約保存） ○ → [設計](specs/ai-chat-phase5bc.md)
-  - Phase 6: タスクメモ欄 ✅
+- ❌ **AIメモ機能**（廃止） → AIエージェントシステムに統合・置き換え
+- 🔧 **AI Agent System**（コンテキスト記憶・Skills・メモ廃止・透明性UI） → [仕様](specs/ai-agent-system.md) | [計画](plans/features/ai-agent-system.md)
+  - Phase 1: ai_project_context テーブル（DB基盤） ○
+  - Phase 2: コンテキストインタビューAPI + 要約保存 ○
+  - Phase 3: 設定画面にコンテキスト表示・更新UI ○
+  - Phase 4: Skills ファイル構成 + ルーター実装 ○
+  - Phase 5: チャットAPIへのコンテキスト注入 + スキル実行 ○
+  - Phase 6: メモ機能廃止（UI削除・DB廃止・BottomNav変更） ○
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
 - ✅ **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
@@ -161,6 +160,7 @@
 
 ## 完了履歴
 
+- 2026-02-26: **AIメモ機能 廃止** → AI Agent System に統合（メモ概念をAIチャットに吸収）
 - 2026-02-21: **AIメモ Phase 5b** 完了（選択肢ボタンUI、optionsパース、タップで自動送信）
 - 2026-02-21: **AIメモ Phase 5a + 波形アニメーション + 削除UI** 完了（AIチャット対話、VoiceWaveform共有化、確認付き削除）
 - 2026-02-23: **タスク削除の即時反映修正** 完了（削除ボタン押下時にGoogleカレンダーイベントもUIから即座に削除する楽観的UI更新）
@@ -192,5 +192,5 @@
 
 ## 現在進行中のタスク
 
-- 🔧 **AIメモ機能**（AI分析・音声入力・プロジェクト紐付け・チャット対話） → [計画](plans/features/ai-memo-feature.md)
+- 🔧 **AI Agent System**（コンテキスト記憶・Skills・メモ廃止・透明性UI） → [仕様](specs/ai-agent-system.md) | [計画](plans/features/ai-agent-system.md)
 - 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [仕様](specs/habit-daily-reset.md) | [計画](plans/features/habit-daily-reset.md)
