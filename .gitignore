@@ -51,3 +51,9 @@ docs/env.md
 # Local Netlify folder
 .netlify
 .github/secrets/
+
+# Claude Code
+.claude/
+
+# Temp
+tmp/
