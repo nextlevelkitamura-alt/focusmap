@@ -26,6 +26,7 @@ import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
 import { DateTimePicker } from "@/lib/dynamic-imports"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
+import { BranchEdge } from "@/components/mindmap/branch-edge"
 
 // --- Dagre Layout ---
 const NODE_WIDTH = 200
@@ -34,19 +35,50 @@ const NODE_HEIGHT = 40
 const PROJECT_NODE_WIDTH = 220
 const PROJECT_NODE_HEIGHT = 48
 
-const estimateTaskNodeHeight = (title: string, hasInfoRow: boolean) => {
-    const len = title?.length || 0
-    const charsPerLine = 16
-    const lines = Math.min(2, Math.max(1, Math.ceil(len / charsPerLine)))
-    const textHeight = lines > 1 ? 32 : 24
+/** テキストの視覚的な幅をピクセル単位で推定（全角=13px, 半角=7px） */
+const estimateTextWidthPx = (text: string): number => {
+    let width = 0
+    for (const ch of text) {
+        const code = ch.codePointAt(0) ?? 0
+        const isWide =
+            (code >= 0x3000 && code <= 0x9FFF) ||
+            (code >= 0xF900 && code <= 0xFAFF) ||
+            (code >= 0xFF01 && code <= 0xFF60) ||
+            (code >= 0xFFE0 && code <= 0xFFE6) ||
+            (code >= 0x20000 && code <= 0x2FA1F)
+        width += isWide ? 13 : 7
+    }
+    return width
+}
+
+const estimateTaskNodeHeight = (title: string, hasInfoRow: boolean, nodeWidth: number = NODE_WIDTH) => {
+    const availableWidthPx = Math.max(48, nodeWidth - 48) // パディング・アイコン分を引く
+    const text = (title || '').trim()
+    const lines = Math.max(
+        1,
+        text.split('\n').reduce((acc, line) => {
+            const linePx = estimateTextWidthPx(line)
+            return acc + Math.max(1, Math.ceil(linePx / availableWidthPx))
+        }, 0)
+    )
+    const textHeight = lines * 16 + 8 // 16px/行 + パディング
     const infoRowHeight = hasInfoRow ? 16 : 0
-    return textHeight + infoRowHeight
+    return Math.max(NODE_HEIGHT, textHeight + infoRowHeight)
 }
 
 function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edges: Edge[] } {
     const dagreGraph = new dagre.graphlib.Graph()
     dagreGraph.setDefaultEdgeLabel(() => ({}))
-    dagreGraph.setGraph({ rankdir: 'LR', nodesep: 28, ranksep: 96, align: undefined })
+
+    // ノード最大高さに基づいてnodesepを動的計算
+    let maxH = NODE_HEIGHT
+    nodes.forEach(n => {
+        const h = n.type === 'mobileProjectNode' ? PROJECT_NODE_HEIGHT : (n.height ?? NODE_HEIGHT)
+        if (h > maxH) maxH = h
+    })
+    const dynamicNodesep = Math.max(16, Math.round(maxH / 2) + 12)
+
+    dagreGraph.setGraph({ rankdir: 'LR', nodesep: dynamicNodesep, ranksep: 96, align: undefined })
 
     nodes.forEach((node) => {
         let width = NODE_WIDTH
@@ -548,6 +580,7 @@ MobileTaskNode.displayName = 'MobileTaskNode'
 
 // --- Node Types ---
 const mobileNodeTypes = { mobileProjectNode: MobileProjectNode, mobileTaskNode: MobileTaskNode }
+const mobileEdgeTypes = { branch: BranchEdge }
 const defaultViewport = { x: 0, y: 0, zoom: 0.55 }
 
 // --- Effective minutes calculation ---
@@ -780,7 +813,7 @@ function MobileMindMapContent({
                 id: `e-${parentNodeId}-${task.id}`,
                 source: parentNodeId,
                 target: task.id,
-                type: 'smoothstep',
+                type: 'branch',
             })
 
             if (!isCollapsed) {
@@ -1096,6 +1129,7 @@ function MobileMindMapContent({
                 nodes={augmentedNodes}
                 edges={edges}
                 nodeTypes={mobileNodeTypes}
+                edgeTypes={mobileEdgeTypes}
                 defaultViewport={defaultViewport}
                 onNodeClick={handleNodeClick}
                 onPaneClick={handlePaneClick}

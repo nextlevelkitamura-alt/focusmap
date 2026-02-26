@@ -38,6 +38,7 @@ import {
     NODE_WIDTH, NODE_HEIGHT, PROJECT_NODE_WIDTH, PROJECT_NODE_HEIGHT,
     estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements
 } from "@/lib/mindmap-layout";
+import { BranchEdge } from "@/components/mindmap/branch-edge";
 
 // --- Error Boundary ---
 class MindMapErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -1254,6 +1255,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
 TaskNode.displayName = 'TaskNode';
 
 const nodeTypes = { projectNode: ProjectNode, taskNode: TaskNode };
+const edgeTypes = { branch: BranchEdge };
 const defaultViewport = { x: 0, y: 0, zoom: 0.75 };
 
 interface MindMapProps {
@@ -1930,10 +1932,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     id: `e-${parentId}-${task.id}`,
                     source: parentId,
                     target: task.id,
-                    type: 'step'
+                    type: 'branch'
                 });
 
-                yOffsetRef.current += 40;
+                // ノード実高さ + マージンで次のY位置を計算（固定40pxだと長いテキストで重なる）
+                yOffsetRef.current += taskNodeHeight + 12;
 
                 if (!collapsedTaskIds.has(task.id)) {
                     const children = childTasksByParent[task.id] ?? [];
@@ -2442,6 +2445,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onNodesChange={onNodesChange}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 defaultViewport={defaultViewport}
                 onNodeClick={handleNodeClick}
                 onNodeDragStart={handleNodeDragStart}
