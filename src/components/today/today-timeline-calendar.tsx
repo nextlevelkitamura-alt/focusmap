@@ -16,6 +16,10 @@ const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const DEFAULT_SCROLL_HOUR = 7 // scroll to 7am by default
 const TOTAL_HEIGHT = HOUR_HEIGHT * 24
+const QUICK_CREATE_MINUTES = 15
+const QUICK_CREATE_DEFAULT_MINUTES = 30
+const TOUCH_LONG_PRESS_MS = 260
+const TOUCH_MOVE_CANCEL_PX = 10
 
 // --- Types ---
 
@@ -33,6 +37,23 @@ interface TodayTimelineCalendarProps {
     projectNameMap?: Map<string, string>
     initialScrollTop?: number
     onScrollPositionChange?: (scrollTop: number) => void
+    onQuickCreateTask?: (data: {
+        title: string
+        project_id: string | null
+        scheduled_at: string | null
+        estimated_time: number
+        reminders: number[]
+        calendar_id: string | null
+        priority: number
+    }) => Promise<void>
+    defaultQuickCreateCalendarId?: string | null
+    draftPreview?: {
+        title?: string
+        startTime: Date
+        endTime: Date
+        color?: string
+    } | null
+    onQuickCreateRangeSelect?: (payload: { scheduledAt: Date; estimatedTime: number }) => void
 }
 
 // --- Helpers ---
@@ -47,6 +68,18 @@ function getTopPx(date: Date): number {
 function getHeightPx(startDate: Date, endDate: Date): number {
     const durationMin = (endDate.getTime() - startDate.getTime()) / (1000 * 60)
     return Math.max((durationMin / (24 * 60)) * TOTAL_HEIGHT, HOUR_HEIGHT * 0.4) // min 40% of hour
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max)
+}
+
+function snapDown(minutes: number): number {
+    return Math.floor(minutes / QUICK_CREATE_MINUTES) * QUICK_CREATE_MINUTES
+}
+
+function snapUp(minutes: number): number {
+    return Math.ceil(minutes / QUICK_CREATE_MINUTES) * QUICK_CREATE_MINUTES
 }
 
 // --- Main Component ---
@@ -64,10 +97,38 @@ export function TodayTimelineCalendar({
     projectNameMap,
     initialScrollTop,
     onScrollPositionChange,
+    onQuickCreateTask,
+    defaultQuickCreateCalendarId = null,
+    draftPreview,
+    onQuickCreateRangeSelect,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
+    const lastTouchYRef = useRef<number | null>(null)
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+    const [selectionState, setSelectionState] = useState<{
+        pointerId: number
+        anchorY: number
+        currentY: number
+        active: boolean
+        pointerType: string
+    } | null>(null)
+    const [quickDraft, setQuickDraft] = useState<{
+        startTime: Date
+        endTime: Date
+        title: string
+    } | null>(null)
+    const [isQuickCreating, setIsQuickCreating] = useState(false)
+    const [suppressItemTapUntil, setSuppressItemTapUntil] = useState<number | null>(null)
+    const quickInputRef = useRef<HTMLInputElement>(null)
+    const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const tapSuppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const captureTargetRef = useRef<HTMLDivElement | null>(null)
+    const pendingTouchRef = useRef<{
+        pointerId: number
+        clientY: number
+        gridY: number
+    } | null>(null)
 
     // Touch drag & drop
     const handleDrop = useCallback((item: DragItem, newStart: Date, newEnd: Date) => {
@@ -88,11 +149,60 @@ export function TodayTimelineCalendar({
         }
     }, [initialScrollTop])
 
+    // Prevent scroll chaining to the page on iOS/Android when reaching timeline edges.
+    useEffect(() => {
+        const grid = gridRef.current
+        if (!grid) return
+
+        const handleTouchStart = (e: TouchEvent) => {
+            if (e.touches.length !== 1) return
+            lastTouchYRef.current = e.touches[0].clientY
+        }
+
+        const handleTouchMove = (e: TouchEvent) => {
+            if (e.touches.length !== 1) return
+            const touchY = e.touches[0].clientY
+            const prevTouchY = lastTouchYRef.current
+            lastTouchYRef.current = touchY
+            if (prevTouchY === null) return
+
+            const deltaY = touchY - prevTouchY
+            const atTop = grid.scrollTop <= 0
+            const atBottom = grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 1
+
+            if ((atTop && deltaY > 0) || (atBottom && deltaY < 0)) {
+                e.preventDefault()
+            }
+        }
+
+        const clearTouch = () => {
+            lastTouchYRef.current = null
+        }
+
+        grid.addEventListener("touchstart", handleTouchStart, { passive: true })
+        grid.addEventListener("touchmove", handleTouchMove, { passive: false })
+        grid.addEventListener("touchend", clearTouch)
+        grid.addEventListener("touchcancel", clearTouch)
+
+        return () => {
+            grid.removeEventListener("touchstart", handleTouchStart)
+            grid.removeEventListener("touchmove", handleTouchMove)
+            grid.removeEventListener("touchend", clearTouch)
+            grid.removeEventListener("touchcancel", clearTouch)
+        }
+    }, [])
+
     // Notify parent about current scroll position (for restoring position after date switch)
     const handleGridScroll = useCallback(() => {
         if (!gridRef.current) return
         onScrollPositionChange?.(gridRef.current.scrollTop)
     }, [onScrollPositionChange])
+
+    useEffect(() => {
+        if (!quickDraft || !quickInputRef.current) return
+        quickInputRef.current.focus()
+        quickInputRef.current.select()
+    }, [quickDraft])
 
     // Current time position
     const currentTimeTop = useMemo(() => getTopPx(currentTime), [currentTime])
@@ -150,6 +260,279 @@ export function TodayTimelineCalendar({
     }, [timelineItems])
 
     // 日付をまたぐアイテムは today-view.tsx 側でクランプ済み
+
+    const clearTouchPending = useCallback(() => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current)
+            longPressTimerRef.current = null
+        }
+        pendingTouchRef.current = null
+    }, [])
+
+    useEffect(() => {
+        return () => clearTouchPending()
+    }, [clearTouchPending])
+
+    useEffect(() => {
+        return () => {
+            if (tapSuppressTimerRef.current) {
+                clearTimeout(tapSuppressTimerRef.current)
+                tapSuppressTimerRef.current = null
+            }
+        }
+    }, [])
+
+    const toGridY = useCallback((clientY: number) => {
+        const grid = gridRef.current
+        if (!grid) return 0
+        const rect = grid.getBoundingClientRect()
+        return clamp(clientY - rect.top + grid.scrollTop, 0, TOTAL_HEIGHT)
+    }, [])
+
+    const toDateFromGridY = useCallback((gridY: number) => {
+        const totalMinutes = (clamp(gridY, 0, TOTAL_HEIGHT) / TOTAL_HEIGHT) * 24 * 60
+        const snappedMinutes = snapDown(totalMinutes)
+        const d = new Date(currentTime)
+        d.setHours(0, 0, 0, 0)
+        d.setMinutes(clamp(snappedMinutes, 0, 24 * 60 - QUICK_CREATE_MINUTES))
+        return d
+    }, [currentTime])
+
+    const buildRangeFromSelection = useCallback((startY: number, endY: number) => {
+        const startMinutes = (Math.min(startY, endY) / TOTAL_HEIGHT) * 24 * 60
+        const endMinutes = (Math.max(startY, endY) / TOTAL_HEIGHT) * 24 * 60
+        const snappedStart = clamp(snapDown(startMinutes), 0, 24 * 60 - QUICK_CREATE_MINUTES)
+        const snappedEnd = clamp(
+            Math.max(snapUp(endMinutes), snappedStart + QUICK_CREATE_MINUTES),
+            QUICK_CREATE_MINUTES,
+            24 * 60
+        )
+
+        const start = new Date(currentTime)
+        start.setHours(0, 0, 0, 0)
+        start.setMinutes(snappedStart)
+
+        const end = new Date(currentTime)
+        end.setHours(0, 0, 0, 0)
+        end.setMinutes(snappedEnd)
+
+        return { start, end }
+    }, [currentTime])
+
+    const finalizeQuickSelection = useCallback((state: NonNullable<typeof selectionState>) => {
+        const movedPx = Math.abs(state.currentY - state.anchorY)
+        if (movedPx < 4) {
+            const start = toDateFromGridY(state.anchorY)
+            const durationMinutes = QUICK_CREATE_DEFAULT_MINUTES
+            if (onQuickCreateRangeSelect) {
+                onQuickCreateRangeSelect({ scheduledAt: start, estimatedTime: durationMinutes })
+                return
+            }
+            const end = new Date(start.getTime() + durationMinutes * 60 * 1000)
+            setQuickDraft({ startTime: start, endTime: end, title: '' })
+            return
+        }
+        const { start, end } = buildRangeFromSelection(state.anchorY, state.currentY)
+        const durationMinutes = Math.max(
+            QUICK_CREATE_MINUTES,
+            Math.round((end.getTime() - start.getTime()) / 60000)
+        )
+        if (onQuickCreateRangeSelect) {
+            onQuickCreateRangeSelect({ scheduledAt: start, estimatedTime: durationMinutes })
+            return
+        }
+        setQuickDraft({ startTime: start, endTime: end, title: '' })
+    }, [buildRangeFromSelection, toDateFromGridY, onQuickCreateRangeSelect])
+
+    const submitQuickDraft = useCallback(async () => {
+        if (!quickDraft || !onQuickCreateTask || isQuickCreating) return
+        const title = quickDraft.title.trim()
+        if (!title) return
+
+        const durationMinutes = Math.max(
+            QUICK_CREATE_MINUTES,
+            Math.round((quickDraft.endTime.getTime() - quickDraft.startTime.getTime()) / 60000)
+        )
+
+        setIsQuickCreating(true)
+        try {
+            await onQuickCreateTask({
+                title,
+                project_id: null,
+                scheduled_at: quickDraft.startTime.toISOString(),
+                estimated_time: durationMinutes,
+                reminders: [],
+                calendar_id: defaultQuickCreateCalendarId,
+                priority: 3,
+            })
+            setQuickDraft(null)
+        } finally {
+            setIsQuickCreating(false)
+        }
+    }, [quickDraft, onQuickCreateTask, isQuickCreating, defaultQuickCreateCalendarId])
+
+    const handleGridPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (!onQuickCreateTask || dragState.isDragging) return
+        if (quickDraft) return
+        if (e.pointerType === 'mouse' && e.button !== 0) return
+
+        const target = e.target as HTMLElement
+        if (target.closest('[data-time-item="true"]')) return
+        if (target.closest('[data-no-quick-create="true"]')) return
+
+        const gridY = toGridY(e.clientY)
+        const captureTarget = e.currentTarget
+        const pointerId = e.pointerId
+        const pointerType = e.pointerType
+
+        if (pointerType === 'touch') {
+            pendingTouchRef.current = { pointerId, clientY: e.clientY, gridY }
+            longPressTimerRef.current = setTimeout(() => {
+                const pending = pendingTouchRef.current
+                if (!pending || pending.pointerId !== pointerId) return
+                setSelectionState({
+                    pointerId,
+                    anchorY: pending.gridY,
+                    currentY: pending.gridY,
+                    active: true,
+                    pointerType,
+                })
+                captureTargetRef.current = captureTarget
+                captureTarget.setPointerCapture(pointerId)
+                clearTouchPending()
+            }, TOUCH_LONG_PRESS_MS)
+            return
+        }
+
+        setSelectionState({
+            pointerId: e.pointerId,
+            anchorY: gridY,
+            currentY: gridY,
+            active: true,
+            pointerType: e.pointerType,
+        })
+        captureTargetRef.current = captureTarget
+        captureTarget.setPointerCapture(pointerId)
+        e.preventDefault()
+    }, [onQuickCreateTask, dragState.isDragging, quickDraft, toGridY, clearTouchPending])
+
+    const handleGridPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (pendingTouchRef.current && pendingTouchRef.current.pointerId === e.pointerId) {
+            if (Math.abs(e.clientY - pendingTouchRef.current.clientY) > TOUCH_MOVE_CANCEL_PX) {
+                clearTouchPending()
+            }
+        }
+
+        setSelectionState(prev => {
+            if (!prev || prev.pointerId !== e.pointerId || !prev.active) return prev
+            return { ...prev, currentY: toGridY(e.clientY) }
+        })
+    }, [clearTouchPending, toGridY])
+
+    const handleGridPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (pendingTouchRef.current?.pointerId === e.pointerId) {
+            clearTouchPending()
+            return
+        }
+
+        let finalizedQuickSelection = false
+        setSelectionState(prev => {
+            if (!prev || prev.pointerId !== e.pointerId || !prev.active) return prev
+            finalizeQuickSelection(prev)
+            finalizedQuickSelection = true
+            return null
+        })
+
+        if (!finalizedQuickSelection) return
+
+        const captureTarget = captureTargetRef.current
+        if (captureTarget?.hasPointerCapture(e.pointerId)) {
+            captureTarget.releasePointerCapture(e.pointerId)
+        }
+        captureTargetRef.current = null
+
+        setSuppressItemTapUntil(Date.now() + 260)
+        if (tapSuppressTimerRef.current) clearTimeout(tapSuppressTimerRef.current)
+        tapSuppressTimerRef.current = setTimeout(() => {
+            setSuppressItemTapUntil(null)
+            tapSuppressTimerRef.current = null
+        }, 280)
+        e.preventDefault()
+        e.stopPropagation()
+    }, [clearTouchPending, finalizeQuickSelection])
+
+    const handleGridClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (suppressItemTapUntil && Date.now() < suppressItemTapUntil) {
+            e.preventDefault()
+            e.stopPropagation()
+        }
+    }, [suppressItemTapUntil])
+
+    const handleGridPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (pendingTouchRef.current?.pointerId === e.pointerId) {
+            clearTouchPending()
+        }
+        setSelectionState(prev => (prev?.pointerId === e.pointerId ? null : prev))
+        const captureTarget = captureTargetRef.current
+        if (captureTarget?.hasPointerCapture(e.pointerId)) {
+            captureTarget.releasePointerCapture(e.pointerId)
+        }
+        captureTargetRef.current = null
+    }, [clearTouchPending])
+
+    const quickSelectionPreview = useMemo(() => {
+        if (!selectionState?.active) return null
+        const { start, end } = buildRangeFromSelection(selectionState.anchorY, selectionState.currentY)
+        return {
+            top: getTopPx(start),
+            height: getHeightPx(start, end),
+        }
+    }, [selectionState, buildRangeFromSelection])
+
+    const quickDraftLayout = useMemo(() => {
+        if (!quickDraft) return null
+        const durationMinutes = Math.max(
+            QUICK_CREATE_MINUTES,
+            Math.round((quickDraft.endTime.getTime() - quickDraft.startTime.getTime()) / 60000)
+        )
+        return {
+            top: getTopPx(quickDraft.startTime),
+            height: getHeightPx(quickDraft.startTime, quickDraft.endTime),
+            timeLabel: `${format(quickDraft.startTime, 'HH:mm')} - ${format(quickDraft.endTime, 'HH:mm')}`,
+            durationLabel: `${durationMinutes}分`,
+        }
+    }, [quickDraft])
+
+    const draftPreviewLayout = useMemo(() => {
+        if (!draftPreview) return null
+
+        const dayStart = new Date(currentTime)
+        dayStart.setHours(0, 0, 0, 0)
+        const dayEnd = new Date(dayStart)
+        dayEnd.setDate(dayEnd.getDate() + 1)
+
+        const rawStart = new Date(draftPreview.startTime)
+        const rawEnd = new Date(draftPreview.endTime)
+
+        if (rawEnd <= dayStart || rawStart >= dayEnd) return null
+
+        const start = rawStart < dayStart ? dayStart : rawStart
+        const end = rawEnd > dayEnd ? dayEnd : rawEnd
+        const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000))
+        const color = draftPreview.color || '#F97316'
+        const rgb = hexToRgb(color)
+
+        return {
+            title: draftPreview.title || '新しい予定',
+            top: getTopPx(start),
+            height: getHeightPx(start, end),
+            timeLabel: `${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`,
+            durationLabel: `${durationMinutes}分`,
+            color,
+            bgColor: rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.18)` : undefined,
+            borderColor: rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.7)` : color,
+        }
+    }, [draftPreview, currentTime])
 
     return (
         <div className="flex flex-col flex-1 overflow-hidden">
@@ -237,12 +620,20 @@ export function TodayTimelineCalendar({
                     </div>
 
                     {/* Main Grid */}
-                    <div className="relative flex-1 min-w-0" style={{ height: TOTAL_HEIGHT }}>
+                    <div
+                        className="relative flex-1 min-w-0"
+                        style={{ height: TOTAL_HEIGHT }}
+                        onPointerDown={handleGridPointerDown}
+                        onPointerMove={handleGridPointerMove}
+                        onPointerUp={handleGridPointerUp}
+                        onPointerCancel={handleGridPointerCancel}
+                        onClickCapture={handleGridClickCapture}
+                    >
                         {/* Hour Grid Lines */}
                         {HOURS.map((hour) => (
                             <div
                                 key={`grid-${hour}`}
-                                className="absolute w-full border-t border-border/20"
+                                className="absolute w-full border-t border-border/20 pointer-events-none"
                                 style={{ top: hour * HOUR_HEIGHT }}
                             />
                         ))}
@@ -251,7 +642,7 @@ export function TodayTimelineCalendar({
                         {HOURS.map((hour) => (
                             <div
                                 key={`half-${hour}`}
-                                className="absolute w-full border-t border-border/10 border-dashed"
+                                className="absolute w-full border-t border-border/10 border-dashed pointer-events-none"
                                 style={{ top: hour * HOUR_HEIGHT + HOUR_HEIGHT / 2 }}
                             />
                         ))}
@@ -264,6 +655,81 @@ export function TodayTimelineCalendar({
                             >
                                 <div className="absolute w-2.5 h-2.5 rounded-full bg-red-500 left-[-5px] shadow-lg shadow-red-500/30 z-40" />
                                 <div className="h-[1.5px] bg-red-500 w-full opacity-70" />
+                            </div>
+                        )}
+
+                        {/* Quick-create selection preview */}
+                        {quickSelectionPreview && (
+                            <div
+                                className="absolute left-[14px] right-[2px] rounded-md border border-primary/40 bg-primary/12 pointer-events-none z-[15]"
+                                style={{ top: quickSelectionPreview.top, height: quickSelectionPreview.height }}
+                            />
+                        )}
+
+                        {/* Draft preview from side form */}
+                        {draftPreviewLayout && (
+                            <div
+                                className="absolute left-[14px] right-[2px] rounded-md border-l-[3px] border border-dashed pointer-events-none z-[16] px-2 py-1"
+                                style={{
+                                    top: draftPreviewLayout.top,
+                                    height: draftPreviewLayout.height,
+                                    borderColor: draftPreviewLayout.borderColor,
+                                    borderLeftColor: draftPreviewLayout.color,
+                                    backgroundColor: draftPreviewLayout.bgColor,
+                                }}
+                            >
+                                <div className="text-[11px] font-medium truncate" style={{ color: draftPreviewLayout.color }}>
+                                    {draftPreviewLayout.title}
+                                </div>
+                                {draftPreviewLayout.height > 34 && (
+                                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                                        {draftPreviewLayout.timeLabel} ({draftPreviewLayout.durationLabel})
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Quick-create draft input */}
+                        {quickDraftLayout && quickDraft && (
+                            <div
+                                className="absolute left-[14px] right-[2px] rounded-md border border-primary/50 bg-background/95 shadow-sm z-40 px-2 py-1"
+                                style={{ top: quickDraftLayout.top, height: quickDraftLayout.height }}
+                                data-no-quick-create="true"
+                            >
+                                <div className="flex items-center justify-between gap-1 mb-0.5">
+                                    <div className="text-[10px] text-primary/80 font-medium">
+                                        {quickDraftLayout.timeLabel} ({quickDraftLayout.durationLabel})
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="text-[10px] text-muted-foreground hover:text-foreground"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={() => setQuickDraft(null)}
+                                        data-no-quick-create="true"
+                                    >
+                                        キャンセル
+                                    </button>
+                                </div>
+                                <input
+                                    ref={quickInputRef}
+                                    value={quickDraft.title}
+                                    onChange={(e) => setQuickDraft(prev => prev ? { ...prev, title: e.target.value } : prev)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            submitQuickDraft()
+                                        } else if (e.key === 'Escape') {
+                                            e.preventDefault()
+                                            setQuickDraft(null)
+                                        }
+                                    }}
+                                    onBlur={() => {
+                                        if (quickDraft.title.trim()) submitQuickDraft()
+                                    }}
+                                    placeholder="予定名を入力..."
+                                    disabled={isQuickCreating}
+                                    className="w-full h-6 bg-transparent outline-none text-xs text-foreground placeholder:text-muted-foreground"
+                                />
                             </div>
                         )}
 
@@ -300,6 +766,7 @@ export function TodayTimelineCalendar({
                                         isDragTarget && "invisible",
                                         isExpanded ? "z-30" : "z-20"
                                     )}
+                                    data-time-item="true"
                                     style={{
                                         top: item.top,
                                         height: item.height,
@@ -313,7 +780,7 @@ export function TodayTimelineCalendar({
                                             event={item.originalEvent!}
                                             currentTime={currentTime}
                                             height={item.height}
-                                            onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
+                                            onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     ) : (
                                         <>
@@ -326,7 +793,7 @@ export function TodayTimelineCalendar({
                                                 totalColumns={item.totalColumns}
                                                 timer={timer}
                                                 onToggle={onToggleTask}
-                                                onTap={!dragState.isDragging && onItemTap ? () => onItemTap(item) : undefined}
+                                                onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && onItemTap ? () => onItemTap(item) : undefined}
                                                 childTaskCount={taskChildTasks?.length ?? 0}
                                                 childDoneCount={taskChildTasks?.filter(t => t.status === 'done').length ?? 0}
                                                 isExpanded={isExpanded}

@@ -19,10 +19,31 @@ interface PanelQuickTaskFormProps {
     onCreateTask: (data: QuickTaskData) => Promise<void>
     isOpen?: boolean
     onClose?: () => void
+    variant?: 'bottom-sheet' | 'side-panel'
+    initialScheduledDate?: Date | null
+    initialEstimatedTime?: number
+    initialCalendarId?: string | null
+    onDraftChange?: (draft: {
+        title: string
+        scheduledDate: Date | null
+        estimatedTime: number
+        calendarId: string | null
+    }) => void
 }
 
 export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
-    const { projects, calendars, onCreateTask, isOpen: controlledIsOpen, onClose } = props
+    const {
+        projects,
+        calendars,
+        onCreateTask,
+        isOpen: controlledIsOpen,
+        onClose,
+        variant = 'bottom-sheet',
+        initialScheduledDate,
+        initialEstimatedTime,
+        initialCalendarId,
+        onDraftChange,
+    } = props
     const [internalIsOpen, setInternalIsOpen] = useState(false)
     const isControlled = controlledIsOpen !== undefined
     const isOpen = isControlled ? controlledIsOpen : internalIsOpen
@@ -54,6 +75,23 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
         }
     }, [isOpen])
 
+    useEffect(() => {
+        if (!isOpen) return
+        if (initialScheduledDate) setScheduledDate(initialScheduledDate)
+        if (initialEstimatedTime && initialEstimatedTime > 0) setEstimatedTime(initialEstimatedTime)
+        if (initialCalendarId !== undefined) setCalendarId(initialCalendarId)
+    }, [isOpen, initialScheduledDate, initialEstimatedTime, initialCalendarId])
+
+    useEffect(() => {
+        if (!isOpen || !onDraftChange) return
+        onDraftChange({
+            title,
+            scheduledDate: scheduledDate ?? null,
+            estimatedTime,
+            calendarId,
+        })
+    }, [isOpen, onDraftChange, title, scheduledDate, estimatedTime, calendarId])
+
     // Reset form
     const resetForm = useCallback(() => {
         setTitle("")
@@ -64,7 +102,13 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
         setCalendarId(null)
         setPriority(3)
         setIsDurationPickerOpen(false)
-    }, [])
+        onDraftChange?.({
+            title: "",
+            scheduledDate: null,
+            estimatedTime: 30,
+            calendarId: null,
+        })
+    }, [onDraftChange])
 
     // Handle submit
     const handleSubmit = useCallback(async () => {
@@ -111,9 +155,22 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
 
     const selectedDurationLabel = `${formatDuration(estimatedTime)}`
 
+    const isSidePanel = variant === 'side-panel'
+
     return (
-        <div className="border-t border-border/40 bg-background/95 backdrop-blur-md animate-in slide-in-from-bottom-2 duration-200 shadow-[0_-8px_24px_rgba(0,0,0,0.24)]">
-            <div className="max-h-[68vh] overflow-y-auto px-4 py-4 space-y-3.5" onKeyDown={handleKeyDown}>
+        <div className={cn(
+            "bg-background/95 backdrop-blur-md",
+            isSidePanel
+                ? "h-full animate-in fade-in-0 duration-150 shadow-[8px_0_24px_rgba(0,0,0,0.18)]"
+                : "border-t border-border/40 animate-in slide-in-from-bottom-2 duration-200 shadow-[0_-8px_24px_rgba(0,0,0,0.24)]"
+        )}>
+            <div
+                className={cn(
+                    "overflow-y-auto px-4 py-4 space-y-3.5",
+                    isSidePanel ? "h-full" : "max-h-[68vh]"
+                )}
+                onKeyDown={handleKeyDown}
+            >
                 <div className="flex items-center justify-between">
                     <h3 className="text-base font-semibold">タスクを追加</h3>
                     <button

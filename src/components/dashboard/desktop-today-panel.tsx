@@ -45,6 +45,13 @@ export function DesktopTodayPanel({
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
     const [isTaskFormOpen, setIsTaskFormOpen] = useState(false)
+    const [taskFormPreset, setTaskFormPreset] = useState<{ scheduledDate: Date; estimatedTime: number } | null>(null)
+    const [taskFormDraft, setTaskFormDraft] = useState<{
+        title: string
+        scheduledDate: Date | null
+        estimatedTime: number
+        calendarId: string | null
+    } | null>(null)
     const [activeTab, setActiveTab] = useState<'today' | 'inbox'>('today')
 
     const logic = useTodayViewLogic({
@@ -64,6 +71,25 @@ export function DesktopTodayPanel({
     })
 
     const runningTask = allTasks.find(t => t.id === logic.timer.runningTaskId)
+    const defaultQuickCreateCalendarId =
+        logic.calendars.find(c =>
+            c.selected && (c.access_level === 'owner' || c.access_level === 'writer')
+        )?.google_calendar_id
+        ?? logic.writableCalendars[0]?.id
+        ?? null
+    const showSideTaskForm = !!(isTaskFormOpen && onCreateQuickTask && activeTab === 'today' && logic.timelineMode === 'calendar')
+    const showBottomTaskForm = !!(isTaskFormOpen && onCreateQuickTask && !showSideTaskForm)
+    const draftCalendarColor = taskFormDraft?.calendarId
+        ? logic.writableCalendars.find(c => c.id === taskFormDraft.calendarId)?.background_color
+        : undefined
+    const draftPreview = taskFormDraft?.scheduledDate
+        ? {
+            title: taskFormDraft.title?.trim() || '新しい予定',
+            startTime: taskFormDraft.scheduledDate,
+            endTime: new Date(taskFormDraft.scheduledDate.getTime() + Math.max(15, taskFormDraft.estimatedTime || 30) * 60 * 1000),
+            color: draftCalendarColor || '#F97316',
+        }
+        : null
 
     return (
         <div ref={panelRef} className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative overflow-hidden">
@@ -412,47 +438,47 @@ export function DesktopTodayPanel({
                         )}
                     </p>
                 </div>
-
-                {activeTab === 'inbox' ? (
-                    <div className="flex-1 overflow-y-auto no-scrollbar px-3 py-2">
-                        {logic.unscheduledTasks.length === 0 ? (
-                            <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                                Inbox は空です
-                            </div>
-                        ) : (
-                            <div className="space-y-1.5">
-                                {logic.unscheduledTasks.map(task => (
-                                    <div
-                                        key={task.id}
-                                        role="button"
-                                        tabIndex={0}
-                                        onClick={() => logic.openTaskEditModal(task.id)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault()
-                                                logic.openTaskEditModal(task.id)
-                                            }
-                                        }}
-                                        className="w-full text-left flex items-center justify-between gap-2 px-2 py-2 rounded-md border border-border/50 bg-background/60 hover:bg-muted/40 transition-colors"
-                                    >
-                                        <span className="text-sm truncate flex-1">{task.title}</span>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                logic.handleDeleteTask(task.id)
+                <div className="relative flex-1 min-h-0">
+                    {activeTab === 'inbox' ? (
+                        <div className="h-full overflow-y-auto no-scrollbar px-3 py-2">
+                            {logic.unscheduledTasks.length === 0 ? (
+                                <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                                    Inbox は空です
+                                </div>
+                            ) : (
+                                <div className="space-y-1.5">
+                                    {logic.unscheduledTasks.map(task => (
+                                        <div
+                                            key={task.id}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => logic.openTaskEditModal(task.id)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault()
+                                                    logic.openTaskEditModal(task.id)
+                                                }
                                             }}
-                                            className="p-1 rounded-md text-muted-foreground/70 hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0"
-                                            aria-label={`${task.title}を削除`}
+                                            className="w-full text-left flex items-center justify-between gap-2 px-2 py-2 rounded-md border border-border/50 bg-background/60 hover:bg-muted/40 transition-colors"
                                         >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ) : (
-                <>
+                                            <span className="text-sm truncate flex-1">{task.title}</span>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    logic.handleDeleteTask(task.id)
+                                                }}
+                                                className="p-1 rounded-md text-muted-foreground/70 hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0"
+                                                aria-label={`${task.title}を削除`}
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                    <div className={cn("h-full min-h-0 flex flex-col transition-all duration-200", showSideTaskForm && "pl-[352px]")}>
                 {/* Calendar Connection Required */}
                 {!logic.eventsLoading && !logic.calendarsLoading && logic.calendars.length === 0 && (
                     <div className="mx-3 mt-2 py-3 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
@@ -510,6 +536,19 @@ export function DesktopTodayPanel({
                         projectNameMap={logic.projectNameMap}
                         initialScrollTop={scrollPositionRef.current}
                         onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
+                        onQuickCreateTask={onCreateQuickTask}
+                        defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
+                        draftPreview={draftPreview}
+                        onQuickCreateRangeSelect={({ scheduledAt, estimatedTime }) => {
+                            setTaskFormPreset({ scheduledDate: scheduledAt, estimatedTime })
+                            setTaskFormDraft({
+                                title: '',
+                                scheduledDate: scheduledAt,
+                                estimatedTime,
+                                calendarId: defaultQuickCreateCalendarId,
+                            })
+                            setIsTaskFormOpen(true)
+                        }}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -524,8 +563,35 @@ export function DesktopTodayPanel({
                         />
                     </div>
                 )}
-                </>
-                )}
+                    </div>
+                    )}
+
+                    {showSideTaskForm && onCreateQuickTask && (
+                        <div className="absolute inset-y-0 left-0 z-20 w-[352px] border-r border-border/30 bg-background/95">
+                            <PanelQuickTaskForm
+                                variant="side-panel"
+                                projects={projects}
+                                calendars={logic.writableCalendars}
+                                onCreateTask={async (data) => {
+                                    await onCreateQuickTask(data)
+                                    setTaskFormPreset(null)
+                                    setTaskFormDraft(null)
+                                    setIsTaskFormOpen(false)
+                                }}
+                                isOpen={true}
+                                onClose={() => {
+                                    setTaskFormPreset(null)
+                                    setTaskFormDraft(null)
+                                    setIsTaskFormOpen(false)
+                                }}
+                                initialScheduledDate={taskFormPreset?.scheduledDate ?? null}
+                                initialEstimatedTime={taskFormPreset?.estimatedTime}
+                                initialCalendarId={defaultQuickCreateCalendarId}
+                                onDraftChange={setTaskFormDraft}
+                            />
+                        </div>
+                    )}
+                </div>
 
             </div>
 
@@ -553,17 +619,27 @@ export function DesktopTodayPanel({
             />
 
             {/* Task form (opened from FAB) */}
-            {isTaskFormOpen && onCreateQuickTask && (
+            {showBottomTaskForm && onCreateQuickTask && (
                 <div className="absolute bottom-0 left-0 right-0 z-20 border-t border-border/30 bg-background/95 backdrop-blur-sm animate-in slide-in-from-bottom-2 duration-200">
                     <PanelQuickTaskForm
                         projects={projects}
                         calendars={logic.writableCalendars}
                         onCreateTask={async (data) => {
                             await onCreateQuickTask(data)
+                            setTaskFormPreset(null)
+                            setTaskFormDraft(null)
                             setIsTaskFormOpen(false)
                         }}
                         isOpen={true}
-                        onClose={() => setIsTaskFormOpen(false)}
+                        onClose={() => {
+                            setTaskFormPreset(null)
+                            setTaskFormDraft(null)
+                            setIsTaskFormOpen(false)
+                        }}
+                        initialScheduledDate={taskFormPreset?.scheduledDate ?? null}
+                        initialEstimatedTime={taskFormPreset?.estimatedTime}
+                        initialCalendarId={defaultQuickCreateCalendarId}
+                        onDraftChange={setTaskFormDraft}
                     />
                 </div>
             )}
@@ -572,7 +648,16 @@ export function DesktopTodayPanel({
             {onCreateQuickTask && onOpenAiChat && !logic.isEditModalOpen && (
                 <DesktopPanelFab
                     onOpenAiChat={onOpenAiChat}
-                    onOpenTaskForm={() => setIsTaskFormOpen(true)}
+                    onOpenTaskForm={() => {
+                        setTaskFormPreset(null)
+                        setTaskFormDraft({
+                            title: '',
+                            scheduledDate: null,
+                            estimatedTime: 30,
+                            calendarId: defaultQuickCreateCalendarId,
+                        })
+                        setIsTaskFormOpen(true)
+                    }}
                     isTaskFormOpen={isTaskFormOpen}
                 />
             )}

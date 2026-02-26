@@ -363,8 +363,8 @@ export function DashboardClient({
             memo: null,
         }
 
-        // カレンダー選択ありの場合のみ今日ビューに即表示
-        const showOnTimeline = !!taskData.calendar_id
+        // 時間指定がある予定は即時にタイムラインへ反映（カレンダー選択有無に依存しない）
+        const showOnTimeline = !!taskData.scheduled_at
         if (showOnTimeline) {
             setQuickTasks(prev => [...prev, optimisticTask])
         }
