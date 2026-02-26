@@ -27,24 +27,25 @@ import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 
 // --- Dagre Layout ---
-const NODE_WIDTH = 240
-const NODE_HEIGHT = 48
-const PROJECT_NODE_WIDTH = 260
-const PROJECT_NODE_HEIGHT = 56
+const NODE_WIDTH = 200
+const NESTED_NODE_WIDTH = 160
+const NODE_HEIGHT = 40
+const PROJECT_NODE_WIDTH = 220
+const PROJECT_NODE_HEIGHT = 48
 
 const estimateTaskNodeHeight = (title: string, hasInfoRow: boolean) => {
     const len = title?.length || 0
-    const charsPerLine = 18
-    const lines = Math.max(1, Math.ceil(len / charsPerLine))
-    const textHeight = Math.max(38, 16 + lines * 18)
-    const infoRowHeight = hasInfoRow ? 24 : 0
+    const charsPerLine = 16
+    const lines = Math.min(2, Math.max(1, Math.ceil(len / charsPerLine)))
+    const textHeight = lines > 1 ? 32 : 24
+    const infoRowHeight = hasInfoRow ? 16 : 0
     return textHeight + infoRowHeight
 }
 
 function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edges: Edge[] } {
     const dagreGraph = new dagre.graphlib.Graph()
     dagreGraph.setDefaultEdgeLabel(() => ({}))
-    dagreGraph.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 140, align: undefined })
+    dagreGraph.setGraph({ rankdir: 'LR', nodesep: 28, ranksep: 96, align: undefined })
 
     nodes.forEach((node) => {
         let width = NODE_WIDTH
@@ -53,6 +54,7 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edg
             width = PROJECT_NODE_WIDTH
             height = PROJECT_NODE_HEIGHT
         } else if (node.type === 'mobileTaskNode' && node.height) {
+            width = node.width ?? NODE_WIDTH
             height = node.height
         }
         dagreGraph.setNode(node.id, { width, height })
@@ -65,6 +67,7 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edg
         const pos = dagreGraph.node(node.id)
         let width = NODE_WIDTH
         if (node.type === 'mobileProjectNode') width = PROJECT_NODE_WIDTH
+        else if (node.type === 'mobileTaskNode') width = node.width ?? NODE_WIDTH
         let height = NODE_HEIGHT
         if (node.type === 'mobileProjectNode') height = PROJECT_NODE_HEIGHT
         else if (node.type === 'mobileTaskNode' && node.height) height = node.height
@@ -226,7 +229,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     return (
         <div
             className={cn(
-                "w-[260px] h-[56px] rounded-xl bg-primary text-primary-foreground px-4 flex items-center shadow-md transition-all",
+                "w-[220px] h-[48px] rounded-xl bg-primary text-primary-foreground px-3 flex items-center shadow-md transition-all",
                 isNodeSelected && "ring-2 ring-white ring-offset-2"
             )}
         >
@@ -234,7 +237,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
             {isEditing ? (
                 <input
                     ref={inputRef}
-                    className="w-full bg-transparent border-none text-base font-semibold focus:outline-none"
+                    className="w-full bg-transparent border-none text-sm font-semibold focus:outline-none"
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
                     onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
@@ -246,7 +249,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
                     }}
                 />
             ) : (
-                <div className="text-base font-semibold truncate">{data?.label ?? 'Project'}</div>
+                <div className="text-sm font-semibold truncate">{data?.label ?? 'Project'}</div>
             )}
         </div>
     )
@@ -312,7 +315,8 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     return (
         <div
             className={cn(
-                "relative w-[240px] px-3 py-2 rounded-lg bg-background border text-sm shadow-sm flex flex-col gap-1 transition-all min-h-[44px]",
+                "relative px-2 py-1.5 rounded-lg bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all min-h-[36px]",
+                data?.compact ? "w-[160px]" : "w-[200px]",
                 isHabit && "border-blue-400 bg-blue-50 dark:bg-blue-950/30",
                 isNodeSelected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
                 isNodeSelected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
@@ -344,7 +348,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                 {isEditing ? (
                     data?.isProxyTarget ? (
                         // Proxy mode: bridge input captures keystrokes, display here with fake cursor
-                        <div className="nodrag nopan flex-1 text-base min-w-0 flex items-center">
+                        <div className="nodrag nopan flex-1 text-sm min-w-0 flex items-center">
                             <span>{data.proxyText}</span>
                             <span
                                 className="inline-block w-0.5 h-[1.1em] bg-foreground/80 ml-px"
@@ -354,7 +358,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                     ) : (
                         <input
                             ref={inputRef}
-                            className="nodrag nopan flex-1 bg-transparent border-none text-base focus:outline-none min-w-0"
+                            className="nodrag nopan flex-1 bg-transparent border-none text-sm focus:outline-none min-w-0"
                             value={editValue}
                             onChange={(e) => { setEditValue(e.target.value) }}
                             onBlur={() => { if (editValue !== data?.label) data?.onSave?.(editValue) }}
@@ -373,7 +377,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         />
                     )
                 ) : (
-                    <span className={cn("flex-1 text-sm truncate", isDone && "line-through text-muted-foreground")}>
+                    <span className={cn("flex-1 text-xs truncate", isDone && "line-through text-muted-foreground")}>
                         {data?.label || ''}
                     </span>
                 )}
@@ -447,7 +451,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                                     <Button variant="outline" size="sm" className="w-full justify-start text-sm h-9">
                                         <CalendarIcon className="w-4 h-4 mr-2" />
                                         {data?.scheduled_at ? (
-                                            <span>{format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}</span>
+                                            <span>{format(new Date(data.scheduled_at), 'M/d HH:mm', { locale: ja })}</span>
                                         ) : <span className="text-muted-foreground">日時を設定</span>}
                                     </Button>
                                 }
@@ -503,13 +507,13 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
 
             {/* Row 2: Info */}
             {hasInfoRow && (
-                <div className="flex items-center gap-2 pl-5 flex-wrap">
+                <div className="flex items-center gap-1.5 pl-4 flex-wrap">
                     {hasEstimatedTime && <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} />}
                     {hasPriority && <PriorityBadge value={data.priority as Priority} />}
                     {hasMemo && <StickyNote className="w-3 h-3 text-muted-foreground" />}
                     {hasScheduledAt && (
-                        <span className="text-[11px] text-muted-foreground ml-auto">
-                            {format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}
+                        <span className="text-[10px] text-muted-foreground ml-auto">
+                            {format(new Date(data.scheduled_at), 'M/d HH:mm', { locale: ja })}
                         </span>
                     )}
                 </div>
@@ -523,7 +527,7 @@ MobileTaskNode.displayName = 'MobileTaskNode'
 
 // --- Node Types ---
 const mobileNodeTypes = { mobileProjectNode: MobileProjectNode, mobileTaskNode: MobileTaskNode }
-const defaultViewport = { x: 0, y: 0, zoom: 0.6 }
+const defaultViewport = { x: 0, y: 0, zoom: 0.55 }
 
 // --- Effective minutes calculation ---
 function getTaskEffectiveMinutes(taskId: string, childrenMap: Map<string, Task[]>, taskMap: Map<string, Task>): number {
@@ -627,7 +631,7 @@ function MobileMindMapContent({
         })
 
         // DFS to add task nodes
-        const addTaskNodes = (task: Task, parentNodeId: string) => {
+        const addTaskNodes = (task: Task, parentNodeId: string, depth = 0) => {
             const children = childrenMap.get(task.id) ?? []
             const hasChildren = children.length > 0
             const isCollapsed = collapsedTaskIds.has(task.id)
@@ -642,10 +646,14 @@ function MobileMindMapContent({
             const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at || !!task.memo
             const height = estimateTaskNodeHeight(task.title, hasInfoRow)
 
+            const isNested = depth >= 1
+            const nodeWidth = isNested ? NESTED_NODE_WIDTH : NODE_WIDTH
+
             nodes.push({
                 id: task.id,
                 type: 'mobileTaskNode',
                 position: { x: 0, y: 0 },
+                width: nodeWidth,
                 height,
                 data: {
                     label: task.title,
@@ -660,6 +668,7 @@ function MobileMindMapContent({
                     google_event_id: task.google_event_id,
                     is_habit: task.is_habit,
                     parentIsHabit,
+                    compact: isNested,
                     habit_frequency: task.habit_frequency,
                     habit_icon: task.habit_icon,
                     habit_start_date: task.habit_start_date,
@@ -754,14 +763,14 @@ function MobileMindMapContent({
 
             if (!isCollapsed) {
                 for (const child of children) {
-                    addTaskNodes(child, task.id)
+                    addTaskNodes(child, task.id, depth + 1)
                 }
             }
         }
 
         const sortedGroups = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
         for (const group of sortedGroups) {
-            addTaskNodes(group, projectId)
+            addTaskNodes(group, projectId, 0)
         }
 
         const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(nodes, edgeList)

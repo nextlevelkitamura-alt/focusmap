@@ -36,7 +36,7 @@ import { format } from "date-fns";
 import { ja } from "date-fns/locale";
 import {
     NODE_WIDTH, NODE_HEIGHT, PROJECT_NODE_WIDTH, PROJECT_NODE_HEIGHT,
-    estimateTaskNodeHeight, getLayoutedElements
+    estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements
 } from "@/lib/mindmap-layout";
 
 // --- Error Boundary ---
@@ -142,7 +142,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
             }
         }
 
-        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
             e.preventDefault();
             await saveValue();
             setIsEditing(false);
@@ -212,7 +212,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
         <div
             ref={wrapperRef}
             className={cn(
-                "w-[300px] px-4 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-center shadow-lg transition-all outline-none min-h-[60px] flex items-center justify-center",
+                "w-[250px] px-3 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-center shadow-lg transition-all outline-none min-h-[52px] flex items-center justify-center",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 data?.isDropTarget && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background bg-sky-500/10"
             )}
@@ -239,7 +239,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
                     className="nodrag nopan w-full bg-transparent border-none text-center font-bold focus:outline-none focus:ring-0 text-primary-foreground resize-none overflow-hidden"
                 />
             ) : (
-                <div className="whitespace-pre-wrap break-words">{data?.label ?? 'Project'}</div>
+                <div className="w-full truncate">{data?.label ?? 'Project'}</div>
             )}
             <Handle type="source" position={Position.Right} className="!bg-primary-foreground" />
         </div>
@@ -512,7 +512,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
         }
 
         // Edit Mode key handlers
-        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
             // Edit Mode + Enter = Save and return to selection mode (XMind 2-stage)
             e.preventDefault();
             e.stopPropagation();
@@ -698,7 +698,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
         <div
             ref={wrapperRef}
             className={cn(
-                "relative w-[225px] px-2 py-1.5 rounded bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all outline-none min-h-[30px] group",
+                "relative px-1.5 py-1 rounded bg-background border text-[13px] shadow-sm flex flex-col gap-0 transition-all outline-none min-h-[30px] group",
                 !isEditing && "cursor-grab active:cursor-grabbing",
                 dragging && "is-dragging-active",
                 (data?.is_habit || data?.parentIsHabit) && "border-blue-400",
@@ -708,6 +708,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                 data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
             )}
             tabIndex={0}
+            style={{ width: typeof data?.nodeWidth === 'number' ? data.nodeWidth : NODE_WIDTH }}
             onKeyDown={handleWrapperKeyDown}
             onDoubleClick={handleDoubleClick}
             onMouseDown={handleWrapperMouseDown}
@@ -793,7 +794,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                         }
                     }}
                     className={cn(
-                        "nodrag nopan flex-1 bg-transparent border-none text-xs focus:outline-none focus:ring-0 px-0.5 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words",
+                        "nodrag nopan flex-1 bg-transparent border-none text-[13px] font-semibold leading-tight focus:outline-none focus:ring-0 px-0.5 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
                         !showCaret && "caret-transparent",
                         !showCaret && !selected && "pointer-events-none select-none",
                         (data?.is_habit
@@ -888,7 +889,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                                     <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
                                         <CalendarIcon className="w-3 h-3 mr-2" />
                                         {data?.scheduled_at ? (
-                                            <span>{format(new Date(data.scheduled_at), 'M月d日 HH:mm', { locale: ja })}</span>
+                                            <span>{format(new Date(data.scheduled_at), 'M/d HH:mm', { locale: ja })}</span>
                                         ) : (
                                             <span className="text-muted-foreground">日時を設定</span>
                                         )}
@@ -942,7 +943,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
             {/* Row 2: メタデータ（値が設定されている場合のみ表示） */}
             {
                 hasInfoRow && (
-                    <div className="nodrag nopan flex items-center gap-1.5 pl-5 flex-wrap">
+                    <div className="nodrag nopan flex items-center gap-1 pl-4 flex-wrap">
                         {/* Estimated Time Badge */}
                         {hasEstimatedTime && (
                             <>
@@ -1049,7 +1050,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
 TaskNode.displayName = 'TaskNode';
 
 const nodeTypes = { projectNode: ProjectNode, taskNode: TaskNode };
-const defaultViewport = { x: 0, y: 0, zoom: 0.8 };
+const defaultViewport = { x: 0, y: 0, zoom: 0.75 };
 
 interface MindMapProps {
     project: Project
@@ -1676,9 +1677,10 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     ? (taskIsEstimatedOverride ? (task.estimated_time ?? 0) : taskAutoEstimatedMinutes)
                     : (task.estimated_time ?? 0);
                 const xPos = BASE_X + (depth * X_STEP);
+                const taskNodeWidth = estimateTaskNodeWidth(task.title || '');
 
-                const taskHasInfo = (taskDisplayEstimatedMinutes > 0) || task.priority != null || !!task.scheduled_at;
-                const taskNodeHeight = estimateTaskNodeHeight(task.title || '', taskHasInfo);
+                const taskHasInfo = (taskDisplayEstimatedMinutes > 0) || task.priority != null || !!task.scheduled_at || !!task.memo;
+                const taskNodeHeight = estimateTaskNodeHeight(task.title || '', taskHasInfo, taskNodeWidth);
 
                 // Store computed data for data injection pass
                 dataMap.set(task.id, {
@@ -1692,10 +1694,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 resultNodes.push({
                     id: task.id,
                     type: 'taskNode',
+                    width: taskNodeWidth,
                     height: taskNodeHeight,
                     data: {
                         taskId: task.id,
                         label: task.title ?? 'Task',
+                        nodeWidth: taskNodeWidth,
                         status: task.status ?? 'todo',
                         scheduled_at: task.scheduled_at,
                         google_event_id: task.google_event_id,
@@ -1784,6 +1788,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     isDropTarget: false,
                     dropPosition: null,
                     displaySettings: displaySettings,
+                    nodeWidth: typeof node.width === 'number' ? node.width : NODE_WIDTH,
                     onSave: (t: string) => cbs.saveTaskTitle(taskId, t),
                     onUpdateDate: (d: string | null) => cbs.updateTaskScheduledAt(taskId, d),
                     onUpdateScheduledAt: (d: string) => cbs.updateTaskScheduledAt(taskId, d),
