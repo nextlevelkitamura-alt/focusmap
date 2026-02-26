@@ -42,6 +42,23 @@ export function ContextManager({ onBack }: ContextManagerProps) {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // 初回ロード後、未入力のドキュメントがあれば自動選択（オンボーディング）
+  const [hasAutoSelected, setHasAutoSelected] = useState(false)
+  useEffect(() => {
+    if (hasAutoSelected || loading || folders.length === 0 || selectedDoc) return
+    // 「自分について」フォルダ内の最初の空ドキュメントを探す
+    const personalFolder = folders.find(f => f.folder_type === 'root_personal')
+    if (personalFolder) {
+      const emptyDoc = personalFolder.documents.find(d => !d.content)
+      if (emptyDoc) {
+        setSelectedDoc(emptyDoc)
+        setHasAutoSelected(true)
+        return
+      }
+    }
+    setHasAutoSelected(true)
+  }, [hasAutoSelected, loading, folders, selectedDoc])
+
   // ドキュメント選択
   const handleSelectDocument = useCallback((doc: DocumentData) => {
     setSelectedDoc(doc)
@@ -168,18 +185,23 @@ export function ContextManager({ onBack }: ContextManagerProps) {
               onReview={handleReview}
             />
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-8 gap-3">
-              <Brain className="w-10 h-10 opacity-30" />
-              <p className="text-sm text-center">
-                左のツリーからファイルを選択して
-                <br />
-                コンテキスト情報を編集できます
-              </p>
-              <p className="text-xs text-center opacity-60">
-                AIはここに保存された情報をもとに
-                <br />
-                あなたに合った提案をします
-              </p>
+            <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-6 gap-4 max-w-sm mx-auto">
+              <Brain className="w-12 h-12 opacity-20" />
+              <div className="text-center space-y-2">
+                <p className="text-sm font-medium text-foreground">
+                  AIがあなたを理解するための情報を管理
+                </p>
+                <p className="text-xs leading-relaxed">
+                  左のファイルを選択して、自分のことやプロジェクトの情報を入力してください。
+                  AIはここに保存された情報をもとに、あなたに合った提案をします。
+                </p>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3 text-xs space-y-1.5 w-full">
+                <p className="font-medium text-foreground">まずはここから:</p>
+                <p>1. 「性格・ライフスタイル」に働き方や生活リズムを記入</p>
+                <p>2. 「今の状況」に最近の状況や悩みを記入</p>
+                <p>3. AIチャットで話すだけでも自動的に学習します</p>
+              </div>
             </div>
           )}
         </div>
