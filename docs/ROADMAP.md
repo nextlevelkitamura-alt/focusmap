@@ -132,6 +132,12 @@
   - Phase 4: Skills ファイル構成 + ルーター実装 ○
   - Phase 5: チャットAPIへのコンテキスト注入 + スキル実行 ○
   - Phase 6: メモ機能廃止（UI削除・DB廃止・BottomNav変更） ○
+- 🔥 **AIコンテキスト フォルダ管理**（フォルダ/ファイル型UIでコンテキスト管理・鮮度管理・自動要約） → [仕様](specs/ai-context-folder-management.md)
+  - Phase 1: データ基盤（ai_context_folders / ai_context_documents テーブル + 初期化API） ○
+  - Phase 2: CRUD API（フォルダ・ドキュメント操作 + ツリー取得 + 鮮度サマリー） ○
+  - Phase 3: UI実装（フォルダツリー・ドキュメントエディタ・鮮度バッジ・モバイル対応） ○
+  - Phase 4: AI統合（コンテキスト注入改修・鮮度アラート・context_update新形式） ○
+  - Phase 5: 磨き込み（オンボーディング・AI自動更新承認・旧テーブル移行） ○
 - ✅ **カレンダーイベント編集UI**（タップ→モダンな編集モーダル）
 - ✅ **マインドマップ操作感改善**（ドラッグ閾値、キーボード操作、XMind風）
 - ✅ **グループとタスクの統合**（task_groupsをtasksに統合、GroupNode廃止） → [引き継ぎ](plans/features/group-task-unification-handover.md)
@@ -192,5 +198,6 @@
 
 ## 現在進行中のタスク
 
+- 🔥 **AIコンテキスト フォルダ管理**（フォルダ/ファイル型UIでコンテキスト管理・鮮度管理・自動要約） → [仕様](specs/ai-context-folder-management.md)
 - 🔧 **AI Agent System**（コンテキスト記憶・Skills・メモ廃止・透明性UI） → [仕様](specs/ai-agent-system.md) | [計画](plans/features/ai-agent-system.md)
 - 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [仕様](specs/habit-daily-reset.md) | [計画](plans/features/habit-daily-reset.md)
