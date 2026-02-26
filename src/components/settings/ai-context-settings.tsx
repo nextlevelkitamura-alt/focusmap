@@ -1,25 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Brain, ChevronRight } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { ContextManager } from './context-manager'
 
 export function AiContextSettings() {
-  const [showManager, setShowManager] = useState(false)
-
-  if (showManager) {
-    return (
-      <div className="fixed inset-0 z-50 bg-background md:static md:z-auto md:rounded-xl md:border md:shadow-sm md:h-[600px]">
-        <ContextManager onBack={() => setShowManager(false)} />
-      </div>
-    )
-  }
+  const router = useRouter()
 
   return (
     <Card
       className="cursor-pointer hover:bg-muted/30 transition-colors"
-      onClick={() => setShowManager(true)}
+      onClick={() => router.push('/dashboard/ai-context')}
     >
       <CardHeader>
         <div className="flex items-center justify-between">

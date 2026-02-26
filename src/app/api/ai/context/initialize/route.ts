@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
+import { createProjectContextFolder } from '@/lib/ai/context/create-project-context'
 
 /**
  * POST /api/ai/context/initialize
  * ルートフォルダ作成 + 既存データの移行（Lazy Migration）
+ * + 未登録プロジェクトのコンテキストフォルダ自動作成
  */
 export async function POST() {
   try {
@@ -21,7 +23,11 @@ export async function POST() {
       .eq('user_id', user.id)
       .in('folder_type', ['root_personal', 'root_projects'])
 
-    if (existingFolders && existingFolders.length >= 2) {
+    const alreadyInitialized = existingFolders && existingFolders.length >= 2
+
+    if (alreadyInitialized) {
+      // 既に初期化済みでも、未登録プロジェクトのフォルダを作成
+      await ensureAllProjectFolders(supabase, user.id)
       return NextResponse.json({ initialized: true, migrated_user_context: false, migrated_project_contexts: 0 })
     }
 
@@ -52,7 +58,6 @@ export async function POST() {
     }
 
     let personalFolderId: string | null = null
-    let projectsRootId: string | null = null
 
     if (foldersToCreate.length > 0) {
       const { data: createdFolders, error: folderError } = await supabase
@@ -63,16 +68,13 @@ export async function POST() {
       if (folderError) throw folderError
 
       personalFolderId = createdFolders?.find(f => f.folder_type === 'root_personal')?.id ?? null
-      projectsRootId = createdFolders?.find(f => f.folder_type === 'root_projects')?.id ?? null
     } else {
       personalFolderId = existingFolders?.find(f => f.folder_type === 'root_personal')?.id ?? null
-      projectsRootId = existingFolders?.find(f => f.folder_type === 'root_projects')?.id ?? null
     }
 
     // 2.「自分について」にデフォルトドキュメント作成
     let migratedUserContext = false
     if (personalFolderId) {
-      // 既存の ai_user_context からデータ取得
       const { data: oldContext } = await supabase
         .from('ai_user_context')
         .select('life_personality, life_purpose, current_situation, persona, updated_at')
@@ -125,85 +127,49 @@ export async function POST() {
       migratedUserContext = !!(personality || purpose || situation)
     }
 
-    // 3. プロジェクトコンテキストの移行
+    // 3. プロジェクトコンテキストの移行（レガシーデータ）
     let migratedProjectCount = 0
-    if (projectsRootId) {
-      const { data: oldProjectContexts } = await supabase
-        .from('ai_project_context')
-        .select('project_id, purpose, current_status, key_insights, updated_at, projects(title)')
-        .eq('user_id', user.id)
+    const { data: oldProjectContexts } = await supabase
+      .from('ai_project_context')
+      .select('project_id, purpose, current_status, key_insights, updated_at, projects(title)')
+      .eq('user_id', user.id)
 
-      if (oldProjectContexts && oldProjectContexts.length > 0) {
-        for (const pc of oldProjectContexts) {
-          const projects = pc.projects as unknown as { title: string } | { title: string }[] | null
-          const projectTitle = (Array.isArray(projects) ? projects[0]?.title : projects?.title) || 'プロジェクト'
+    if (oldProjectContexts && oldProjectContexts.length > 0) {
+      for (const pc of oldProjectContexts) {
+        const projects = pc.projects as unknown as { title: string } | { title: string }[] | null
+        const projectTitle = (Array.isArray(projects) ? projects[0]?.title : projects?.title) || 'プロジェクト'
 
-          // プロジェクトフォルダ作成
-          const { data: projectFolder, error: pfError } = await supabase
-            .from('ai_context_folders')
-            .insert({
-              user_id: user.id,
-              parent_id: projectsRootId,
-              folder_type: 'project' as const,
-              project_id: pc.project_id,
-              title: projectTitle,
-              order_index: migratedProjectCount,
-            })
-            .select('id')
-            .single()
+        const { folderId, created } = await createProjectContextFolder(supabase, user.id, pc.project_id, projectTitle)
+        if (!folderId || !created) continue
 
-          if (pfError) {
-            console.error('Project folder creation error:', pfError)
-            continue
+        // レガシーデータがある場合、作成されたドキュメントを更新
+        const { data: docs } = await supabase
+          .from('ai_context_documents')
+          .select('id, document_type')
+          .eq('folder_id', folderId)
+
+        if (docs) {
+          for (const doc of docs) {
+            let content = ''
+            if (doc.document_type === 'project_purpose') content = pc.purpose || ''
+            else if (doc.document_type === 'project_status') content = pc.current_status || ''
+            else if (doc.document_type === 'project_insights') content = pc.key_insights || ''
+
+            if (content) {
+              await supabase
+                .from('ai_context_documents')
+                .update({ content, content_updated_at: pc.updated_at || new Date().toISOString() })
+                .eq('id', doc.id)
+            }
           }
-
-          // プロジェクトドキュメント作成
-          const projectDocs = [
-            {
-              user_id: user.id,
-              folder_id: projectFolder.id,
-              title: 'プロジェクト目的',
-              content: pc.purpose || '',
-              document_type: 'project_purpose' as const,
-              max_length: 500,
-              order_index: 0,
-              content_updated_at: pc.updated_at || new Date().toISOString(),
-            },
-            {
-              user_id: user.id,
-              folder_id: projectFolder.id,
-              title: '現状・進捗',
-              content: pc.current_status || '',
-              document_type: 'project_status' as const,
-              max_length: 500,
-              order_index: 1,
-              content_updated_at: pc.updated_at || new Date().toISOString(),
-            },
-            {
-              user_id: user.id,
-              folder_id: projectFolder.id,
-              title: '重要な決定',
-              content: pc.key_insights || '',
-              document_type: 'project_insights' as const,
-              max_length: 500,
-              order_index: 2,
-              content_updated_at: pc.updated_at || new Date().toISOString(),
-            },
-          ]
-
-          const { error: pdError } = await supabase
-            .from('ai_context_documents')
-            .insert(projectDocs)
-
-          if (pdError) {
-            console.error('Project docs creation error:', pdError)
-            continue
-          }
-
-          migratedProjectCount++
         }
+
+        migratedProjectCount++
       }
     }
+
+    // 4. レガシーデータにないプロジェクトのフォルダも作成
+    await ensureAllProjectFolders(supabase, user.id)
 
     return NextResponse.json({
       initialized: true,
@@ -213,5 +179,34 @@ export async function POST() {
   } catch (error) {
     console.error('Context initialization error:', error)
     return NextResponse.json({ error: 'Failed to initialize context' }, { status: 500 })
+  }
+}
+
+/**
+ * ユーザーの全プロジェクトに対してコンテキストフォルダが存在することを保証する
+ */
+async function ensureAllProjectFolders(supabase: ReturnType<typeof createClient> extends Promise<infer T> ? T : never, userId: string) {
+  // ユーザーの全プロジェクト取得
+  const { data: allProjects } = await supabase
+    .from('projects')
+    .select('id, title')
+    .eq('user_id', userId)
+
+  if (!allProjects || allProjects.length === 0) return
+
+  // 既存のプロジェクトフォルダを取得
+  const { data: existingProjectFolders } = await supabase
+    .from('ai_context_folders')
+    .select('project_id')
+    .eq('user_id', userId)
+    .eq('folder_type', 'project')
+
+  const existingProjectIds = new Set(existingProjectFolders?.map(f => f.project_id) ?? [])
+
+  // 未登録プロジェクトのフォルダを作成
+  for (const project of allProjects) {
+    if (!existingProjectIds.has(project.id)) {
+      await createProjectContextFolder(supabase, userId, project.id, project.title)
+    }
   }
 }

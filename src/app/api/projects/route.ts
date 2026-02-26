@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server"
 import { NextResponse } from "next/server"
+import { createProjectContextFolder } from "@/lib/ai/context/create-project-context"
 
 export async function POST(request: Request) {
     try {
@@ -32,6 +33,11 @@ export async function POST(request: Request) {
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 })
         }
+
+        // AIコンテキストフォルダを自動作成（バックグラウンド、失敗してもプロジェクト作成は成功扱い）
+        createProjectContextFolder(supabase, user.id, data.id, title).catch(err => {
+            console.error('[API] Failed to create project context folder:', err)
+        })
 
         return NextResponse.json(data)
     } catch (error) {

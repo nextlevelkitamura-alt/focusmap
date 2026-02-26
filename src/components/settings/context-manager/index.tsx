@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { ArrowLeft, Brain, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -9,10 +10,11 @@ import { ContextDocumentEditor } from './context-document-editor'
 import type { DocumentData, FolderNode } from './types'
 
 interface ContextManagerProps {
-  onBack: () => void
+  onBack?: () => void
 }
 
 export function ContextManager({ onBack }: ContextManagerProps) {
+  const router = useRouter()
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [selectedDoc, setSelectedDoc] = useState<DocumentData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -152,7 +154,7 @@ export function ContextManager({ onBack }: ContextManagerProps) {
     <div className="flex flex-col h-full">
       {/* ヘッダー */}
       <div className="flex items-center gap-3 px-4 py-3 border-b">
-        <button onClick={onBack} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <button onClick={onBack ?? (() => router.back())} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <Brain className="w-5 h-5 text-primary" />
