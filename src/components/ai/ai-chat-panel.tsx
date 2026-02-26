@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import {
   Sparkles, Send, X, RotateCcw, Loader2,
   Mic, Square, CheckCircle2, XCircle,
+  CalendarPlus, ListTodo, StickyNote, MessageCircleHeart,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -118,6 +119,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [isLoading, setIsLoading] = useState(false)
   const [executionNotice, setExecutionNotice] = useState<string | null>(null)
   const [isSummarizing, setIsSummarizing] = useState(false)
+  const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -175,6 +177,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             content: m.content,
           })),
           context: buildRequestContext(),
+          skillId: activeSkillId || undefined,
         }),
       })
 
@@ -193,7 +196,30 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         bestProposal,
         proposalCards,
         shouldSummarize,
+        skillId: responseSkillId,
+        skillSelector,
+        contextUpdate,
       } = await res.json()
+
+      // サーバーからSkillIdが返ってきたら保持
+      if (responseSkillId && !activeSkillId) {
+        setActiveSkillId(responseSkillId)
+      }
+
+      // skillSelector が返ってきた場合 → Skill選択UIを表示
+      if (skillSelector) {
+        const aiMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: reply || '何をしましょうか？',
+          options: skillSelector.map((s: { id: string; label: string }) => ({
+            label: s.label,
+            value: `${s.label}をしたい`,
+          })),
+        }
+        setMessages(prev => [...prev, aiMessage])
+        return
+      }
 
       // サーバーから要約指示が来た場合、自動要約を実行
       if (shouldSummarize) {
@@ -206,6 +232,15 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         // 自動要約をトリガー
         await summarizeAndContinue([...updatedMessages, aiMessage])
         return
+      }
+
+      // context_update がある場合、バックグラウンドで保存
+      if (contextUpdate?.category && contextUpdate?.content) {
+        fetch('/api/ai/chat/context', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(contextUpdate),
+        }).catch(() => {})  // fire-and-forget
       }
 
       const aiMessage: ChatMessage = {
@@ -233,7 +268,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, buildRequestContext])
+  }, [isLoading, messages, buildRequestContext, activeSkillId])
 
   // テキスト入力から送信
   const handleSend = useCallback(() => {
@@ -442,6 +477,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     setMessages([])
     setInput("")
     setExecutionNotice(null)
+    setActiveSkillId(null)
   }, [messages])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -505,21 +541,33 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             {/* メッセージエリア */}
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
               {messages.length === 0 && (
-                <div className="text-center text-muted-foreground text-sm py-6">
+                <div className="text-center text-muted-foreground text-sm py-4">
                   <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p>AIに話しかけてみましょう</p>
-                  <p className="text-xs mt-1 opacity-70">テキストでも音声でもOK</p>
-                  <div className="flex flex-wrap gap-2 justify-center mt-4">
-                    {["マップに追加して", "予定に入れて", "メモを整理して"].map(suggestion => (
-                      <button
-                        key={suggestion}
-                        onClick={() => sendMessage(suggestion)}
-                        className="text-xs px-3 py-1.5 rounded-full border border-border hover:bg-muted transition-colors"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
+                  <p className="font-medium mb-3">何をしましょうか？</p>
+                  <div className="grid grid-cols-2 gap-2 px-2">
+                    {([
+                      { id: 'scheduling', label: '予定を入れる', icon: CalendarPlus },
+                      { id: 'task', label: 'タスク管理', icon: ListTodo },
+                      { id: 'memo', label: 'メモ整理', icon: StickyNote },
+                      { id: 'counseling', label: '相談する', icon: MessageCircleHeart },
+                    ] as const).map(skill => {
+                      const Icon = skill.icon
+                      return (
+                        <button
+                          key={skill.id}
+                          onClick={() => {
+                            setActiveSkillId(skill.id)
+                            sendMessage(`${skill.label}をしたい`)
+                          }}
+                          className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-border hover:bg-muted hover:border-primary/30 transition-colors text-xs"
+                        >
+                          <Icon className="w-5 h-5 text-primary" />
+                          <span>{skill.label}</span>
+                        </button>
+                      )
+                    })}
                   </div>
+                  <p className="text-xs mt-3 opacity-60">または自由に入力してもOK</p>
                 </div>
               )}
 

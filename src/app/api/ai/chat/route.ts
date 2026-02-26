@@ -2,6 +2,13 @@ import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { getFreeTimeContext } from '@/lib/free-time-context'
+import { routeToSkill } from '@/lib/ai/router'
+import { getSkillById, SKILLS } from '@/lib/ai/skills'
+import type { SkillContext } from '@/lib/ai/skills/prompts/common'
+import { buildSchedulingPrompt } from '@/lib/ai/skills/prompts/scheduling'
+import { buildTaskPrompt } from '@/lib/ai/skills/prompts/task'
+import { buildMemoPrompt } from '@/lib/ai/skills/prompts/memo'
+import { buildCounselingPrompt } from '@/lib/ai/skills/prompts/counseling'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -419,13 +426,14 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { message, history = [], context = {} } = body as {
+    const { message, history = [], context = {}, skillId: requestedSkillId } = body as {
       message: string
       history: ChatMessage[]
       context: {
         activeNoteId?: string
         activeProjectId?: string
       }
+      skillId?: string
     }
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -458,25 +466,65 @@ export async function POST(request: Request) {
       }
     }
 
-    // ユーザーコンテキスト（パーソナライズ）を取得
+    // ユーザーコンテキスト（パーソナライズ）を取得 — 3カテゴリ対応
     let userPersonaContext = ''
     const { data: userContext } = await supabase
       .from('ai_user_context')
-      .select('persona, preferences')
+      .select('persona, preferences, life_personality, life_purpose, current_situation')
       .eq('user_id', user.id)
       .maybeSingle()
 
-    if (userContext?.persona) {
-      userPersonaContext = `\n## ユーザーの傾向\n${userContext.persona}`
-      if (userContext.preferences && Object.keys(userContext.preferences).length > 0) {
-        const prefs = userContext.preferences as Record<string, unknown>
-        if (prefs.preferred_time_of_day) {
-          userPersonaContext += `\n好みの時間帯: ${prefs.preferred_time_of_day}`
-        }
-        if (Array.isArray(prefs.common_event_types) && prefs.common_event_types.length > 0) {
-          userPersonaContext += `\nよく登録する予定: ${prefs.common_event_types.join(', ')}`
-        }
+    const userContextCategories: Partial<Record<'life_personality' | 'life_purpose' | 'current_situation', string>> = {}
+    const userPreferences = (userContext?.preferences as Record<string, unknown>) || {}
+
+    if (userContext) {
+      // 新3カテゴリ（優先）
+      if (userContext.life_personality) userContextCategories.life_personality = userContext.life_personality
+      if (userContext.life_purpose) userContextCategories.life_purpose = userContext.life_purpose
+      if (userContext.current_situation) userContextCategories.current_situation = userContext.current_situation
+      // 旧 persona フォールバック
+      if (!userContext.life_personality && userContext.persona) {
+        userContextCategories.life_personality = userContext.persona
       }
+
+      // 既存互換: userPersonaContext も組み立てる（systemPrompt直接埋め込み用）
+      const parts: string[] = []
+      if (userContextCategories.life_personality) parts.push(`生活・性格: ${userContextCategories.life_personality}`)
+      if (userContextCategories.life_purpose) parts.push(`目標・価値観: ${userContextCategories.life_purpose}`)
+      if (userContextCategories.current_situation) parts.push(`最近の状況: ${userContextCategories.current_situation}`)
+      if (parts.length > 0) {
+        userPersonaContext = `\n## ユーザーの情報\n${parts.join('\n')}`
+      }
+      if (userPreferences.preferred_time_of_day) {
+        userPersonaContext += `\n好みの時間帯: ${userPreferences.preferred_time_of_day}`
+      }
+      if (Array.isArray(userPreferences.common_event_types) && userPreferences.common_event_types.length > 0) {
+        userPersonaContext += `\nよく登録する予定: ${(userPreferences.common_event_types as string[]).join(', ')}`
+      }
+    }
+
+    // Skill ルーティング: UIから指定 or 自然言語判定
+    const resolvedSkillId = requestedSkillId || routeToSkill(message)
+    const isFirstMessage = history.length === 0
+    const hasNoUserContext = !userContext || (!userContext.life_personality && !userContext.life_purpose && !userContext.current_situation && !userContext.persona)
+
+    // Skill未確定の場合 → Skill選択ボタンを返す
+    if (!resolvedSkillId && isFirstMessage) {
+      // 初回利用で未コンテキストの場合 → 軽いオンボーディング
+      if (hasNoUserContext) {
+        return NextResponse.json({
+          reply: 'はじめまして！まずはあなたのことを少し教えてください。',
+          skillId: 'counseling',
+          options: [
+            { label: '相談してみる', value: '自分のことを話したい' },
+            { label: 'まず予定を入れたい', value: '予定を入れたい' },
+          ],
+        })
+      }
+      return NextResponse.json({
+        reply: '何をしましょうか？',
+        skillSelector: SKILLS.map(s => ({ id: s.id, label: s.label, icon: s.icon, description: s.description })),
+      })
     }
 
     // ユーザーのプロジェクトとタスクを取得（コンテキスト用）
@@ -582,130 +630,58 @@ export async function POST(request: Request) {
       `${m.role === 'user' ? 'ユーザー' : 'AI'}: ${m.content}`
     ).join('\n')
 
-    const systemPrompt = `あなたは「しかみか」のAIアシスタントです。
-ユーザーのメモを整理し、タスクや予定の管理を手伝います。
+    // Skill別のプロンプトを構築
+    const activeSkillId = resolvedSkillId || 'scheduling' // フォールバック
+    const skillDef = getSkillById(activeSkillId)
 
-## できること
-1. マインドマップにタスクを追加 → action: add_task
-2. カレンダーに予定を追加 → action: add_calendar_event
-3. メモの編集 → action: edit_memo
-4. メモにプロジェクトを紐付け → action: link_project
-5. メモを処理済みにする → action: archive_memo
-6. タスクの優先度変更 → action: update_priority
-7. タスクの締切設定 → action: set_deadline
+    // Skill用のコンテキストを組み立て
+    const skillContext: SkillContext = {
+      todayDate: new Date().toISOString().split('T')[0],
+      currentTime: new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }),
+      userContext: {},
+      userPreferences: userPreferences,
+      projectsContext: projectsContext || undefined,
+      calendar: calendarSettings?.is_sync_enabled ? {
+        isEnabled: true,
+        defaultCalendarId,
+        defaultCalendarName: defaultCalendarName || 'デフォルトカレンダー',
+        calendarsContext,
+        calendarCount,
+      } : undefined,
+      freeTimeContext: freeTimeContext || undefined,
+      activeNoteContent: activeNoteContent || undefined,
+      previousSummaryContext: previousSummaryContext || undefined,
+    }
 
-## 対話の基本ルール
-- **対話優先**: ユーザーと情報を交換しながら質の高い提案をする。選択肢を提示し、ユーザーの意思を確認してから行動する
-- 削除操作は実行不可。「削除はメモ画面から行ってください」と案内する
-- 親しみやすく応答する（2文以内 + options）
-- 日本語で応答する
+    // Skillが必要とするコンテキストカテゴリだけを注入
+    if (skillDef) {
+      for (const cat of skillDef.contextCategories) {
+        if (userContextCategories[cat]) {
+          skillContext.userContext[cat] = userContextCategories[cat]
+        }
+      }
+    }
 
-## 重要な実行前条件（最優先）
-- 予定登録前に **所要時間 / 時間帯 / カレンダー / 開始時間** の4項目を必ず確定する
-- 1つでも未確定なら action や best_proposal は返さず、options で1項目だけ質問する
-- 候補は2〜4件で提示し、ユーザーが選んでから次へ進む
-
-## カレンダー予定追加（対話優先モード・最重要ルール）
-ユーザーがスケジューリング意図を示した場合、**即座にbest_proposalを返さない**。
-以下の対話ステップを順に進め、**1回の応答で聞くのは1つだけ**。
-
-### 対話ステップ（この順番で進める）
-
-**ステップ1: 意図確認 + 所要時間**
-「〇〇ですね！」と共感し、イベント種別に応じた所要時間候補をoptionsで提示:
-- 電話・通話・コール: options → ["15分", "30分", "60分"]
-- 会議・打ち合わせ・MTG・ミーティング: options → ["30分", "60分", "90分"]
-- ランチ・食事・飲み: options → ["60分", "90分", "120分"]
-- 一般タスク・作業: options → ["30分", "60分", "90分"]
-※ ユーザーが「30分」等と明示済みならこのステップはスキップ
-
-**ステップ2: 時間帯の好み**
-optionsで時間帯を聞く: ["午前がいい", "午後がいい", "夕方以降", "おまかせ"]
-※ ユーザーが「午前中に」「10時に」等と明示済みならスキップ
-
-**ステップ3: カレンダー選択**
-必ずoptionsでカレンダーを選ばせる（カレンダーが1つでも確認する）
-${calendarCount <= 1 ? `options → ["${defaultCalendarName || 'デフォルトカレンダー'}"]` : '利用可能なカレンダーをoptionsで提示'}
-※ ユーザーが「仕事用に」等とカレンダー名を明示済みならスキップ
-
-**ステップ4: 開始時間の提案（根拠付き）**
-空き時間データとユーザーの時間帯希望を元に、2〜3つの具体的な開始時間候補をoptionsで提示。
-各候補には**根拠**を含める:
-- 空き状況（「前後に余裕あり」「ちょうど空いている」）
-- 予定との関係（「次の予定まで2時間空き」）
-例: options → [{"label":"10:00〜10:30（前後に余裕あり）","value":"開始時間は2026-02-26T10:00:00+09:00"}, ...]
-※ ユーザーが「10時から」等と明示済みならスキップ
-
-**ステップ5: 最終提案**
-全情報が揃ったらbest_proposalで提案。reasonに選択根拠を詳しく記載。
-
-### スキップの判定
-ユーザーが会話の中で明示的に情報を提供した場合、該当ステップをスキップして次へ進む。
-例: 「明日の午前に30分の電話」→ ステップ1,2スキップ → ステップ3(カレンダー)へ
-例: 「明日10時から30分の電話」→ ステップ1,2,4スキップ → ステップ3(カレンダー)へ
-
-### best_proposal ブロック（必須形式）
-予定を提案するときは**必ずこの形式のみ**を使う:
-\`\`\`best_proposal
-{"title":"予定名","startAt":"2026-02-26T14:00:00+09:00","endAt":"2026-02-26T15:00:00+09:00","calendarId":"${defaultCalendarId}","duration":60,"reason":"午前10時は前後に余裕があり、電話に集中しやすい時間帯です"}
-\`\`\`
-**絶対ルール**:
-- startAt/endAt は必ず ISO8601 JST (+09:00) 形式
-- duration は分数（整数）
-- calendarId は必ず実際のカレンダーIDを入れる
-- reason は「なぜこの時間を選んだか」を**具体的な根拠**で書く（例: 「前後に余裕があり集中しやすい」「空き時間がちょうど30分でぴったり」）
-- best_proposalを返すとき、actionブロックやoptionsブロックやproposal_cardsブロックは絶対に返さない
-- best_proposalは**全ステップの情報が確定した後にのみ**出力する
-
-### ユーザーが提案を承認した場合
-「登録して」「OK」「それで」等の承認メッセージが来たら、actionブロックを返す:
-\`\`\`action
-{"type":"add_calendar_event","params":{"title":"予定名","scheduled_at":"ISO8601+09:00","estimated_time":60,"calendar_id":"${defaultCalendarId}"},"description":"📅 M/D(曜) HH:MM〜HH:MM 予定名 をカレンダーに登録します"}
-\`\`\`
-- estimated_time は分数（必ず含める）
-- calendar_id は必ず含める
-
-### ユーザーが「他の候補」「変えたい」等を要求した場合
-別の時間帯で新しい best_proposal を返す（proposal_cardsは使わない）。
-新しい候補にも根拠を必ず含める。
-
-## マップ追加・その他の操作
-- 情報が足りない場合は選択肢付きで質問する
-- 例: 「マップに追加して」→ プロジェクトが複数あるならoptionsで聞く
-
-## 選択肢の指定方法
-\`\`\`options
-[{"label": "表示テキスト", "value": "選択時に送信される値"}, ...]
-\`\`\`
-- 最大4つまで
-
-## アクション指定方法
-\`\`\`action
-{"type": "アクション名", "params": {パラメータ}, "description": "確認用の説明"}
-\`\`\`
-注意: actionブロックとoptionsブロックとbest_proposalブロックは同時に使わない。どれか1つのみ。
-
-アクション名と必要なパラメータ:
-- add_task: {"title": "タスク名", "project_id": "プロジェクトID(任意)", "parent_task_id": "親タスクID(任意)"}
-- add_calendar_event: {"title": "予定名", "scheduled_at": "ISO8601日時(JST)", "estimated_time": 分数, "calendar_id": "カレンダーID(任意)", "project_id": "プロジェクトID(任意)"}
-- edit_memo: {"note_id": "メモID", "content": "新しい内容"}
-- link_project: {"note_id": "メモID", "project_id": "プロジェクトID"}
-- archive_memo: {"note_id": "メモID"}
-- update_priority: {"task_id": "タスクID", "priority": 1-4}
-- set_deadline: {"task_id": "タスクID", "scheduled_at": "ISO8601日時", "estimated_time": 分数}
-
-## コンテキスト
-今日の日付: ${new Date().toISOString().split('T')[0]}
-現在時刻: ${new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}
-タイムゾーン: Asia/Tokyo
-${calendarSettings?.is_sync_enabled ? `Googleカレンダー連携: 有効\nデフォルトカレンダーID: ${defaultCalendarId}${calendarsContext ? '\n利用可能なカレンダー:\n' + calendarsContext : ''}` : 'Googleカレンダー連携: 未設定'}
-
-ユーザーのプロジェクト一覧:
-${projectsContext || '(プロジェクトなし)'}
-${activeNoteContent}
-${freeTimeContext}
-${previousSummaryContext}
-${userPersonaContext}`
+    // Skill別プロンプトを生成
+    let systemPrompt: string
+    switch (activeSkillId) {
+      case 'scheduling':
+        systemPrompt = buildSchedulingPrompt(skillContext)
+        break
+      case 'task':
+        systemPrompt = buildTaskPrompt(skillContext)
+        break
+      case 'memo':
+        systemPrompt = buildMemoPrompt(skillContext)
+        break
+      case 'counseling':
+        systemPrompt = buildCounselingPrompt(skillContext)
+        break
+      default:
+        // 未知のskillIdの場合、スケジューリングにフォールバック
+        systemPrompt = buildSchedulingPrompt(skillContext)
+        break
+    }
 
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
@@ -844,6 +820,17 @@ ${userPersonaContext}`
       options = optionsBlock.value.slice(0, 4)
     }
     replyText = optionsBlock.text
+
+    // context_update ブロックを抽出（カウンセリングSkill用）
+    const contextUpdateBlock = extractJsonBlock(replyText, 'context_update')
+    let contextUpdate: { category: string; content: string } | undefined
+    if (contextUpdateBlock.value && typeof contextUpdateBlock.value === 'object') {
+      const cu = contextUpdateBlock.value as { category?: string; content?: string }
+      if (cu.category && cu.content) {
+        contextUpdate = { category: cu.category, content: cu.content }
+      }
+    }
+    replyText = contextUpdateBlock.text
 
     // 残存するJSONコードブロックをクリーンアップ（AIが中途半端なJSONを返した場合）
     replyText = replyText.replace(/```\w*\s*\n[\s\S]*?(\n```|$)/g, '').trim()
@@ -1054,6 +1041,8 @@ ${userPersonaContext}`
       plannerState,
       bestProposal,
       missingFields,
+      skillId: activeSkillId,
+      contextUpdate,
     })
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error'
