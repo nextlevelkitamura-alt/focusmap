@@ -31,7 +31,23 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, project_id, parent_task_id, title, order_index, scheduled_at, estimated_time, calendar_id, priority, is_group, is_habit, habit_frequency, habit_icon } = body;
+    const {
+      id,
+      project_id,
+      parent_task_id,
+      title,
+      order_index,
+      scheduled_at,
+      estimated_time,
+      calendar_id,
+      priority,
+      is_group,
+      is_habit,
+      habit_frequency,
+      habit_icon,
+      memo,
+      memo_images,
+    } = body;
     const titleValue = (typeof title === 'string' && title.trim()) || 'New Task';
 
     // title バリデーション
@@ -70,6 +86,8 @@ export async function POST(request: NextRequest) {
       is_habit: is_habit ?? false,
       habit_frequency: habit_frequency ?? null,
       habit_icon: habit_icon ?? null,
+      memo: memo ?? null,
+      memo_images: memo_images ?? null,
     };
 
     // クライアントが ID を指定した場合はそれを使用（楽観的UI用）

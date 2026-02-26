@@ -20,7 +20,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, StickyNote } from "lucide-react";
+import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, StickyNote, ImagePlus, Copy, Link2, Sparkles } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
@@ -253,6 +253,14 @@ const HABIT_DAYS = [
     { key: 'thu', label: '木' }, { key: 'fri', label: '金' }, { key: 'sat', label: '土' }, { key: 'sun', label: '日' },
 ] as const;
 
+const fileToDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Failed to read image file'));
+        reader.readAsDataURL(file);
+    });
+
 function HabitSettingsPanel({ data }: { data: any }) {
     const [isHabit, setIsHabit] = useState<boolean>(data?.is_habit ?? false);
     const [frequency, setFrequency] = useState<string>(data?.habit_frequency ?? '');
@@ -371,6 +379,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
     const [editValue, setEditValue] = useState<string>(data?.label ?? '');
     const [showCaret, setShowCaret] = useState<boolean>(false);
     const [showScheduleMenu, setShowScheduleMenu] = useState<boolean>(false);
+    const [imageUrlInput, setImageUrlInput] = useState<string>('');
+    const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
 
     // Flag to prevent double-save when exiting via keyboard (Enter/Tab/Escape)
@@ -687,12 +697,73 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
     }, [])
 
     const settings = data?.displaySettings || { showStatus: true, showPriority: true, showScheduledAt: true, showEstimatedTime: true, showProgress: true, showCollapseButton: true };
+    const memoImages: string[] = Array.isArray(data?.memo_images)
+        ? (data.memo_images as string[]).filter((url: string) => typeof url === 'string' && !!url.trim())
+        : [];
 
     const hasEstimatedTime = settings.showEstimatedTime && (data?.estimatedDisplayMinutes ?? 0) > 0;
     const hasPriority = settings.showPriority && data?.priority != null;
     const hasScheduledAt = settings.showScheduledAt && !!data?.scheduled_at;
     const hasMemo = !!data?.memo;
-    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo;
+    const hasMemoImages = memoImages.length > 0;
+    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo || hasMemoImages;
+
+    const writeClipboard = useCallback(async (text: string, successMessage: string) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopyFeedback(successMessage);
+            setTimeout(() => setCopyFeedback(null), 1400);
+        } catch (error) {
+            console.error('[TaskNode] Failed to write clipboard:', error);
+            setCopyFeedback('コピーに失敗しました');
+            setTimeout(() => setCopyFeedback(null), 1600);
+        }
+    }, []);
+
+    const handleAddImageUrl = useCallback(() => {
+        const nextUrl = imageUrlInput.trim();
+        if (!nextUrl) return;
+        if (memoImages.includes(nextUrl)) {
+            setImageUrlInput('');
+            return;
+        }
+        data?.onUpdateMemoImages?.([...memoImages, nextUrl]);
+        setImageUrlInput('');
+    }, [imageUrlInput, memoImages, data]);
+
+    const handleImageFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files ?? []);
+        if (files.length === 0) return;
+
+        try {
+            const encoded = await Promise.all(
+                files
+                    .filter(file => file.type.startsWith('image/'))
+                    .map(fileToDataUrl)
+            );
+            const merged = [...memoImages, ...encoded.filter(Boolean)];
+            data?.onUpdateMemoImages?.(merged.length > 0 ? merged : null);
+        } catch (error) {
+            console.error('[TaskNode] Failed to encode image files:', error);
+        } finally {
+            event.target.value = '';
+        }
+    }, [memoImages, data]);
+
+    const handleRemoveImage = useCallback((targetUrl: string) => {
+        const filtered = memoImages.filter(url => url !== targetUrl);
+        data?.onUpdateMemoImages?.(filtered.length > 0 ? filtered : null);
+    }, [memoImages, data]);
+
+    const buildAiMemoPayload = useCallback(() => {
+        const memoText = typeof data?.memo === 'string' ? data.memo.trim() : '';
+        const sections: string[] = [];
+        if (memoText) sections.push(`メモ:\n${memoText}`);
+        if (memoImages.length > 0) {
+            sections.push(`画像:\n${memoImages.map((url, idx) => `![image-${idx + 1}](${url})`).join('\n')}`);
+        }
+        return sections.join('\n\n').trim();
+    }, [data?.memo, memoImages]);
 
     return (
         <div
@@ -928,6 +999,118 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                             />
                         </div>
 
+                        {/* Memo Images */}
+                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">画像</div>
+                        <div className="px-2 pb-2 space-y-2">
+                            <div className="flex gap-1">
+                                <input
+                                    className="nodrag nopan flex-1 h-8 text-xs border rounded px-2 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                                    placeholder="画像URL または data:image..."
+                                    value={imageUrlInput}
+                                    onChange={(e) => setImageUrlInput(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 px-2 text-xs"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleAddImageUrl();
+                                    }}
+                                >
+                                    追加
+                                </Button>
+                            </div>
+
+                            <label className="flex items-center justify-center gap-1 h-8 border rounded text-xs cursor-pointer hover:bg-muted/40">
+                                <ImagePlus className="w-3 h-3" />
+                                画像ファイルを追加
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    className="hidden"
+                                    onChange={handleImageFileChange}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            </label>
+
+                            {memoImages.length > 0 && (
+                                <div className="space-y-1.5">
+                                    {memoImages.map((url, index) => (
+                                        <div key={`${url}-${index}`} className="border rounded p-1.5 space-y-1">
+                                            <img
+                                                src={url}
+                                                alt={`memo-image-${index + 1}`}
+                                                className="w-full h-16 object-cover rounded bg-muted"
+                                            />
+                                            <div className="grid grid-cols-3 gap-1">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-6 text-[10px] px-1"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        writeClipboard(url, 'URLをコピーしました');
+                                                    }}
+                                                >
+                                                    <Link2 className="w-3 h-3 mr-1" />
+                                                    URL
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-6 text-[10px] px-1"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        writeClipboard(`![image-${index + 1}](${url})`, 'Markdownをコピーしました');
+                                                    }}
+                                                >
+                                                    <Copy className="w-3 h-3 mr-1" />
+                                                    MD
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-6 text-[10px] px-1 text-red-400"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleRemoveImage(url);
+                                                    }}
+                                                >
+                                                    削除
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full h-8 justify-start text-xs"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const aiPayload = buildAiMemoPayload();
+                                    if (!aiPayload) return;
+                                    writeClipboard(aiPayload, 'AI用メモをコピーしました');
+                                }}
+                            >
+                                <Sparkles className="w-3 h-3 mr-2" />
+                                AI用にメモ+画像をコピー
+                            </Button>
+                            {copyFeedback && (
+                                <div className="text-[10px] text-emerald-400">{copyFeedback}</div>
+                            )}
+                        </div>
+
                         {/* Habit Settings - uses HabitSettingsPanel */}
                         <HabitSettingsPanel data={data} />
                         {/* 閉じるボタン */}
@@ -1012,6 +1195,9 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                         {hasMemo && (
                             <StickyNote className="w-3 h-3 text-muted-foreground" />
                         )}
+                        {hasMemoImages && (
+                            <ImagePlus className="w-3 h-3 text-muted-foreground" />
+                        )}
 
                         {/* DateTime（右寄せ） */}
                         {hasScheduledAt && (
@@ -1090,7 +1276,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onAddOptimisticEvent,
         onRemoveOptimisticEvent,
     });
-    const groupsJson = JSON.stringify(groups?.map(g => ({
+        const groupsJson = JSON.stringify(groups?.map(g => ({
         id: g?.id,
         title: g?.title,
         status: g?.status ?? 'todo',
@@ -1104,12 +1290,14 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         google_event_id: g?.google_event_id ?? null,
         // Habit fields
         is_habit: g?.is_habit ?? false,
-        habit_frequency: g?.habit_frequency ?? null,
-        habit_icon: g?.habit_icon ?? null,
-        habit_start_date: g?.habit_start_date ?? null,
-        habit_end_date: g?.habit_end_date ?? null,
-    })) ?? []);
-    const tasksJson = JSON.stringify(tasks?.map(t => ({
+            habit_frequency: g?.habit_frequency ?? null,
+            habit_icon: g?.habit_icon ?? null,
+            habit_start_date: g?.habit_start_date ?? null,
+            habit_end_date: g?.habit_end_date ?? null,
+            memo: g?.memo ?? null,
+            memo_images: g?.memo_images ?? null,
+        })) ?? []);
+        const tasksJson = JSON.stringify(tasks?.map(t => ({
         id: t?.id,
         title: t?.title,
         status: t?.status,
@@ -1124,11 +1312,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         estimated_time: t?.estimated_time ?? 0,
         // Habit fields
         is_habit: t?.is_habit ?? false,
-        habit_frequency: t?.habit_frequency ?? null,
-        habit_icon: t?.habit_icon ?? null,
-        habit_start_date: t?.habit_start_date ?? null,
-        habit_end_date: t?.habit_end_date ?? null,
-    })) ?? []);
+            habit_frequency: t?.habit_frequency ?? null,
+            habit_icon: t?.habit_icon ?? null,
+            habit_start_date: t?.habit_start_date ?? null,
+            habit_end_date: t?.habit_end_date ?? null,
+            memo: t?.memo ?? null,
+            memo_images: t?.memo_images ?? null,
+        })) ?? []);
 
     // STATE
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -1602,6 +1792,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         is_habit: boolean; habit_frequency: string | null; habit_icon: string | null;
         habit_start_date: string | null; habit_end_date: string | null;
         memo: string | null;
+        memo_images: string[] | null;
     };
 
     const { structureNodes, edges, taskDataMap } = useMemo(() => {
@@ -1679,7 +1870,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 const xPos = BASE_X + (depth * X_STEP);
                 const taskNodeWidth = estimateTaskNodeWidth(task.title || '');
 
-                const taskHasInfo = (taskDisplayEstimatedMinutes > 0) || task.priority != null || !!task.scheduled_at || !!task.memo;
+                const taskHasInfo = (taskDisplayEstimatedMinutes > 0)
+                    || task.priority != null
+                    || !!task.scheduled_at
+                    || !!task.memo
+                    || !!(task.memo_images && task.memo_images.length > 0);
                 const taskNodeHeight = estimateTaskNodeHeight(task.title || '', taskHasInfo, taskNodeWidth);
 
                 // Store computed data for data injection pass
@@ -1804,6 +1999,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onUpdateHabit: (habitUpdates: Partial<Pick<ParsedTask, 'is_habit' | 'habit_frequency' | 'habit_icon' | 'habit_start_date' | 'habit_end_date'>>) => cbs.onUpdateTask?.(taskId, habitUpdates),
                     memo: taskData?.memo ?? null,
                     onUpdateMemo: (memo: string | null) => cbs.onUpdateTask?.(taskId, { memo }),
+                    memo_images: taskData?.memo_images ?? null,
+                    onUpdateMemoImages: (memo_images: string[] | null) => cbs.onUpdateTask?.(taskId, { memo_images }),
                     onAddChild: () => cbs.addChildTask(taskId),
                     onAddSibling: () => cbs.addSiblingTask(taskId),
                     onPromote: () => cbs.promoteTask(taskId),

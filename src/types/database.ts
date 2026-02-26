@@ -118,6 +118,7 @@ export interface Database {
                     habit_end_date: string | null
                     // Memo
                     memo: string | null
+                    memo_images: string[] | null
                 }
                 Insert: {
                     id?: string
@@ -154,6 +155,7 @@ export interface Database {
                     habit_end_date?: string | null
                     // Memo
                     memo?: string | null
+                    memo_images?: string[] | null
                 }
                 Update: {
                     id?: string
@@ -190,6 +192,7 @@ export interface Database {
                     habit_end_date?: string | null
                     // Memo
                     memo?: string | null
+                    memo_images?: string[] | null
                 }
             }
             habit_completions: {

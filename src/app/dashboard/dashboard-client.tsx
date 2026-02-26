@@ -364,6 +364,7 @@ export function DashboardClient({
             habit_start_date: null,
             habit_end_date: null,
             memo: null,
+            memo_images: null,
         }
 
         // 時間指定がある予定は即時にタイムラインへ反映（カレンダー選択有無に依存しない）
@@ -560,6 +561,7 @@ export function DashboardClient({
             habit_start_date: null,
             habit_end_date: null,
             memo: null,
+            memo_images: null,
         }
 
         // quickTasks に追加 → allTasksMerged に反映 → TodayView の allTasks prop に伝播
