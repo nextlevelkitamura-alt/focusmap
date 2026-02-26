@@ -2,9 +2,9 @@ import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
 import { CalendarSettings } from "@/components/dashboard/calendar-settings"
 import { NotificationSettings } from "@/components/notifications"
+import { AiContextSettings } from "@/components/settings/ai-context-settings"
 import { ThemeSettings } from "@/components/settings/theme-settings"
 import { AccountSettings } from "@/components/settings/account-settings"
-import { AiContextSettings } from "@/components/settings/ai-context-settings"
 
 export default async function SettingsPage() {
     const supabase = await createClient()
@@ -33,7 +33,7 @@ export default async function SettingsPage() {
                 {/* 通知設定 */}
                 <NotificationSettings />
 
-                {/* AIコンテキスト */}
+                {/* AIコンテキスト管理 */}
                 <AiContextSettings />
 
                 {/* 表示設定 */}

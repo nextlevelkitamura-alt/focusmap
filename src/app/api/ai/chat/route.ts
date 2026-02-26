@@ -9,6 +9,7 @@ import { buildSchedulingPrompt } from '@/lib/ai/skills/prompts/scheduling'
 import { buildTaskPrompt } from '@/lib/ai/skills/prompts/task'
 import { buildCounselingPrompt } from '@/lib/ai/skills/prompts/counseling'
 import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai/context/project-context'
+import { loadContextFromDocuments } from '@/lib/ai/context/document-context'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -470,42 +471,11 @@ export async function POST(request: Request) {
       }
     }
 
-    // ユーザーコンテキスト（パーソナライズ）を取得 — 3カテゴリ対応
-    let userPersonaContext = ''
-    const { data: userContext } = await supabase
-      .from('ai_user_context')
-      .select('persona, preferences, life_personality, life_purpose, current_situation')
-      .eq('user_id', user.id)
-      .maybeSingle()
-
-    const userContextCategories: Partial<Record<'life_personality' | 'life_purpose' | 'current_situation', string>> = {}
-    const userPreferences = (userContext?.preferences as Record<string, unknown>) || {}
-
-    if (userContext) {
-      // 新3カテゴリ（優先）
-      if (userContext.life_personality) userContextCategories.life_personality = userContext.life_personality
-      if (userContext.life_purpose) userContextCategories.life_purpose = userContext.life_purpose
-      if (userContext.current_situation) userContextCategories.current_situation = userContext.current_situation
-      // 旧 persona フォールバック
-      if (!userContext.life_personality && userContext.persona) {
-        userContextCategories.life_personality = userContext.persona
-      }
-
-      // 既存互換: userPersonaContext も組み立てる（systemPrompt直接埋め込み用）
-      const parts: string[] = []
-      if (userContextCategories.life_personality) parts.push(`生活・性格: ${userContextCategories.life_personality}`)
-      if (userContextCategories.life_purpose) parts.push(`目標・価値観: ${userContextCategories.life_purpose}`)
-      if (userContextCategories.current_situation) parts.push(`最近の状況: ${userContextCategories.current_situation}`)
-      if (parts.length > 0) {
-        userPersonaContext = `\n## ユーザーの情報\n${parts.join('\n')}`
-      }
-      if (userPreferences.preferred_time_of_day) {
-        userPersonaContext += `\n好みの時間帯: ${userPreferences.preferred_time_of_day}`
-      }
-      if (Array.isArray(userPreferences.common_event_types) && userPreferences.common_event_types.length > 0) {
-        userPersonaContext += `\nよく登録する予定: ${(userPreferences.common_event_types as string[]).join(', ')}`
-      }
-    }
+    // ユーザーコンテキスト（パーソナライズ）を取得 — フォルダ/ドキュメント型（旧テーブルフォールバック付き）
+    const contextInjection = await loadContextFromDocuments(supabase, user.id)
+    const userContextCategories = contextInjection.userContextCategories
+    const userPreferences = contextInjection.userPreferences
+    let userPersonaContext = contextInjection.personalContext + contextInjection.projectContext + contextInjection.freshnessAlerts
 
     // プロジェクトコンテキスト（AIの記憶）を読み込み
     const projectContexts = await loadAllProjectContexts(supabase, user.id)
@@ -517,7 +487,7 @@ export async function POST(request: Request) {
     // Skill ルーティング: UIから指定 or 自然言語判定
     const resolvedSkillId = requestedSkillId || routeToSkill(message)
     const isFirstMessage = history.length === 0
-    const hasNoUserContext = !userContext || (!userContext.life_personality && !userContext.life_purpose && !userContext.current_situation && !userContext.persona)
+    const hasNoUserContext = !userContextCategories.life_personality && !userContextCategories.life_purpose && !userContextCategories.current_situation
 
     // Skill未確定の場合 → Skill選択ボタンを返す
     if (!resolvedSkillId && isFirstMessage) {
@@ -815,13 +785,41 @@ export async function POST(request: Request) {
     }
     replyText = optionsBlock.text
 
-    // context_update ブロックを抽出（カウンセリングSkill用）
+    // context_update ブロックを抽出（カウンセリングSkill用）→ 新テーブルに直接保存
     const contextUpdateBlock = extractJsonBlock(replyText, 'context_update')
     let contextUpdate: { category: string; content: string } | undefined
     if (contextUpdateBlock.value && typeof contextUpdateBlock.value === 'object') {
       const cu = contextUpdateBlock.value as { category?: string; content?: string }
       if (cu.category && cu.content) {
         contextUpdate = { category: cu.category, content: cu.content }
+
+        // 新テーブル (ai_context_documents) に保存を試みる
+        const categoryToDocType: Record<string, string> = {
+          life_personality: 'personality',
+          life_purpose: 'purpose',
+          current_situation: 'situation',
+        }
+        const docType = categoryToDocType[cu.category]
+        if (docType) {
+          const { data: existingDoc } = await supabase
+            .from('ai_context_documents')
+            .select('id, content')
+            .eq('user_id', user.id)
+            .eq('document_type', docType)
+            .maybeSingle()
+
+          if (existingDoc) {
+            // 既存ドキュメントにマージ（追記）
+            const merged = existingDoc.content
+              ? `${existingDoc.content}\n${cu.content}`.slice(0, 500)
+              : cu.content.slice(0, 500)
+            await supabase
+              .from('ai_context_documents')
+              .update({ content: merged, content_updated_at: new Date().toISOString(), source: 'ai_auto' })
+              .eq('id', existingDoc.id)
+          }
+          // 新テーブルにドキュメントがない場合は旧APIにフォールバック（クライアント側で処理）
+        }
       }
     }
     replyText = contextUpdateBlock.text
