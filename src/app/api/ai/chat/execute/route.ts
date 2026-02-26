@@ -185,6 +185,145 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, message: '✅ 締切を設定しました' })
       }
 
+      case 'add_mindmap_group': {
+        const { title, project_id } = action.params as {
+          title: string; project_id: string
+        }
+        // 現在の最大order_indexを取得
+        const { data: maxOrderGroup } = await supabase
+          .from('tasks')
+          .select('order_index')
+          .eq('user_id', user.id)
+          .eq('project_id', project_id)
+          .is('parent_task_id', null)
+          .is('deleted_at', null)
+          .order('order_index', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        const nextOrder = (maxOrderGroup?.order_index ?? -1) + 1
+
+        const { error } = await supabase
+          .from('tasks')
+          .insert({
+            title,
+            user_id: user.id,
+            project_id,
+            is_group: true,
+            parent_task_id: null,
+            status: 'todo',
+            stage: 'plan',
+            order_index: nextOrder,
+          })
+        if (error) throw error
+        return NextResponse.json({
+          success: true,
+          message: `✅ マインドマップに「${title}」グループを追加しました`,
+          actionType: 'mindmap_updated',
+        })
+      }
+
+      case 'add_mindmap_task': {
+        const { title, parent_id, project_id } = action.params as {
+          title: string; parent_id: string; project_id: string
+        }
+        // 親ノードの存在確認
+        const { data: parentNode } = await supabase
+          .from('tasks')
+          .select('id, title')
+          .eq('id', parent_id)
+          .eq('user_id', user.id)
+          .is('deleted_at', null)
+          .maybeSingle()
+
+        if (!parentNode) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 指定された親ノードが見つかりません',
+          }, { status: 400 })
+        }
+
+        // 現在の最大order_indexを取得
+        const { data: maxOrderTask } = await supabase
+          .from('tasks')
+          .select('order_index')
+          .eq('user_id', user.id)
+          .eq('parent_task_id', parent_id)
+          .is('deleted_at', null)
+          .order('order_index', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        const nextTaskOrder = (maxOrderTask?.order_index ?? -1) + 1
+
+        const { error } = await supabase
+          .from('tasks')
+          .insert({
+            title,
+            user_id: user.id,
+            project_id,
+            parent_task_id: parent_id,
+            is_group: false,
+            status: 'todo',
+            stage: 'plan',
+            order_index: nextTaskOrder,
+          })
+        if (error) throw error
+        return NextResponse.json({
+          success: true,
+          message: `✅ 「${parentNode.title}」に「${title}」を追加しました`,
+          actionType: 'mindmap_updated',
+        })
+      }
+
+      case 'delete_mindmap_node': {
+        const { node_id, node_title } = action.params as {
+          node_id: string; node_title?: string
+        }
+        // ノードの存在確認（所有者チェック）
+        const { data: targetNode } = await supabase
+          .from('tasks')
+          .select('id, title, is_group')
+          .eq('id', node_id)
+          .eq('user_id', user.id)
+          .is('deleted_at', null)
+          .maybeSingle()
+
+        if (!targetNode) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 指定されたノードが見つかりません',
+          }, { status: 400 })
+        }
+
+        // ソフトデリート（deleted_at を設定）
+        const now = new Date().toISOString()
+        const { error } = await supabase
+          .from('tasks')
+          .update({ deleted_at: now })
+          .eq('id', node_id)
+          .eq('user_id', user.id)
+
+        if (error) throw error
+
+        // グループの場合は子タスクもソフトデリート
+        if (targetNode.is_group) {
+          await supabase
+            .from('tasks')
+            .update({ deleted_at: now })
+            .eq('parent_task_id', node_id)
+            .eq('user_id', user.id)
+            .is('deleted_at', null)
+        }
+
+        const displayTitle = node_title || targetNode.title
+        return NextResponse.json({
+          success: true,
+          message: `✅ マインドマップから「${displayTitle}」を削除しました`,
+          actionType: 'mindmap_updated',
+        })
+      }
+
       default:
         return NextResponse.json({ success: false, message: `未対応のアクション: ${action.type}` }, { status: 400 })
     }

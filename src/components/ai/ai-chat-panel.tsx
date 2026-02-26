@@ -86,6 +86,7 @@ interface AiChatPanelProps {
   activeProjectId?: string | null
   hideFab?: boolean
   onCalendarEventCreated?: (eventData?: CalendarEventData) => void
+  onMindmapUpdated?: () => void
   isOpen?: boolean
   onOpenChange?: (open: boolean) => void
 }
@@ -104,7 +105,7 @@ function formatDateTimeRange(startAt: string, endAt: string): string {
   return `${month}/${day}(${dow}) ${startTime}〜${endTime}`
 }
 
-export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
+export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, onMindmapUpdated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const isControlled = controlledIsOpen !== undefined
   const isOpen = isControlled ? controlledIsOpen : internalIsOpen
@@ -121,6 +122,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [executionNotice, setExecutionNotice] = useState<string | null>(null)
   const [isSummarizing, setIsSummarizing] = useState(false)
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
+  const [projectSummaryNotice, setProjectSummaryNotice] = useState(false)
   const [summaryBoundaryIndex, setSummaryBoundaryIndex] = useState<number>(0)
   const [currentSummaryText, setCurrentSummaryText] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -203,6 +205,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         skillId: responseSkillId,
         skillSelector,
         contextUpdate,
+        projectContextUpdated,
       } = await res.json()
 
       // サーバーからSkillIdが返ってきたら保持
@@ -245,6 +248,12 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(contextUpdate),
         }).catch(() => {})  // fire-and-forget
+      }
+
+      // プロジェクト要約が更新された場合、一時的にインジケーターを表示
+      if (projectContextUpdated) {
+        setProjectSummaryNotice(true)
+        setTimeout(() => setProjectSummaryNotice(false), 3000)
       }
 
       const aiMessage: ChatMessage = {
@@ -302,7 +311,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         body: JSON.stringify({ action: msg.action }),
       })
 
-      const { success, message, eventData } = await res.json()
+      const { success, message, eventData, actionType } = await res.json()
 
       setMessages(prev => [
         ...prev.map(m =>
@@ -324,12 +333,17 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         setExecutionNotice(registeredAt ? `予定を登録しました（${registeredAt}）` : '予定を登録しました')
         setTimeout(() => setExecutionNotice(null), 4500)
       }
+
+      // マインドマップ更新時にコールバック
+      if (success && actionType === 'mindmap_updated') {
+        onMindmapUpdated?.()
+      }
     } catch {
       setMessages(prev => prev.map(m =>
         m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
       ))
     }
-  }, [messages, onCalendarEventCreated])
+  }, [messages, onCalendarEventCreated, onMindmapUpdated])
 
   // アクションキャンセル
   const handleCancelAction = useCallback((messageId: string) => {
@@ -554,6 +568,13 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             {executionNotice && (
               <div className="mx-3 mt-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-700 dark:text-green-300">
                 {executionNotice}
+              </div>
+            )}
+
+            {projectSummaryNotice && (
+              <div className="mx-3 mt-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300">
+                <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                会話を要約しています
               </div>
             )}
 

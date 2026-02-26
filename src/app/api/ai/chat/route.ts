@@ -13,6 +13,7 @@ import { buildProjectConsultationPrompt } from '@/lib/ai/skills/prompts/project-
 import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai/context/project-context'
 import { loadContextFromDocuments } from '@/lib/ai/context/document-context'
 import { summarizeProjectTasks, summarizeAllProjects } from '@/lib/ai/context/task-summarizer'
+import { buildMindmapContextForPrompt } from '@/lib/ai/context/mindmap-context'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -604,17 +605,43 @@ export async function POST(request: Request) {
     const activeSkillId = resolvedSkillId || 'scheduling' // フォールバック
     const skillDef = getSkillById(activeSkillId)
 
-    // プロジェクト相談Skill用: タスクデータの構造化要約を取得
+    // プロジェクト相談Skill用: タスクデータの構造化要約 + マインドマップ構造 + プロジェクト要約を取得
     let taskSummaryContext = ''
+    let mindmapContext = ''
+    let projectSummary = ''
     if (activeSkillId === 'project-consultation') {
       try {
         if (context.activeProjectId) {
           taskSummaryContext = await summarizeProjectTasks(supabase, user.id, context.activeProjectId)
+
+          // マインドマップ構造をツリーテキストで取得
+          const project = (projects || []).find(p => p.id === context.activeProjectId)
+          if (project) {
+            mindmapContext = await buildMindmapContextForPrompt(
+              supabase, user.id, context.activeProjectId, project.title
+            )
+          }
+
+          // プロジェクト要約を ai_context_documents から動的読み込み
+          const { data: projectDocs } = await supabase
+            .from('ai_context_documents')
+            .select('content, document_type, ai_context_folders!inner(project_id)')
+            .eq('user_id', user.id)
+            .eq('ai_context_folders.project_id', context.activeProjectId)
+            .order('is_pinned', { ascending: false })
+            .limit(5)
+
+          if (projectDocs && projectDocs.length > 0) {
+            const summaryParts = projectDocs
+              .filter((d: { content: string | null }) => d.content)
+              .map((d: { content: string | null; document_type: string }) => d.content)
+            projectSummary = summaryParts.join('\n')
+          }
         } else {
           taskSummaryContext = await summarizeAllProjects(supabase, user.id)
         }
       } catch (err) {
-        console.error('[chat] Task summary generation failed:', err)
+        console.error('[chat] Task summary / mindmap context generation failed:', err)
       }
     }
 
@@ -636,6 +663,8 @@ export async function POST(request: Request) {
       projectContextPrompt: projectContextPrompt || undefined,
       previousSummaryContext: previousSummaryContext || undefined,
       taskSummaryContext: taskSummaryContext || undefined,
+      mindmapContext: mindmapContext || undefined,
+      projectSummary: projectSummary || undefined,
     }
 
     // Skillが必要とするコンテキストカテゴリだけを注入
@@ -849,34 +878,99 @@ export async function POST(request: Request) {
     replyText = contextUpdateBlock.text
 
     // project_context_update ブロックを抽出（プロジェクト相談Skill用）
+    // v2: 再要約上書き型 — 追記ではなく、AIが統合・再要約した内容で上書きする
     const projectContextUpdateBlock = extractJsonBlock(replyText, 'project_context_update')
+    let projectContextUpdated = false
     if (projectContextUpdateBlock.value && typeof projectContextUpdateBlock.value === 'object') {
-      const pcu = projectContextUpdateBlock.value as { project_id?: string; field?: string; content?: string }
+      const pcu = projectContextUpdateBlock.value as { project_id?: string; field?: string; content?: string; mode?: string }
       if (pcu.project_id && pcu.field && pcu.content) {
-        const allowedFields = ['key_insights', 'current_status']
+        const allowedFields = ['key_insights', 'current_status', 'purpose']
         if (allowedFields.includes(pcu.field)) {
           try {
-            // 既存データとマージ
-            const { data: existingCtx } = await supabase
-              .from('ai_project_context')
-              .select('id, key_insights, current_status')
-              .eq('user_id', user.id)
-              .eq('project_id', pcu.project_id)
-              .maybeSingle()
-
-            const existingValue = existingCtx?.[pcu.field as 'key_insights' | 'current_status'] || ''
-            const merged = existingValue
-              ? `${existingValue}\n${pcu.content}`.slice(0, 500)
-              : pcu.content.slice(0, 500)
-
+            // ai_project_context テーブルに上書き保存
+            const content = pcu.content.slice(0, 500)
             await supabase
               .from('ai_project_context')
               .upsert({
                 user_id: user.id,
                 project_id: pcu.project_id,
-                [pcu.field]: merged,
+                [pcu.field]: content,
                 updated_at: new Date().toISOString(),
               }, { onConflict: 'user_id,project_id' })
+
+            // ai_context_documents にも保存（フォルダ構造）
+            const fieldToDocType: Record<string, string> = {
+              purpose: 'project_summary',
+              current_status: 'project_status',
+              key_insights: 'project_insights',
+            }
+            const docType = fieldToDocType[pcu.field]
+            if (docType) {
+              // プロジェクトフォルダを取得/作成
+              let { data: folder } = await supabase
+                .from('ai_context_folders')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('project_id', pcu.project_id)
+                .eq('folder_type', 'project')
+                .maybeSingle()
+
+              if (!folder) {
+                const { data: newFolder } = await supabase
+                  .from('ai_context_folders')
+                  .insert({
+                    user_id: user.id,
+                    project_id: pcu.project_id,
+                    folder_type: 'project',
+                    name: 'プロジェクト',
+                  })
+                  .select('id')
+                  .single()
+                folder = newFolder
+              }
+
+              if (folder) {
+                // 既存ドキュメントを検索
+                const { data: existingDoc } = await supabase
+                  .from('ai_context_documents')
+                  .select('id')
+                  .eq('user_id', user.id)
+                  .eq('folder_id', folder.id)
+                  .eq('document_type', docType)
+                  .maybeSingle()
+
+                const docTitle = pcu.field === 'purpose' ? 'プロジェクト概要'
+                  : pcu.field === 'current_status' ? '現在の状況'
+                  : '重要な知見'
+
+                if (existingDoc) {
+                  // 上書き更新
+                  await supabase
+                    .from('ai_context_documents')
+                    .update({
+                      content,
+                      content_updated_at: new Date().toISOString(),
+                      source: 'ai_auto',
+                    })
+                    .eq('id', existingDoc.id)
+                } else {
+                  // 新規作成
+                  await supabase
+                    .from('ai_context_documents')
+                    .insert({
+                      user_id: user.id,
+                      folder_id: folder.id,
+                      title: docTitle,
+                      content,
+                      document_type: docType,
+                      source: 'ai_auto',
+                      content_updated_at: new Date().toISOString(),
+                    })
+                }
+              }
+            }
+
+            projectContextUpdated = true
           } catch (err) {
             console.error('[chat] project_context_update save failed:', err)
           }
@@ -1090,6 +1184,7 @@ export async function POST(request: Request) {
       missingFields,
       skillId: activeSkillId,
       contextUpdate,
+      projectContextUpdated,
     })
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error'

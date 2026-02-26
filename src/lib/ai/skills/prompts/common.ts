@@ -31,6 +31,10 @@ export interface SkillContext {
   activeNoteContent?: string
   /** プロジェクト相談用: タスク構造の要約データ */
   taskSummaryContext?: string
+  /** プロジェクト相談用: マインドマップ構造のツリーテキスト */
+  mindmapContext?: string
+  /** プロジェクト相談用: 対象プロジェクトの要約（ai_context_documents） */
+  projectSummary?: string
 }
 
 /** 全Skill共通の基本ルール */
