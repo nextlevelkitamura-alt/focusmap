@@ -2189,13 +2189,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             if (filteredIds.length === 0) return;
             event.preventDefault();
 
-            if (typeof window === 'undefined') return;
-            const anyHasChildren = filteredIds.some(id => hasChildren(id));
-            const msg = anyHasChildren
-                ? `${filteredIds.length}件のタスクを削除しますか？\n子タスクがあるものは子タスクも削除されます。`
-                : `${filteredIds.length}件のタスクを削除しますか？`;
-            if (!window.confirm(msg)) return;
-
             applySelection(new Set(), null, 'user');
 
             // ルートタスクと子タスクを分離してbulkDeleteに渡す
@@ -2211,7 +2204,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             return;
         }
         // ルートタスクもTaskNodeなのでノード内でキーボードを処理 → コンテナ追加処理不要
-    }, [selectedNodeIds, tasks, groups, hasChildren, isDescendant, onDeleteTask, onDeleteGroup, onBulkDelete, markUserAction, applySelection]);
+    }, [selectedNodeIds, tasks, groups, onDeleteTask, onDeleteGroup, onBulkDelete, markUserAction, applySelection]);
 
     return (
         <div
