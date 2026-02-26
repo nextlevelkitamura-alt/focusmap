@@ -101,6 +101,8 @@ export function DashboardClient({
     const [isAiChatOpen, setIsAiChatOpen] = useState(false)
     // Scheduling panel open state
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
+    // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
+    const [isTaskListVisible, setIsTaskListVisible] = useState(false)
 
     // BottomNav の AI タブからのイベントリスナー
     useEffect(() => {
@@ -719,6 +721,9 @@ export function DashboardClient({
                     onCreateSpace={handleCreateSpace}
                     onUpdateSpace={handleUpdateSpace}
                     onDeleteSpace={handleDeleteSpace}
+                    showTaskListToggle
+                    isTaskListVisible={isTaskListVisible}
+                    onToggleTaskList={() => setIsTaskListVisible(prev => !prev)}
                 />
 
                 {/* Undo/Redo Toast */}
@@ -864,6 +869,7 @@ export function DashboardClient({
                             onRefreshCalendar={handleRefreshCalendar}
                             onAddOptimisticEvent={handleAddOptimisticEvent}
                             onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                            isTaskListVisible={isTaskListVisible}
                         />
                     )}
                 </div>

@@ -33,6 +33,7 @@ interface CenterPaneProps {
     onRefreshCalendar?: () => Promise<void>
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
+    isTaskListVisible?: boolean
 }
 
 export function CenterPane({
@@ -51,6 +52,7 @@ export function CenterPane({
     onRefreshCalendar,
     onAddOptimisticEvent,
     onRemoveOptimisticEvent,
+    isTaskListVisible = false,
 }: CenterPaneProps) {
     // Splitter State
     const [topHeight, setTopHeight] = useState(50)
@@ -225,7 +227,13 @@ export function CenterPane({
                 </div>
             ) : (
                 <>
-                    <div style={{ height: `${topHeight}%` }} className="min-h-[100px] border-b bg-muted/5 relative overflow-hidden group flex flex-col transition-none">
+                    <div
+                        style={{ height: isTaskListVisible ? `${topHeight}%` : '100%' }}
+                        className={cn(
+                            "min-h-[100px] bg-muted/5 relative overflow-hidden group flex flex-col transition-none",
+                            isTaskListVisible && "border-b"
+                        )}
+                    >
                         <MindMap
                             project={project}
                             groups={groups}
@@ -251,17 +259,19 @@ export function CenterPane({
                     </div>
 
                     {/* Splitter Handle */}
-                    <div
-                        className="h-2 bg-background border-b hover:bg-primary/10 cursor-row-resize flex items-center justify-center z-10 -mt-1"
-                        onMouseDown={handleMouseDown}
-                    >
-                        <div className="w-8 h-1 bg-muted-foreground/20 rounded-full" />
-                    </div>
+                    {isTaskListVisible && (
+                        <div
+                            className="h-2 bg-background border-b hover:bg-primary/10 cursor-row-resize flex items-center justify-center z-10 -mt-1"
+                            onMouseDown={handleMouseDown}
+                        >
+                            <div className="w-8 h-1 bg-muted-foreground/20 rounded-full" />
+                        </div>
+                    )}
                 </>
             )}
 
             {/* Task List (Bottom) - hidden in fullscreen */}
-            <div className={cn("flex-1 min-h-0 bg-background flex flex-col", isFullscreen && "hidden")}>
+            <div className={cn("flex-1 min-h-0 bg-background flex flex-col", (isFullscreen || !isTaskListVisible) && "hidden")}>
                 <div className="px-4 py-2 border-b flex justify-between items-center bg-card">
                     <h2 className="font-semibold text-sm">タスク</h2>
                 </div>

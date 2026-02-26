@@ -13,7 +13,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target } from "lucide-react"
+import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target, ListTodo } from "lucide-react"
 import { Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -25,6 +25,9 @@ interface HeaderProps {
     onCreateSpace?: (title: string) => Promise<Space | null>
     onUpdateSpace?: (spaceId: string, updates: Partial<Space>) => Promise<void>
     onDeleteSpace?: (spaceId: string) => Promise<void>
+    showTaskListToggle?: boolean
+    isTaskListVisible?: boolean
+    onToggleTaskList?: () => void
 }
 
 export function Header({
@@ -34,6 +37,9 @@ export function Header({
     onCreateSpace,
     onUpdateSpace,
     onDeleteSpace,
+    showTaskListToggle = false,
+    isTaskListVisible = false,
+    onToggleTaskList,
 }: HeaderProps) {
     const router = useRouter()
     const [user, setUser] = useState<any>(null)
@@ -231,24 +237,42 @@ export function Header({
             </div>
 
             {/* Center: View Tabs */}
-            <div className="hidden md:flex items-center gap-1 absolute left-1/2 -translate-x-1/2 bg-muted/50 rounded-lg p-0.5">
-                {viewTabs.map(tab => (
+            <div className="hidden md:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
+                <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+                    {viewTabs.map(tab => (
+                        <Button
+                            key={tab.id}
+                            variant={activeView === tab.id ? "secondary" : "ghost"}
+                            size="sm"
+                            className={cn(
+                                "gap-1.5 h-7 px-3 text-xs font-medium transition-all",
+                                activeView === tab.id
+                                    ? "bg-background shadow-sm"
+                                    : "text-muted-foreground hover:text-foreground"
+                            )}
+                            onClick={() => setActiveView(tab.id)}
+                        >
+                            {tab.icon}
+                            {tab.label}
+                        </Button>
+                    ))}
+                </div>
+                {showTaskListToggle && activeView === 'map' && (
                     <Button
-                        key={tab.id}
-                        variant={activeView === tab.id ? "secondary" : "ghost"}
+                        variant={isTaskListVisible ? "secondary" : "ghost"}
                         size="sm"
                         className={cn(
-                            "gap-1.5 h-7 px-3 text-xs font-medium transition-all",
-                            activeView === tab.id
-                                ? "bg-background shadow-sm"
+                            "gap-1.5 h-7 px-3 text-xs font-medium",
+                            isTaskListVisible
+                                ? "bg-background shadow-sm border"
                                 : "text-muted-foreground hover:text-foreground"
                         )}
-                        onClick={() => setActiveView(tab.id)}
+                        onClick={onToggleTaskList}
                     >
-                        {tab.icon}
-                        {tab.label}
+                        <ListTodo className="h-3.5 w-3.5" />
+                        タスク一覧
                     </Button>
-                ))}
+                )}
             </div>
 
             {/* Right: User Profile & Settings */}
