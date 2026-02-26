@@ -373,10 +373,15 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
   }, [])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+    if (e.key !== 'Enter') return
+
+    const nativeEvent = e.nativeEvent as KeyboardEvent
+    const isComposing = nativeEvent.isComposing || nativeEvent.keyCode === 229
+    if (isComposing) return
+    if (e.shiftKey) return
+
+    e.preventDefault()
+    handleSend()
   }, [handleSend])
 
   return (
@@ -648,7 +653,7 @@ export function SchedulingPanel({ hideFab, onCalendarEventCreated, isOpen: isOpe
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder="予定の内容を入力..."
+                      placeholder="予定の内容を入力...（Enter送信 / Shift+Enter改行）"
                       className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-24 min-h-[36px]"
                       rows={1}
                       disabled={isLoading}
