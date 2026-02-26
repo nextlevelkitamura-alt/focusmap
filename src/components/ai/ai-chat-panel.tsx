@@ -14,6 +14,7 @@ import { VoiceWaveform } from "@/components/ui/voice-waveform"
 interface ChatOption {
   label: string
   value: string
+  silent?: boolean  // trueなら返信バブルを出さずにAPIに直接送信
 }
 
 interface ChatAction {
@@ -65,6 +66,7 @@ interface ChatMessage {
   actionStatus?: 'pending' | 'executing' | 'success' | 'error'
   options?: ChatOption[]
   optionsUsed?: boolean
+  selectedOption?: string  // 選択されたオプションのラベル
   plannerState?: PlannerState
   bestProposal?: BestProposal
   bestProposalStatus?: 'pending' | 'accepted' | 'editing'
@@ -81,11 +83,19 @@ interface CalendarEventData {
   calendar_id?: string | null
 }
 
+interface TaskData {
+  id: string
+  title: string
+  project_id?: string | null
+  parent_task_id?: string | null
+}
+
 interface AiChatPanelProps {
   activeNoteId?: string | null
   activeProjectId?: string | null
   hideFab?: boolean
   onCalendarEventCreated?: (eventData?: CalendarEventData) => void
+  onTaskCreated?: (taskData?: TaskData) => void
   onMindmapUpdated?: () => void
   isOpen?: boolean
   onOpenChange?: (open: boolean) => void
@@ -105,7 +115,7 @@ function formatDateTimeRange(startAt: string, endAt: string): string {
   return `${month}/${day}(${dow}) ${startTime}〜${endTime}`
 }
 
-export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, onMindmapUpdated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
+export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, onTaskCreated, onMindmapUpdated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const isControlled = controlledIsOpen !== undefined
   const isOpen = isControlled ? controlledIsOpen : internalIsOpen
@@ -290,6 +300,95 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     }
   }, [isLoading, messages, buildRequestContext, activeSkillId, summaryBoundaryIndex, currentSummaryText])
 
+  // サイレント送信（ユーザーバブルを表示せずにAPIに送信）
+  const sendMessageSilent = useCallback(async (text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed || isLoading) return
+
+    // UIにユーザーバブルを表示しないが、AIの文脈として履歴に含める
+    const silentUserMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: trimmed,
+    }
+
+    setIsLoading(true)
+
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          history: [...messages, silentUserMessage].map(m => ({
+            role: m.role,
+            content: m.content,
+          })),
+          context: buildRequestContext(),
+          skillId: activeSkillId || undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        const { error } = await res.json()
+        throw new Error(error || 'Chat failed')
+      }
+
+      const {
+        reply,
+        action,
+        pendingAction,
+        calendarChoices,
+        options,
+        plannerState,
+        bestProposal,
+        proposalCards,
+        shouldSummarize,
+        skillId: responseSkillId,
+        contextUpdate,
+      } = await res.json()
+
+      if (responseSkillId && !activeSkillId) {
+        setActiveSkillId(responseSkillId)
+      }
+
+      if (contextUpdate?.category && contextUpdate?.content) {
+        fetch('/api/ai/chat/context', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(contextUpdate),
+        }).catch(() => {})
+      }
+
+      // silentUserMessage を内部的にmessagesに追加（UIには非表示だが文脈として保持）
+      const aiMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: reply,
+        action,
+        pendingAction,
+        calendarChoices: calendarChoices?.length ? calendarChoices : undefined,
+        actionStatus: action || pendingAction ? 'pending' : undefined,
+        options: options?.length ? options : undefined,
+        plannerState,
+        bestProposal,
+        bestProposalStatus: bestProposal ? 'pending' : undefined,
+        proposalCards: proposalCards?.length ? proposalCards : undefined,
+      }
+
+      setMessages(prev => [...prev, aiMessage])
+    } catch (error) {
+      const errMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: error instanceof Error ? error.message : 'エラーが発生しました。もう一度お試しください。',
+      }
+      setMessages(prev => [...prev, errMessage])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [isLoading, messages, buildRequestContext, activeSkillId])
+
   // テキスト入力から送信
   const handleSend = useCallback(() => {
     sendMessage(input)
@@ -311,7 +410,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         body: JSON.stringify({ action: msg.action }),
       })
 
-      const { success, message, eventData, actionType } = await res.json()
+      const { success, message, eventData, taskData, continueOptions, actionType } = await res.json()
 
       setMessages(prev => [
         ...prev.map(m =>
@@ -321,6 +420,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
           id: crypto.randomUUID(),
           role: 'assistant' as const,
           content: message,
+          options: continueOptions?.length ? continueOptions : undefined,
         },
       ])
 
@@ -334,16 +434,19 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         setTimeout(() => setExecutionNotice(null), 4500)
       }
 
-      // マインドマップ更新時にコールバック
-      if (success && actionType === 'mindmap_updated') {
+      // タスク作成成功時にマインドマップ更新
+      if (success && msg.action?.type === 'add_task') {
+        onTaskCreated?.(taskData)
         onMindmapUpdated?.()
+        setExecutionNotice(`タスクをマップに追加しました`)
+        setTimeout(() => setExecutionNotice(null), 4500)
       }
     } catch {
       setMessages(prev => prev.map(m =>
         m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
       ))
     }
-  }, [messages, onCalendarEventCreated, onMindmapUpdated])
+  }, [messages, onCalendarEventCreated, onTaskCreated, onMindmapUpdated])
 
   // アクションキャンセル
   const handleCancelAction = useCallback((messageId: string) => {
@@ -410,15 +513,22 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   // 選択肢ボタンクリック
   const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
     setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, optionsUsed: true } : m
+      m.id === messageId ? { ...m, optionsUsed: true, selectedOption: option.label } : m
     ))
 
-    if (option.value) {
-      sendMessage(option.value)
-    } else {
+    if (!option.value) {
+      // 空のvalue（「完了」ボタン等）は何もしない
       inputRef.current?.focus()
+      return
     }
-  }, [sendMessage])
+
+    if (option.silent) {
+      // サイレント: ユーザーバブルなしでAPIに直接送信
+      sendMessageSilent(option.value)
+    } else {
+      sendMessage(option.value)
+    }
+  }, [sendMessage, sendMessageSilent])
 
   // ベスト提案を承認
   const handleAcceptProposal = useCallback((messageId: string) => {
@@ -801,7 +911,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
                     {msg.optionsUsed && msg.options && (
                       <div className="mt-1 text-xs opacity-50">
-                        選択済み
+                        {msg.selectedOption ? `✓ ${msg.selectedOption}` : '選択済み'}
                       </div>
                     )}
 

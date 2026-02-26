@@ -831,12 +831,41 @@ export async function POST(request: Request) {
 
     // 選択肢ブロックを抽出（失敗時も本文から除去）
     const optionsBlock = extractJsonBlock(replyText, 'options')
-    let options: { label: string; value: string }[] | undefined
+    let options: { label: string; value: string; silent?: boolean }[] | undefined
 
     if (Array.isArray(optionsBlock.value) && optionsBlock.value.length > 0) {
       options = optionsBlock.value.slice(0, 4)
     }
     replyText = optionsBlock.text
+
+    // タスクスキルの場合: optionsにUUIDが含まれていたらプロジェクト名ベースに修正 + silent化
+    if (activeSkillId === 'task' && options && projects) {
+      const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+      options = options.map(opt => {
+        // value にUUIDが含まれる場合、プロジェクト名ベースに置換
+        const uuidMatch = opt.value.match(UUID_REGEX)
+        if (uuidMatch) {
+          const project = projects.find(p => p.id === uuidMatch[0])
+          if (project) {
+            return {
+              label: project.title,
+              value: `プロジェクト「${project.title}」に追加して`,
+              silent: true,
+            }
+          }
+        }
+        // label にプロジェクト名が含まれる場合もsilent化
+        const matchByLabel = projects.find(p => opt.label.includes(p.title))
+        if (matchByLabel) {
+          return {
+            label: matchByLabel.title,
+            value: `プロジェクト「${matchByLabel.title}」に追加して`,
+            silent: true,
+          }
+        }
+        return opt
+      })
+    }
 
     // context_update ブロックを抽出（カウンセリングSkill用）→ 新テーブルに直接保存
     const contextUpdateBlock = extractJsonBlock(replyText, 'context_update')
@@ -981,6 +1010,50 @@ export async function POST(request: Request) {
 
     // 残存するJSONコードブロックをクリーンアップ（AIが中途半端なJSONを返した場合）
     replyText = replyText.replace(/```\w*\s*\n[\s\S]*?(\n```|$)/g, '').trim()
+
+    // --- Task skill: プロジェクト名→ID逆引き ---
+    // AIがproject_idにプロジェクト名を入れた場合、UUIDに変換する
+    if (action?.type === 'add_task' && projects) {
+      const projectIdRaw = String(action.params.project_id || '')
+      const UUID_REGEX_CHECK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      if (projectIdRaw && !UUID_REGEX_CHECK.test(projectIdRaw)) {
+        // プロジェクト名からIDを逆引き
+        const matchedProject = projects.find(p =>
+          projectIdRaw.includes(p.title) || p.title.includes(projectIdRaw)
+        )
+        if (matchedProject) {
+          action = {
+            ...action,
+            params: { ...action.params, project_id: matchedProject.id },
+          }
+        } else if (projects.length === 1) {
+          // プロジェクトが1つしかない場合はそれを使う
+          action = {
+            ...action,
+            params: { ...action.params, project_id: projects[0].id },
+          }
+        }
+      }
+      // project_idが未設定でプロジェクトが1つの場合は自動設定
+      if (!action.params.project_id && projects.length === 1) {
+        action = {
+          ...action,
+          params: { ...action.params, project_id: projects[0].id },
+        }
+      }
+    }
+
+    // 会話テキストからプロジェクト名を解決（「プロジェクト「〇〇」に追加して」パターン）
+    if (activeSkillId === 'task' && !action && projects) {
+      const projectNameMatch = message.match(/プロジェクト「([^」]+)」/)
+      if (projectNameMatch) {
+        const targetProject = projects.find(p => p.title === projectNameMatch[1])
+        if (targetProject) {
+          // プロジェクトが確定したことをAIの文脈に追加（次のリクエストでactionが生成されやすくなる）
+          // この場合はoptionsを返さず、AIに再度actionを生成させるための情報を追加
+        }
+      }
+    }
 
     // --- Safety normalization layer ---
     // AIの揺らぎで不自然な時間・duration・calendar_idが出ても、サーバー側で補正する

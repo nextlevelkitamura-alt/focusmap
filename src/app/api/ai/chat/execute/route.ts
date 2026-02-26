@@ -25,9 +25,11 @@ export async function POST(request: Request) {
         const { title, project_id, parent_task_id } = action.params as {
           title: string; project_id?: string; parent_task_id?: string
         }
+        const taskId = crypto.randomUUID()
         const { error } = await supabase
           .from('tasks')
           .insert({
+            id: taskId,
             title,
             user_id: user.id,
             project_id: project_id || null,
@@ -35,7 +37,15 @@ export async function POST(request: Request) {
             status: 'pending',
           })
         if (error) throw error
-        return NextResponse.json({ success: true, message: `✅ タスク「${title}」をマップに追加しました` })
+        return NextResponse.json({
+          success: true,
+          message: `✅ タスク「${title}」をマップに追加しました`,
+          taskData: { id: taskId, title, project_id: project_id || null, parent_task_id: parent_task_id || null },
+          continueOptions: [
+            { label: '別のタスクを追加', value: 'タスクを追加したい', silent: true },
+            { label: '完了', value: '', silent: true },
+          ],
+        })
       }
 
       case 'add_calendar_event': {

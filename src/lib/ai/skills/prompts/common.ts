@@ -53,6 +53,8 @@ export function buildResponseFormatRules(): string {
 [{"label": "表示テキスト", "value": "選択時に送信される値"}, ...]
 \`\`\`
 - 最大4つまで
+- **重要**: valueにUUIDやIDを含めないこと。日本語の自然な文を使うこと
+- 例: {"label": "shikumika 開発", "value": "プロジェクト「shikumika 開発」に追加"}
 
 ## アクション指定方法
 \`\`\`action
