@@ -70,6 +70,7 @@ interface ChatMessage {
   bestProposalStatus?: 'pending' | 'accepted' | 'editing'
   proposalCards?: ProposalCard[]
   proposalUsed?: boolean
+  isSummaryDivider?: boolean
 }
 
 interface CalendarEventData {
@@ -120,6 +121,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
   const [executionNotice, setExecutionNotice] = useState<string | null>(null)
   const [isSummarizing, setIsSummarizing] = useState(false)
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
+  const [summaryBoundaryIndex, setSummaryBoundaryIndex] = useState<number>(0)
+  const [currentSummaryText, setCurrentSummaryText] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -130,8 +133,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
 
   const { isRecording, isTranscribing, analyserRef, startRecording, stopRecording } = useVoiceRecorder(handleTranscribed)
 
-  // ラリー数カウント
-  const rallyCount = messages.filter(m => m.role === 'user').length
+  // ラリー数カウント（要約境界以降のメッセージのみ）
+  const rallyCount = messages.slice(summaryBoundaryIndex).filter(m => m.role === 'user').length
 
   // 自動スクロール
   useEffect(() => {
@@ -172,12 +175,13 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmed,
-          history: updatedMessages.map(m => ({
+          history: updatedMessages.slice(summaryBoundaryIndex).filter(m => !m.isSummaryDivider).map(m => ({
             role: m.role,
             content: m.content,
           })),
           context: buildRequestContext(),
           skillId: activeSkillId || undefined,
+          summaryContext: currentSummaryText || undefined,
         }),
       })
 
@@ -268,7 +272,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, buildRequestContext, activeSkillId])
+  }, [isLoading, messages, buildRequestContext, activeSkillId, summaryBoundaryIndex, currentSummaryText])
 
   // テキスト入力から送信
   const handleSend = useCallback(() => {
@@ -443,18 +447,19 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       })
       if (res.ok) {
         const { summary } = await res.json()
-        const contextMessage: ChatMessage = {
+        const dividerMessage: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `(前の会話の要約)\n${summary}\n\n引き続きお手伝いします！`,
+          content: summary,
+          isSummaryDivider: true,
         }
-        setMessages([contextMessage])
-      } else {
-        // 要約失敗時はリセット
-        setMessages([])
+        setMessages(prev => [...prev, dividerMessage])
+        setSummaryBoundaryIndex(messagesToSummarize.length + 1)
+        setCurrentSummaryText(summary)
       }
+      // 要約失敗時もメッセージを維持（クリアしない）
     } catch {
-      setMessages([])
+      // エラー時もメッセージを維持
     } finally {
       setIsSummarizing(false)
     }
@@ -475,16 +480,23 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       }
     }
     setMessages([])
+    setSummaryBoundaryIndex(0)
+    setCurrentSummaryText(null)
     setInput("")
     setExecutionNotice(null)
     setActiveSkillId(null)
   }, [messages])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+    if (e.key !== 'Enter') return
+
+    const nativeEvent = e.nativeEvent as KeyboardEvent
+    const isComposing = nativeEvent.isComposing || nativeEvent.keyCode === 229
+    if (isComposing) return
+    if (e.shiftKey) return
+
+    e.preventDefault()
+    handleSend()
   }, [handleSend])
 
   return (
@@ -572,7 +584,20 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
               )}
 
               {messages.map((msg) => (
-                <div
+                msg.isSummaryDivider ? (
+                  <div key={msg.id} className="py-2 my-1">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-px bg-border" />
+                      <span className="text-[11px] text-muted-foreground whitespace-nowrap px-1">
+                        会話を要約しました
+                      </span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/70 mt-1.5 px-2 leading-relaxed">
+                      {msg.content}
+                    </p>
+                  </div>
+                ) : <div
                   key={msg.id}
                   className={cn(
                     "flex",
@@ -873,7 +898,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder="メッセージを入力..."
+                      placeholder="メッセージを入力...（Enter送信 / Shift+Enter改行）"
                       className="flex-1 resize-none border rounded-xl px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary max-h-24 min-h-[36px]"
                       rows={1}
                       disabled={isLoading}

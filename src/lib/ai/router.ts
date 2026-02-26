@@ -8,7 +8,6 @@ export function routeToSkill(message: string): string | null {
   const scores: Record<string, number> = {
     scheduling: 0,
     task: 0,
-    memo: 0,
     counseling: 0,
   }
 
@@ -27,12 +26,6 @@ export function routeToSkill(message: string): string | null {
   if (taskStrong.test(text)) scores.task += 3
   if (taskMedium.test(text)) scores.task += 2
   if (taskWeak.test(text)) scores.task += 1
-
-  // --- memo ---
-  const memoStrong = /メモ.*(編集|変更|更新|整理)|メモを.*(して|する)/
-  const memoMedium = /アーカイブ|処理済み|紐付け/
-  if (memoStrong.test(text)) scores.memo += 3
-  if (memoMedium.test(text)) scores.memo += 2
 
   // --- counseling ---
   const counselingStrong = /相談|悩み|つらい|しんどい|きつい|不安/

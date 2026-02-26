@@ -7,8 +7,8 @@ import { getSkillById, SKILLS } from '@/lib/ai/skills'
 import type { SkillContext } from '@/lib/ai/skills/prompts/common'
 import { buildSchedulingPrompt } from '@/lib/ai/skills/prompts/scheduling'
 import { buildTaskPrompt } from '@/lib/ai/skills/prompts/task'
-import { buildMemoPrompt } from '@/lib/ai/skills/prompts/memo'
 import { buildCounselingPrompt } from '@/lib/ai/skills/prompts/counseling'
+import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai/context/project-context'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -426,14 +426,14 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { message, history = [], context = {}, skillId: requestedSkillId } = body as {
+    const { message, history = [], context = {}, skillId: requestedSkillId, summaryContext: clientSummaryContext } = body as {
       message: string
       history: ChatMessage[]
       context: {
-        activeNoteId?: string
         activeProjectId?: string
       }
       skillId?: string
+      summaryContext?: string
     }
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -449,9 +449,13 @@ export async function POST(request: Request) {
       })
     }
 
-    // 過去の会話要約を取得（新規セッション or 序盤のみ）
+    // 過去の会話要約を取得
     let previousSummaryContext = ''
-    if (rallyCount <= 1) {
+    if (clientSummaryContext) {
+      // クライアントから要約コンテキストが送られた場合（要約後の継続会話）
+      previousSummaryContext = `\n## 前の会話の要約\n${clientSummaryContext}`
+    } else if (rallyCount <= 1) {
+      // 新規セッション or 序盤のみDBから取得
       const { data: previousSummaries } = await supabase
         .from('ai_chat_summaries')
         .select('summary, topics, created_at')
@@ -501,6 +505,13 @@ export async function POST(request: Request) {
       if (Array.isArray(userPreferences.common_event_types) && userPreferences.common_event_types.length > 0) {
         userPersonaContext += `\nよく登録する予定: ${(userPreferences.common_event_types as string[]).join(', ')}`
       }
+    }
+
+    // プロジェクトコンテキスト（AIの記憶）を読み込み
+    const projectContexts = await loadAllProjectContexts(supabase, user.id)
+    const projectContextPrompt = formatProjectContextsForPrompt(projectContexts, 3)
+    if (projectContextPrompt) {
+      userPersonaContext += projectContextPrompt
     }
 
     // Skill ルーティング: UIから指定 or 自然言語判定
@@ -604,20 +615,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // アクティブなメモのコンテキスト
-    let activeNoteContent = ''
-    if (context.activeNoteId) {
-      const { data: note } = await supabase
-        .from('notes')
-        .select('content, project_id')
-        .eq('id', context.activeNoteId)
-        .eq('user_id', user.id)
-        .single()
-      if (note) {
-        activeNoteContent = `\n現在選択中のメモ: "${note.content}"`
-      }
-    }
-
     // プロジェクト一覧を文字列化
     const projectsContext = (projects || []).map(p => {
       const projectTasks = (tasks || []).filter(t => t.project_id === p.id)
@@ -649,7 +646,7 @@ export async function POST(request: Request) {
         calendarCount,
       } : undefined,
       freeTimeContext: freeTimeContext || undefined,
-      activeNoteContent: activeNoteContent || undefined,
+      projectContextPrompt: projectContextPrompt || undefined,
       previousSummaryContext: previousSummaryContext || undefined,
     }
 
@@ -670,9 +667,6 @@ export async function POST(request: Request) {
         break
       case 'task':
         systemPrompt = buildTaskPrompt(skillContext)
-        break
-      case 'memo':
-        systemPrompt = buildMemoPrompt(skillContext)
         break
       case 'counseling':
         systemPrompt = buildCounselingPrompt(skillContext)

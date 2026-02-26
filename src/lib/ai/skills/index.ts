@@ -40,16 +40,6 @@ export const SKILLS: SkillDefinition[] = [
     needsFreeTime: false,
   },
   {
-    id: 'memo',
-    label: 'メモ整理',
-    icon: 'StickyNote',
-    description: 'メモの編集・分類・アーカイブ',
-    contextCategories: [],
-    needsCalendar: false,
-    needsProjects: true,
-    needsFreeTime: false,
-  },
-  {
     id: 'counseling',
     label: '相談する',
     icon: 'MessageCircleHeart',

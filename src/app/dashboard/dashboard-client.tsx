@@ -18,7 +18,6 @@ import { TodayView } from "@/components/today/today-view"
 import { HabitsView } from "@/components/habits/habits-view"
 import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
-import { MemoView } from "@/components/memo/memo-view"
 import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 
@@ -41,9 +40,7 @@ export function DashboardClient({
 
     // Selection State — null means "全体" (all spaces)
     // Use consistent defaults for SSR/client to avoid hydration mismatch (#418)
-    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(
-        initialSpaces.length > 0 ? initialSpaces[0].id : null
-    )
+    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null)
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
         initialProjects.length > 0 ? initialProjects[0].id : null
     )
@@ -51,10 +48,6 @@ export function DashboardClient({
     // Restore from localStorage after mount (client-only)
     const selectionRestoredRef = useRef(false)
     useEffect(() => {
-        const savedSpace = localStorage.getItem('shikumika:lastSpaceId')
-        if (savedSpace && initialSpaces.some(s => s.id === savedSpace)) {
-            setSelectedSpaceId(savedSpace)
-        }
         const savedProject = localStorage.getItem('shikumika:lastProjectId')
         if (savedProject && initialProjects.some(p => p.id === savedProject)) {
             setSelectedProjectId(savedProject)
@@ -63,11 +56,6 @@ export function DashboardClient({
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Persist selection to localStorage (only after restore to avoid overwriting saved values)
-    useEffect(() => {
-        if (!selectionRestoredRef.current) return
-        if (selectedSpaceId) localStorage.setItem('shikumika:lastSpaceId', selectedSpaceId)
-        else localStorage.removeItem('shikumika:lastSpaceId')
-    }, [selectedSpaceId])
     useEffect(() => {
         if (!selectionRestoredRef.current) return
         if (selectedProjectId) localStorage.setItem('shikumika:lastProjectId', selectedProjectId)
@@ -101,12 +89,25 @@ export function DashboardClient({
 
     // --- View State ---
     // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
-    const { activeView, isViewReady } = useView()
+    const { activeView, setActiveView, isViewReady } = useView()
 
-    // AI Chat open state (controlled from desktop panel FAB)
+    // Reload時はマインドマップを開いた状態に揃える
+    useEffect(() => {
+        if (!isViewReady) return
+        setActiveView('map')
+    }, [isViewReady, setActiveView])
+
+    // AI Chat open state (controlled from desktop panel FAB + mobile BottomNav)
     const [isAiChatOpen, setIsAiChatOpen] = useState(false)
     // Scheduling panel open state
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
+
+    // BottomNav の AI タブからのイベントリスナー
+    useEffect(() => {
+        const handler = () => setIsAiChatOpen(true)
+        window.addEventListener('open-ai-chat', handler)
+        return () => window.removeEventListener('open-ai-chat', handler)
+    }, [])
 
     // --- MindMap Sync Hook ---
     // STABLE reference for initial groups (root tasks) using useMemo
@@ -795,18 +796,7 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {isViewReady && activeView === 'memo' && (
-                    <div className="flex-1 overflow-hidden md:flex md:justify-center">
-                        <div className="w-full max-w-2xl h-full">
-                            <MemoView
-                                projects={filteredProjects}
-                                spaces={spaces}
-                                selectedSpaceId={selectedSpaceId}
-                                onSelectSpace={setSelectedSpaceId}
-                            />
-                        </div>
-                    </div>
-                )}
+                {/* memo view は廃止 → AI タブはチャットパネルを開く */}
 
                 {/* === Desktop: Always 3-pane === */}
                 <div className={cn(

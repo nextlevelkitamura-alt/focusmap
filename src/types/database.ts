@@ -438,6 +438,73 @@ export interface Database {
                     created_at?: string
                 }
             }
+            ai_user_context: {
+                Row: {
+                    id: string
+                    user_id: string
+                    persona: string
+                    preferences: Json
+                    life_personality: string
+                    life_purpose: string
+                    current_situation: string
+                    updated_at: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    persona?: string
+                    preferences?: Json
+                    life_personality?: string
+                    life_purpose?: string
+                    current_situation?: string
+                    updated_at?: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    persona?: string
+                    preferences?: Json
+                    life_personality?: string
+                    life_purpose?: string
+                    current_situation?: string
+                    updated_at?: string
+                    created_at?: string
+                }
+            }
+            ai_project_context: {
+                Row: {
+                    id: string
+                    user_id: string
+                    project_id: string
+                    purpose: string
+                    current_status: string
+                    key_insights: string
+                    updated_at: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    project_id: string
+                    purpose?: string
+                    current_status?: string
+                    key_insights?: string
+                    updated_at?: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    project_id?: string
+                    purpose?: string
+                    current_status?: string
+                    key_insights?: string
+                    updated_at?: string
+                    created_at?: string
+                }
+            }
             user_calendars: {
                 Row: {
                     id: string
@@ -522,3 +589,10 @@ export type HabitCompletionInsert = Database['public']['Tables']['habit_completi
 
 export type HabitTaskCompletion = Database['public']['Tables']['habit_task_completions']['Row']
 export type HabitTaskCompletionInsert = Database['public']['Tables']['habit_task_completions']['Insert']
+
+export type AiUserContext = Database['public']['Tables']['ai_user_context']['Row']
+export type AiUserContextUpdate = Database['public']['Tables']['ai_user_context']['Update']
+
+export type AiProjectContext = Database['public']['Tables']['ai_project_context']['Row']
+export type AiProjectContextInsert = Database['public']['Tables']['ai_project_context']['Insert']
+export type AiProjectContextUpdate = Database['public']['Tables']['ai_project_context']['Update']

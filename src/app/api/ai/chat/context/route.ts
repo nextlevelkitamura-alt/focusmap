@@ -5,6 +5,35 @@ const VALID_CATEGORIES = ['life_personality', 'life_purpose', 'current_situation
 type ContextCategory = typeof VALID_CATEGORIES[number]
 const MAX_CONTENT_LENGTH = 500
 
+// GET /api/ai/chat/context - ユーザーコンテキスト取得
+export async function GET() {
+  try {
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { data } = await supabase
+      .from('ai_user_context')
+      .select('life_personality, life_purpose, current_situation, updated_at')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    return NextResponse.json({
+      context: data ? {
+        life_personality: data.life_personality || '',
+        life_purpose: data.life_purpose || '',
+        current_situation: data.current_situation || '',
+        updated_at: data.updated_at,
+      } : null,
+    })
+  } catch (error) {
+    console.error('Get context error:', error)
+    return NextResponse.json({ error: 'Failed to get context' }, { status: 500 })
+  }
+}
+
 // POST /api/ai/chat/context - ユーザーコンテキストのカテゴリ別保存
 export async function POST(request: Request) {
   try {

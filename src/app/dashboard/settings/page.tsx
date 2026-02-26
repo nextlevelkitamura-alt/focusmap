@@ -4,6 +4,7 @@ import { CalendarSettings } from "@/components/dashboard/calendar-settings"
 import { NotificationSettings } from "@/components/notifications"
 import { ThemeSettings } from "@/components/settings/theme-settings"
 import { AccountSettings } from "@/components/settings/account-settings"
+import { AiContextSettings } from "@/components/settings/ai-context-settings"
 
 export default async function SettingsPage() {
     const supabase = await createClient()
@@ -31,6 +32,9 @@ export default async function SettingsPage() {
 
                 {/* 通知設定 */}
                 <NotificationSettings />
+
+                {/* AIコンテキスト */}
+                <AiContextSettings />
 
                 {/* 表示設定 */}
                 <ThemeSettings />

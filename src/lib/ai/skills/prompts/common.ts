@@ -23,8 +23,8 @@ export interface SkillContext {
   }
   /** 空き時間データ */
   freeTimeContext?: string
-  /** アクティブなメモ */
-  activeNoteContent?: string
+  /** プロジェクトコンテキスト（AIの記憶） */
+  projectContextPrompt?: string
   /** 過去の会話サマリー */
   previousSummaryContext?: string
 }
@@ -33,7 +33,7 @@ export interface SkillContext {
 export function buildCommonRules(): string {
   return `## 対話の基本ルール
 - **対話優先**: ユーザーと情報を交換しながら質の高い提案をする。選択肢を提示し、ユーザーの意思を確認してから行動する
-- 削除操作は実行不可。「削除はメモ画面から行ってください」と案内する
+- 削除操作は実行不可。「削除はアプリから直接行ってください」と案内する
 - 親しみやすく応答する（2文以内 + options）
 - 日本語で応答する`
 }
@@ -81,6 +81,10 @@ export function buildContextBlock(ctx: SkillContext): string {
     if (Array.isArray(prefs.common_event_types) && prefs.common_event_types.length > 0) {
       parts.push(`よく登録する予定: ${(prefs.common_event_types as string[]).join(', ')}`)
     }
+  }
+
+  if (ctx.projectContextPrompt) {
+    parts.push(ctx.projectContextPrompt)
   }
 
   if (ctx.previousSummaryContext) {
