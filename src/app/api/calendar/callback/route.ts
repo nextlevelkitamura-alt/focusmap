@@ -74,6 +74,21 @@ export async function GET(request: NextRequest) {
       throw new Error('Failed to get tokens');
     }
 
+    oauth2Client.setCredentials(tokens);
+
+    let googleAccountName: string | null = null;
+    let googleAccountEmail: string | null = null;
+    let googleAccountPicture: string | null = null;
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const profile = await oauth2.userinfo.get();
+      googleAccountName = profile.data.name || null;
+      googleAccountEmail = profile.data.email || null;
+      googleAccountPicture = profile.data.picture || null;
+    } catch (profileError) {
+      console.warn('[Calendar Callback] Failed to fetch Google account profile:', profileError);
+    }
+
     // トークンの有効期限を計算
     const expiresAt = tokens.expiry_date
       ? new Date(tokens.expiry_date)
@@ -89,6 +104,9 @@ export async function GET(request: NextRequest) {
           google_access_token: tokens.access_token,
           google_refresh_token: tokens.refresh_token,
           google_token_expires_at: expiresAt.toISOString(),
+          google_account_name: googleAccountName,
+          google_account_email: googleAccountEmail,
+          google_account_picture: googleAccountPicture,
           is_sync_enabled: true,
           sync_status: 'idle',
         },
@@ -127,10 +145,11 @@ export async function GET(request: NextRequest) {
     const successUrl = new URL(nextPath || '/dashboard', origin);
     successUrl.searchParams.set('calendar_connected', 'true');
     return NextResponse.redirect(successUrl);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('Calendar callback error:', error);
     return NextResponse.redirect(
-      new URL(`/dashboard?calendar_error=${encodeURIComponent(error.message)}`, origin)
+      new URL(`/dashboard?calendar_error=${encodeURIComponent(message)}`, origin)
     );
   }
 }

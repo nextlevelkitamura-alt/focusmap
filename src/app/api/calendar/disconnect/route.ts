@@ -25,6 +25,9 @@ export async function POST() {
         google_access_token: null,
         google_refresh_token: null,
         google_token_expires_at: null,
+        google_account_name: null,
+        google_account_email: null,
+        google_account_picture: null,
         is_sync_enabled: false,
         sync_status: 'disconnected',
         updated_at: new Date().toISOString()
@@ -41,10 +44,11 @@ export async function POST() {
       message: 'Google Calendar disconnected successfully'
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to disconnect calendar';
     console.error('Disconnect calendar error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to disconnect calendar' },
+      { error: message },
       { status: 500 }
     );
   }

@@ -1,11 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Settings2 } from "lucide-react"
+import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Settings2, Mail } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -16,6 +17,11 @@ interface CalendarStatus {
   syncStatus: 'idle' | 'syncing' | 'error'
   lastSyncedAt: string | null
   tokenExpired?: boolean
+  linkedAccount?: {
+    name: string | null
+    email: string
+    picture: string | null
+  } | null
 }
 
 interface CalendarInfo {
@@ -128,7 +134,8 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
           isConnected: false,
           isSyncEnabled: false,
           syncStatus: 'idle',
-          lastSyncedAt: null
+          lastSyncedAt: null,
+          linkedAccount: null,
         })
       } else {
         throw new Error('Failed to disconnect')
@@ -147,7 +154,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
       // Trigger calendar event refetch
       const response = await fetch('/api/calendar/sync', { method: 'POST' })
       if (response.ok) {
-        const data = await response.json()
+        await response.json()
         setStatus(prev => ({ ...prev, lastSyncedAt: new Date().toISOString() }))
       }
     } catch (error) {
@@ -293,13 +300,56 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                 再連携
               </Button>
             ) : (
-              <Button onClick={handleDisconnect} size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive">
+              <Button
+                onClick={handleDisconnect}
+                size="sm"
+                variant="outline"
+                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
                 <Unlink className="h-4 w-4 mr-2" />
                 連携解除
               </Button>
             )}
           </div>
         </div>
+
+        {status.isConnected && (
+          <div className="rounded-lg border bg-muted/20 p-3">
+            <p className="text-xs font-medium text-muted-foreground mb-2">連携アカウント</p>
+            <div className="flex items-center gap-3">
+              {status.linkedAccount?.picture ? (
+                <Image
+                  src={status.linkedAccount.picture}
+                  alt="Google account avatar"
+                  width={40}
+                  height={40}
+                  className="h-10 w-10 rounded-full border object-cover"
+                  referrerPolicy="no-referrer"
+                  unoptimized
+                />
+              ) : (
+                <div className="h-10 w-10 rounded-full border bg-background flex items-center justify-center text-sm font-semibold">
+                  {(status.linkedAccount?.name || status.linkedAccount?.email || "G").charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">
+                  {status.linkedAccount?.name || 'Googleアカウント'}
+                </p>
+                {status.linkedAccount?.email ? (
+                  <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                    <Mail className="h-3 w-3 shrink-0" />
+                    <span>{status.linkedAccount.email}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    アカウント情報を取得中です
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 最終同期時刻 */}
         {status.lastSyncedAt && (
