@@ -10,6 +10,7 @@ export function routeToSkill(message: string): string | null {
     task: 0,
     memo: 0,
     counseling: 0,
+    'project-consultation': 0,
   }
 
   // --- scheduling ---
@@ -43,6 +44,14 @@ export function routeToSkill(message: string): string | null {
   if (counselingStrong.test(text)) scores.counseling += 3
   if (counselingMedium.test(text)) scores.counseling += 2
   if (counselingWeak.test(text)) scores.counseling += 1
+
+  // --- project-consultation ---
+  const projectConsultStrong = /プロジェクト.*相談|進捗.*分析|戦略|ロードマップ|振り返り/
+  const projectConsultMedium = /プロジェクト|進捗|ボトルネック|優先順位.*見直し|リスク/
+  const projectConsultWeak = /どう進めたら|次.*何|遅れ|見通し|計画/
+  if (projectConsultStrong.test(text)) scores['project-consultation'] += 3
+  if (projectConsultMedium.test(text)) scores['project-consultation'] += 2
+  if (projectConsultWeak.test(text)) scores['project-consultation'] += 1
 
   // 最高スコアのSkillを選択（閾値2以上で確定）
   const entries = Object.entries(scores)

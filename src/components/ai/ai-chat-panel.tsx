@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import {
   Sparkles, Send, X, RotateCcw, Loader2,
   Mic, Square, CheckCircle2, XCircle,
-  CalendarPlus, ListTodo, StickyNote, MessageCircleHeart,
+  CalendarPlus, ListTodo, StickyNote, MessageCircleHeart, BrainCircuit,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -567,8 +567,8 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                     {([
                       { id: 'scheduling', label: '予定を入れる', icon: CalendarPlus },
                       { id: 'task', label: 'タスク管理', icon: ListTodo },
-                      { id: 'memo', label: 'メモ整理', icon: StickyNote },
                       { id: 'counseling', label: '相談する', icon: MessageCircleHeart },
+                      { id: 'project-consultation', label: 'プロジェクト相談', icon: BrainCircuit },
                     ] as const).map(skill => {
                       const Icon = skill.icon
                       return (

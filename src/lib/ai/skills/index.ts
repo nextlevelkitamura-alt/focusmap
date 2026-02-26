@@ -59,6 +59,16 @@ export const SKILLS: SkillDefinition[] = [
     needsProjects: false,
     needsFreeTime: false,
   },
+  {
+    id: 'project-consultation',
+    label: 'プロジェクト相談',
+    icon: 'BrainCircuit',
+    description: 'プロジェクトの進捗分析・戦略・次のアクションを相談',
+    contextCategories: ['current_situation'],
+    needsCalendar: false,
+    needsProjects: true,
+    needsFreeTime: false,
+  },
 ]
 
 export function getSkillById(id: string): SkillDefinition | undefined {

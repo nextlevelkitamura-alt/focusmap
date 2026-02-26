@@ -29,6 +29,8 @@ export interface SkillContext {
   previousSummaryContext?: string
   /** アクティブなノートの内容（メモ整理Skill用） */
   activeNoteContent?: string
+  /** プロジェクト相談用: タスク構造の要約データ */
+  taskSummaryContext?: string
 }
 
 /** 全Skill共通の基本ルール */
@@ -91,6 +93,10 @@ export function buildContextBlock(ctx: SkillContext): string {
 
   if (ctx.previousSummaryContext) {
     parts.push(ctx.previousSummaryContext)
+  }
+
+  if (ctx.taskSummaryContext) {
+    parts.push(ctx.taskSummaryContext)
   }
 
   return parts.join('\n')

@@ -9,8 +9,10 @@ import { buildSchedulingPrompt } from '@/lib/ai/skills/prompts/scheduling'
 import { buildTaskPrompt } from '@/lib/ai/skills/prompts/task'
 import { buildCounselingPrompt } from '@/lib/ai/skills/prompts/counseling'
 import { buildMemoPrompt } from '@/lib/ai/skills/prompts/memo'
+import { buildProjectConsultationPrompt } from '@/lib/ai/skills/prompts/project-consultation'
 import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai/context/project-context'
 import { loadContextFromDocuments } from '@/lib/ai/context/document-context'
+import { summarizeProjectTasks, summarizeAllProjects } from '@/lib/ai/context/task-summarizer'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -602,6 +604,20 @@ export async function POST(request: Request) {
     const activeSkillId = resolvedSkillId || 'scheduling' // フォールバック
     const skillDef = getSkillById(activeSkillId)
 
+    // プロジェクト相談Skill用: タスクデータの構造化要約を取得
+    let taskSummaryContext = ''
+    if (activeSkillId === 'project-consultation') {
+      try {
+        if (context.activeProjectId) {
+          taskSummaryContext = await summarizeProjectTasks(supabase, user.id, context.activeProjectId)
+        } else {
+          taskSummaryContext = await summarizeAllProjects(supabase, user.id)
+        }
+      } catch (err) {
+        console.error('[chat] Task summary generation failed:', err)
+      }
+    }
+
     // Skill用のコンテキストを組み立て
     const skillContext: SkillContext = {
       todayDate: new Date().toISOString().split('T')[0],
@@ -619,6 +635,7 @@ export async function POST(request: Request) {
       freeTimeContext: freeTimeContext || undefined,
       projectContextPrompt: projectContextPrompt || undefined,
       previousSummaryContext: previousSummaryContext || undefined,
+      taskSummaryContext: taskSummaryContext || undefined,
     }
 
     // Skillが必要とするコンテキストカテゴリだけを注入
@@ -644,6 +661,9 @@ export async function POST(request: Request) {
         break
       case 'memo':
         systemPrompt = buildMemoPrompt(skillContext)
+        break
+      case 'project-consultation':
+        systemPrompt = buildProjectConsultationPrompt(skillContext)
         break
       default:
         // 未知のskillIdの場合、スケジューリングにフォールバック
@@ -827,6 +847,43 @@ export async function POST(request: Request) {
       }
     }
     replyText = contextUpdateBlock.text
+
+    // project_context_update ブロックを抽出（プロジェクト相談Skill用）
+    const projectContextUpdateBlock = extractJsonBlock(replyText, 'project_context_update')
+    if (projectContextUpdateBlock.value && typeof projectContextUpdateBlock.value === 'object') {
+      const pcu = projectContextUpdateBlock.value as { project_id?: string; field?: string; content?: string }
+      if (pcu.project_id && pcu.field && pcu.content) {
+        const allowedFields = ['key_insights', 'current_status']
+        if (allowedFields.includes(pcu.field)) {
+          try {
+            // 既存データとマージ
+            const { data: existingCtx } = await supabase
+              .from('ai_project_context')
+              .select('id, key_insights, current_status')
+              .eq('user_id', user.id)
+              .eq('project_id', pcu.project_id)
+              .maybeSingle()
+
+            const existingValue = existingCtx?.[pcu.field as 'key_insights' | 'current_status'] || ''
+            const merged = existingValue
+              ? `${existingValue}\n${pcu.content}`.slice(0, 500)
+              : pcu.content.slice(0, 500)
+
+            await supabase
+              .from('ai_project_context')
+              .upsert({
+                user_id: user.id,
+                project_id: pcu.project_id,
+                [pcu.field]: merged,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'user_id,project_id' })
+          } catch (err) {
+            console.error('[chat] project_context_update save failed:', err)
+          }
+        }
+      }
+    }
+    replyText = projectContextUpdateBlock.text
 
     // 残存するJSONコードブロックをクリーンアップ（AIが中途半端なJSONを返した場合）
     replyText = replyText.replace(/```\w*\s*\n[\s\S]*?(\n```|$)/g, '').trim()
