@@ -263,10 +263,17 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       }
       setMessages(prev => [...prev, aiMessage])
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'エラーが発生しました'
+      const isApiKeyError = errorMsg.includes('APIキーエラー') || errorMsg.includes('API設定')
       const errMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: error instanceof Error ? error.message : 'エラーが発生しました。もう一度お試しください。',
+        content: isApiKeyError
+          ? 'AI設定にエラーがあります。管理者にお問い合わせください。'
+          : errorMsg,
+        options: isApiKeyError ? undefined : [
+          { label: 'リトライ', value: trimmed },
+        ],
       }
       setMessages(prev => [...prev, errMessage])
     } finally {

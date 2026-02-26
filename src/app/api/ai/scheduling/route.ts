@@ -503,7 +503,7 @@ ${freeTimeContext}`
     console.error('[scheduling] Chat error:', errMsg)
 
     if (errMsg.includes('API key not valid') || errMsg.includes('API_KEY_INVALID')) {
-      return NextResponse.json({ error: 'AI機能が一時的に利用できません' }, { status: 503 })
+      return NextResponse.json({ error: 'AI設定を確認してください（APIキーエラー）', errorCode: 'API_KEY_INVALID' }, { status: 503 })
     }
     if (errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('RATE_LIMIT')) {
       return NextResponse.json({ error: 'リクエスト上限に達しました。しばらくお待ちください' }, { status: 429 })

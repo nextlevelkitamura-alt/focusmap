@@ -27,6 +27,8 @@ export interface SkillContext {
   projectContextPrompt?: string
   /** 過去の会話サマリー */
   previousSummaryContext?: string
+  /** アクティブなノートの内容（メモ整理Skill用） */
+  activeNoteContent?: string
 }
 
 /** 全Skill共通の基本ルール */

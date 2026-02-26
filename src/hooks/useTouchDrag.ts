@@ -98,6 +98,12 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
         }
     }, [])
 
+    const restoreGridScroll = useCallback(() => {
+        if (!gridRef.current) return
+        gridRef.current.style.overflow = ''
+        gridRef.current.style.touchAction = ''
+    }, [gridRef])
+
     // Auto-scroll logic
     const runAutoScroll = useCallback((touchClientY: number) => {
         const grid = gridRef.current
@@ -202,15 +208,17 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             const touch = e.touches[0]
             touchStartY.current = touch.clientY
             touchStartScrollTop.current = gridRef.current?.scrollTop ?? 0
+            const initialClientY = touch.clientY
 
             // Start long press timer
             longPressTimer.current = setTimeout(() => {
                 // Check if finger hasn't moved much (still a long press)
-                startDragForItem(item, touch.clientY, itemTopInGrid)
+                startDragForItem(item, initialClientY, itemTopInGrid)
 
                 // Prevent further scroll handling
                 if (gridRef.current) {
                     gridRef.current.style.overflow = 'hidden'
+                    gridRef.current.style.touchAction = 'none'
                 }
 
                 // Note: Vibration removed due to browser restrictions causing console warnings
@@ -233,19 +241,18 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             // We're dragging - update preview.
             // Scroll prevention is handled by temporarily setting the grid overflow to hidden
             // when drag starts (instead of relying on non-passive preventDefault).
+            if (e.cancelable) e.preventDefault()
 
             updatePreview(touch.clientY)
             runAutoScroll(touch.clientY)
         }
 
-        const onTouchEnd = () => {
+        const completeDrag = () => {
             cancelLongPress()
             stopAutoScroll()
 
             // Restore scroll FIRST (always execute, even if errors occur below)
-            if (gridRef.current) {
-                gridRef.current.style.overflow = ''
-            }
+            restoreGridScroll()
 
             if (isDraggingRef.current && dragItemRef.current) {
                 // Complete the drag
@@ -291,16 +298,25 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             dragItemRef.current = null
         }
 
-        return { onTouchStart, onTouchMove, onTouchEnd }
-    }, [enabled, gridRef, startDragForItem, cancelLongPress, updatePreview, runAutoScroll, stopAutoScroll, onDrop])
+        const onTouchEnd = () => {
+            completeDrag()
+        }
+
+        const onTouchCancel = () => {
+            completeDrag()
+        }
+
+        return { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel }
+    }, [enabled, gridRef, startDragForItem, cancelLongPress, updatePreview, runAutoScroll, stopAutoScroll, onDrop, restoreGridScroll])
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
             cancelLongPress()
             stopAutoScroll()
+            restoreGridScroll()
         }
-    }, [cancelLongPress, stopAutoScroll])
+    }, [cancelLongPress, stopAutoScroll, restoreGridScroll])
 
     return {
         dragState,

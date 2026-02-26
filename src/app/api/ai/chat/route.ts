@@ -8,6 +8,7 @@ import type { SkillContext } from '@/lib/ai/skills/prompts/common'
 import { buildSchedulingPrompt } from '@/lib/ai/skills/prompts/scheduling'
 import { buildTaskPrompt } from '@/lib/ai/skills/prompts/task'
 import { buildCounselingPrompt } from '@/lib/ai/skills/prompts/counseling'
+import { buildMemoPrompt } from '@/lib/ai/skills/prompts/memo'
 import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai/context/project-context'
 import { loadContextFromDocuments } from '@/lib/ai/context/document-context'
 
@@ -47,7 +48,7 @@ type PlannerState =
   | 'resolve_conflict'
   | 'confirm_and_execute'
 
-type MissingField = 'duration' | 'time_preference' | 'calendar' | 'start_time'
+type MissingField = 'duration' | 'calendar' | 'start_time'
 
 // スケジューリング意図を検出するキーワード
 const SCHEDULING_KEYWORDS = ['予定', 'カレンダー', '入れて', 'スケジュール', '会議', 'ミーティング', 'ランチ', '追加して', '登録', '予約']
@@ -641,6 +642,9 @@ export async function POST(request: Request) {
       case 'counseling':
         systemPrompt = buildCounselingPrompt(skillContext)
         break
+      case 'memo':
+        systemPrompt = buildMemoPrompt(skillContext)
+        break
       default:
         // 未知のskillIdの場合、スケジューリングにフォールバック
         systemPrompt = buildSchedulingPrompt(skillContext)
@@ -649,10 +653,10 @@ export async function POST(request: Request) {
 
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
-    // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
+    // Gemini API 呼び出し（フォールバックチェーン付き）
     const genAI = new GoogleGenerativeAI(apiKey)
-    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.0-flash').trim()
-    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash'].filter(Boolean)))
+    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
+    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash', 'gemini-2.0-flash'].filter(Boolean)))
 
     let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
     let lastModelError: unknown = null
@@ -916,7 +920,8 @@ export async function POST(request: Request) {
     }
 
     // --- Structured scheduling guard ---
-    // 予定登録は「所要時間 → 時間帯 → カレンダー → 開始時間」を順に確定してから実行する
+    // 予定登録は「所要時間 → カレンダー(複数時のみ) → 開始時間」を順に確定してから実行する
+    // time_preference は独立ステップではなく、start_time 選定時の内部パラメータとして使用
     if (isSchedulingIntent) {
       const confirmedDurationMin = extractConfirmedDurationMinutes(allUserTexts) ?? explicitDurationForNormalization
       const confirmedStartAtFromOption = extractConfirmedStartAt(allUserTexts)
@@ -931,22 +936,23 @@ export async function POST(request: Request) {
         ? toJstIsoString(snapToFiveMinutes(new Date(candidateStartRaw)))
         : undefined
 
-      // カレンダー自動選択を廃止: 必ずユーザーに確認する
+      // カレンダー自動選択: 1つしかない場合はデフォルトを使う
+      const hasSingleCalendar = validCalendarIds.size <= 1
       const candidateCalendarId =
         confirmedCalendarFromOption
         || inferredCalendarFromText
         || (typeof action?.params?.calendar_id === 'string' && validCalendarIds.has(action.params.calendar_id) ? action.params.calendar_id : undefined)
         || (bestProposal && validCalendarIds.has(bestProposal.calendarId) ? bestProposal.calendarId : undefined)
+        || (hasSingleCalendar ? defaultCalendarId : undefined)
 
       const hasKnownDuration = Number.isFinite(confirmedDurationMin)
-      const hasKnownTimePreference = !!confirmedTimePreference || hasExplicitStart
+      // 明示的な開始時間(「10時から」等)があれば start_time も確定とみなす
+      const hasKnownStart = !!candidateStartAt || hasExplicitStart
       const hasKnownCalendar = !!candidateCalendarId
-      const hasKnownStart = !!candidateStartAt
 
-      // 順序: duration → time_preference → calendar → start_time
+      // 順序: duration → calendar(複数時のみ) → start_time
       const nextMissing: MissingField[] = []
       if (!hasKnownDuration) nextMissing.push('duration')
-      if (!hasKnownTimePreference) nextMissing.push('time_preference')
       if (!hasKnownCalendar) nextMissing.push('calendar')
       if (!hasKnownStart) nextMissing.push('start_time')
 
@@ -966,14 +972,6 @@ export async function POST(request: Request) {
           // イベント種別に応じたスマートな所要時間候補
           replyText = replyText || 'どのくらいの時間になりそうですか？'
           options = getSmartDurationOptions(eventTitle)
-        } else if (firstMissing === 'time_preference') {
-          replyText = replyText || '何時頃がいいですか？'
-          options = [
-            { label: '午前がいい', value: '午前中にお願いします' },
-            { label: '午後がいい', value: '午後にお願いします' },
-            { label: '夕方以降', value: '夕方以降にお願いします' },
-            { label: 'おまかせ', value: 'いい感じの時間でお願いします' },
-          ]
         } else if (firstMissing === 'calendar') {
           const candidates = userCalendarsForResolution.length > 0
             ? userCalendarsForResolution
@@ -992,7 +990,7 @@ export async function POST(request: Request) {
             if (d <= now) d.setDate(d.getDate() + 1)
             return d
           })()
-          // 空き時間データから根拠付きの候補を生成
+          // 空き時間データから根拠付きの候補を生成（時間帯の好みも考慮）
           const startOptions = buildSmartStartTimeOptions(
             freeTimeContext, durationMin, confirmedTimePreference || undefined, baseStart
           )
@@ -1042,12 +1040,15 @@ export async function POST(request: Request) {
 
     // Google API固有のエラーをユーザーフレンドリーなメッセージに変換
     if (errMsg.includes('API key not valid') || errMsg.includes('API_KEY_INVALID')) {
-      return NextResponse.json({ error: 'AI機能が一時的に利用できません' }, { status: 503 })
+      return NextResponse.json({ error: 'AI設定を確認してください（APIキーエラー）', errorCode: 'API_KEY_INVALID' }, { status: 503 })
     }
     if (errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('RATE_LIMIT')) {
-      return NextResponse.json({ error: 'リクエスト上限に達しました。しばらくお待ちください' }, { status: 429 })
+      return NextResponse.json({ error: 'リクエスト上限に達しました。しばらくお待ちください', errorCode: 'RATE_LIMIT' }, { status: 429 })
+    }
+    if (errMsg.includes('No available Gemini model')) {
+      return NextResponse.json({ error: 'AIモデルに接続できません。しばらくお待ちください', errorCode: 'MODEL_UNAVAILABLE' }, { status: 503 })
     }
 
-    return NextResponse.json({ error: 'AIチャット中にエラーが発生しました' }, { status: 500 })
+    return NextResponse.json({ error: 'AIチャット中にエラーが発生しました', errorCode: 'UNKNOWN' }, { status: 500 })
   }
 }

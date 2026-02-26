@@ -346,6 +346,10 @@ export function useTodayViewLogic({
         [...todayScheduledTasks, ...overflowTasks].filter(t => t.google_event_id),
         [todayScheduledTasks, overflowTasks]
     )
+    const scheduledTaskIds = useMemo(
+        () => new Set([...todayScheduledTasks, ...overflowTasks].map(t => t.id)),
+        [todayScheduledTasks, overflowTasks]
+    )
     const taskGoogleIds = new Set(allTasksWithGoogleEvent.map(t => t.google_event_id!))
     const eventLikeTaskKeys = new Set(
         [...todayScheduledTasks, ...overflowTasks]
@@ -362,6 +366,7 @@ export function useTodayViewLogic({
 
         for (const event of calendarEvents) {
             if (event.is_all_day) continue
+            if (event.task_id && scheduledTaskIds.has(event.task_id)) continue
             if (taskGoogleIds.has(event.google_event_id)) continue
             const eventMinute = Math.floor(new Date(event.start_time).getTime() / 60000)
             const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
@@ -405,7 +410,7 @@ export function useTodayViewLogic({
 
         items.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         return items
-    }, [calendarEvents, stableCalendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
+    }, [calendarEvents, scheduledTaskIds, stableCalendarColorMap, todayScheduledTasks, overflowTasks, today, tomorrow])
 
     // All-day events
     const allDayEvents = useMemo(() => {

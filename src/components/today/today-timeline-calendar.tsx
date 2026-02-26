@@ -118,6 +118,12 @@ export function TodayTimelineCalendar({
         endTime: Date
         title: string
     } | null>(null)
+    const [desktopDragState, setDesktopDragState] = useState<{
+        item: DragItem
+        previewTop: number
+        previewStartTime: Date
+        previewEndTime: Date
+    } | null>(null)
     const [isQuickCreating, setIsQuickCreating] = useState(false)
     const [suppressItemTapUntil, setSuppressItemTapUntil] = useState<number | null>(null)
     const quickInputRef = useRef<HTMLInputElement>(null)
@@ -128,6 +134,18 @@ export function TodayTimelineCalendar({
         pointerId: number
         clientY: number
         gridY: number
+    } | null>(null)
+    const desktopDragContextRef = useRef<{
+        item: DragItem
+        startClientY: number
+        initialOffsetInItem: number
+        hasMoved: boolean
+    } | null>(null)
+    const desktopDragPreviewRef = useRef<{
+        item: DragItem
+        previewTop: number
+        previewStartTime: Date
+        previewEndTime: Date
     } | null>(null)
 
     // Touch drag & drop
@@ -140,6 +158,99 @@ export function TodayTimelineCalendar({
         onDrop: handleDrop,
         enabled: !!onDragDrop,
     })
+
+    const updateDesktopDragPreview = useCallback((dragItem: DragItem, clientY: number, initialOffsetInItem: number) => {
+        const grid = gridRef.current
+        if (!grid) return null
+
+        const rect = grid.getBoundingClientRect()
+        const scrollTop = grid.scrollTop
+        const yInGrid = clientY - rect.top + scrollTop - initialOffsetInItem
+        const rawMinutes = (clamp(yInGrid, 0, TOTAL_HEIGHT) / TOTAL_HEIGHT) * 24 * 60
+        const snappedMinutes = Math.round(rawMinutes / QUICK_CREATE_MINUTES) * QUICK_CREATE_MINUTES
+        const clampedMinutes = clamp(snappedMinutes, 0, 24 * 60 - dragItem.durationMinutes)
+
+        const nextStart = new Date(dragItem.startTime)
+        nextStart.setHours(0, 0, 0, 0)
+        nextStart.setMinutes(clampedMinutes)
+        const nextEnd = new Date(nextStart.getTime() + dragItem.durationMinutes * 60 * 1000)
+        const previewTop = (clampedMinutes / (24 * 60)) * TOTAL_HEIGHT
+
+        const preview = {
+            item: dragItem,
+            previewTop,
+            previewStartTime: nextStart,
+            previewEndTime: nextEnd,
+        }
+
+        desktopDragPreviewRef.current = preview
+        setDesktopDragState(preview)
+        return preview
+    }, [])
+
+    const handleDesktopItemMouseDown = useCallback((e: React.MouseEvent, item: DragItem, itemTop: number) => {
+        if (!onDragDrop || e.button !== 0) return
+
+        const target = e.target as HTMLElement
+        if (target.closest('button, input, textarea, select, a, [role="button"]')) return
+
+        const grid = gridRef.current
+        if (!grid) return
+
+        const rect = grid.getBoundingClientRect()
+        const scrollTop = grid.scrollTop
+        const pointerYInGrid = e.clientY - rect.top + scrollTop
+        const initialOffsetInItem = pointerYInGrid - itemTop
+
+        desktopDragContextRef.current = {
+            item,
+            startClientY: e.clientY,
+            initialOffsetInItem,
+            hasMoved: false,
+        }
+
+        const onMouseMove = (moveEvent: MouseEvent) => {
+            const ctx = desktopDragContextRef.current
+            if (!ctx) return
+
+            if (!ctx.hasMoved && Math.abs(moveEvent.clientY - ctx.startClientY) < 3) return
+            if (!ctx.hasMoved) {
+                ctx.hasMoved = true
+                if (document.body) document.body.style.userSelect = 'none'
+            }
+
+            updateDesktopDragPreview(ctx.item, moveEvent.clientY, ctx.initialOffsetInItem)
+        }
+
+        const onMouseUp = () => {
+            window.removeEventListener('mousemove', onMouseMove)
+            window.removeEventListener('mouseup', onMouseUp)
+            if (document.body) document.body.style.userSelect = ''
+
+            const ctx = desktopDragContextRef.current
+            const preview = desktopDragPreviewRef.current
+            if (ctx?.hasMoved && preview) {
+                const originalMinutes = preview.item.startTime.getHours() * 60 + preview.item.startTime.getMinutes()
+                const newMinutes = preview.previewStartTime.getHours() * 60 + preview.previewStartTime.getMinutes()
+                if (newMinutes !== originalMinutes) {
+                    onDragDrop(preview.item, preview.previewStartTime, preview.previewEndTime)
+                }
+            }
+
+            desktopDragContextRef.current = null
+            desktopDragPreviewRef.current = null
+            setDesktopDragState(null)
+        }
+
+        window.addEventListener('mousemove', onMouseMove)
+        window.addEventListener('mouseup', onMouseUp)
+    }, [onDragDrop, updateDesktopDragPreview])
+
+    useEffect(() => {
+        return () => {
+            if (document.body) document.body.style.userSelect = ''
+        }
+    }, [])
 
     // Scroll to saved position (or default hour) on mount
     useEffect(() => {
@@ -601,7 +712,7 @@ export function TodayTimelineCalendar({
                 ref={gridRef}
                 className={cn(
                     "flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y",
-                    dragState.isDragging && "select-none"
+                    (dragState.isDragging || !!desktopDragState) && "select-none"
                 )}
                 onScroll={handleGridScroll}
             >
@@ -763,7 +874,7 @@ export function TodayTimelineCalendar({
                                     className={cn(
                                         "absolute select-none",
                                         isDragTarget ? "touch-none" : "touch-pan-y",
-                                        isDragTarget && "invisible",
+                                        (isDragTarget || desktopDragState?.item.id === id) && "invisible",
                                         isExpanded ? "z-30" : "z-20"
                                     )}
                                     data-time-item="true"
@@ -773,6 +884,7 @@ export function TodayTimelineCalendar({
                                         left: `calc(${leftPercent}% + 2px)`,
                                         width: `calc(${widthPercent}% - 4px)`,
                                     }}
+                                    onMouseDown={(e) => handleDesktopItemMouseDown(e, dragItem, item.top)}
                                     {...touchHandlers}
                                 >
                                     {isEvent ? (
@@ -823,6 +935,17 @@ export function TodayTimelineCalendar({
                             <DragPreview
                                 dragState={dragState}
                                 item={dragState.dragItem}
+                            />
+                        )}
+
+                        {desktopDragState && (
+                            <DragPreview
+                                dragState={{
+                                    previewTop: desktopDragState.previewTop,
+                                    previewStartTime: desktopDragState.previewStartTime,
+                                    previewEndTime: desktopDragState.previewEndTime,
+                                }}
+                                item={desktopDragState.item}
                             />
                         )}
 
