@@ -356,6 +356,15 @@ describe('useMindMapSync', () => {
       // 親グループの status が 'done' に自動変更
       const parentGroup = result.current.groups.find(g => g.id === 'g1')
       expect(parentGroup?.status).toBe('done')
+      expect(
+        mockFetch.mock.calls.some(([url, init]) =>
+          url === '/api/tasks/g1' &&
+          typeof init === 'object' &&
+          init &&
+          'body' in init &&
+          JSON.parse(String((init as RequestInit).body)).status === 'done'
+        )
+      ).toBe(true)
     })
 
     test('status=todoで親がdoneなら親を自動未完了に戻す', async () => {
@@ -385,6 +394,15 @@ describe('useMindMapSync', () => {
 
       const parentGroup = result.current.groups.find(g => g.id === 'g1')
       expect(parentGroup?.status).toBe('todo')
+      expect(
+        mockFetch.mock.calls.some(([url, init]) =>
+          url === '/api/tasks/g1' &&
+          typeof init === 'object' &&
+          init &&
+          'body' in init &&
+          JSON.parse(String((init as RequestInit).body)).status === 'todo'
+        )
+      ).toBe(true)
     })
   })
 

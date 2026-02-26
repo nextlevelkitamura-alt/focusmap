@@ -707,6 +707,9 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
     const hasMemo = !!data?.memo;
     const hasMemoImages = memoImages.length > 0;
     const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo || hasMemoImages;
+    const isTaskDone = data?.is_habit
+        ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
+        : data?.status === 'done';
 
     const writeClipboard = useCallback(async (text: string, successMessage: string) => {
         try {
@@ -819,12 +822,9 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                     <GripVertical className="w-3 h-3" />
                 </div>
 
-                {settings.showStatus && (() => {
-                    const taskDone = data?.is_habit
-                        ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
-                        : data?.status === 'done'
-                    return <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", taskDone ? "bg-primary" : "bg-muted-foreground/30")} />
-                })()}
+                {settings.showStatus && (
+                    <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", isTaskDone ? "bg-primary" : "bg-muted-foreground/30")} />
+                )}
 
                 {/* Habit Icon Badge */}
                 {data?.is_habit && data?.habit_icon && (
@@ -868,9 +868,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                         "nodrag nopan flex-1 bg-transparent border-none text-[13px] font-semibold leading-tight focus:outline-none focus:ring-0 px-0.5 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
                         !showCaret && "caret-transparent",
                         !showCaret && !selected && "pointer-events-none select-none",
-                        (data?.is_habit
-                            ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
-                            : data?.status === 'done') && "line-through text-muted-foreground"
+                        isTaskDone && "line-through text-muted-foreground"
                     )}
                 />
 
@@ -907,6 +905,26 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                         onFocusOutside={(e) => e.preventDefault()}
                         onInteractOutside={(e) => e.preventDefault()}
                     >
+                        {/* Task Completion */}
+                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">タスク</div>
+                        <div className="nodrag nopan px-2 pb-2">
+                            <button
+                                type="button"
+                                className="flex items-center justify-between w-full h-8 rounded px-1 hover:bg-muted/40 transition-colors"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    data?.onUpdateStatus?.(isTaskDone ? 'todo' : 'done');
+                                }}
+                            >
+                                <span className="text-xs">完了</span>
+                                <Switch
+                                    checked={isTaskDone}
+                                    onCheckedChange={(checked) => data?.onUpdateStatus?.(checked ? 'done' : 'todo')}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            </button>
+                        </div>
+
                         {/* Priority */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">優先度</div>
                         <div className="px-2 pb-2">
@@ -1987,6 +2005,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onSave: (t: string) => cbs.saveTaskTitle(taskId, t),
                     onUpdateDate: (d: string | null) => cbs.updateTaskScheduledAt(taskId, d),
                     onUpdateScheduledAt: (d: string) => cbs.updateTaskScheduledAt(taskId, d),
+                    onUpdateStatus: (status: string) => cbs.onUpdateTask?.(taskId, { status }),
                     onUpdatePriority: (p: number) => cbs.updateTaskPriority(taskId, p),
                     onUpdateEstimatedTime: (m: number) => cbs.updateTaskEstimatedTime(taskId, m),
                     onUpdateCalendar: (calendarId: string | null) => cbs.onUpdateTask?.(taskId, { calendar_id: calendarId }),

@@ -21,6 +21,7 @@ import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
 import { DateTimePicker } from "@/lib/dynamic-imports"
 import { format } from "date-fns"
@@ -408,6 +409,26 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         onFocusOutside={(e) => e.preventDefault()}
                         onInteractOutside={(e) => e.preventDefault()}
                     >
+                        {/* Task Completion */}
+                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">タスク</div>
+                        <div className="nodrag nopan px-3 pb-2">
+                            <button
+                                type="button"
+                                className="flex items-center justify-between w-full h-9 rounded px-1 active:bg-muted"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    data?.onUpdateStatus?.(isDone ? 'todo' : 'done')
+                                }}
+                            >
+                                <span className="text-sm">完了</span>
+                                <Switch
+                                    checked={isDone}
+                                    onCheckedChange={(checked) => data?.onUpdateStatus?.(checked ? 'done' : 'todo')}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            </button>
+                        </div>
+
                         {/* Priority */}
                         <div className="px-3 py-2 text-xs font-medium text-muted-foreground">優先度</div>
                         <div className="px-3 pb-2">
@@ -739,6 +760,7 @@ function MobileMindMapContent({
                         }
                     },
                     onUpdatePriority: (priority: number) => onUpdateTask?.(task.id, { priority }),
+                    onUpdateStatus: (status: string) => onUpdateTask?.(task.id, { status }),
                     onUpdateEstimatedTime: (minutes: number) => onUpdateTask?.(task.id, { estimated_time: minutes }),
                     onUpdateScheduledAt: (isoString: string | null) => onUpdateTask?.(task.id, { scheduled_at: isoString }),
                     onUpdateCalendar: (calendarId: string | null) => onUpdateTask?.(task.id, { calendar_id: calendarId }),
