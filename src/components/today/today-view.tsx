@@ -51,6 +51,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onSwipeRight: logic.goToPrevDay,
     })
 
+    const defaultQuickCreateCalendarId =
+        logic.calendars.find(c =>
+            c.selected && (c.access_level === 'owner' || c.access_level === 'writer')
+        )?.google_calendar_id
+        ?? logic.writableCalendars[0]?.id
+        ?? null
+
     return (
         <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
             {/* Date Header + Mode Toggle */}
@@ -498,6 +505,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             projectNameMap={logic.projectNameMap}
                             initialScrollTop={logic.scrollPositionRef.current}
                             onScrollPositionChange={(pos) => { logic.scrollPositionRef.current = pos }}
+                            onQuickCreateTask={onCreateQuickTask}
+                            defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                         />
                     ) : (
                         <div className="flex-1 overflow-y-auto no-scrollbar">

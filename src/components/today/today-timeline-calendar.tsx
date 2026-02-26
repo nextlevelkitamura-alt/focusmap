@@ -873,8 +873,7 @@ function EventBlock({
     const endTime = new Date(event.end_time)
     const isNow = currentTime >= startTime && currentTime < endTime
     const isCompact = height < 40
-
-    const startStr = format(startTime, 'HH:mm')
+    const eventTitleLines = height >= 150 ? 5 : height >= 110 ? 4 : height >= 80 ? 3 : height >= 60 ? 2 : 1
 
     const eventHex = getEventColor(event)
     const rgb = hexToRgb(eventHex)
@@ -897,7 +896,6 @@ function EventBlock({
         >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
-                    <span className="text-[10px] font-medium text-muted-foreground">{startStr}</span>
                     <span className="text-[11px] font-medium truncate text-foreground">
                         {event.title}
                     </span>
@@ -905,11 +903,18 @@ function EventBlock({
             ) : (
                 <>
                     <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium truncate leading-tight text-foreground">
+                        <span
+                            className={cn(
+                                "text-[11px] font-medium leading-tight text-foreground break-words",
+                                eventTitleLines === 1
+                                    ? "truncate"
+                                    : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal"
+                            )}
+                            style={eventTitleLines > 1 ? { WebkitLineClamp: eventTitleLines } : undefined}
+                        >
                             {event.title}
                         </span>
                     </div>
-                    <div className="text-[10px] font-medium mt-0.5 text-muted-foreground">{startStr}</div>
                     {event.location && height > 55 && (
                         <div className="text-[9px] truncate mt-0.5 text-muted-foreground/70">
                             {event.location}
@@ -958,9 +963,9 @@ function TaskBlock({
     const isNow = currentTime >= startTime && currentTime < endTime
     const isRunning = timer.runningTaskId === task.id
     const isDone = task.status === 'done'
-    const isCompact = height < 40 || totalColumns >= 2
-
-    const startStr = format(startTime, 'HH:mm')
+    const isCompact = height < 36 || (totalColumns >= 2 && height < 52)
+    const isTallCard = height >= 56
+    const titleLines = height >= 160 ? 6 : height >= 128 ? 5 : height >= 96 ? 4 : height >= 72 ? 3 : height >= 56 ? 2 : 1
 
     // Google由来タスクはカレンダー色、通常タスクは既存オレンジ
     const TASK_HEX = accentColor || '#F97316'
@@ -1061,14 +1066,42 @@ function TaskBlock({
                                     <Square className="w-4.5 h-4.5" style={{ color: TASK_HEX }} />
                                 )}
                             </button>
-                            <span className={cn(
-                                "text-[11px] font-medium truncate",
-                                isDone ? "line-through text-muted-foreground" : "text-foreground"
-                            )}>
+                            <span
+                                className={cn(
+                                    "text-[11px] font-medium leading-tight break-words",
+                                    titleLines === 1
+                                        ? "truncate"
+                                        : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
+                                    isDone ? "line-through text-muted-foreground" : "text-foreground"
+                                )}
+                                style={titleLines > 1 ? { WebkitLineClamp: titleLines } : undefined}
+                            >
                                 {task.title}
                             </span>
                         </div>
-                        <div className="flex-shrink-0 ml-1 flex items-center gap-1">
+                    </div>
+                    <div className={cn(
+                        "mt-0.5 flex gap-1",
+                        isTallCard ? "items-start justify-between" : "items-center justify-end"
+                    )}>
+                        <div className="min-w-0 flex-1">
+                            {projectName && (
+                                <div className="mb-1">
+                                    <span className="text-[9px] text-muted-foreground bg-muted/60 px-1 py-0.5 rounded inline-block max-w-full truncate">
+                                        {projectName}
+                                    </span>
+                                </div>
+                            )}
+                            {isRunning && (
+                                <div className="text-[11px] font-mono text-primary tabular-nums">
+                                    {formatTime(timer.currentElapsedSeconds)}
+                                </div>
+                            )}
+                        </div>
+                        <div className={cn(
+                            "flex-shrink-0 flex",
+                            isTallCard ? "flex-col items-end gap-1" : "items-center gap-1"
+                        )}>
                             {isRunning ? (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
@@ -1109,24 +1142,6 @@ function TaskBlock({
                             )}
                         </div>
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] font-medium text-muted-foreground tabular-nums">
-                            {startStr}–{format(endTime, 'HH:mm')}
-                        </span>
-                        {task.estimated_time > 0 && (
-                            <span className="text-[9px] text-muted-foreground">⏱ {task.estimated_time}分</span>
-                        )}
-                        {projectName && (
-                            <span className="text-[9px] text-muted-foreground bg-muted/60 px-1 py-0.5 rounded truncate max-w-20">
-                                {projectName}
-                            </span>
-                        )}
-                    </div>
-                    {isRunning && (
-                        <div className="text-[11px] font-mono text-primary mt-0.5 tabular-nums">
-                            {formatTime(timer.currentElapsedSeconds)}
-                        </div>
-                    )}
                 </>
             )}
         </div>
