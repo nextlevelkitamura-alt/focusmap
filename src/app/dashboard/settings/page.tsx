@@ -2,6 +2,7 @@ import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
 import { CalendarSettings } from "@/components/dashboard/calendar-settings"
 import { NotificationSettings } from "@/components/notifications"
+import { AiContextSettings } from "@/components/settings/ai-context-settings"
 import { ThemeSettings } from "@/components/settings/theme-settings"
 import { AccountSettings } from "@/components/settings/account-settings"
 
@@ -31,6 +32,9 @@ export default async function SettingsPage() {
 
                 {/* 通知設定 */}
                 <NotificationSettings />
+
+                {/* AIコンテキスト管理 */}
+                <AiContextSettings />
 
                 {/* 表示設定 */}
                 <ThemeSettings />

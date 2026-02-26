@@ -438,6 +438,95 @@ export interface Database {
                     created_at?: string
                 }
             }
+            ai_context_folders: {
+                Row: {
+                    id: string
+                    user_id: string
+                    parent_id: string | null
+                    folder_type: 'root_personal' | 'root_projects' | 'project' | 'custom'
+                    project_id: string | null
+                    title: string
+                    icon: string | null
+                    order_index: number
+                    is_system: boolean
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    parent_id?: string | null
+                    folder_type?: 'root_personal' | 'root_projects' | 'project' | 'custom'
+                    project_id?: string | null
+                    title: string
+                    icon?: string | null
+                    order_index?: number
+                    is_system?: boolean
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    parent_id?: string | null
+                    folder_type?: 'root_personal' | 'root_projects' | 'project' | 'custom'
+                    project_id?: string | null
+                    title?: string
+                    icon?: string | null
+                    order_index?: number
+                    is_system?: boolean
+                    updated_at?: string
+                }
+            }
+            ai_context_documents: {
+                Row: {
+                    id: string
+                    user_id: string
+                    folder_id: string
+                    title: string
+                    content: string
+                    document_type: 'personality' | 'purpose' | 'situation' | 'project_purpose' | 'project_status' | 'project_insights' | 'note'
+                    max_length: number
+                    source: 'manual' | 'ai_interview' | 'ai_auto'
+                    order_index: number
+                    is_pinned: boolean
+                    content_updated_at: string
+                    freshness_reviewed_at: string | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    folder_id: string
+                    title: string
+                    content?: string
+                    document_type?: 'personality' | 'purpose' | 'situation' | 'project_purpose' | 'project_status' | 'project_insights' | 'note'
+                    max_length?: number
+                    source?: 'manual' | 'ai_interview' | 'ai_auto'
+                    order_index?: number
+                    is_pinned?: boolean
+                    content_updated_at?: string
+                    freshness_reviewed_at?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    folder_id?: string
+                    title?: string
+                    content?: string
+                    document_type?: 'personality' | 'purpose' | 'situation' | 'project_purpose' | 'project_status' | 'project_insights' | 'note'
+                    max_length?: number
+                    source?: 'manual' | 'ai_interview' | 'ai_auto'
+                    order_index?: number
+                    is_pinned?: boolean
+                    content_updated_at?: string
+                    freshness_reviewed_at?: string | null
+                    updated_at?: string
+                }
+            }
             user_calendars: {
                 Row: {
                     id: string
@@ -522,3 +611,11 @@ export type HabitCompletionInsert = Database['public']['Tables']['habit_completi
 
 export type HabitTaskCompletion = Database['public']['Tables']['habit_task_completions']['Row']
 export type HabitTaskCompletionInsert = Database['public']['Tables']['habit_task_completions']['Insert']
+
+export type AiContextFolder = Database['public']['Tables']['ai_context_folders']['Row']
+export type AiContextFolderInsert = Database['public']['Tables']['ai_context_folders']['Insert']
+export type AiContextFolderUpdate = Database['public']['Tables']['ai_context_folders']['Update']
+
+export type AiContextDocument = Database['public']['Tables']['ai_context_documents']['Row']
+export type AiContextDocumentInsert = Database['public']['Tables']['ai_context_documents']['Insert']
+export type AiContextDocumentUpdate = Database['public']['Tables']['ai_context_documents']['Update']
