@@ -1717,7 +1717,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     id: `e-${parentId}-${task.id}`,
                     source: parentId,
                     target: task.id,
-                    type: 'smoothstep'
+                    type: 'step'
                 });
 
                 yOffsetRef.current += 40;

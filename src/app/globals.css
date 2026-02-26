@@ -138,7 +138,7 @@
 
 /* ReactFlow: ノード位置変更時のスムーズアニメーション */
 .react-flow__node {
-  transition: transform 200ms ease, filter 0.15s ease, opacity 0.15s ease;
+  transition: filter 0.15s ease, opacity 0.15s ease;
 }
 
 /* ReactFlow: ドラッグ可能なノードにグラブカーソル */
