@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useMemo, useState, useEffect, useLayoutEffect, useCallback, useRef, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useMemo, useState, useEffect, useLayoutEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
 import ReactFlow, {
     Node,
     Edge,
@@ -40,6 +40,82 @@ import {
 } from "@/lib/mindmap-layout";
 import { BranchEdge } from "@/components/mindmap/branch-edge";
 
+type HabitUpdatePayload = Partial<Pick<Task,
+    'is_habit' | 'habit_frequency' | 'habit_icon' | 'habit_start_date' | 'habit_end_date'
+>>;
+
+type ProjectNodeData = {
+    label?: string;
+    isDropTarget?: boolean;
+    onAddChild?: () => Promise<void> | void;
+    onSave?: (newTitle: string) => Promise<void> | void;
+    onDelete?: () => Promise<void> | void;
+};
+
+type TaskNodeData = {
+    id?: string;
+    taskId?: string;
+    label?: string;
+    triggerEdit?: boolean;
+    initialValue?: string;
+    displaySettings?: {
+        showStatus: boolean;
+        showPriority: boolean;
+        showScheduledAt: boolean;
+        showEstimatedTime: boolean;
+        showProgress: boolean;
+        showCollapseButton: boolean;
+    };
+    memo_images?: string[] | null;
+    estimatedDisplayMinutes?: number;
+    priority?: number | null;
+    scheduled_at?: string | null;
+    memo?: string | null;
+    is_habit?: boolean;
+    habit_icon?: string | null;
+    habit_end_date?: string | null;
+    status?: string;
+    hasChildren?: boolean;
+    onSave?: (title: string) => Promise<void> | void;
+    onPromote?: () => Promise<void> | void;
+    onAddChild?: () => Promise<void> | void;
+    onAddSibling?: () => Promise<void> | void;
+    onDelete?: () => Promise<void> | void;
+    onNavigate?: (direction: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => void;
+    onUpdateMemoImages?: (urls: string[] | null) => Promise<void> | void;
+    onUpdateEstimatedTime?: (minutes: number) => Promise<void> | void;
+    onUpdatePriority?: (priority: number | null) => Promise<void> | void;
+    onUpdateDate?: (dateIso: string | null) => Promise<void> | void;
+    onDragStart?: (taskId: string, title: string) => void;
+    onDragEnd?: () => void;
+};
+
+type HabitSettingsPanelData = {
+    is_habit?: boolean;
+    habit_frequency?: string | null;
+    habit_start_date?: string | null;
+    habit_end_date?: string | null;
+    onUpdateHabit?: (updates: HabitUpdatePayload) => void;
+};
+
+type MindMapCallbacks = {
+    saveTaskTitle: (taskId: string, newTitle: string) => Promise<void>;
+    addChildTask: (taskId: string) => Promise<void>;
+    addSiblingTask: (taskId: string) => Promise<void>;
+    deleteTask: (taskId: string) => Promise<void>;
+    handleNavigate: (taskId: string, direction: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => void;
+    promoteTask: (taskId: string) => Promise<void>;
+    updateTaskScheduledAt: (taskId: string, dateStr: string | null) => Promise<void>;
+    updateTaskPriority: (taskId: string, priority: number | null) => Promise<void>;
+    updateTaskEstimatedTime: (taskId: string, minutes: number) => Promise<void>;
+    onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>;
+    toggleTaskCollapse: (taskId: string) => void;
+    startDrag: (taskId: string, title: string) => void;
+    endDrag: () => void;
+    createRootTaskAndFocus: (title: string) => Promise<void>;
+    onUpdateProject?: (projectId: string, title: string) => Promise<void>;
+};
+
 // --- Error Boundary ---
 class MindMapErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
     constructor(props: { children: ReactNode }) {
@@ -76,10 +152,10 @@ class MindMapErrorBoundary extends Component<{ children: ReactNode }, { hasError
 }
 
 // --- Custom Nodes ---
-const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
+const ProjectNode = React.memo(({ data, selected }: NodeProps<ProjectNodeData>) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(data?.label ?? '');
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
 
     // Sync label when not editing
@@ -104,7 +180,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
         }
     }, [editValue, data]);
 
-    const handleInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const handleInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         e.stopPropagation();
         if (!isEditing) {
             // Selection Mode behaviors for Project (root) node:
@@ -223,7 +299,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
         >
             {(selected || isEditing) ? (
                 <textarea
-                    ref={inputRef as any}
+                    ref={inputRef}
                     rows={1}
                     value={editValue}
                     onChange={(e) => {
@@ -233,7 +309,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps) => {
                         e.target.style.height = `${e.target.scrollHeight}px`;
                     }}
                     onBlur={handleInputBlur}
-                    onKeyDown={handleInputKeyDown as any}
+                    onKeyDown={handleInputKeyDown}
                     onClick={(e) => {
                         if (isEditing) e.stopPropagation();
                     }}
@@ -262,7 +338,7 @@ const fileToDataUrl = (file: File): Promise<string> =>
         reader.readAsDataURL(file);
     });
 
-function HabitSettingsPanel({ data }: { data: any }) {
+function HabitSettingsPanel({ data }: { data: HabitSettingsPanelData }) {
     const [isHabit, setIsHabit] = useState<boolean>(data?.is_habit ?? false);
     const [frequency, setFrequency] = useState<string>(data?.habit_frequency ?? '');
     const [startDate, setStartDate] = useState<string>(data?.habit_start_date ?? '');
@@ -270,7 +346,9 @@ function HabitSettingsPanel({ data }: { data: any }) {
 
     // Save immediately on any change via stable ref to onUpdateHabit
     const onUpdateHabitRef = useRef(data?.onUpdateHabit);
-    onUpdateHabitRef.current = data?.onUpdateHabit;
+    useEffect(() => {
+        onUpdateHabitRef.current = data?.onUpdateHabit;
+    }, [data?.onUpdateHabit]);
 
     const saveNow = useCallback((updates: {
         isHabit: boolean; frequency: string; startDate: string; endDate: string;
@@ -373,8 +451,8 @@ function HabitSettingsPanel({ data }: { data: any }) {
 }
 
 // TASK NODE
-const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
-    const inputRef = useRef<HTMLInputElement>(null);
+const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeData>) => {
+    const inputRef = useRef<HTMLTextAreaElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [isEditing, setIsEditing] = useState<boolean>(false);
     const [editValue, setEditValue] = useState<string>(data?.label ?? '');
@@ -461,7 +539,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
         });
     }, []);
 
-    const handleInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const handleInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         e.stopPropagation();
 
         if (!isEditing) {
@@ -660,7 +738,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
         }
 
         // タスクIDをドラッグデータに設定
-        const taskId = (data as any)?.taskId || (data as any)?.id
+        const taskId = data?.taskId || data?.id
         if (taskId) {
             e.dataTransfer.setData('text/plain', taskId)
             e.dataTransfer.effectAllowed = 'copy'
@@ -686,7 +764,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
             setTimeout(() => ghost.remove(), 0)
 
                 // DragContextに通知（data経由で呼び出し）
-                ; (data as any)?.onDragStart?.(taskId, editValue || 'タスク')
+                data?.onDragStart?.(taskId, editValue || 'タスク')
 
         }
     }, [isEditing, data, editValue])
@@ -694,8 +772,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
     // ドラッグ終了時の処理
     const handleDragEnd = useCallback(() => {
         // DragContextに通知（data経由で呼び出し）
-        ; (data as any)?.onDragEnd?.()
-    }, [])
+        data?.onDragEnd?.()
+    }, [data])
 
     const settings = data?.displaySettings || { showStatus: true, showPriority: true, showScheduledAt: true, showEstimatedTime: true, showProgress: true, showCollapseButton: true };
     const memoImages: string[] = Array.isArray(data?.memo_images)
@@ -835,7 +913,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                 )}
 
                 <textarea
-                    ref={inputRef as any}
+                    ref={inputRef}
                     rows={1}
                     value={editValue}
                     onChange={(e) => {
@@ -849,7 +927,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                         e.target.style.height = `${e.target.scrollHeight}px`;
                     }}
                     onBlur={handleInputBlur}
-                    onKeyDown={handleInputKeyDown as any}
+                    onKeyDown={handleInputKeyDown}
                     onClick={(e) => {
                         if (isEditing) {
                             e.stopPropagation();
@@ -1207,7 +1285,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                                     className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"
                                     onClick={(e) => {
                                         e.stopPropagation()
-                                        data?.onUpdatePriority?.(undefined as any)
+                                        data?.onUpdatePriority?.(null)
                                     }}
                                     title="優先度を削除"
                                 >
@@ -1263,6 +1341,39 @@ TaskNode.displayName = 'TaskNode';
 const nodeTypes = { projectNode: ProjectNode, taskNode: TaskNode };
 const edgeTypes = { branch: BranchEdge };
 const defaultViewport = { x: 0, y: 0, zoom: 0.75 };
+const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
+
+type MindMapClipboardNode = {
+    title: string;
+    status: string;
+    priority: number | null;
+    scheduled_at: string | null;
+    estimated_time: number;
+    is_habit: boolean;
+    habit_frequency: string | null;
+    habit_icon: string | null;
+    habit_start_date: string | null;
+    habit_end_date: string | null;
+    memo: string | null;
+    memo_images: string[] | null;
+    children: MindMapClipboardNode[];
+};
+
+type MindMapClipboardPayload = {
+    type: 'mindmap-node';
+    version: 2;
+    copiedAt: string;
+    roots: MindMapClipboardNode[];
+};
+
+type MindMapClipboardPayloadV1 = {
+    type: 'mindmap-node';
+    version: 1;
+    copiedAt?: string;
+    root: MindMapClipboardNode;
+};
+
+type MindMapClipboardAnyPayload = MindMapClipboardPayload | MindMapClipboardPayloadV1;
 
 interface MindMapProps {
     project: Project
@@ -1334,7 +1445,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         scheduled_at: t?.scheduled_at,
         google_event_id: t?.google_event_id,
         calendar_id: t?.calendar_id,
-        priority: (t as any)?.priority, // Include priority (no default value)
+        priority: t?.priority ?? null,
         estimated_time: t?.estimated_time ?? 0,
         // Habit fields
         is_habit: t?.is_habit ?? false,
@@ -1349,6 +1460,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // STATE
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+    const [clipboardFeedback, setClipboardFeedback] = useState<string | null>(null);
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null);
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set());
     const dropInfoRef = useRef<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
@@ -1358,14 +1470,25 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const lastUserActionAtRef = useRef<number>(0);
     const selectedNodeIdRef = useRef<string | null>(null);
     const isDraggingRef = useRef(false);
+    const clipboardFeedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // Local node state for smooth drag tracking (decoupled from static dagre layout)
     const [nodes, setNodes] = useState<Node[]>([]);
 
-    // Hold latest callbacks in a ref so they don't invalidate useMemos
-    const callbacksRef = useRef<Record<string, any>>({});
     const markUserAction = useCallback(() => {
         lastUserActionAtRef.current = Date.now();
+    }, []);
+
+    const flashClipboardFeedback = useCallback((message: string) => {
+        if (clipboardFeedbackTimerRef.current) {
+            clearTimeout(clipboardFeedbackTimerRef.current);
+            clipboardFeedbackTimerRef.current = null;
+        }
+        setClipboardFeedback(message);
+        clipboardFeedbackTimerRef.current = setTimeout(() => {
+            setClipboardFeedback(null);
+            clipboardFeedbackTimerRef.current = null;
+        }, 1400);
     }, []);
 
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null, source: 'user' | 'system') => {
@@ -1473,6 +1596,14 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [pendingEditNodeId]);
 
+    useEffect(() => {
+        return () => {
+            if (clipboardFeedbackTimerRef.current) {
+                clearTimeout(clipboardFeedbackTimerRef.current);
+            }
+        };
+    }, []);
+
     // Helpers
     const getTaskById = useCallback((id: string) => {
         return tasks.find(t => t.id === id) ?? groups.find(g => g.id === id);
@@ -1490,6 +1621,215 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
         return false;
     }, [groups, tasks]);
+
+    const getIsTypingTarget = useCallback((target: EventTarget | null) => {
+        const el = target as HTMLElement | null;
+        if (!el) return false;
+        if (el.isContentEditable) return true;
+        if (el.closest('input, textarea, [contenteditable="true"]')) return true;
+        return false;
+    }, []);
+
+    const appendImagesToNode = useCallback(async (nodeId: string, imageUrls: string[]) => {
+        if (!onUpdateTask || !nodeId || nodeId === 'project-root' || imageUrls.length === 0) return;
+
+        const targetTask = tasks.find(t => t.id === nodeId) ?? groups.find(g => g.id === nodeId);
+        if (!targetTask) return;
+
+        const existing = Array.isArray(targetTask.memo_images)
+            ? targetTask.memo_images.filter((url): url is string => typeof url === 'string' && !!url.trim())
+            : [];
+        const merged = Array.from(new Set([...existing, ...imageUrls.filter(Boolean)]));
+
+        try {
+            await onUpdateTask(nodeId, { memo_images: merged.length > 0 ? merged : null });
+            flashClipboardFeedback(`${imageUrls.length}枚の画像を追加しました`);
+        } catch (error) {
+            console.error('[MindMap] Failed to paste images:', error);
+            flashClipboardFeedback('画像の貼り付けに失敗しました');
+        }
+    }, [onUpdateTask, tasks, groups, flashClipboardFeedback]);
+
+    const handleContainerPasteCapture = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+        const clipboard = event.clipboardData;
+        if (!clipboard) return;
+
+        const imageFiles = Array.from(clipboard.items ?? [])
+            .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+            .map(item => item.getAsFile())
+            .filter((file): file is File => file instanceof File);
+
+        if (imageFiles.length === 0) return;
+
+        const targetNodeId = selectedNodeIdRef.current ?? selectedNodeId;
+        if (!targetNodeId || targetNodeId === 'project-root') return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        void (async () => {
+            try {
+                const encoded = await Promise.all(imageFiles.map(fileToDataUrl));
+                const imageUrls = encoded.filter(Boolean);
+                if (imageUrls.length === 0) return;
+                await appendImagesToNode(targetNodeId, imageUrls);
+            } catch (error) {
+                console.error('[MindMap] Failed to process pasted images:', error);
+                flashClipboardFeedback('画像の読み取りに失敗しました');
+            }
+        })();
+    }, [selectedNodeId, appendImagesToNode, flashClipboardFeedback]);
+
+    const buildClipboardNode = useCallback((rootId: string): MindMapClipboardNode | null => {
+        const allById = new Map([...groups, ...tasks].map(task => [task.id, task]));
+        const rootTask = allById.get(rootId);
+        if (!rootTask) return null;
+
+        const childrenByParent = new Map<string, Task[]>();
+        for (const task of tasks) {
+            if (!task.parent_task_id) continue;
+            const arr = childrenByParent.get(task.parent_task_id) ?? [];
+            arr.push(task);
+            childrenByParent.set(task.parent_task_id, arr);
+        }
+        for (const [, childList] of childrenByParent) {
+            childList.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        }
+
+        const serialize = (task: Task): MindMapClipboardNode => {
+            const children = childrenByParent.get(task.id) ?? [];
+            return {
+                title: task.title ?? 'New Task',
+                status: task.status ?? 'todo',
+                priority: task.priority ?? null,
+                scheduled_at: task.scheduled_at ?? null,
+                estimated_time: task.estimated_time ?? 0,
+                is_habit: task.is_habit ?? false,
+                habit_frequency: task.habit_frequency ?? null,
+                habit_icon: task.habit_icon ?? null,
+                habit_start_date: task.habit_start_date ?? null,
+                habit_end_date: task.habit_end_date ?? null,
+                memo: task.memo ?? null,
+                memo_images: task.memo_images ?? null,
+                children: children.map(serialize),
+            };
+        };
+
+        return serialize(rootTask);
+    }, [groups, tasks]);
+
+    const getCopyRootNodeIds = useCallback((): string[] => {
+        const selectedIds = Array.from(selectedNodeIds).filter(id => id !== 'project-root');
+        if (selectedIds.length === 0) return [];
+
+        const allById = new Map([...groups, ...tasks].map(task => [task.id, task]));
+        const selectedSet = new Set(selectedIds);
+
+        const isTopLevelSelected = (taskId: string): boolean => {
+            let current = allById.get(taskId);
+            const visited = new Set<string>();
+            while (current?.parent_task_id) {
+                if (selectedSet.has(current.parent_task_id)) return false;
+                if (visited.has(current.parent_task_id)) break;
+                visited.add(current.parent_task_id);
+                current = allById.get(current.parent_task_id);
+            }
+            return true;
+        };
+
+        const roots = selectedIds.filter(isTopLevelSelected);
+        roots.sort((a, b) => {
+            const taskA = allById.get(a);
+            const taskB = allById.get(b);
+            return (taskA?.order_index ?? 0) - (taskB?.order_index ?? 0);
+        });
+
+        if (selectedNodeId && selectedNodeId !== 'project-root' && roots.includes(selectedNodeId)) {
+            return [selectedNodeId, ...roots.filter(id => id !== selectedNodeId)];
+        }
+        return roots;
+    }, [selectedNodeIds, selectedNodeId, groups, tasks]);
+
+    const normalizeClipboardPayload = useCallback((raw: MindMapClipboardAnyPayload): MindMapClipboardPayload | null => {
+        if (!raw || raw.type !== 'mindmap-node') return null;
+        if (raw.version === 2 && Array.isArray((raw as MindMapClipboardPayload).roots)) {
+            const roots = (raw as MindMapClipboardPayload).roots.filter(Boolean);
+            if (roots.length === 0) return null;
+            return {
+                type: 'mindmap-node',
+                version: 2,
+                copiedAt: raw.copiedAt || new Date().toISOString(),
+                roots,
+            };
+        }
+        if (raw.version === 1 && (raw as MindMapClipboardPayloadV1).root) {
+            return {
+                type: 'mindmap-node',
+                version: 2,
+                copiedAt: raw.copiedAt || new Date().toISOString(),
+                roots: [(raw as MindMapClipboardPayloadV1).root],
+            };
+        }
+        return null;
+    }, []);
+
+    const pasteClipboardTree = useCallback(async (payload: MindMapClipboardPayload) => {
+        if (payload.roots.length === 0) return;
+        const anchorId = selectedNodeId && selectedNodeId !== 'project-root' ? selectedNodeId : null;
+
+        const applyCopiedFields = async (nodeId: string, sourceNode: MindMapClipboardNode) => {
+            if (!onUpdateTask) return;
+            await onUpdateTask(nodeId, {
+                status: sourceNode.status ?? 'todo',
+                priority: sourceNode.priority ?? null,
+                scheduled_at: sourceNode.scheduled_at ?? null,
+                estimated_time: sourceNode.estimated_time ?? 0,
+                is_habit: sourceNode.is_habit ?? false,
+                habit_frequency: sourceNode.habit_frequency ?? null,
+                habit_icon: sourceNode.habit_icon ?? null,
+                habit_start_date: sourceNode.habit_start_date ?? null,
+                habit_end_date: sourceNode.habit_end_date ?? null,
+                memo: sourceNode.memo ?? null,
+                memo_images: sourceNode.memo_images ?? null,
+                calendar_id: null,
+                google_event_id: null,
+                calendar_event_id: null,
+            });
+        };
+
+        const createNodeRecursive = async (sourceNode: MindMapClipboardNode, parentId: string | null, isRoot: boolean): Promise<string | null> => {
+            const title = (sourceNode.title || '').trim() || 'New Task';
+            let created: Task | null = null;
+
+            if (isRoot && parentId === null) {
+                created = await onCreateGroup?.(title) ?? null;
+            } else {
+                if (!parentId) return null;
+                created = await onCreateTask?.(parentId, title, parentId) ?? null;
+            }
+
+            if (!created?.id) return null;
+            await applyCopiedFields(created.id, sourceNode);
+
+            for (const childNode of sourceNode.children ?? []) {
+                await createNodeRecursive(childNode, created.id, false);
+            }
+            return created.id;
+        };
+
+        const createdRootIds: string[] = [];
+        for (const root of payload.roots) {
+            const createdRootId = await createNodeRecursive(root, anchorId, anchorId === null);
+            if (createdRootId) createdRootIds.push(createdRootId);
+        }
+
+        if (createdRootIds.length > 0) {
+            const primaryId = createdRootIds[0];
+            applySelection(new Set(createdRootIds), primaryId, 'user');
+            focusNodeWithPollingV2(primaryId, 300, false);
+            flashClipboardFeedback(`${createdRootIds.length}件のノードを貼り付けました`);
+        }
+    }, [selectedNodeId, onCreateGroup, onCreateTask, onUpdateTask, applySelection, focusNodeWithPollingV2, flashClipboardFeedback]);
 
     const toggleTaskCollapse = useCallback((taskId: string) => {
         setCollapsedTaskIds(prev => {
@@ -1783,7 +2123,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [onUpdateTask]);
 
-    const updateTaskPriority = useCallback(async (taskId: string, priority: number) => {
+    const updateTaskPriority = useCallback(async (taskId: string, priority: number | null) => {
         if (onUpdateTask) {
             await onUpdateTask(taskId, { priority });
         }
@@ -1795,18 +2135,29 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [onUpdateTask]);
 
-    const shouldTriggerEdit = useCallback((taskId: string) => {
-        return pendingEditNodeId === taskId;
-    }, [pendingEditNodeId]);
-
-    // Keep callbacksRef in sync (avoids putting callbacks in useMemo deps)
-    callbacksRef.current = {
+    const callbacks = useMemo<MindMapCallbacks>(() => ({
         saveTaskTitle, addChildTask, addSiblingTask, deleteTask,
         handleNavigate, promoteTask, updateTaskScheduledAt,
         updateTaskPriority, updateTaskEstimatedTime,
         onUpdateTask, toggleTaskCollapse, startDrag, endDrag,
         createRootTaskAndFocus, onUpdateProject,
-    };
+    }), [
+        saveTaskTitle,
+        addChildTask,
+        addSiblingTask,
+        deleteTask,
+        handleNavigate,
+        promoteTask,
+        updateTaskScheduledAt,
+        updateTaskPriority,
+        updateTaskEstimatedTime,
+        onUpdateTask,
+        toggleTaskCollapse,
+        startDrag,
+        endDrag,
+        createRootTaskAndFocus,
+        onUpdateProject,
+    ]);
 
     // ===== STEP 1: Structure + dagre layout (expensive, only on data/collapse change) =====
     type ParsedTask = {
@@ -1883,7 +2234,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 task: ParsedTask,
                 parentId: string,
                 depth: number,
-                yOffsetRef: { current: number }
+                yOffsetCursor: { value: number }
             ) => {
                 if (depth >= MAX_DEPTH) return;
 
@@ -1931,7 +2282,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         estimatedIsOverride: taskIsEstimatedOverride,
                         hasChildren: taskHasChildren,
                     },
-                    position: { x: xPos, y: yOffsetRef.current },
+                    position: { x: xPos, y: yOffsetCursor.value },
                     draggable: true,
                 });
                 resultEdges.push({
@@ -1942,12 +2293,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 });
 
                 // ノード実高さ + マージンで次のY位置を計算（固定40pxだと長いテキストで重なる）
-                yOffsetRef.current += taskNodeHeight + 12;
+                yOffsetCursor.value += taskNodeHeight + 12;
 
                 if (!collapsedTaskIds.has(task.id)) {
                     const children = childTasksByParent[task.id] ?? [];
                     for (const child of children) {
-                        renderTasksRecursively(child, task.id, depth + 1, yOffsetRef);
+                        renderTasksRecursively(child, task.id, depth + 1, yOffsetCursor);
                     }
                 }
             };
@@ -1956,9 +2307,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             let globalYOffset = 50;
 
             for (const rootTask of sortedRootTasks) {
-                const yOffsetRef = { current: globalYOffset };
-                renderTasksRecursively(rootTask, 'project-root', 0, yOffsetRef);
-                globalYOffset = Math.max(globalYOffset + 80, yOffsetRef.current + 30);
+                const yOffsetCursor = { value: globalYOffset };
+                renderTasksRecursively(rootTask, 'project-root', 0, yOffsetCursor);
+                globalYOffset = Math.max(globalYOffset + 80, yOffsetCursor.value + 30);
             }
         } catch (err) {
             console.error('[MindMap] Error:', err);
@@ -1970,7 +2321,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // ===== STEP 2: Inject interactive data (cheap, runs on selection/edit/settings change) =====
     const layoutNodes = useMemo(() => {
-        const cbs = callbacksRef.current;
+        const cbs = callbacks;
         return structureNodes.map(node => {
             if (node.type === 'projectNode') {
                 return {
@@ -2040,7 +2391,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 },
             };
         });
-    }, [structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id]);
+    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id]);
 
     // Sync computed static layout to controllable local state
     useEffect(() => {
@@ -2393,6 +2744,67 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     const handleContainerKeyDown = useCallback(async (event: React.KeyboardEvent) => {
         markUserAction();
+        if (getIsTypingTarget(event.target)) return;
+
+        const isModifierPressed = (event.metaKey || event.ctrlKey) && !event.altKey;
+        if (isModifierPressed) {
+            const key = event.key.toLowerCase();
+
+            if (key === 'c' && !event.shiftKey) {
+                const copyRootIds = getCopyRootNodeIds();
+                if (copyRootIds.length === 0) return;
+
+                const rootNodes = copyRootIds
+                    .map(id => buildClipboardNode(id))
+                    .filter((node): node is MindMapClipboardNode => node !== null);
+
+                if (rootNodes.length === 0) {
+                    flashClipboardFeedback('コピー対象が見つかりません');
+                    return;
+                }
+
+                const payload: MindMapClipboardPayload = {
+                    type: 'mindmap-node',
+                    version: 2,
+                    copiedAt: new Date().toISOString(),
+                    roots: rootNodes,
+                };
+
+                try {
+                    event.preventDefault();
+                    await navigator.clipboard.writeText(
+                        `${MINDMAP_CLIPBOARD_PREFIX}${JSON.stringify(payload)}`
+                    );
+                    flashClipboardFeedback(`${rootNodes.length}件のノードをコピーしました`);
+                } catch (error) {
+                    console.error('[MindMap] Failed to copy node:', error);
+                    flashClipboardFeedback('コピーに失敗しました');
+                }
+                return;
+            }
+
+            if (key === 'v' && !event.shiftKey) {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (!text.startsWith(MINDMAP_CLIPBOARD_PREFIX)) return;
+
+                    event.preventDefault();
+                    const payloadRaw = text.slice(MINDMAP_CLIPBOARD_PREFIX.length);
+                    const payloadParsed = JSON.parse(payloadRaw) as MindMapClipboardAnyPayload;
+                    const normalized = normalizeClipboardPayload(payloadParsed);
+                    if (!normalized) {
+                        flashClipboardFeedback('貼り付けデータを読み取れません');
+                        return;
+                    }
+                    await pasteClipboardTree(normalized);
+                } catch (error) {
+                    console.error('[MindMap] Failed to paste node:', error);
+                    flashClipboardFeedback('貼り付けに失敗しました');
+                }
+                return;
+            }
+        }
+
         // Bulk delete: drag-selection -> Delete/Backspace removes selected nodes
         if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodeIds.size > 0) {
             const allTasksById = new Map([...groups, ...tasks].map(t => [t.id, t]));
@@ -2429,13 +2841,29 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             return;
         }
         // ルートタスクもTaskNodeなのでノード内でキーボードを処理 → コンテナ追加処理不要
-    }, [selectedNodeIds, tasks, groups, onDeleteTask, onDeleteGroup, onBulkDelete, markUserAction, applySelection]);
+    }, [
+        selectedNodeIds,
+        tasks,
+        groups,
+        onDeleteTask,
+        onDeleteGroup,
+        onBulkDelete,
+        markUserAction,
+        applySelection,
+        getIsTypingTarget,
+        getCopyRootNodeIds,
+        buildClipboardNode,
+        normalizeClipboardPayload,
+        pasteClipboardTree,
+        flashClipboardFeedback,
+    ]);
 
     return (
         <div
             className="w-full h-full bg-muted/5 relative outline-none"
             tabIndex={0}
             onKeyDown={handleContainerKeyDown}
+            onPasteCapture={handleContainerPasteCapture}
             onMouseDown={markUserAction}
         >
             {/* MindMap Display Settings Button (Top Right) */}
@@ -2489,7 +2917,14 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">Enter</kbd> 兄弟追加</span>
                         <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">文字</kbd> 編集</span>
                         <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">Del</kbd> 削除</span>
+                        <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">⌘C/⌘V</kbd> 複製</span>
                     </div>
+                </div>
+            )}
+
+            {clipboardFeedback && (
+                <div className="absolute bottom-4 right-4 bg-card/90 backdrop-blur border rounded-lg px-3 py-2 text-xs text-emerald-400 shadow-lg">
+                    {clipboardFeedback}
                 </div>
             )}
         </div>
@@ -2497,8 +2932,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 }
 
 export function MindMap(props: MindMapProps) {
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => { setMounted(true); }, []);
+    const mounted = useSyncExternalStore(
+        () => () => { },
+        () => true,
+        () => false
+    );
     if (!mounted) return <div className="w-full h-full bg-muted/5 flex items-center justify-center text-muted-foreground">Loading...</div>;
 
     return (
