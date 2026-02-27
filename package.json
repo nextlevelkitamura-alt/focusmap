@@ -16,6 +16,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.33",
     "@google/generative-ai": "^0.24.1",
     "@hello-pangea/dnd": "^18.0.1",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -31,6 +32,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.90.1",
+    "ai": "^6.0.103",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
@@ -45,7 +47,8 @@
     "react-day-picker": "^9.13.0",
     "react-dom": "19.2.3",
     "reactflow": "^11.11.4",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -132,6 +132,12 @@
   - Phase 4: Skills ファイル構成 + ルーター実装 ○
   - Phase 5: チャットAPIへのコンテキスト注入 + スキル実行 ○
   - Phase 6: メモ機能廃止（UI削除・DB廃止・BottomNav変更） ○
+- 🔥 **AI基盤リニューアル**（モデル非依存化・スキル連動自動切替・壁打ち強化） → [仕様](specs/ai-provider-abstraction.md)
+  - Phase 1: AIProvider抽象レイヤー + モデル切替テーブル ○
+  - Phase 2: 壁打ち対話の品質向上（プロンプト設計） ○
+  - Phase 3: 対話→マインドマップ自動変換（ハイブリッド方式） ○
+  - Phase 4: 2段階ルーティング（LLM + キーワードフォールバック） ○
+  - Phase 5: マルチプロバイダー有効化 + スキルUI ○
 - 🔥 **AIコンテキスト フォルダ管理**（フォルダ/ファイル型UIでコンテキスト管理・鮮度管理・自動要約） → [仕様](specs/ai-context-folder-management.md)
   - Phase 1: データ基盤（ai_context_folders / ai_context_documents テーブル + 初期化API） ○
   - Phase 2: CRUD API（フォルダ・ドキュメント操作 + ツリー取得 + 鮮度サマリー） ○
@@ -200,4 +206,5 @@
 
 - 🔥 **AIコンテキスト フォルダ管理**（フォルダ/ファイル型UIでコンテキスト管理・鮮度管理・自動要約） → [仕様](specs/ai-context-folder-management.md)
 - 🔧 **AI Agent System**（コンテキスト記憶・Skills・メモ廃止・透明性UI） → [仕様](specs/ai-agent-system.md) | [計画](plans/features/ai-agent-system.md)
+- 🔥 **AI基盤リニューアル**（モデル非依存化・スキル連動自動切替・壁打ち強化） → [仕様](specs/ai-provider-abstraction.md)
 - 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [仕様](specs/habit-daily-reset.md) | [計画](plans/features/habit-daily-reset.md)

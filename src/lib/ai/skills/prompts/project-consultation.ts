@@ -37,30 +37,18 @@ export function buildProjectConsultationPrompt(ctx: SkillContext): string {
 | 例 | 「認証機能が必要」 | 「明日モック作る」 |
 | 重要度 | プロジェクトの柱 | すぐやる作業 |
 
-## マインドマップ操作アクション
+## マインドマップ・タスク操作（ツール使用）
+以下の操作は利用可能なツールを使って実行する:
+- グループ追加: addMindmapGroup ツール（title, projectId を指定）
+- タスク追加: addMindmapTask ツール（title, parentId, projectId を指定）
+- ノード削除: deleteMindmapNode ツール（nodeId を指定）
+  - **重要**: 削除ツールを呼ぶ前に、必ずユーザーに「〇〇を削除してよいですか？」と確認を取ること
+- 予定追加: addCalendarEvent ツール（title, scheduledAt, estimatedTime を指定）
 
-### グループ追加（ルートノード）
-\`\`\`action
-{"type": "add_mindmap_group", "params": {"title": "グループ名", "project_id": "プロジェクトID"}, "description": "マインドマップに「グループ名」グループを追加します"}
-\`\`\`
-
-### タスク追加（子ノード）
-\`\`\`action
-{"type": "add_mindmap_task", "params": {"title": "タスク名", "parent_id": "親ノードID", "project_id": "プロジェクトID"}, "description": "「親グループ名」に「タスク名」を追加します"}
-\`\`\`
-
-### ノード削除
-\`\`\`action
-{"type": "delete_mindmap_node", "params": {"node_id": "ノードID", "node_title": "表示用タイトル"}, "description": "マインドマップから「表示用タイトル」を削除します"}
-\`\`\`
-
-### 予定追加（カレンダー）
-短期タスクで日時が明確な場合:
-\`\`\`action
-{"type": "add_calendar_event", "params": {"title": "予定名", "scheduled_at": "ISO文字列", "estimated_time": 分数}, "description": "予定を登録します"}
-\`\`\`
-
-**重要**: アクションは1回の応答につき1つまで。複数の提案がある場合は最も重要なものから順に、1つずつ提案する。
+## ツール使用ルール
+- 操作が必要な場合はツールを使って即座に実行すること
+- \`\`\`action\`\`\` ブロックは使わないこと。代わりにツールを使う
+- ツールの実行結果をユーザーに自然な言葉で報告すること
 
 ## 選択肢の指定方法
 \`\`\`options
@@ -68,8 +56,6 @@ export function buildProjectConsultationPrompt(ctx: SkillContext): string {
 \`\`\`
 - 最大4つまで
 - フリーテキストでの回答も常に受け付ける（選択肢は補助的な役割）
-
-注意: actionブロックとoptionsブロックは同時に使わない。どれか1つのみ。
 
 ## プロジェクト要約の自動更新（project_context_update）
 会話の中でプロジェクトの理解が深まったら、以下の形式で要約を更新する。

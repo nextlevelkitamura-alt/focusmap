@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { generateText } from 'ai'
+import { getModelForSkill, getConfigForSkill } from '@/lib/ai/providers'
 import { getFreeTimeContext } from '@/lib/free-time-context'
 import { format } from 'date-fns'
 
@@ -143,8 +144,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
+    // Vercel AI SDK (@ai-sdk/google) は GOOGLE_GENERATIVE_AI_API_KEY を自動で読む
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
       return NextResponse.json({ error: 'AI service not configured' }, { status: 503 })
     }
 
@@ -289,45 +290,17 @@ ${freeTimeContext}`
 
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
-    // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.0-flash').trim()
-    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash'].filter(Boolean)))
+    // Vercel AI SDK で生成
+    const skillConfig = getConfigForSkill('scheduling')
+    const aiResult = await generateText({
+      model: getModelForSkill('scheduling'),
+      system: systemPrompt,
+      prompt,
+      maxOutputTokens: skillConfig.maxTokens,
+      temperature: skillConfig.temperature,
+    })
 
-    let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
-    let lastModelError: unknown = null
-
-    for (const modelName of modelCandidates) {
-      try {
-        const model = genAI.getGenerativeModel({ model: modelName })
-        result = await model.generateContent({
-          contents: [
-            { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
-          ],
-          generationConfig: {
-            maxOutputTokens: 1000,
-            temperature: 0.5,
-          },
-        })
-        break
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        lastModelError = error
-        const isModelUnavailable =
-          errMsg.includes('404') ||
-          errMsg.toLowerCase().includes('not found') ||
-          errMsg.toLowerCase().includes('model')
-        if (!isModelUnavailable) {
-          throw error
-        }
-      }
-    }
-
-    if (!result) {
-      throw lastModelError || new Error('No available Gemini model')
-    }
-
-    const responseText = result.response.text()
+    const responseText = aiResult.text
     let replyText = responseText
 
     // actionブロックを抽出

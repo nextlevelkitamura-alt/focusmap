@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { generateText } from 'ai'
+import { getModelForSkill } from '@/lib/ai/providers'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -17,8 +18,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
+    // Vercel AI SDK (@ai-sdk/google) は GOOGLE_GENERATIVE_AI_API_KEY を自動で読む
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
       return NextResponse.json({ error: 'AI service not configured' }, { status: 503 })
     }
 
@@ -33,15 +34,10 @@ export async function POST(request: Request) {
       .map(m => `${m.role === 'user' ? 'ユーザー' : 'AI'}: ${m.content}`)
       .join('\n')
 
-    // Geminiで要約を生成
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
-
-    const result = await model.generateContent({
-      contents: [{
-        role: 'user',
-        parts: [{
-          text: `以下の会話を200文字以内で要約してください。
+    // Vercel AI SDK で要約を生成
+    const summaryResult = await generateText({
+      model: getModelForSkill(),
+      prompt: `以下の会話を200文字以内で要約してください。
 また、主要なトピックをキーワード3つ以内で抽出してください。
 
 会話:
@@ -51,11 +47,11 @@ ${conversationText}
 {"summary": "要約テキスト", "topics": ["キーワード1", "キーワード2"]}
 
 JSONのみ出力してください。`,
-        }],
-      }],
+      maxOutputTokens: 500,
+      temperature: 0.3,
     })
 
-    const responseText = result.response.text().trim()
+    const responseText = summaryResult.text.trim()
     let summary = ''
     let topics: string[] = []
 
@@ -115,11 +111,9 @@ JSONのみ出力してください。`,
       const currentLifePurpose = existingContext?.life_purpose || ''
       const currentSituation = existingContext?.current_situation || ''
 
-      const contextResult = await model.generateContent({
-        contents: [{
-          role: 'user',
-          parts: [{
-            text: `以下の会話から、ユーザーの嗜好やパターンを抽出してください。
+      const contextResult = await generateText({
+        model: getModelForSkill(),
+        prompt: `以下の会話から、ユーザーの嗜好やパターンを抽出してください。
 
 既存のユーザー情報:
 - 生活・性格: ${currentLifePersonality || currentPersona || '(まだなし)'}
@@ -142,11 +136,11 @@ ${summary}
 }
 
 JSONのみ出力。変更がないカテゴリは既存の値をそのまま返してください。`,
-          }],
-        }],
+        maxOutputTokens: 800,
+        temperature: 0.3,
       })
 
-      const contextText = contextResult.response.text().trim()
+      const contextText = contextResult.text.trim()
       const contextJson = contextText.match(/\{[\s\S]*\}/)
       if (contextJson) {
         const parsed = JSON.parse(contextJson[0])

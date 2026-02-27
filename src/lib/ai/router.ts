@@ -11,6 +11,7 @@ export function routeToSkill(message: string): string | null {
     memo: 0,
     counseling: 0,
     'project-consultation': 0,
+    brainstorm: 0,
   }
 
   // --- scheduling ---
@@ -52,6 +53,14 @@ export function routeToSkill(message: string): string | null {
   if (projectConsultStrong.test(text)) scores['project-consultation'] += 3
   if (projectConsultMedium.test(text)) scores['project-consultation'] += 2
   if (projectConsultWeak.test(text)) scores['project-consultation'] += 1
+
+  // --- brainstorm ---
+  const brainstormStrong = /ブレスト|ブレインストーミング|アイデア出し/
+  const brainstormMedium = /アイデア|発想|ひらめき/
+  const brainstormWeak = /思いつき|案を出/
+  if (brainstormStrong.test(text)) scores.brainstorm += 3
+  if (brainstormMedium.test(text)) scores.brainstorm += 2
+  if (brainstormWeak.test(text)) scores.brainstorm += 1
 
   // 最高スコアのSkillを選択（閾値2以上で確定）
   const entries = Object.entries(scores)

@@ -69,6 +69,16 @@ export const SKILLS: SkillDefinition[] = [
     needsProjects: true,
     needsFreeTime: false,
   },
+  {
+    id: 'brainstorm',
+    label: 'ブレスト',
+    icon: 'Lightbulb',
+    description: 'アイデア出し・ブレインストーミング',
+    contextCategories: ['current_situation'],
+    needsCalendar: false,
+    needsProjects: true,
+    needsFreeTime: false,
+  },
 ]
 
 export function getSkillById(id: string): SkillDefinition | undefined {

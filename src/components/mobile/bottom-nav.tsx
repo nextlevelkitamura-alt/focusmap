@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { CalendarDays, Network, Target, Settings, Bot } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-const navItems: { id: DashboardView | 'settings' | 'ai'; icon: typeof CalendarDays; label: string }[] = [
+const navItems: { id: DashboardView | 'settings'; icon: typeof CalendarDays; label: string }[] = [
     { id: "today", icon: CalendarDays, label: "To do" },
     { id: "map", icon: Network, label: "マップ" },
     { id: "ai", icon: Bot, label: "AI" },
@@ -26,8 +26,6 @@ export function BottomNav() {
                 {navItems.map((item) => {
                     const isActive = item.id === 'settings'
                         ? isSettingsPage
-                        : item.id === 'ai'
-                        ? false // AI タブのアクティブ状態はチャットパネル側で管理
                         : (!isSettingsPage && activeView === item.id)
 
                     return (
@@ -36,14 +34,11 @@ export function BottomNav() {
                             onClick={() => {
                                 if (item.id === 'settings') {
                                     router.push('/dashboard/settings')
-                                } else if (item.id === 'ai') {
-                                    // カスタムイベントでチャットパネルを開く
-                                    window.dispatchEvent(new CustomEvent('open-ai-chat'))
                                 } else {
                                     if (isSettingsPage) {
                                         router.push('/dashboard')
                                     }
-                                    setActiveView(item.id)
+                                    setActiveView(item.id as DashboardView)
                                 }
                             }}
                             className={cn(

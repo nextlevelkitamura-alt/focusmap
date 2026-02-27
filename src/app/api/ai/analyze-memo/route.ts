@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { generateText } from 'ai'
+import { getModelForSkill } from '@/lib/ai/providers'
 
 // POST /api/ai/analyze-memo - メモをAIで分析・分類
 export async function POST(request: Request) {
@@ -12,9 +13,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
-      console.error('GEMINI_API_KEY is not configured')
+    // Vercel AI SDK (@ai-sdk/google) は GOOGLE_GENERATIVE_AI_API_KEY を自動で読む
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      console.error('GOOGLE_GENERATIVE_AI_API_KEY is not configured')
       return NextResponse.json({ error: 'AI service not configured' }, { status: 503 })
     }
 
@@ -47,11 +48,6 @@ export async function POST(request: Request) {
         .join('\n')
       return `- ${p.name} (id: ${p.id})\n${tasks}`
     }).join('\n')
-
-    // Gemini API 呼び出し（3.0優先、未対応時は2.5へフォールバック）
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.0-flash').trim()
-    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash'].filter(Boolean)))
 
     const today = new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')
     const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][new Date().getDay()]
@@ -91,31 +87,14 @@ ${projectContext || '(プロジェクトなし)'}
 - 「明日」「来週」「今週末」等の相対的な表現は、今日(${today})を基準にYYYY-MM-DD形式の具体的な日付に変換すること
 - event_titleは日時情報を含めず、予定の本質的な名前だけを抽出すること`
 
-    let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
-    let lastModelError: unknown = null
-
-    for (const modelName of modelCandidates) {
-      try {
-        const model = genAI.getGenerativeModel({ model: modelName })
-        result = await model.generateContent(prompt)
-        break
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        lastModelError = error
-        const isModelUnavailable =
-          errMsg.includes('404') ||
-          errMsg.toLowerCase().includes('not found') ||
-          errMsg.toLowerCase().includes('model')
-        if (!isModelUnavailable) {
-          throw error
-        }
-      }
-    }
-
-    if (!result) {
-      throw lastModelError || new Error('No available Gemini model')
-    }
-    const responseText = result.response.text()
+    // Vercel AI SDK で生成
+    const aiResult = await generateText({
+      model: getModelForSkill(),
+      prompt,
+      maxOutputTokens: 800,
+      temperature: 0.3,
+    })
+    const responseText = aiResult.text
 
     // JSONを抽出（マークダウンのコードブロックを考慮）
     const jsonMatch = responseText.match(/\{[\s\S]*\}/)

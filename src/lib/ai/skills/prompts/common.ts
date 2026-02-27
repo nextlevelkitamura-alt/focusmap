@@ -63,6 +63,22 @@ export function buildResponseFormatRules(): string {
 注意: actionブロックとoptionsブロックとbest_proposalブロックは同時に使わない。どれか1つのみ。`
 }
 
+/** ツール有効スキル用のレスポンス形式ルール */
+export function buildToolResponseFormatRules(): string {
+  return `## 選択肢の指定方法
+\`\`\`options
+[{"label": "表示テキスト", "value": "選択時に送信される値"}, ...]
+\`\`\`
+- 最大4つまで
+- **重要**: valueにUUIDやIDを含めないこと。日本語の自然な文を使うこと
+
+## ツール使用ルール
+- DB操作（タスク追加、グループ追加など）が必要な場合は、利用可能なツールを呼び出して実行すること
+- \`\`\`action\`\`\` ブロックは使わないこと。代わりにツールを使う
+- ツール実行後は結果をユーザーに自然な言葉で報告する
+- 1回の応答で複数のツールを呼んでもよい`
+}
+
 /** コンテキスト情報ブロック */
 export function buildContextBlock(ctx: SkillContext): string {
   const parts: string[] = [

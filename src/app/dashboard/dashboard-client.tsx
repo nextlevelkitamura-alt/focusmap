@@ -19,6 +19,7 @@ import { HabitsView } from "@/components/habits/habits-view"
 import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
 import { AiChatPanel } from "@/components/ai/ai-chat-panel"
+import { AiView } from "@/components/ai/ai-view"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 
 interface DashboardClientProps {
@@ -104,12 +105,7 @@ export function DashboardClient({
     // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
     const [isTaskListVisible, setIsTaskListVisible] = useState(false)
 
-    // BottomNav の AI タブからのイベントリスナー
-    useEffect(() => {
-        const handler = () => setIsAiChatOpen(true)
-        window.addEventListener('open-ai-chat', handler)
-        return () => window.removeEventListener('open-ai-chat', handler)
-    }, [])
+    // BottomNav の AI タブは setActiveView('ai') を使うので、イベントリスナーは不要
 
     // --- MindMap Sync Hook ---
     // STABLE reference for initial groups (root tasks) using useMemo
@@ -180,7 +176,7 @@ export function DashboardClient({
 
     // ビュー切り替え時にマインドマップのタスクを再取得
     useEffect(() => {
-        if (activeView === 'map') {
+        if (activeView === 'map' || activeView === 'ai') {
             refreshFromServer()
         }
     }, [activeView, refreshFromServer])
@@ -803,13 +799,50 @@ export function DashboardClient({
                     </div>
                 )}
 
-                {/* memo view は廃止 → AI タブはチャットパネルを開く */}
+                {isViewReady && activeView === 'ai' && (
+                    <div className="flex-1 md:hidden overflow-hidden">
+                        <AiChatPanel
+                            mode="fullscreen"
+                            activeProjectId={selectedProjectId}
+                            onMindmapUpdated={refreshFromServer}
+                            onCalendarEventCreated={handleCalendarEventCreated}
+                        />
+                    </div>
+                )}
 
-                {/* === Desktop: Always 3-pane === */}
+                {/* === Desktop: AI View === */}
+                {activeView === 'ai' && (
+                    <div className="flex-1 w-full overflow-hidden hidden md:flex">
+                        <AiView
+                            projects={filteredProjects}
+                            selectedProjectId={selectedProjectId}
+                            onSelectProject={setSelectedProjectId}
+                            selectedProject={selectedProject}
+                            groups={currentGroups}
+                            tasks={currentTasks}
+                            onCreateGroup={handleCreateGroup}
+                            onDeleteGroup={handleDeleteGroup}
+                            onReorderGroup={reorderGroup}
+                            onUpdateProject={handleUpdateProjectTitle}
+                            onCreateTask={createTask}
+                            onUpdateTask={updateTask}
+                            onDeleteTask={handleDeleteTask}
+                            onBulkDelete={bulkDelete}
+                            onReorderTask={reorderTask}
+                            refreshFromServer={refreshFromServer}
+                            onCalendarEventCreated={handleCalendarEventCreated}
+                            onRefreshCalendar={handleRefreshCalendar}
+                            onAddOptimisticEvent={handleAddOptimisticEvent}
+                            onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                        />
+                    </div>
+                )}
+
+                {/* === Desktop: 3-pane layout === */}
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
-                    activeView === 'map' ? "md:flex" : ""
+                    activeView === 'ai' ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(
@@ -902,10 +935,14 @@ export function DashboardClient({
                     />
                 </div>
             </div>
-            {/* AI Chat Floating Panel */}
-            <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
+            {/* AI Chat Floating Panel (AIビュー中は非表示) */}
+            {activeView !== 'ai' && (
+                <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
+            )}
             {/* Scheduling AI Panel */}
-            <SchedulingPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
+            {activeView !== 'ai' && (
+                <SchedulingPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
+            )}
             </TimerProvider>
         </DragProvider>
     )

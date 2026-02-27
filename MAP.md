@@ -277,13 +277,32 @@ CREATE TABLE notification_settings (
 
 ---
 
+## 🤖 AI基盤リニューアル（モデル非依存化 + スキル連動自動切替）
+
+→ 詳細仕様: [specs/ai-provider-abstraction.md](docs/specs/ai-provider-abstraction.md)
+
+### 概要
+- AIProvider 抽象レイヤーで OpenAI / Anthropic / Gemini を切替可能に
+- スキルごとに最適なモデルを自動選択（コスト効率と品質の両立）
+- 2段階ルーティング（キーワード → LLM フォールバック）
+- 壁打ち対話 + マインドマップ自動生成（ハイブリッド方式）
+
+### 実装フェーズ
+- [ ] Phase 1: AIProvider 抽象レイヤー + モデル切替テーブル
+- [ ] Phase 2: 壁打ち対話の品質向上（プロンプト設計）
+- [ ] Phase 3: 対話→マインドマップ自動変換
+- [ ] Phase 4: 2段階ルーティング
+- [ ] Phase 5: スキルUIパッケージ化
+
+---
+
 ## 🎯 Current Sprint
 
-### Status: Phase 1 開始準備中
+### Status: AI基盤リニューアル Phase 1 準備中
 
 **Next Action:**
-- Phase 1.1.1（イベント取得の実装）のタスク詳細化
-- NOW.mdの作成
+- AIProvider 抽象レイヤーの実装計画を `NOW.md` に展開
+- OpenAI / Anthropic API キーの取得
 
 ---
 
@@ -293,7 +312,8 @@ CREATE TABLE notification_settings (
 - パフォーマンス最適化は各フェーズ完了後にレビュー
 - セキュリティ監査は Phase 1 完了時に実施
 - ユーザーフィードバックを Phase 1 完了後に収集し、Phase 2 に反映
+- AI基盤リニューアルは既存 Gemini 機能を壊さず段階移行する
 
 ---
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-02-27

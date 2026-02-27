@@ -4,8 +4,9 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import {
   Sparkles, Send, X, RotateCcw, Loader2,
   Mic, Square, CheckCircle2, XCircle,
-  CalendarPlus, ListTodo, StickyNote, MessageCircleHeart, BrainCircuit,
+  CalendarPlus, ListTodo, StickyNote, MessageCircleHeart, BrainCircuit, Lightbulb,
 } from "lucide-react"
+import { SKILLS } from "@/lib/ai/skills"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
@@ -72,6 +73,7 @@ interface ChatMessage {
   bestProposalStatus?: 'pending' | 'accepted' | 'editing'
   proposalCards?: ProposalCard[]
   proposalUsed?: boolean
+  toolResults?: ToolResult[]
   isSummaryDivider?: boolean
 }
 
@@ -90,7 +92,14 @@ interface TaskData {
   parent_task_id?: string | null
 }
 
+interface ToolResult {
+  toolName: string
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+}
+
 interface AiChatPanelProps {
+  mode?: 'floating' | 'fullscreen'
   activeNoteId?: string | null
   activeProjectId?: string | null
   hideFab?: boolean
@@ -99,6 +108,16 @@ interface AiChatPanelProps {
   onMindmapUpdated?: () => void
   isOpen?: boolean
   onOpenChange?: (open: boolean) => void
+}
+
+// スキルアイコンのマッピング
+const SKILL_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  CalendarPlus,
+  ListTodo,
+  StickyNote,
+  MessageCircleHeart,
+  BrainCircuit,
+  Lightbulb,
 }
 
 const MAX_RALLIES = 15
@@ -115,7 +134,8 @@ function formatDateTimeRange(startAt: string, endAt: string): string {
   return `${month}/${day}(${dow}) ${startTime}〜${endTime}`
 }
 
-export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, onTaskCreated, onMindmapUpdated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
+export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, hideFab, onCalendarEventCreated, onTaskCreated, onMindmapUpdated, isOpen: controlledIsOpen, onOpenChange }: AiChatPanelProps) {
+  const isFullscreen = mode === 'fullscreen'
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const isControlled = controlledIsOpen !== undefined
   const isOpen = isControlled ? controlledIsOpen : internalIsOpen
@@ -164,6 +184,44 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     activeNoteId: activeNoteId || undefined,
     activeProjectId: activeProjectId || undefined,
   }), [activeNoteId, activeProjectId])
+
+  // ツール自動実行結果を処理（エージェントループ完了後）
+  const handleToolResults = useCallback((results: ToolResult[]) => {
+    let mindmapChanged = false
+    for (const result of results) {
+      const out = result.output as { success?: boolean; taskId?: string; title?: string; scheduledAt?: string; message?: string }
+      if (!out?.success) continue
+
+      switch (result.toolName) {
+        case 'addTask':
+          onTaskCreated?.({
+            id: out.taskId || '',
+            title: out.title || '',
+            project_id: (result.input.projectId as string) || null,
+            parent_task_id: (result.input.parentTaskId as string) || null,
+          })
+          mindmapChanged = true
+          break
+        case 'addMindmapGroup':
+        case 'addMindmapTask':
+        case 'deleteMindmapNode':
+          mindmapChanged = true
+          break
+        case 'addCalendarEvent':
+          onCalendarEventCreated?.({
+            id: out.taskId || '',
+            title: out.title || '',
+            scheduled_at: out.scheduledAt || '',
+            estimated_time: (result.input.estimatedTime as number) || 60,
+            calendar_id: (result.input.calendarId as string) || null,
+          })
+          break
+      }
+    }
+    if (mindmapChanged) {
+      onMindmapUpdated?.()
+    }
+  }, [onCalendarEventCreated, onTaskCreated, onMindmapUpdated])
 
   // メッセージ送信（共通ロジック）
   const sendMessage = useCallback(async (text: string) => {
@@ -216,6 +274,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         skillSelector,
         contextUpdate,
         projectContextUpdated,
+        toolResults,
       } = await res.json()
 
       // サーバーからSkillIdが返ってきたら保持
@@ -279,8 +338,14 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         bestProposal,
         bestProposalStatus: bestProposal ? 'pending' : undefined,
         proposalCards: proposalCards?.length ? proposalCards : undefined,
+        toolResults: toolResults?.length ? toolResults : undefined,
       }
       setMessages(prev => [...prev, aiMessage])
+
+      // ツール自動実行結果を処理（マインドマップ・カレンダー等の更新通知）
+      if (toolResults?.length) {
+        handleToolResults(toolResults)
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'エラーが発生しました'
       const isApiKeyError = errorMsg.includes('APIキーエラー') || errorMsg.includes('API設定')
@@ -298,7 +363,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, buildRequestContext, activeSkillId, summaryBoundaryIndex, currentSummaryText])
+  }, [isLoading, messages, buildRequestContext, activeSkillId, summaryBoundaryIndex, currentSummaryText, handleToolResults])
 
   // サイレント送信（ユーザーバブルを表示せずにAPIに送信）
   const sendMessageSilent = useCallback(async (text: string) => {
@@ -346,6 +411,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         shouldSummarize,
         skillId: responseSkillId,
         contextUpdate,
+        toolResults,
       } = await res.json()
 
       if (responseSkillId && !activeSkillId) {
@@ -374,9 +440,14 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
         bestProposal,
         bestProposalStatus: bestProposal ? 'pending' : undefined,
         proposalCards: proposalCards?.length ? proposalCards : undefined,
+        toolResults: toolResults?.length ? toolResults : undefined,
       }
 
       setMessages(prev => [...prev, aiMessage])
+
+      if (toolResults?.length) {
+        handleToolResults(toolResults)
+      }
     } catch (error) {
       const errMessage: ChatMessage = {
         id: crypto.randomUUID(),
@@ -387,7 +458,7 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, buildRequestContext, activeSkillId])
+  }, [isLoading, messages, buildRequestContext, activeSkillId, handleToolResults])
 
   // テキスト入力から送信
   const handleSend = useCallback(() => {
@@ -630,10 +701,13 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
     handleSend()
   }, [handleSend])
 
+  // fullscreen モードでは常に表示
+  const shouldRender = isFullscreen || isOpen
+
   return (
     <>
-      {/* フローティングアイコン */}
-      {!isOpen && !hideFab && (
+      {/* フローティングアイコン (floating モードのみ) */}
+      {!isFullscreen && !isOpen && !hideFab && (
         <button
           onClick={() => setIsOpen(true)}
           className="fixed bottom-20 right-4 z-50 w-12 h-12 bg-primary text-primary-foreground rounded-full shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform md:hidden"
@@ -643,24 +717,38 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
       )}
 
       {/* チャットパネル */}
-      {isOpen && (
+      {shouldRender && (
         <>
-          {/* バックドロップ (モバイル) */}
-          <div
-            className="fixed inset-0 bg-black/20 z-[80] md:hidden"
-            onClick={() => setIsOpen(false)}
-          />
+          {/* バックドロップ (floating モード + モバイルのみ) */}
+          {!isFullscreen && (
+            <div
+              className="fixed inset-0 bg-black/20 z-[80] md:hidden"
+              onClick={() => setIsOpen(false)}
+            />
+          )}
 
           <div className={cn(
-            "fixed z-[90] bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
-            "bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-0 right-0 h-[60dvh]",
-            "md:bottom-6 md:right-6 md:left-auto md:w-[400px] md:h-[520px]",
+            isFullscreen
+              ? "flex flex-col h-full w-full bg-background overflow-hidden"
+              : cn(
+                "fixed z-[90] bg-background border rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden",
+                "bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-0 right-0 h-[60dvh]",
+                "md:bottom-6 md:right-6 md:left-auto md:w-[400px] md:h-[520px]",
+              )
           )}>
             {/* ヘッダー */}
-            <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0">
+            <div className={cn(
+              "flex items-center justify-between border-b shrink-0",
+              isFullscreen ? "px-5 py-3" : "px-4 py-2.5"
+            )}>
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-primary" />
-                <span className="font-semibold text-sm">AIアシスタント</span>
+                <Sparkles className={cn("text-primary", isFullscreen ? "w-5 h-5" : "w-4 h-4")} />
+                <span className={cn("font-semibold", isFullscreen ? "text-base" : "text-sm")}>AIアシスタント</span>
+                {activeSkillId && (
+                  <span className="text-xs bg-primary/10 text-primary rounded-full px-2 py-0.5">
+                    {SKILLS.find(s => s.id === activeSkillId)?.label || activeSkillId}
+                  </span>
+                )}
                 <span className="text-xs text-muted-foreground">
                   ({rallyCount}/{MAX_RALLIES})
                 </span>
@@ -669,9 +757,11 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={handleReset} title="リセット">
                   <RotateCcw className="w-3.5 h-3.5" />
                 </Button>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setIsOpen(false)} title="閉じる">
-                  <X className="w-4 h-4" />
-                </Button>
+                {!isFullscreen && (
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setIsOpen(false)} title="閉じる">
+                    <X className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -691,17 +781,18 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
             {/* メッセージエリア */}
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
               {messages.length === 0 && (
-                <div className="text-center text-muted-foreground text-sm py-4">
-                  <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p className="font-medium mb-3">何をしましょうか？</p>
-                  <div className="grid grid-cols-2 gap-2 px-2">
-                    {([
-                      { id: 'scheduling', label: '予定を入れる', icon: CalendarPlus },
-                      { id: 'task', label: 'タスク管理', icon: ListTodo },
-                      { id: 'counseling', label: '相談する', icon: MessageCircleHeart },
-                      { id: 'project-consultation', label: 'プロジェクト相談', icon: BrainCircuit },
-                    ] as const).map(skill => {
-                      const Icon = skill.icon
+                <div className={cn(
+                  "text-center text-muted-foreground text-sm",
+                  isFullscreen ? "py-12 flex flex-col items-center justify-center flex-1" : "py-4"
+                )}>
+                  <Sparkles className={cn("mx-auto mb-3 opacity-30", isFullscreen ? "w-12 h-12" : "w-8 h-8")} />
+                  <p className={cn("font-medium mb-4", isFullscreen ? "text-lg" : "")}>何をしましょうか？</p>
+                  <div className={cn(
+                    "grid gap-2",
+                    isFullscreen ? "grid-cols-3 max-w-md px-4" : "grid-cols-2 px-2"
+                  )}>
+                    {SKILLS.map(skill => {
+                      const Icon = SKILL_ICON_MAP[skill.icon] || Sparkles
                       return (
                         <button
                           key={skill.id}
@@ -709,10 +800,16 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                             setActiveSkillId(skill.id)
                             sendMessage(`${skill.label}をしたい`)
                           }}
-                          className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-border hover:bg-muted hover:border-primary/30 transition-colors text-xs"
+                          className={cn(
+                            "flex flex-col items-center gap-1.5 rounded-xl border border-border hover:bg-muted hover:border-primary/30 transition-colors",
+                            isFullscreen ? "p-4 gap-2" : "p-3"
+                          )}
                         >
-                          <Icon className="w-5 h-5 text-primary" />
-                          <span>{skill.label}</span>
+                          <Icon className={cn("text-primary", isFullscreen ? "w-6 h-6" : "w-5 h-5")} />
+                          <span className={cn(isFullscreen ? "text-sm font-medium" : "text-xs")}>{skill.label}</span>
+                          {isFullscreen && (
+                            <span className="text-[11px] text-muted-foreground leading-tight">{skill.description}</span>
+                          )}
                         </button>
                       )
                     })}
@@ -749,6 +846,24 @@ export function AiChatPanel({ activeNoteId, activeProjectId, hideFab, onCalendar
                       : "bg-muted"
                   )}>
                     <p className="whitespace-pre-wrap">{msg.content}</p>
+
+                    {/* ツール自動実行結果（エージェントループ） */}
+                    {msg.toolResults && msg.toolResults.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
+                        {msg.toolResults.map((tr, i) => {
+                          const out = tr.output as { success?: boolean; message?: string }
+                          return (
+                            <div key={i} className={cn(
+                              "flex items-center gap-1.5 text-xs",
+                              out?.success ? "text-green-600 dark:text-green-400" : "text-red-500"
+                            )}>
+                              {out?.success ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <XCircle className="w-3 h-3 shrink-0" />}
+                              <span>{out?.message || tr.toolName}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
 
                     {msg.pendingAction && msg.calendarChoices && msg.actionStatus === 'pending' && !msg.calendarChoiceUsed && (
                       <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">

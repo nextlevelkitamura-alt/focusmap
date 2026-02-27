@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { generateText, type ToolSet } from 'ai'
+import { getModelForSkill, getConfigForSkill } from '@/lib/ai/providers'
+import { getToolsForSkill, isToolEnabledSkill } from '@/lib/ai/tools'
 import { getFreeTimeContext } from '@/lib/free-time-context'
 import { routeToSkill } from '@/lib/ai/router'
 import { getSkillById, SKILLS } from '@/lib/ai/skills'
@@ -10,6 +12,7 @@ import { buildTaskPrompt } from '@/lib/ai/skills/prompts/task'
 import { buildCounselingPrompt } from '@/lib/ai/skills/prompts/counseling'
 import { buildMemoPrompt } from '@/lib/ai/skills/prompts/memo'
 import { buildProjectConsultationPrompt } from '@/lib/ai/skills/prompts/project-consultation'
+import { buildBrainstormPrompt } from '@/lib/ai/skills/prompts/brainstorm'
 import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai/context/project-context'
 import { loadContextFromDocuments } from '@/lib/ai/context/document-context'
 import { summarizeProjectTasks, summarizeAllProjects } from '@/lib/ai/context/task-summarizer'
@@ -425,8 +428,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
+    // Vercel AI SDK (@ai-sdk/google) は GOOGLE_GENERATIVE_AI_API_KEY を自動で読む
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
       return NextResponse.json({ error: 'AI service not configured' }, { status: 503 })
     }
 
@@ -694,53 +697,54 @@ export async function POST(request: Request) {
       case 'project-consultation':
         systemPrompt = buildProjectConsultationPrompt(skillContext)
         break
+      case 'brainstorm':
+        systemPrompt = buildBrainstormPrompt(skillContext)
+        break
       default:
-        // 未知のskillIdの場合、スケジューリングにフォールバック
-        systemPrompt = buildSchedulingPrompt(skillContext)
+        // 未知のskillIdの場合、タスク管理にフォールバック（汎用性が高い）
+        systemPrompt = buildTaskPrompt(skillContext)
         break
     }
 
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
-    // Gemini API 呼び出し（フォールバックチェーン付き）
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const preferredModel = (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
-    const modelCandidates = Array.from(new Set([preferredModel, 'gemini-2.5-flash', 'gemini-2.0-flash'].filter(Boolean)))
+    // Vercel AI SDK で生成（ツール有効スキルはエージェントループ付き）
+    const skillConfig = getConfigForSkill(activeSkillId)
+    const useTools = isToolEnabledSkill(activeSkillId)
+    const tools = useTools ? getToolsForSkill(activeSkillId) as ToolSet : undefined
 
-    let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null
-    let lastModelError: unknown = null
+    const aiResult = await generateText({
+      model: getModelForSkill(activeSkillId),
+      system: systemPrompt,
+      prompt,
+      maxOutputTokens: skillConfig.maxTokens,
+      temperature: skillConfig.temperature,
+      ...(tools && Object.keys(tools).length > 0 ? { tools, maxSteps: 5 } : {}),
+    })
 
-    for (const modelName of modelCandidates) {
-      try {
-        const model = genAI.getGenerativeModel({ model: modelName })
-        result = await model.generateContent({
-          contents: [
-            { role: 'user', parts: [{ text: systemPrompt + '\n\n' + prompt }] }
-          ],
-          generationConfig: {
-            maxOutputTokens: 1000,
-            temperature: 0.7,
-          },
-        })
-        break
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error)
-        lastModelError = error
-        const isModelUnavailable =
-          errMsg.includes('404') ||
-          errMsg.toLowerCase().includes('not found') ||
-          errMsg.toLowerCase().includes('model')
-        if (!isModelUnavailable) {
-          throw error
+    const responseText = aiResult.text
+
+    // ツール実行結果を収集（全ステップから）
+    interface ToolResultEntry {
+      toolName: string
+      input: Record<string, unknown>
+      output: Record<string, unknown>
+    }
+    const allToolResults: ToolResultEntry[] = []
+    if (useTools && aiResult.steps) {
+      for (const step of aiResult.steps) {
+        if (step.toolResults) {
+          for (const tr of step.toolResults) {
+            allToolResults.push({
+              toolName: tr.toolName,
+              input: (tr.input ?? {}) as Record<string, unknown>,
+              output: (tr.output ?? {}) as Record<string, unknown>,
+            })
+          }
         }
       }
     }
-
-    if (!result) {
-      throw lastModelError || new Error('No available Gemini model')
-    }
-
-    const responseText = result.response.text()
+    const toolsExecuted = allToolResults.length > 0
 
     const extractJsonBlock = (source: string, blockName: string) => {
       const regex = new RegExp(`\`\`\`${blockName}\\s*\\n([\\s\\S]*?)\\n\`\`\``)
@@ -780,14 +784,14 @@ export async function POST(request: Request) {
     const actionBlock = extractJsonBlock(responseText, 'action')
     let action: ChatMessage['action'] | undefined
     let replyText = actionBlock.text
-    if (actionBlock.value && typeof actionBlock.value === 'object') {
+    if (!toolsExecuted && actionBlock.value && typeof actionBlock.value === 'object') {
       action = actionBlock.value as ChatMessage['action']
     }
 
     // best_proposal ブロックを抽出
     const bestProposalBlock = extractJsonBlock(replyText, 'best_proposal')
     let bestProposal: BestProposal | undefined
-    if (bestProposalBlock.value && typeof bestProposalBlock.value === 'object') {
+    if (!toolsExecuted && bestProposalBlock.value && typeof bestProposalBlock.value === 'object') {
       bestProposal = bestProposalBlock.value as BestProposal
     }
     replyText = bestProposalBlock.text
@@ -795,7 +799,7 @@ export async function POST(request: Request) {
     // planner_state ブロックを抽出
     const plannerStateBlock = extractJsonBlock(replyText, 'planner_state')
     let plannerState: PlannerState | undefined
-    if (typeof plannerStateBlock.value === 'string') {
+    if (!toolsExecuted && typeof plannerStateBlock.value === 'string') {
       const allowedStates: PlannerState[] = [
         'capture_intent',
         'propose',
@@ -1011,7 +1015,7 @@ export async function POST(request: Request) {
     // 残存するJSONコードブロックをクリーンアップ（AIが中途半端なJSONを返した場合）
     replyText = replyText.replace(/```\w*\s*\n[\s\S]*?(\n```|$)/g, '').trim()
 
-    // --- Task skill: プロジェクト名→ID逆引き ---
+    // --- Task skill: プロジェクト名→ID逆引き（ツール未使用時のみ） ---
     // AIがproject_idにプロジェクト名を入れた場合、UUIDに変換する
     if (action?.type === 'add_task' && projects) {
       const projectIdRaw = String(action.params.project_id || '')
@@ -1258,6 +1262,7 @@ export async function POST(request: Request) {
       skillId: activeSkillId,
       contextUpdate,
       projectContextUpdated,
+      ...(toolsExecuted ? { toolResults: allToolResults } : {}),
     })
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error'
