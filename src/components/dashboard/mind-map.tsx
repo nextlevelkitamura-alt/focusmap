@@ -898,7 +898,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                     </PopoverTrigger>
                     <PopoverContent
                         align="end"
-                        className="nodrag nopan w-56 p-1 max-h-[70vh] overflow-y-auto overscroll-contain"
+                        className="nodrag nopan w-[min(94vw,46rem)] h-[min(88vh,46rem)] p-3 overflow-hidden"
                         style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
                         onTouchMove={(e) => e.stopPropagation()}
                         onOpenAutoFocus={(e) => e.preventDefault()}
@@ -906,6 +906,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                         onFocusOutside={(e) => e.preventDefault()}
                         onInteractOutside={(e) => e.preventDefault()}
                     >
+                        <div className="grid h-full grid-cols-2 gap-3">
+                            <div className="min-h-0 overflow-y-auto pr-1 space-y-1.5">
                         {/* Task Completion */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">タスク</div>
                         <div className="nodrag nopan px-2 pb-2">
@@ -1017,8 +1019,10 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                                 onClick={(e) => e.stopPropagation()}
                             />
                         </div>
+                            </div>
 
                         {/* Memo Images */}
+                            <div className="min-h-0 overflow-y-auto pr-1 space-y-1.5">
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">画像</div>
                         <div className="px-2 pb-2 space-y-2">
                             <div className="flex gap-1">
@@ -1137,6 +1141,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps) => {
                             <Button size="sm" className="w-full h-7 text-xs" onClick={(e) => { e.stopPropagation(); setShowScheduleMenu(false); }}>
                                 閉じる
                             </Button>
+                        </div>
+                            </div>
                         </div>
                     </PopoverContent>
                 </Popover>

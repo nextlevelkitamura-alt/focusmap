@@ -15,11 +15,10 @@ import 'reactflow/dist/style.css'
 import dagre from 'dagre'
 import { Task, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus, StickyNote } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus, StickyNote, X, ImagePlus, Copy, Link2, Sparkles, Download } from "lucide-react"
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select"
@@ -27,6 +26,7 @@ import { DateTimePicker } from "@/lib/dynamic-imports"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { BranchEdge } from "@/components/mindmap/branch-edge"
+import { createPortal } from "react-dom"
 
 // --- Dagre Layout ---
 const NODE_WIDTH = 200
@@ -34,6 +34,13 @@ const NESTED_NODE_WIDTH = 160
 const NODE_HEIGHT = 40
 const PROJECT_NODE_WIDTH = 220
 const PROJECT_NODE_HEIGHT = 48
+const fileToDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result ?? ''))
+        reader.onerror = () => reject(new Error('Failed to read image file'))
+        reader.readAsDataURL(file)
+    })
 
 /** テキストの視覚的な幅をピクセル単位で推定（全角=13px, 半角=7px） */
 const estimateTextWidthPx = (text: string): number => {
@@ -294,6 +301,8 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     const [isEditing, setIsEditing] = useState(false)
     const [editValue, setEditValue] = useState(data?.label ?? '')
     const [showMenu, setShowMenu] = useState(false)
+    const [imageUrlInput, setImageUrlInput] = useState('')
+    const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const wasSelectedRef = useRef(false)
     const justSavedRef = useRef(false)
@@ -343,7 +352,103 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     const hasPriority = data?.priority != null
     const hasScheduledAt = !!data?.scheduled_at
     const hasMemo = !!data?.memo
-    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo
+    const memoImages: string[] = Array.isArray(data?.memo_images)
+        ? (data.memo_images as string[]).filter((url: string) => typeof url === 'string' && !!url.trim())
+        : []
+    const hasMemoImages = memoImages.length > 0
+    const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo || hasMemoImages
+
+    const writeClipboard = useCallback(async (text: string, successMessage: string) => {
+        try {
+            await navigator.clipboard.writeText(text)
+            setCopyFeedback(successMessage)
+            setTimeout(() => setCopyFeedback(null), 1400)
+        } catch (error) {
+            console.error('[MobileTaskNode] Failed to write clipboard:', error)
+            setCopyFeedback('コピーに失敗しました')
+            setTimeout(() => setCopyFeedback(null), 1600)
+        }
+    }, [])
+
+    const handleAddImageUrl = useCallback(() => {
+        const nextUrl = imageUrlInput.trim()
+        if (!nextUrl) return
+        if (memoImages.includes(nextUrl)) {
+            setImageUrlInput('')
+            return
+        }
+        data?.onUpdateMemoImages?.([...memoImages, nextUrl])
+        setImageUrlInput('')
+    }, [imageUrlInput, memoImages, data])
+
+    const handleImageFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files ?? [])
+        if (files.length === 0) return
+        try {
+            const encoded = await Promise.all(
+                files
+                    .filter(file => file.type.startsWith('image/'))
+                    .map(fileToDataUrl)
+            )
+            const merged = [...memoImages, ...encoded.filter(Boolean)]
+            data?.onUpdateMemoImages?.(merged.length > 0 ? merged : null)
+        } catch (error) {
+            console.error('[MobileTaskNode] Failed to encode image files:', error)
+        } finally {
+            event.target.value = ''
+        }
+    }, [memoImages, data])
+
+    const handleRemoveImage = useCallback((targetUrl: string) => {
+        const filtered = memoImages.filter(url => url !== targetUrl)
+        data?.onUpdateMemoImages?.(filtered.length > 0 ? filtered : null)
+    }, [memoImages, data])
+
+    const buildAiMemoPayload = useCallback(() => {
+        const memoText = typeof data?.memo === 'string' ? data.memo.trim() : ''
+        const sections: string[] = []
+        if (memoText) sections.push(`メモ:\n${memoText}`)
+        if (memoImages.length > 0) {
+            sections.push(`画像:\n${memoImages.map((url, idx) => `![image-${idx + 1}](${url})`).join('\n')}`)
+        }
+        return sections.join('\n\n').trim()
+    }, [data?.memo, memoImages])
+
+    const handleSaveImage = useCallback(async (url: string, index: number) => {
+        const filename = `mindmap-memo-image-${index + 1}.png`
+        try {
+            if (url.startsWith('data:image/')) {
+                const link = document.createElement('a')
+                link.href = url
+                link.download = filename
+                document.body.appendChild(link)
+                link.click()
+                link.remove()
+                setCopyFeedback('画像の保存を開始しました')
+                setTimeout(() => setCopyFeedback(null), 1600)
+                return
+            }
+
+            const response = await fetch(url, { mode: 'cors' })
+            if (!response.ok) throw new Error('Failed to fetch image')
+            const blob = await response.blob()
+            const objectUrl = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = objectUrl
+            link.download = filename
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+            URL.revokeObjectURL(objectUrl)
+            setCopyFeedback('画像の保存を開始しました')
+            setTimeout(() => setCopyFeedback(null), 1600)
+        } catch (error) {
+            console.error('[MobileTaskNode] Failed to download image:', error)
+            window.open(url, '_blank', 'noopener,noreferrer')
+            setCopyFeedback('画像を新しいタブで開きました')
+            setTimeout(() => setCopyFeedback(null), 1800)
+        }
+    }, [])
 
     return (
         <div
@@ -421,142 +526,292 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                 )}
 
                 {/* Menu button */}
-                <Popover open={showMenu} onOpenChange={setShowMenu}>
-                    <PopoverTrigger asChild>
-                        <button
-                            className="nodrag nopan w-7 h-7 flex items-center justify-center text-muted-foreground active:bg-muted rounded shrink-0"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                        align="end"
-                        side="bottom"
-                        className="nodrag nopan w-64 p-1 max-h-[60vh] overflow-y-auto overscroll-contain"
-                        style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
-                        onTouchMove={(e) => e.stopPropagation()}
-                        onOpenAutoFocus={(e) => e.preventDefault()}
-                        onPointerDownOutside={(e) => e.preventDefault()}
-                        onFocusOutside={(e) => e.preventDefault()}
-                        onInteractOutside={(e) => e.preventDefault()}
+                <button
+                    className="nodrag nopan w-7 h-7 flex items-center justify-center text-muted-foreground active:bg-muted rounded shrink-0"
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        setShowMenu(true)
+                    }}
+                >
+                    <MoreHorizontal className="w-4 h-4" />
+                </button>
+            </div>
+
+            {showMenu && typeof document !== 'undefined' && createPortal(
+                <div
+                    className="fixed inset-0 z-[80]"
+                    onClick={() => setShowMenu(false)}
+                >
+                    <div className="absolute inset-0 bg-black/40" />
+                    <div
+                        className="absolute inset-x-0 bottom-0 bg-background rounded-t-2xl shadow-xl max-h-[84dvh] flex flex-col overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
                     >
-                        {/* Task Completion */}
-                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">タスク</div>
-                        <div className="nodrag nopan px-3 pb-2">
+                        <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
+                            <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+                        </div>
+
+                        <div className="flex items-center justify-between px-4 py-2 border-b flex-shrink-0">
+                            <h3 className="text-base font-semibold">ノード詳細</h3>
                             <button
-                                type="button"
-                                className="flex items-center justify-between w-full h-9 rounded px-1 active:bg-muted"
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    data?.onUpdateStatus?.(isDone ? 'todo' : 'done')
-                                }}
+                                className="p-1.5 rounded-full hover:bg-muted transition-colors"
+                                onClick={() => setShowMenu(false)}
                             >
-                                <span className="text-sm">完了</span>
-                                <Switch
-                                    checked={isDone}
-                                    onCheckedChange={(checked) => data?.onUpdateStatus?.(checked ? 'done' : 'todo')}
-                                    onClick={(e) => e.stopPropagation()}
-                                />
+                                <X className="w-4 h-4 text-muted-foreground" />
                             </button>
                         </div>
 
-                        {/* Priority */}
-                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">優先度</div>
-                        <div className="px-3 pb-2">
-                            <PriorityPopover
-                                value={(data?.priority ?? 3) as Priority}
-                                onChange={(priority) => data?.onUpdatePriority?.(priority)}
-                                trigger={
-                                    <Button variant="outline" size="sm" className="w-full justify-start text-sm h-9">
-                                        <Target className="w-4 h-4 mr-2" style={{ color: getPriorityIconColor((data?.priority ?? 3) as Priority) }} />
-                                        {data?.priority != null ? <PriorityBadge value={data.priority as Priority} /> : <span className="text-muted-foreground">優先度を設定</span>}
-                                    </Button>
-                                }
-                            />
-                        </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">タスク</div>
+                                <button
+                                    type="button"
+                                    className="flex items-center justify-between w-full h-9 rounded px-1 active:bg-muted"
+                                    onClick={(e) => {
+                                        e.stopPropagation()
+                                        data?.onUpdateStatus?.(isDone ? 'todo' : 'done')
+                                    }}
+                                >
+                                    <span className="text-sm">完了</span>
+                                    <Switch
+                                        checked={isDone}
+                                        onCheckedChange={(checked) => data?.onUpdateStatus?.(checked ? 'done' : 'todo')}
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                </button>
+                            </div>
 
-                        {/* Estimated Time */}
-                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">所要時間</div>
-                        <div className="px-3 pb-2">
-                            <EstimatedTimePopover
-                                valueMinutes={data?.estimatedDisplayMinutes ?? 0}
-                                onChangeMinutes={(minutes) => data?.onUpdateEstimatedTime?.(minutes)}
-                                isOverridden={!!data?.estimatedIsOverride}
-                                autoMinutes={data?.estimatedAutoMinutes}
-                                onResetAuto={data?.hasChildren ? () => data?.onUpdateEstimatedTime?.(0) : undefined}
-                                trigger={
-                                    <Button variant="outline" size="sm" className="w-full justify-start text-sm h-9">
-                                        <Clock className="w-4 h-4 mr-2" />
-                                        {(data?.estimatedDisplayMinutes ?? 0) > 0 ? <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} /> : <span className="text-muted-foreground">所要時間を設定</span>}
-                                    </Button>
-                                }
-                            />
-                        </div>
-
-                        {/* Schedule */}
-                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">スケジュール</div>
-                        <div className="px-3 pb-2">
-                            <DateTimePicker
-                                date={data?.scheduled_at ? new Date(data.scheduled_at) : undefined}
-                                setDate={(date) => data?.onUpdateScheduledAt?.(date ? date.toISOString() : null)}
-                                trigger={
-                                    <Button variant="outline" size="sm" className="w-full justify-start text-sm h-9">
-                                        <CalendarIcon className="w-4 h-4 mr-2" />
-                                        {data?.scheduled_at ? (
-                                            <span>{format(new Date(data.scheduled_at), 'M/d HH:mm', { locale: ja })}</span>
-                                        ) : <span className="text-muted-foreground">日時を設定</span>}
-                                    </Button>
-                                }
-                            />
-                        </div>
-
-                        {/* Calendar */}
-                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">カレンダー</div>
-                        <div className="px-3 pb-2">
-                            <TaskCalendarSelect
-                                value={data?.calendar_id || null}
-                                onChange={(calendarId) => data?.onUpdateCalendar?.(calendarId)}
-                                className="w-full h-9 justify-start"
-                            />
-                        </div>
-
-                        {/* Memo */}
-                        <div className="px-3 py-2 text-xs font-medium text-muted-foreground">メモ</div>
-                        <div className="px-3 pb-2">
-                            <textarea
-                                className="nodrag nopan w-full text-sm border rounded-lg p-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary resize-none min-h-[80px]"
-                                placeholder="メモを入力..."
-                                defaultValue={data?.memo || ''}
-                                key={data?.taskId + '-memo'}
-                                onBlur={(e) => {
-                                    const val = e.target.value.trim() || null;
-                                    if (val !== (data?.memo || null)) {
-                                        data?.onUpdateMemo?.(val);
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">優先度</div>
+                                <PriorityPopover
+                                    value={(data?.priority ?? 3) as Priority}
+                                    onChange={(priority) => data?.onUpdatePriority?.(priority)}
+                                    trigger={
+                                        <Button variant="outline" size="sm" className="w-full justify-start text-sm h-10">
+                                            <Target className="w-4 h-4 mr-2" style={{ color: getPriorityIconColor((data?.priority ?? 3) as Priority) }} />
+                                            {data?.priority != null ? <PriorityBadge value={data.priority as Priority} /> : <span className="text-muted-foreground">優先度を設定</span>}
+                                        </Button>
                                     }
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                onTouchMove={(e) => e.stopPropagation()}
-                            />
+                                />
+                            </div>
+
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">所要時間</div>
+                                <EstimatedTimePopover
+                                    valueMinutes={data?.estimatedDisplayMinutes ?? 0}
+                                    onChangeMinutes={(minutes) => data?.onUpdateEstimatedTime?.(minutes)}
+                                    isOverridden={!!data?.estimatedIsOverride}
+                                    autoMinutes={data?.estimatedAutoMinutes}
+                                    onResetAuto={data?.hasChildren ? () => data?.onUpdateEstimatedTime?.(0) : undefined}
+                                    trigger={
+                                        <Button variant="outline" size="sm" className="w-full justify-start text-sm h-10">
+                                            <Clock className="w-4 h-4 mr-2" />
+                                            {(data?.estimatedDisplayMinutes ?? 0) > 0 ? <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} /> : <span className="text-muted-foreground">所要時間を設定</span>}
+                                        </Button>
+                                    }
+                                />
+                            </div>
+
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">スケジュール</div>
+                                <DateTimePicker
+                                    date={data?.scheduled_at ? new Date(data.scheduled_at) : undefined}
+                                    setDate={(date) => data?.onUpdateScheduledAt?.(date ? date.toISOString() : null)}
+                                    trigger={
+                                        <Button variant="outline" size="sm" className="w-full justify-start text-sm h-10">
+                                            <CalendarIcon className="w-4 h-4 mr-2" />
+                                            {data?.scheduled_at ? (
+                                                <span>{format(new Date(data.scheduled_at), 'M/d HH:mm', { locale: ja })}</span>
+                                            ) : <span className="text-muted-foreground">日時を設定</span>}
+                                        </Button>
+                                    }
+                                />
+                            </div>
+
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">カレンダー</div>
+                                <TaskCalendarSelect
+                                    value={data?.calendar_id || null}
+                                    onChange={(calendarId) => data?.onUpdateCalendar?.(calendarId)}
+                                    className="w-full h-10 justify-start"
+                                />
+                            </div>
+
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">メモ</div>
+                                <textarea
+                                    className="nodrag nopan w-full text-sm border rounded-lg p-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary resize-none min-h-[100px]"
+                                    placeholder="メモを入力..."
+                                    defaultValue={data?.memo || ''}
+                                    key={data?.taskId + '-memo'}
+                                    onBlur={(e) => {
+                                        const val = e.target.value.trim() || null
+                                        if (val !== (data?.memo || null)) {
+                                            data?.onUpdateMemo?.(val)
+                                        }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            </div>
+
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">画像</div>
+                                <div className="flex gap-1">
+                                    <input
+                                        className="nodrag nopan flex-1 h-9 text-sm border rounded px-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                        placeholder="画像URL または data:image..."
+                                        value={imageUrlInput}
+                                        onChange={(e) => setImageUrlInput(e.target.value)}
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-9 px-3 text-xs"
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            handleAddImageUrl()
+                                        }}
+                                    >
+                                        追加
+                                    </Button>
+                                </div>
+
+                                <label className="flex items-center justify-center gap-1 h-9 border rounded text-xs cursor-pointer hover:bg-muted/40">
+                                    <ImagePlus className="w-3 h-3" />
+                                    画像ファイルを追加
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="hidden"
+                                        onChange={handleImageFileChange}
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                </label>
+
+                                {memoImages.length > 0 && (
+                                    <div className="space-y-2">
+                                        {memoImages.map((url, index) => (
+                                            <div key={`${url}-${index}`} className="border rounded p-2 space-y-2">
+                                                <img
+                                                    src={url}
+                                                    alt={`memo-image-${index + 1}`}
+                                                    className="w-full h-24 object-cover rounded bg-muted"
+                                                />
+                                                <div className="grid grid-cols-4 gap-1">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-[10px] px-1"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            writeClipboard(url, 'URLをコピーしました')
+                                                        }}
+                                                    >
+                                                        <Link2 className="w-3 h-3 mr-1" />
+                                                        URL
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-[10px] px-1"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            writeClipboard(`![image-${index + 1}](${url})`, 'Markdownをコピーしました')
+                                                        }}
+                                                    >
+                                                        <Copy className="w-3 h-3 mr-1" />
+                                                        MD
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-[10px] px-1"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleSaveImage(url, index)
+                                                        }}
+                                                    >
+                                                        <Download className="w-3 h-3 mr-1" />
+                                                        保存
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-[10px] px-1 text-red-400"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleRemoveImage(url)
+                                                        }}
+                                                    >
+                                                        削除
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-full h-9 justify-start text-xs"
+                                    onClick={(e) => {
+                                        e.stopPropagation()
+                                        const aiPayload = buildAiMemoPayload()
+                                        if (!aiPayload) return
+                                        writeClipboard(aiPayload, 'AI用メモをコピーしました')
+                                    }}
+                                >
+                                    <Sparkles className="w-3 h-3 mr-2" />
+                                    AI用にメモ+画像をコピー
+                                </Button>
+                                {copyFeedback && (
+                                    <div className="text-[10px] text-emerald-400">{copyFeedback}</div>
+                                )}
+                            </div>
+
+                            <div className="rounded-lg border p-3">
+                                <HabitSettingsPanel data={data} />
+                            </div>
                         </div>
 
-                        {/* Habit */}
-                        <HabitSettingsPanel data={data} />
-
-                        <div className="px-3 pb-2 pt-1">
-                            <Button size="sm" variant="destructive" className="w-full h-8 text-xs" onClick={(e) => { e.stopPropagation(); data?.onDelete?.(); setShowMenu(false) }}>
+                        <div className="border-t px-4 py-3 grid grid-cols-2 gap-2 flex-shrink-0 bg-background">
+                            <Button
+                                size="sm"
+                                variant="destructive"
+                                className="h-10 text-sm"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    data?.onDelete?.()
+                                    setShowMenu(false)
+                                }}
+                            >
+                                <Trash2 className="w-4 h-4 mr-1" />
                                 削除
                             </Button>
-                        </div>
-
-                        <div className="px-3 pb-2">
-                            <Button size="sm" className="w-full h-8 text-xs" onClick={(e) => { e.stopPropagation(); setShowMenu(false) }}>
+                            <Button
+                                size="sm"
+                                className="h-10 text-sm"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    setShowMenu(false)
+                                }}
+                            >
                                 閉じる
                             </Button>
                         </div>
-                    </PopoverContent>
-                </Popover>
-            </div>
+                    </div>
+                </div>,
+                document.body
+            )}
 
             {/* Row 2: Info */}
             {hasInfoRow && (
@@ -805,7 +1060,9 @@ function MobileMindMapContent({
                         habit_end_date: updates.habit_end_date,
                     }),
                     memo: task.memo,
+                    memo_images: task.memo_images ?? null,
                     onUpdateMemo: (memo: string | null) => onUpdateTask?.(task.id, { memo }),
+                    onUpdateMemoImages: (memo_images: string[] | null) => onUpdateTask?.(task.id, { memo_images }),
                 },
             })
 
