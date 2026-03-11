@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server'
 import { authenticateApiKey, isAuthError } from '../_lib/auth'
 import { apiSuccess, apiError, handleCors } from '../_lib/response'
 import { createServiceClient } from '@/utils/supabase/service'
+import { scheduleNotificationsForTask } from '../_lib/notifications'
+import { syncTaskToCalendarV1 } from '../_lib/calendar-sync'
 
 export async function OPTIONS() {
   return handleCors()
@@ -61,6 +63,8 @@ export async function POST(request: NextRequest) {
     priority?: string
     is_group?: boolean
     memo?: string
+    calendar_id?: string
+    sync_calendar?: boolean
   }
   try {
     body = await request.json()
@@ -97,6 +101,26 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     return apiError('INSERT_ERROR', error.message, 500)
+  }
+
+  // Fire-and-forget: 通知スケジュール
+  if (data.scheduled_at) {
+    scheduleNotificationsForTask(serviceClient, auth.userId, {
+      id: data.id,
+      title: data.title,
+      scheduled_at: data.scheduled_at,
+    }).catch(() => {})
+  }
+
+  // Fire-and-forget: カレンダー同期
+  if (body.sync_calendar && data.scheduled_at) {
+    syncTaskToCalendarV1(serviceClient, auth.userId, {
+      id: data.id,
+      title: data.title,
+      scheduled_at: data.scheduled_at,
+      estimated_time: data.estimated_time ?? 30,
+      calendar_id: body.calendar_id,
+    }).catch(() => {})
   }
 
   return apiSuccess(data, 201)

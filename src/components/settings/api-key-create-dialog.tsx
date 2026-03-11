@@ -45,12 +45,9 @@ export function ApiKeyCreateDialog({
     setSelectedScopes(DEFAULT_SCOPES)
   }
 
-  // Group scopes by category
-  const categories = [...new Set(API_SCOPES.map(s => s.category))]
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>新しいAPIキーを作成</DialogTitle>
           <DialogDescription>
@@ -69,25 +66,19 @@ export function ApiKeyCreateDialog({
             />
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             <Label>権限（スコープ）</Label>
-            {categories.map(category => (
-              <div key={category} className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">{category}</p>
-                {API_SCOPES.filter(s => s.category === category).map(scope => (
-                  <div key={scope.id} className="flex items-center justify-between rounded-lg border p-2.5">
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-medium">{scope.label}</p>
-                      <p className="text-[11px] text-muted-foreground">{scope.description}</p>
-                    </div>
-                    <Switch
-                      checked={selectedScopes.includes(scope.id)}
-                      onCheckedChange={() => handleToggleScope(scope.id)}
-                    />
-                  </div>
-                ))}
-              </div>
-            ))}
+            <div className="grid grid-cols-2 gap-2 max-h-[280px] overflow-y-auto">
+              {API_SCOPES.map(scope => (
+                <div key={scope.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                  <span className="text-sm">{scope.label}</span>
+                  <Switch
+                    checked={selectedScopes.includes(scope.id)}
+                    onCheckedChange={() => handleToggleScope(scope.id)}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

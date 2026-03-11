@@ -2,19 +2,17 @@ import { NextRequest } from 'next/server'
 import { authenticateApiKey, isAuthError } from '../../_lib/auth'
 import { apiSuccess, apiError, handleCors } from '../../_lib/response'
 import { createServiceClient } from '@/utils/supabase/service'
-import { scheduleNotificationsForTask, cancelNotificationsForTask } from '../../_lib/notifications'
-import { syncTaskToCalendarV1 } from '../../_lib/calendar-sync'
 
 export async function OPTIONS() {
   return handleCors()
 }
 
-// GET /api/v1/tasks/[id] — Get a single task
+// GET /api/v1/habits/[id] — Get a single habit with completions
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authenticateApiKey(request, 'tasks:read')
+  const auth = await authenticateApiKey(request, 'habits:read')
   if (isAuthError(auth)) return auth
 
   const { id } = await params
@@ -31,39 +29,34 @@ export async function GET(
     .select('*')
     .eq('id', id)
     .eq('user_id', auth.userId)
+    .eq('is_habit', true)
     .is('deleted_at', null)
     .single()
 
   if (error || !data) {
-    return apiError('NOT_FOUND', 'Task not found', 404)
+    return apiError('NOT_FOUND', 'Habit not found', 404)
   }
 
   return apiSuccess(data)
 }
 
-// PATCH /api/v1/tasks/[id] — Update a task
+// PATCH /api/v1/habits/[id] — Update a habit
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authenticateApiKey(request, 'tasks:write')
+  const auth = await authenticateApiKey(request, 'habits:write')
   if (isAuthError(auth)) return auth
 
   const { id } = await params
 
   let body: {
     title?: string
-    status?: string
-    stage?: string
-    priority?: string
-    scheduled_at?: string | null
-    estimated_time?: number | null
-    memo?: string | null
-    order_index?: number
+    habit_frequency?: string
+    habit_icon?: string
+    habit_start_date?: string | null
+    habit_end_date?: string | null
     project_id?: string | null
-    parent_task_id?: string | null
-    sync_calendar?: boolean
-    calendar_id?: string
   }
   try {
     body = await request.json()
@@ -72,9 +65,8 @@ export async function PATCH(
   }
 
   const allowedFields = [
-    'title', 'status', 'stage', 'priority',
-    'scheduled_at', 'estimated_time', 'memo',
-    'order_index', 'project_id', 'parent_task_id',
+    'title', 'habit_frequency', 'habit_icon',
+    'habit_start_date', 'habit_end_date', 'project_id',
   ]
 
   const updateData: Record<string, unknown> = {}
@@ -100,47 +92,24 @@ export async function PATCH(
     .update(updateData)
     .eq('id', id)
     .eq('user_id', auth.userId)
+    .eq('is_habit', true)
     .is('deleted_at', null)
     .select('*')
     .single()
 
   if (error || !data) {
-    return apiError('NOT_FOUND', 'Task not found or update failed', 404)
-  }
-
-  // scheduled_at が更新された場合、通知を再スケジュール
-  if ('scheduled_at' in updateData) {
-    cancelNotificationsForTask(serviceClient, auth.userId, id).catch(() => {})
-    if (data.scheduled_at) {
-      scheduleNotificationsForTask(serviceClient, auth.userId, {
-        id: data.id,
-        title: data.title,
-        scheduled_at: data.scheduled_at,
-      }).catch(() => {})
-    }
-  }
-
-  // カレンダー同期
-  if (body.sync_calendar && data.scheduled_at) {
-    syncTaskToCalendarV1(serviceClient, auth.userId, {
-      id: data.id,
-      title: data.title,
-      scheduled_at: data.scheduled_at,
-      estimated_time: data.estimated_time ?? 30,
-      google_event_id: data.google_event_id,
-      calendar_id: body.calendar_id,
-    }).catch(() => {})
+    return apiError('NOT_FOUND', 'Habit not found or update failed', 404)
   }
 
   return apiSuccess(data)
 }
 
-// DELETE /api/v1/tasks/[id] — Soft delete a task
+// DELETE /api/v1/habits/[id] — Soft delete a habit
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authenticateApiKey(request, 'tasks:write')
+  const auth = await authenticateApiKey(request, 'habits:write')
   if (isAuthError(auth)) return auth
 
   const { id } = await params
@@ -157,12 +126,13 @@ export async function DELETE(
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', id)
     .eq('user_id', auth.userId)
+    .eq('is_habit', true)
     .is('deleted_at', null)
     .select('id, deleted_at')
     .single()
 
   if (error || !data) {
-    return apiError('NOT_FOUND', 'Task not found or already deleted', 404)
+    return apiError('NOT_FOUND', 'Habit not found or already deleted', 404)
   }
 
   return apiSuccess(data)
