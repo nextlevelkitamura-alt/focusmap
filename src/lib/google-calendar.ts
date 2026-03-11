@@ -2,12 +2,14 @@ import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
 import { CalendarEvent, GoogleCalendarEvent } from '@/types/calendar';
 import { resolveGoogleRedirectUriFromEnv } from '@/lib/google-oauth';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Google Calendar APIクライアントを取得
+ * @param injectedClient - オプショナル。REST API v1からservice_roleクライアントを注入する場合に使用
  */
-export async function getCalendarClient(userId: string) {
-  const supabase = await createClient();
+export async function getCalendarClient(userId: string, injectedClient?: SupabaseClient) {
+  const supabase = injectedClient ?? await createClient();
 
 
   // ユーザーのカレンダー設定を取得
@@ -200,10 +202,11 @@ export async function syncTaskToCalendar(
     google_event_id?: string | null;
     calendar_id?: string | null;
     reminders?: number[];
-  }
+  },
+  injectedClient?: SupabaseClient,
 ) {
-  const supabase = await createClient();
-  const { calendar } = await getCalendarClient(userId);
+  const supabase = injectedClient ?? await createClient();
+  const { calendar } = await getCalendarClient(userId, injectedClient);
 
   const { data: settings } = await supabase
     .from('user_calendar_settings')
