@@ -5,6 +5,7 @@ import { NotificationSettings } from "@/components/notifications"
 import { AiContextSettings } from "@/components/settings/ai-context-settings"
 import { ThemeSettings } from "@/components/settings/theme-settings"
 import { AccountSettings } from "@/components/settings/account-settings"
+import { ApiKeySettings } from "@/components/settings/api-key-settings"
 
 export default async function SettingsPage() {
     const supabase = await createClient()
@@ -35,6 +36,9 @@ export default async function SettingsPage() {
 
                 {/* AIコンテキスト管理 */}
                 <AiContextSettings />
+
+                {/* APIキー管理 */}
+                <ApiKeySettings />
 
                 {/* 表示設定 */}
                 <ThemeSettings />

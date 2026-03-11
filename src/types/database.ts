@@ -597,6 +597,44 @@ export interface Database {
                     updated_at?: string
                 }
             }
+            api_keys: {
+                Row: {
+                    id: string
+                    user_id: string
+                    key_hash: string
+                    key_prefix: string
+                    name: string
+                    scopes: string[]
+                    last_used_at: string | null
+                    expires_at: string | null
+                    is_active: boolean
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    key_hash: string
+                    key_prefix: string
+                    name?: string
+                    scopes?: string[]
+                    last_used_at?: string | null
+                    expires_at?: string | null
+                    is_active?: boolean
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    key_hash?: string
+                    key_prefix?: string
+                    name?: string
+                    scopes?: string[]
+                    last_used_at?: string | null
+                    expires_at?: string | null
+                    is_active?: boolean
+                    created_at?: string
+                }
+            }
             user_calendars: {
                 Row: {
                     id: string
