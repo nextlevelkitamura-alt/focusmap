@@ -30,7 +30,12 @@ export async function GET() {
     }
 
     // トークンの有無を確認
-    const hasTokens = !!(settings?.google_access_token && settings?.google_refresh_token);
+    const hasAccessToken = !!settings?.google_access_token;
+    const hasRefreshToken = !!settings?.google_refresh_token;
+    const hasTokens = hasAccessToken && hasRefreshToken;
+
+    // リフレッシュトークンがない場合は即座に再連携必要
+    const needsReconnect = !hasRefreshToken && !!settings;
 
     // トークンの有効期限を確認
     let tokenExpired = false;
@@ -38,6 +43,9 @@ export async function GET() {
       const expiresAt = new Date(settings.google_token_expires_at);
       tokenExpired = expiresAt < new Date();
     }
+
+    // sync_status が disconnected の場合も再連携必要
+    const isDisconnected = settings?.sync_status === 'disconnected';
 
     let linkedAccount = settings?.google_account_email
       ? {
@@ -96,7 +104,7 @@ export async function GET() {
     });
 
     return NextResponse.json({
-      isConnected: !!settings && hasTokens,
+      isConnected: !!settings && hasTokens && !isDisconnected,
       isSyncEnabled: settings?.is_sync_enabled || false,
       syncStatus: settings?.sync_status || 'idle',
       lastSyncedAt: settings?.last_synced_at || null,
@@ -106,11 +114,20 @@ export async function GET() {
       tokenExpired,
       tokenExpiresAt: settings?.google_token_expires_at || null,
       linkedAccount,
+      needsReconnect: needsReconnect || isDisconnected,
+      reconnectReason: isDisconnected
+        ? 'authorization_expired'
+        : needsReconnect
+          ? 'missing_refresh_token'
+          : tokenExpired
+            ? 'token_expired'
+            : null,
       // デバッグ情報
       debug: {
         settingsFound: !!settings,
-        hasAccessToken: !!settings?.google_access_token,
-        hasRefreshToken: !!settings?.google_refresh_token,
+        hasAccessToken,
+        hasRefreshToken,
+        isDisconnected,
       }
     });
   } catch (error: unknown) {

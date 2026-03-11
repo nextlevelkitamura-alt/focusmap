@@ -67,3 +67,8 @@
 - **/plan [Specファイル名]**: 指定された仕様書（例: `specs/login.md`）を読み込み、実装手順を `NOW.md` に展開する。
 - **/act**: `NOW.md` の手順に従い、テスト駆動開発(TDD)を意識して実装を開始する。
 - **/done**: タスク完了宣言。`MAP.md` を更新し、`NOW.md` のクリアを提案する。
+
+---
+
+## 外部リソース
+- NotebookLM: `1e2d5daf-bc9e-4cd2-84b4-f5d74998b8de` — Shikumika Project: The Final Master Blueprint

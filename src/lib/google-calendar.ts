@@ -89,6 +89,46 @@ export async function getCalendarClient(userId: string) {
     }
   });
 
+  // アクセストークンが期限切れの場合、事前にリフレッシュを試行
+  const isExpired = settings.google_token_expires_at
+    ? new Date(settings.google_token_expires_at).getTime() < Date.now()
+    : false;
+
+  if (isExpired) {
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      oauth2Client.setCredentials(credentials);
+      console.log('[getCalendarClient] Token refreshed successfully for user:', userId);
+    } catch (refreshError: any) {
+      const errorMessage = refreshError?.message || String(refreshError);
+      console.error('[getCalendarClient] Token refresh failed:', {
+        userId,
+        error: errorMessage,
+      });
+
+      // invalid_grant = リフレッシュトークン自体が失効（テストモード7日制限等）
+      if (errorMessage.toLowerCase().includes('invalid_grant')) {
+        await supabase
+          .from('user_calendar_settings')
+          .update({
+            sync_status: 'disconnected',
+            google_access_token: null,
+            google_refresh_token: null,
+            google_token_expires_at: null,
+          })
+          .eq('user_id', userId);
+
+        throw new Error(
+          'invalid_grant: Googleカレンダーの認証が失効しました。' +
+          'OAuth同意画面が「テストモード」の場合、リフレッシュトークンは7日で失効します。' +
+          '「再連携」ボタンから再度連携してください。'
+        );
+      }
+
+      throw new Error(`Token refresh failed: ${errorMessage}`);
+    }
+  }
+
   // Calendarクライアントを返す
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 

@@ -51,7 +51,7 @@ export function classifyCalendarAuthError(messageLike: unknown): CalendarAuthErr
   if (lower.includes('invalid_grant')) {
     return {
       code: 'CALENDAR_REAUTH_REQUIRED',
-      message: 'Calendar authorization expired. Please reconnect.',
+      message: 'Calendar authorization expired. This may be caused by OAuth consent screen being in "Testing" mode (refresh tokens expire after 7 days). Please reconnect your Google Calendar.',
       status: 401,
     }
   }

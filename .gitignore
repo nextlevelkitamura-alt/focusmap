@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/mcp/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -54,6 +55,7 @@ docs/env.md
 
 # Claude Code
 .claude/
+.mcp.json
 
 # Temp
 tmp/

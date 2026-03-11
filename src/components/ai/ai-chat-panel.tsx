@@ -16,6 +16,7 @@ interface ChatOption {
   label: string
   value: string
   silent?: boolean  // trueなら返信バブルを出さずにAPIに直接送信
+  action?: 'restore_input' | 'reset'
 }
 
 interface ChatAction {
@@ -349,14 +350,20 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'エラーが発生しました'
       const isApiKeyError = errorMsg.includes('APIキーエラー') || errorMsg.includes('API設定')
+      if (!isApiKeyError) {
+        setInput(trimmed)
+        setTimeout(() => inputRef.current?.focus(), 0)
+      }
       const errMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
         content: isApiKeyError
           ? 'AI設定にエラーがあります。管理者にお問い合わせください。'
-          : errorMsg,
+          : 'AI応答の取得に失敗しました。入力内容は保持しているので、修正して再送信できます。',
         options: isApiKeyError ? undefined : [
           { label: 'リトライ', value: trimmed },
+          { label: '入力を編集', value: trimmed, action: 'restore_input' },
+          { label: '会話をリセット', value: '', action: 'reset' },
         ],
       }
       setMessages(prev => [...prev, errMessage])
@@ -587,6 +594,17 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
       m.id === messageId ? { ...m, optionsUsed: true, selectedOption: option.label } : m
     ))
 
+    if (option.action === 'reset') {
+      void handleReset()
+      return
+    }
+
+    if (option.action === 'restore_input') {
+      setInput(option.value)
+      setTimeout(() => inputRef.current?.focus(), 0)
+      return
+    }
+
     if (!option.value) {
       // 空のvalue（「完了」ボタン等）は何もしない
       inputRef.current?.focus()
@@ -599,7 +617,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
     } else {
       sendMessage(option.value)
     }
-  }, [sendMessage, sendMessageSilent])
+  }, [sendMessage, sendMessageSilent, handleReset])
 
   // ベスト提案を承認
   const handleAcceptProposal = useCallback((messageId: string) => {
