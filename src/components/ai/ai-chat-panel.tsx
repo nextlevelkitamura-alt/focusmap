@@ -588,6 +588,28 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
     }
   }, [messages, onCalendarEventCreated])
 
+  // リセット
+  const handleReset = useCallback(async () => {
+    // メッセージが2件以上ある場合は要約を保存
+    if (messages.length >= 2) {
+      try {
+        await fetch('/api/ai/chat/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages }),
+        })
+      } catch {
+        // 要約失敗しても会話リセットは続行
+      }
+    }
+    setMessages([])
+    setSummaryBoundaryIndex(0)
+    setCurrentSummaryText(null)
+    setInput("")
+    setExecutionNotice(null)
+    setActiveSkillId(null)
+  }, [messages])
+
   // 選択肢ボタンクリック
   const handleOptionSelect = useCallback((messageId: string, option: ChatOption) => {
     setMessages(prev => prev.map(m =>
@@ -684,28 +706,6 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
       setIsSummarizing(false)
     }
   }, [])
-
-  // リセット
-  const handleReset = useCallback(async () => {
-    // メッセージが2件以上ある場合は要約を保存
-    if (messages.length >= 2) {
-      try {
-        await fetch('/api/ai/chat/summarize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages }),
-        })
-      } catch {
-        // 要約失敗しても会話リセットは続行
-      }
-    }
-    setMessages([])
-    setSummaryBoundaryIndex(0)
-    setCurrentSummaryText(null)
-    setInput("")
-    setExecutionNotice(null)
-    setActiveSkillId(null)
-  }, [messages])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key !== 'Enter') return
