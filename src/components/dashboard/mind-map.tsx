@@ -26,7 +26,7 @@ import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
 import { useDrag } from "@/contexts/DragContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
@@ -959,8 +959,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 )}
 
                 {/* Quick Action Menu */}
-                <Popover open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
-                    <PopoverTrigger asChild>
+                <Dialog open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
+                    <DialogTrigger asChild>
                         <button
                             type="button"
                             className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0 ml-0.5"
@@ -973,16 +973,13 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                 <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
                             </svg>
                         </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                        align="end"
-                        className="nodrag nopan w-[min(94vw,46rem)] h-[min(88vh,46rem)] p-3 overflow-hidden"
+                    </DialogTrigger>
+                    <DialogContent
+                        showCloseButton={false}
+                        className="nodrag nopan w-[min(94vw,46rem)] max-w-[min(94vw,46rem)] h-[min(88vh,46rem)] p-3 overflow-hidden"
                         style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
                         onTouchMove={(e) => e.stopPropagation()}
                         onOpenAutoFocus={(e) => e.preventDefault()}
-                        onPointerDownOutside={(e) => e.preventDefault()}
-                        onFocusOutside={(e) => e.preventDefault()}
-                        onInteractOutside={(e) => e.preventDefault()}
                     >
                         <div className="grid h-full grid-cols-2 gap-3">
                             <div className="min-h-0 overflow-y-auto pr-1 space-y-1.5">
@@ -1222,8 +1219,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         </div>
                             </div>
                         </div>
-                    </PopoverContent>
-                </Popover>
+                    </DialogContent>
+                </Dialog>
             </div>
 
             {/* Row 2: メタデータ（値が設定されている場合のみ表示） */}
