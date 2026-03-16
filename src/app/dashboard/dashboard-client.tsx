@@ -367,6 +367,16 @@ export function DashboardClient({
         const showOnTimeline = !!taskData.scheduled_at
         if (showOnTimeline) {
             setQuickTasks(prev => [...prev, optimisticTask])
+            // カレンダービューにも即時反映（楽観的更新）
+            if (taskData.calendar_id && taskData.scheduled_at) {
+                handleCalendarEventCreated({
+                    id: optimisticId,
+                    title: taskData.title,
+                    scheduled_at: taskData.scheduled_at,
+                    estimated_time: taskData.estimated_time,
+                    calendar_id: taskData.calendar_id,
+                })
+            }
         }
 
         // バックグラウンドで API 保存 + カレンダー同期（await しない）

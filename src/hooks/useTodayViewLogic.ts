@@ -386,7 +386,6 @@ export function useTodayViewLogic({
             let color: string | undefined
             if (task.google_event_id && task.calendar_id) {
                 color = stableCalendarColorMap.get(task.calendar_id || '')
-                if (!color) continue
             }
             const block = taskToTimeBlock(task, undefined, color)
             if (block.endTime > tomorrow) block.endTime = new Date(tomorrow)
@@ -398,7 +397,6 @@ export function useTodayViewLogic({
             let color: string | undefined
             if (task.google_event_id && task.calendar_id) {
                 color = stableCalendarColorMap.get(task.calendar_id || '')
-                if (!color) continue
             }
             const block = taskToTimeBlock(task, undefined, color)
             block.startTime = new Date(today)
