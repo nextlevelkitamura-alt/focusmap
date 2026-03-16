@@ -88,6 +88,22 @@ type TaskNodeData = {
     onUpdateDate?: (dateIso: string | null) => Promise<void> | void;
     onDragStart?: (taskId: string, title: string) => void;
     onDragEnd?: () => void;
+    // Phase B 以降で追加されたプロパティ
+    parentIsHabit?: boolean;
+    isSelected?: boolean;
+    isDropTarget?: boolean;
+    dropPosition?: 'as-child' | 'above' | 'below' | 'before' | 'after' | 'inside';
+    nodeWidth?: number;
+    onToggleCollapse?: () => void;
+    collapsed?: boolean;
+    google_event_id?: string | null;
+    onUpdateStatus?: (status: string) => void;
+    estimatedIsOverride?: boolean;
+    estimatedAutoMinutes?: number;
+    onUpdateScheduledAt?: (scheduledAt: string | null) => void;
+    calendar_id?: string | null;
+    onUpdateCalendar?: (calendarId: string | null) => void;
+    onUpdateMemo?: (memo: string | null) => void;
 };
 
 type HabitSettingsPanelData = {
@@ -1035,7 +1051,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                     <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
                                         <Clock className="w-3 h-3 mr-2" />
                                         {(data?.estimatedDisplayMinutes ?? 0) > 0 ? (
-                                            <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes} />
+                                            <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes ?? 0} />
                                         ) : (
                                             <span className="text-muted-foreground">所要時間を設定</span>
                                         )}
@@ -1231,7 +1247,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         {hasEstimatedTime && (
                             <>
                                 <EstimatedTimePopover
-                                    valueMinutes={data.estimatedDisplayMinutes}
+                                    valueMinutes={data.estimatedDisplayMinutes ?? 0}
                                     onChangeMinutes={(minutes) => data?.onUpdateEstimatedTime?.(minutes)}
                                     isOverridden={!!data?.estimatedIsOverride}
                                     autoMinutes={data?.estimatedAutoMinutes}
@@ -1239,13 +1255,13 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                     trigger={
                                         <span className="cursor-pointer" onClick={(e) => e.stopPropagation()}>
                                             <EstimatedTimeBadge
-                                                minutes={data.estimatedDisplayMinutes}
+                                                minutes={data.estimatedDisplayMinutes ?? 0}
                                                 title={
                                                     data?.hasChildren
                                                         ? (data?.estimatedIsOverride
-                                                            ? `手動設定（自動集計: ${data.estimatedAutoMinutes ? formatEstimatedTime(data.estimatedAutoMinutes) : "0分"}）`
-                                                            : `子孫合計: ${formatEstimatedTime(data.estimatedDisplayMinutes)}`)
-                                                        : `見積もり: ${formatEstimatedTime(data.estimatedDisplayMinutes)}`
+                                                            ? `手動設定（自動集計: ${data.estimatedAutoMinutes ? formatEstimatedTime(data.estimatedAutoMinutes ?? 0) : "0分"}）`
+                                                            : `子孫合計: ${formatEstimatedTime(data.estimatedDisplayMinutes ?? 0)}`)
+                                                        : `見積もり: ${formatEstimatedTime(data.estimatedDisplayMinutes ?? 0)}`
                                                 }
                                             />
                                         </span>
@@ -1303,12 +1319,12 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         {hasScheduledAt && (
                             <div className="ml-auto">
                                 <DateTimePicker
-                                    date={new Date(data.scheduled_at)}
+                                    date={new Date(data.scheduled_at!)}
                                     setDate={(date) => data?.onUpdateDate?.(date ? date.toISOString() : null)}
                                     trigger={
                                         <div className="flex items-center gap-1">
                                             <span className="text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer">
-                                                {format(new Date(data.scheduled_at), 'M/d HH:mm')}
+                                                {format(new Date(data.scheduled_at!), 'M/d HH:mm')}
                                             </span>
                                             <button
                                                 className="p-0.5 rounded text-zinc-500 hover:text-red-400 transition-colors"

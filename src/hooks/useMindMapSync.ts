@@ -695,14 +695,14 @@ export function useMindMapSync({
                             if (!parentRes.ok) {
                                 console.error('[Sync] auto-complete parent API error')
                                 setAllTasks(prev => prev.map(t =>
-                                    t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                                    t.id === task.parent_task_id ? { ...t, status: parent?.status ?? t.status } : t
                                 ))
                                 parentAutoCompleteUndo = null
                             }
                         } catch (parentErr) {
                             console.error('[Sync] auto-complete parent failed:', parentErr)
                             setAllTasks(prev => prev.map(t =>
-                                t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                                t.id === task.parent_task_id ? { ...t, status: parent?.status ?? t.status } : t
                             ))
                             parentAutoCompleteUndo = null
                         }
@@ -890,7 +890,7 @@ export function useMindMapSync({
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
         const currentAll = allTasksRef.current;
         const task = currentAll.find(t => t.id === taskId)
-        const oldParentId = task?.parent_task_id
+        const oldParentId = task?.parent_task_id ?? null
         const taskTitle = task?.title || 'タスク'
 
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, parent_task_id: newGroupId } : t))

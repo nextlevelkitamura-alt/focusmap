@@ -23,7 +23,7 @@ interface CenterPaneProps {
     tasks: Task[]
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
     onCreateGroup?: (title: string) => Promise<Task | null>
-    onDeleteGroup?: (groupId: string) => void
+    onDeleteGroup?: (groupId: string) => Promise<void>
     onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>

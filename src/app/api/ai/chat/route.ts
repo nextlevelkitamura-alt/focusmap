@@ -1,7 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { generateText, type ToolSet } from 'ai'
-import { getModelForSkill, getConfigForSkill } from '@/lib/ai/providers'
+import { getModelForSkill, getConfigForSkill, getModelForAgent, getConfigForAgent } from '@/lib/ai/providers'
+import { buildCoachSystemPrompt } from '@/lib/ai/agents/coach'
+import { buildProjectPMSystemPrompt } from '@/lib/ai/agents/project-pm'
 import { getToolsForSkill, isToolEnabledSkill } from '@/lib/ai/tools'
 import { getFreeTimeContext } from '@/lib/free-time-context'
 import { orchestrate } from '@/lib/ai/agents/orchestrator'
@@ -492,7 +494,7 @@ export async function POST(request: Request) {
     }
 
     // Skill ルーティング: orchestrator 経由（UIから指定 or 自然言語判定）
-    const { agentId: _agentId, skillId: routedSkillId } = orchestrate(message, requestedSkillId || undefined)
+    const { agentId, skillId: routedSkillId } = orchestrate(message, requestedSkillId || undefined)
     const resolvedSkillId = routedSkillId ?? null
     const isFirstMessage = history.length === 0
     const hasNoUserContext = !userContextCategories.life_personality && !userContextCategories.life_purpose && !userContextCategories.current_situation
@@ -690,16 +692,22 @@ export async function POST(request: Request) {
         systemPrompt = buildTaskPrompt(skillContext)
         break
       case 'counseling':
-        systemPrompt = buildCounselingPrompt(skillContext)
+        systemPrompt = agentId === 'coach'
+          ? buildCoachSystemPrompt(contextInjection, activeSkillId)
+          : buildCounselingPrompt(skillContext)
         break
       case 'memo':
         systemPrompt = buildMemoPrompt(skillContext)
         break
       case 'project-consultation':
-        systemPrompt = buildProjectConsultationPrompt(skillContext)
+        systemPrompt = agentId === 'project-pm'
+          ? buildProjectPMSystemPrompt(contextInjection, projectsContext)
+          : buildProjectConsultationPrompt(skillContext)
         break
       case 'brainstorm':
-        systemPrompt = buildBrainstormPrompt(skillContext)
+        systemPrompt = agentId === 'coach'
+          ? buildCoachSystemPrompt(contextInjection, activeSkillId)
+          : buildBrainstormPrompt(skillContext)
         break
       default:
         // 未知のskillIdの場合、タスク管理にフォールバック（汎用性が高い）
@@ -710,12 +718,13 @@ export async function POST(request: Request) {
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
     // Vercel AI SDK で生成（ツール有効スキルはエージェントループ付き）
-    const skillConfig = getConfigForSkill(activeSkillId)
+    const isAgentMode = agentId === 'coach' || agentId === 'project-pm'
+    const skillConfig = isAgentMode ? getConfigForAgent(agentId) : getConfigForSkill(activeSkillId)
     const useTools = isToolEnabledSkill(activeSkillId)
     const tools = useTools ? getToolsForSkill(activeSkillId) as ToolSet : undefined
 
     const aiResult = await generateText({
-      model: getModelForSkill(activeSkillId),
+      model: isAgentMode ? getModelForAgent(agentId) : getModelForSkill(activeSkillId),
       system: systemPrompt,
       prompt,
       maxOutputTokens: skillConfig.maxTokens,

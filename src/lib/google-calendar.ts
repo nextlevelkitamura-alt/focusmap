@@ -237,7 +237,7 @@ export async function syncTaskToCalendar(
       try {
         const searchResult = await calendar.events.list({
           calendarId,
-          privateExtendedProperty: `taskId=${taskId}`,
+          privateExtendedProperty: [`taskId=${taskId}`],
           maxResults: 1,
           timeMin: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
           timeMax: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),

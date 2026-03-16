@@ -188,7 +188,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // Use ref to track previous calendarIds to prevent unnecessary refetches
-  const prevCalendarIdsRef = useRef<string>();
+  const prevCalendarIdsRef = useRef<string | undefined>(undefined);
   const calendarIdsKey = useMemo(() =>
     options.calendarIds?.sort().join(',') || '',
     [options.calendarIds]

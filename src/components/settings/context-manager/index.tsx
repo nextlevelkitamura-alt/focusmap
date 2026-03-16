@@ -5,9 +5,24 @@ import { useRouter } from 'next/navigation'
 import { ArrowLeft, Brain, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ContextFolderTree } from './context-folder-tree'
 import { ContextDocumentEditor } from './context-document-editor'
 import type { DocumentData, FolderNode } from './types'
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  personality: '性格・生活スタイル',
+  purpose: '目標・ビジョン',
+  situation: '現在の状況',
+  project_purpose: 'プロジェクトの目的',
+  project_status: '進捗状況',
+  project_insights: '重要な気づき',
+  note: 'メモ',
+}
+
+const PERSONAL_DOC_TYPES = ['personality', 'purpose', 'situation', 'note']
+const PROJECT_DOC_TYPES = ['project_purpose', 'project_status', 'project_insights', 'note']
 
 interface ContextManagerProps {
   onBack?: () => void
@@ -21,6 +36,11 @@ export function ContextManager({ onBack }: ContextManagerProps) {
   const [error, setError] = useState<string | null>(null)
   // モバイルで「エディタ表示中」かどうか
   const [mobileShowEditor, setMobileShowEditor] = useState(false)
+  // 新規作成ダイアログ
+  const [createDialog, setCreateDialog] = useState<{ folderId: string; folderType: string } | null>(null)
+  const [newDocTitle, setNewDocTitle] = useState('')
+  const [newDocType, setNewDocType] = useState('note')
+  const [creating, setCreating] = useState(false)
 
   // 初期化 + データ取得
   const loadData = useCallback(async () => {
@@ -109,29 +129,46 @@ export function ContextManager({ onBack }: ContextManagerProps) {
     }
   }, [selectedDoc, folders, loadData])
 
-  // 新規ドキュメント作成
-  const handleCreateDocument = useCallback(async (folderId: string) => {
-    const res = await fetch('/api/ai/context/documents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        folder_id: folderId,
-        title: '新しいメモ',
-        document_type: 'note',
-      }),
-    })
-    if (!res.ok) return
-    const data = await res.json()
-    await loadData()
-    // 作成したドキュメントを選択
-    setSelectedDoc({
-      ...data.document,
-      freshness_score: 1,
-      freshness_status: 'fresh',
-      days_since_update: 0,
-    })
-    setMobileShowEditor(true)
-  }, [loadData])
+  // 新規ドキュメント作成（ダイアログ表示）
+  const handleCreateDocument = useCallback((folderId: string) => {
+    const folder = folders.find(f => f.id === folderId) ||
+      folders.flatMap(f => f.children).find(f => f.id === folderId)
+    const folderType = folder?.folder_type ?? 'root_personal'
+    const defaultType = folderType === 'project' ? 'project_purpose' : 'note'
+    setNewDocTitle('')
+    setNewDocType(defaultType)
+    setCreateDialog({ folderId, folderType })
+  }, [folders])
+
+  // ダイアログ確定
+  const handleConfirmCreate = useCallback(async () => {
+    if (!createDialog) return
+    setCreating(true)
+    try {
+      const res = await fetch('/api/ai/context/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folder_id: createDialog.folderId,
+          title: newDocTitle || DOCUMENT_TYPE_LABELS[newDocType] || '新しいドキュメント',
+          document_type: newDocType,
+        }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setCreateDialog(null)
+      await loadData()
+      setSelectedDoc({
+        ...data.document,
+        freshness_score: 1,
+        freshness_status: 'fresh',
+        days_since_update: 0,
+      })
+      setMobileShowEditor(true)
+    } finally {
+      setCreating(false)
+    }
+  }, [createDialog, newDocTitle, newDocType, loadData])
 
   if (loading) {
     return (
@@ -150,8 +187,53 @@ export function ContextManager({ onBack }: ContextManagerProps) {
     )
   }
 
+  const availableDocTypes = createDialog?.folderType === 'project' ? PROJECT_DOC_TYPES : PERSONAL_DOC_TYPES
+
   return (
     <div className="flex flex-col h-full">
+      {/* 新規ドキュメント作成ダイアログ */}
+      <Dialog open={!!createDialog} onOpenChange={(open) => !open && setCreateDialog(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>ドキュメントを追加</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">種別</label>
+              <Select value={newDocType} onValueChange={setNewDocType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableDocTypes.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {DOCUMENT_TYPE_LABELS[type]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">タイトル（省略可）</label>
+              <input
+                type="text"
+                value={newDocTitle}
+                onChange={(e) => setNewDocTitle(e.target.value)}
+                placeholder={DOCUMENT_TYPE_LABELS[newDocType]}
+                className="w-full text-sm border rounded-md px-3 py-2 bg-background outline-none focus:ring-2 focus:ring-ring/50"
+                onKeyDown={(e) => e.key === 'Enter' && handleConfirmCreate()}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setCreateDialog(null)}>キャンセル</Button>
+            <Button size="sm" onClick={handleConfirmCreate} disabled={creating}>
+              {creating ? '作成中...' : '作成'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ヘッダー */}
       <div className="flex items-center gap-3 px-4 py-3 border-b">
         <button onClick={onBack ?? (() => router.back())} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">

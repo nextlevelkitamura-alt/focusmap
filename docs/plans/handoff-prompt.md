@@ -56,7 +56,7 @@ Phase B 以降で追加予定:
 | Phase | タイトル | 状態 |
 |-------|---------|------|
 | A | エージェント基盤（後方互換） | ✅ 完了 |
-| B | コーチ・ProjectPM 深化 | ⏳ 未着手 |
+| B | コーチ・ProjectPM 深化 | ✅ 完了 |
 | C | コンテキスト管理UI完成 | ⏳ 未着手 |
 | D | Strategist・DailyPlanner | ⏳ 未着手 |
 | E | ファイル添付機能 | ⏳ 未着手 |
@@ -65,52 +65,58 @@ Phase B 以降で追加予定:
 
 ## 次のタスク（ここから始めてください）
 
-### Phase B: コーチ・ProjectPM 深化
+### Phase C: コンテキスト管理UI完成
 
-**目標**: counseling/project-consultation の応答品質を、専用エージェントで格段に上げる
+**目標**: ユーザーが4層コンテキスト（ビジョン・プロジェクト・状況）を手動で閲覧・編集・作成できるUIを完成させる
 
-**現状の問題点**:
-- counseling/project-consultation は既存スキルのまま → Orchestrator が 'coach'/'project-pm' に振るが実体は同じ
-- コーチやPMらしい深い思考・専用プロンプトがない
+**現状**:
+- DB テーブル（`ai_context_folders` / `ai_context_documents`）は稼働済み
+- コンテキスト読み込み（`loadContextFromDocuments`）は稼働済み
+- UI は未整備 or 部分的（要調査）
 
-**Step 1: coach.ts 実装**
-- 新規: `src/lib/ai/agents/coach.ts`
-  - `runCoach(context: AgentContext): Promise<AgentResult>` を実装
-  - 4層コンテキスト（Layer4ビジョン + Layer2タスク）を組み込んだ専用プロンプト
-  - counseling + brainstorm 両方に対応
+**調査ポイント（着手前に確認）**:
+1. `src/app/` 配下にコンテキスト管理ページが既にあるか確認
+2. `src/components/` 配下にコンテキスト関連コンポーネントがあるか確認
+3. 既存UIがあれば改善、なければ新規作成
 
-**Step 2: project-pm.ts 実装**
-- 新規: `src/lib/ai/agents/project-pm.ts`
-  - `runProjectPM(context: AgentContext): Promise<AgentResult>` を実装
-  - Layer3プロジェクト情報を深く使う専用プロンプト
-  - プロジェクト状況・課題・次アクションを構造化して返す
+**実装内容（想定）**:
 
-**Step 3: chat/route.ts に分岐を追加**
-- agentId='coach' のとき → `runCoach()` を呼び出す
-- agentId='project-pm' のとき → `runProjectPM()` を呼び出す
-- agentId='task-executor' のとき → 従来通りの処理（変更なし）
+**Step 1: コンテキスト一覧ページ**
+- `/ai-context` または `/settings/context` にページを作成
+- フォルダツリー（root_personal / root_projects / project別）を表示
+- ドキュメント一覧（タイトル・種別・最終更新日）を表示
+
+**Step 2: ドキュメント編集UI**
+- ドキュメントをクリックで編集モードに入れる
+- `document_type` に応じたラベル表示（「性格・スタイル」「目標・ビジョン」「現在の状況」等）
+- 保存 / 鮮度更新（`freshness_reviewed_at` 更新）ボタン
+
+**Step 3: 新規ドキュメント作成**
+- フォルダ配下に新しいドキュメントを追加できる
+- プロジェクトフォルダへの追加（`project_purpose` / `project_insights` 等）
 
 **重要な制約**:
-- task-executor パスは絶対に変更しない
-- 既存の6スキル（scheduling/task/memo）は今まで通り動くこと
-- coach/project-pm の応答フォーマットは既存の `{ reply, action?, options? }` に合わせる
+- 既存の `ai_context_documents` / `ai_context_folders` テーブル構造を変更しない
+- `loadContextFromDocuments()` の返却形式を変更しない（AI側に影響するため）
 
-## Phase A 実装内容（参照用）
+## Phase A・B 実装内容（参照用）
 
 | ファイル | 役割 |
 |---------|------|
 | `src/lib/ai/agents/index.ts` | AgentId/AgentContext/AgentResult 型定義 |
 | `src/lib/ai/agents/context-loader.ts` | loadContextForAgent() — agentId別に必要な層だけロード |
 | `src/lib/ai/agents/orchestrator.ts` | orchestrate() — routeToSkill() をラップしてエージェントIDを返す |
+| `src/lib/ai/agents/coach.ts` | **[Phase B]** buildCoachSystemPrompt() — Layer4+Layer2を使ったコーチ専用プロンプト |
+| `src/lib/ai/agents/project-pm.ts` | **[Phase B]** buildProjectPMSystemPrompt() — Layer3+Layer2を使ったPM専用プロンプト |
 | `src/lib/ai/providers/index.ts` | getModelForAgent() / getConfigForAgent() 追加済み |
-| `src/app/api/ai/chat/route.ts` | routeToSkill() → orchestrate() に差し替え済み |
+| `src/app/api/ai/chat/route.ts` | orchestrate() 統合済み・agentId='coach'/'project-pm' 時に専用プロンプト使用 |
 
 ### orchestrate() の動作
 ```typescript
 // skill → agent マッピング
 scheduling/task/memo → 'task-executor'（既存処理をそのまま通す）
-counseling/brainstorm → 'coach'（Phase B で専用処理に切替）
-project-consultation → 'project-pm'（Phase B で専用処理に切替）
+counseling/brainstorm → 'coach'（buildCoachSystemPrompt で専用プロンプト）
+project-consultation → 'project-pm'（buildProjectPMSystemPrompt で専用プロンプト）
 スコア不足 → 'orchestrator'（スキルセレクタ表示）
 ```
 
@@ -161,7 +167,8 @@ project-consultation → 'project-pm'（Phase B で専用処理に切替）
 | 2026-03-16 | 大刷新計画書（wise-plotting-harbor.md）策定 | ✅ 完了 |
 | 2026-03-16 | ハンドオフプロンプト v2.0 更新 | ✅ 完了 |
 | 2026-03-16 | Phase A: エージェント基盤整備（agents/配下3ファイル新規 + providers/route修正） | ✅ 完了 |
-| - | Phase B: コーチ・ProjectPM 深化 | ⏳ 未着手 |
+| 2026-03-16 | Phase B: コーチ・ProjectPM 深化（coach.ts / project-pm.ts 新規作成 + route.ts 分岐追加） | ✅ 完了 |
+| 2026-03-16 | TypeScript エラー一括修正（6ファイル・テストファイル除き0エラー達成） | ✅ 完了 |
 | - | Phase C: コンテキスト管理UI | ⏳ 未着手 |
 | - | Phase D: Strategist・DailyPlanner | ⏳ 未着手 |
 | - | Phase E: ファイル添付機能 | ⏳ 未着手 |

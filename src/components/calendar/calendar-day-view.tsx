@@ -225,24 +225,23 @@ export function CalendarDayView({
             document.removeEventListener('mouseup', handleMouseUp)
 
             const didDrag = latestPreview !== null
-
             if (didDrag && onEventTimeChange) {
                 // 楽観的UI更新: すぐに新しい位置に表示（高さは元のレイアウトを保持）
-                const newTopPercent = (latestPreview.top / totalHeight) * 100
+                const newTopPercent = (latestPreview!.top / totalHeight) * 100
 
                 setOptimisticMoves(prev => ({
                     ...prev,
                     [localDragState.eventId]: {
                         topPercent: newTopPercent,
                         heightPercent: localDragState.originalHeightPercent,
-                        startTime: latestPreview.newStartTime,
-                        endTime: latestPreview.newEndTime
+                        startTime: latestPreview!.newStartTime,
+                        endTime: latestPreview!.newEndTime
                     }
                 }))
                 setSavingEventIds(prev => new Set(prev).add(localDragState.eventId))
 
                 // 時間変更をAPI経由で適用（awaitしない = UIをブロックしない）
-                onEventTimeChange(localDragState.eventId, latestPreview.newStartTime, latestPreview.newEndTime)
+                onEventTimeChange(localDragState.eventId, latestPreview!.newStartTime, latestPreview!.newEndTime)
             }
 
             // ドラッグ状態をクリア
