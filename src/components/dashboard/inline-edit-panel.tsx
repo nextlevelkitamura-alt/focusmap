@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell } from "lucide-react"
+import { TaskAttachmentPanel } from "@/components/tasks/task-attachment-panel"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
@@ -384,6 +385,13 @@ export function InlineEditPanel({
                             className="w-full px-2.5 py-2 text-xs border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent resize-none min-h-[60px]"
                             placeholder="メモを入力..."
                         />
+                    </div>
+                )}
+
+                {/* Attachments (Task only) */}
+                {isTask && target.taskId && (
+                    <div className="pt-1 border-t">
+                        <TaskAttachmentPanel taskId={target.taskId} />
                     </div>
                 )}
             </div>

@@ -635,6 +635,41 @@ export interface Database {
                     created_at?: string
                 }
             }
+            task_attachments: {
+                Row: {
+                    id: string
+                    user_id: string
+                    task_id: string
+                    file_name: string
+                    file_url: string
+                    storage_path: string
+                    file_type: string
+                    file_size: number
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    task_id: string
+                    file_name: string
+                    file_url: string
+                    storage_path: string
+                    file_type: string
+                    file_size: number
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    task_id?: string
+                    file_name?: string
+                    file_url?: string
+                    storage_path?: string
+                    file_type?: string
+                    file_size?: number
+                    created_at?: string
+                }
+            }
             user_calendars: {
                 Row: {
                     id: string
@@ -734,3 +769,6 @@ export type AiContextFolderUpdate = Database['public']['Tables']['ai_context_fol
 export type AiContextDocument = Database['public']['Tables']['ai_context_documents']['Row']
 export type AiContextDocumentInsert = Database['public']['Tables']['ai_context_documents']['Insert']
 export type AiContextDocumentUpdate = Database['public']['Tables']['ai_context_documents']['Update']
+
+export type TaskAttachment = Database['public']['Tables']['task_attachments']['Row']
+export type TaskAttachmentInsert = Database['public']['Tables']['task_attachments']['Insert']
