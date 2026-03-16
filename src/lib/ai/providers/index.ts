@@ -5,6 +5,7 @@
  * 将来: APIキー追加で OpenAI / Anthropic に切替可能
  */
 import { google } from '@ai-sdk/google'
+import type { AgentId } from '../agents/index'
 
 // 将来追加:
 // import { openai } from '@ai-sdk/openai'
@@ -64,4 +65,48 @@ export function getConfigForSkill(skillId?: string): SkillModelConfig {
     return SKILL_CONFIG[skillId]
   }
   return DEFAULT_CONFIG
+}
+
+// ============================================================
+// Phase A: エージェント向けプロバイダー関数
+// ============================================================
+
+export interface AgentModelConfig {
+  maxTokens: number
+  temperature: number
+}
+
+const AGENT_MODEL_MAP: Record<string, AgentModelConfig> = {
+  // 軽量エージェント（Gemini Flash で十分）
+  orchestrator:      { maxTokens: 500,  temperature: 0.1 },
+  'task-executor':   { maxTokens: 1200, temperature: 0.3 },
+  'daily-planner':   { maxTokens: 1500, temperature: 0.4 },
+  'memory-guardian': { maxTokens: 1000, temperature: 0.3 },
+  // 重量エージェント（デフォルト Gemini Flash、将来 Claude/GPT に昇格可能）
+  coach:             { maxTokens: 3000, temperature: 0.8 },
+  'project-pm':      { maxTokens: 3000, temperature: 0.6 },
+  strategist:        { maxTokens: 3000, temperature: 0.6 },
+}
+
+/**
+ * エージェントに応じたAIモデルを返す
+ *
+ * 将来の切替ポイント:
+ * - ANTHROPIC_API_KEY を設定すると coach/strategist を Claude に昇格可能
+ * - AGENT_MODEL_MAP の provider フィールドを変えるだけで全体に反映
+ */
+export function getModelForAgent(_agentId: AgentId) {
+  // 将来の切替例:
+  // if (process.env.ANTHROPIC_API_KEY && ['coach', 'strategist'].includes(_agentId)) {
+  //   return anthropic('claude-sonnet-4-6')
+  // }
+  const modelName = process.env.GEMINI_MODEL || 'gemini-3.0-flash'
+  return google(modelName)
+}
+
+/**
+ * エージェントに応じた設定を返す
+ */
+export function getConfigForAgent(agentId: AgentId): AgentModelConfig {
+  return AGENT_MODEL_MAP[agentId] ?? { maxTokens: 1000, temperature: 0.7 }
 }

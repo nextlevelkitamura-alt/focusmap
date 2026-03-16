@@ -4,7 +4,7 @@ import { generateText, type ToolSet } from 'ai'
 import { getModelForSkill, getConfigForSkill } from '@/lib/ai/providers'
 import { getToolsForSkill, isToolEnabledSkill } from '@/lib/ai/tools'
 import { getFreeTimeContext } from '@/lib/free-time-context'
-import { routeToSkill } from '@/lib/ai/router'
+import { orchestrate } from '@/lib/ai/agents/orchestrator'
 import { getSkillById, SKILLS } from '@/lib/ai/skills'
 import type { SkillContext } from '@/lib/ai/skills/prompts/common'
 import { buildSchedulingPrompt } from '@/lib/ai/skills/prompts/scheduling'
@@ -491,8 +491,9 @@ export async function POST(request: Request) {
       userPersonaContext += projectContextPrompt
     }
 
-    // Skill ルーティング: UIから指定 or 自然言語判定
-    const resolvedSkillId = requestedSkillId || routeToSkill(message)
+    // Skill ルーティング: orchestrator 経由（UIから指定 or 自然言語判定）
+    const { agentId: _agentId, skillId: routedSkillId } = orchestrate(message, requestedSkillId || undefined)
+    const resolvedSkillId = routedSkillId ?? null
     const isFirstMessage = history.length === 0
     const hasNoUserContext = !userContextCategories.life_personality && !userContextCategories.life_purpose && !userContextCategories.current_situation
 
