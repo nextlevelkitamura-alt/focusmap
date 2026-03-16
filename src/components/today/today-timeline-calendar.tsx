@@ -676,37 +676,6 @@ export function TodayTimelineCalendar({
                 </div>
             )}
 
-            {/* Active Timer Banner */}
-            {timer.runningTask && (
-                <div className="mx-2 mt-2 mb-1 rounded-xl border border-primary/30 bg-primary/8 dark:bg-primary/12 overflow-hidden flex-shrink-0">
-                    <div className="flex items-center gap-2 px-3 py-2">
-                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0 shadow-[0_0_6px_rgba(var(--color-primary-rgb,99,102,241),0.8)]" />
-                        <span className="text-xs font-medium truncate flex-1">{timer.runningTask.title}</span>
-                        <span className="text-sm font-mono font-bold text-primary tabular-nums flex-shrink-0">
-                            {formatTime(timer.currentElapsedSeconds)}
-                        </span>
-                        <button
-                            onClick={() => timer.pauseTimer()}
-                            aria-label="タイマーを一時停止"
-                            className="p-1.5 rounded-full bg-primary/15 active:bg-primary/25 text-primary focus:outline-none flex-shrink-0"
-                        >
-                            <Pause className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                            onClick={() => timer.completeTimer()}
-                            aria-label="タスクを完了"
-                            className="p-1.5 rounded-full bg-emerald-500/15 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 focus:outline-none flex-shrink-0"
-                        >
-                            <Check className="w-3.5 h-3.5" />
-                        </button>
-                    </div>
-                    {/* Shimmer progress bar (loops every 8s to indicate running) */}
-                    <div className="h-[2px] bg-primary/20 overflow-hidden">
-                        <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_2s_linear_infinite] rounded-full" />
-                    </div>
-                </div>
-            )}
-
             {/* Calendar Day Grid */}
             <div
                 ref={gridRef}

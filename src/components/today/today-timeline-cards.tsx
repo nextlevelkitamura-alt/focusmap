@@ -69,37 +69,6 @@ export function TodayTimelineCards({
 
     return (
         <>
-            {/* Active Timer Banner */}
-            {timer.runningTask && (
-                <div className="mx-4 mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 dark:bg-primary/10 dark:border-primary/30">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
-                            <span className="text-sm font-medium truncate">{timer.runningTask.title}</span>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                            <span className="text-base font-mono font-bold text-primary tabular-nums">
-                                {formatTime(timer.currentElapsedSeconds)}
-                            </span>
-                            <button
-                                onClick={() => timer.pauseTimer()}
-                                aria-label="タイマーを一時停止"
-                                className="p-1.5 rounded-full bg-primary/10 hover:bg-primary/20 active:bg-primary/20 text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-                            >
-                                <Pause className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => timer.completeTimer()}
-                                aria-label="タスクを完了"
-                                className="p-1.5 rounded-full bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/20 text-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                            >
-                                <Check className="w-4 h-4" />
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* All-day Events (read-only, not imported as tasks) */}
             {allDayEvents.length > 0 && (
                 <div className="px-4 mt-3">

@@ -397,30 +397,6 @@ export function DesktopTodayPanel({
                 </div>
             ) : null}
 
-            {/* ④ Active Timer Banner */}
-            {activeTab === 'today' && logic.timer.runningTaskId && (
-                <div className="flex-shrink-0 border-b border-border/30 overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-1.5">
-                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse flex-shrink-0 shadow-[0_0_5px_rgba(var(--color-primary-rgb,99,102,241),0.7)]" />
-                        <span className="text-xs text-foreground flex-1 truncate">
-                            {runningTask?.title || 'タイマー実行中'}
-                        </span>
-                        <span className="text-xs font-mono text-primary font-bold tabular-nums flex-shrink-0">
-                            {formatTime(logic.timer.currentElapsedSeconds)}
-                        </span>
-                        <button
-                            onClick={() => logic.timer.pauseTimer()}
-                            className="p-1 rounded-full bg-primary/15 text-primary hover:bg-primary/25 transition-colors flex-shrink-0"
-                        >
-                            <Pause className="w-3 h-3" />
-                        </button>
-                    </div>
-                    <div className="h-[2px] bg-primary/15 overflow-hidden">
-                        <div className="h-full w-1/3 bg-primary/50 animate-[shimmer_2s_linear_infinite] rounded-full" />
-                    </div>
-                </div>
-            )}
-
             {/* ⑤ Timeline content */}
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
                 {/* Schedule summary */}
