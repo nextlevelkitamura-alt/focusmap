@@ -59,3 +59,5 @@ docs/env.md
 
 # Temp
 tmp/
+.playwright-mcp/
+supabase/.temp/
