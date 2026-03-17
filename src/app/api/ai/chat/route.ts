@@ -4,6 +4,7 @@ import { generateText, type ToolSet } from 'ai'
 import { getModelForSkill, getConfigForSkill, getModelForAgent, getConfigForAgent } from '@/lib/ai/providers'
 import { buildCoachSystemPrompt } from '@/lib/ai/agents/coach'
 import { buildProjectPMSystemPrompt } from '@/lib/ai/agents/project-pm'
+import { buildIdealCoachSystemPrompt, formatIdealGoalsForPrompt } from '@/lib/ai/agents/ideal-coach'
 import { getToolsForSkill, isToolEnabledSkill } from '@/lib/ai/tools'
 import { getFreeTimeContext } from '@/lib/free-time-context'
 import { orchestrate } from '@/lib/ai/agents/orchestrator'
@@ -709,6 +710,34 @@ export async function POST(request: Request) {
           ? buildCoachSystemPrompt(contextInjection, activeSkillId)
           : buildBrainstormPrompt(skillContext)
         break
+      case 'ideal-coach': {
+        // 理想像データをフェッチしてコーチプロンプトに注入
+        let idealGoalsContext = ''
+        try {
+          const { data: ideals } = await supabase
+            .from('ideal_goals')
+            .select('id, title, monthly_cost, ideal_items(title, daily_minutes, is_done)')
+            .eq('user_id', user.id)
+            .order('position')
+          if (ideals && ideals.length > 0) {
+            // daily_capacity_minutes を取得
+            const { data: ctxRow } = await supabase
+              .from('ai_user_context')
+              .select('preferences')
+              .eq('user_id', user.id)
+              .single()
+            const capacity = ctxRow?.preferences?.daily_capacity_minutes ?? 120
+            idealGoalsContext = formatIdealGoalsForPrompt(
+              ideals.map(g => ({ ...g, items: g.ideal_items ?? [] })),
+              capacity,
+            )
+          }
+        } catch {
+          // silent - コンテキスト取得失敗時は空で進める
+        }
+        systemPrompt = buildIdealCoachSystemPrompt(contextInjection, idealGoalsContext)
+        break
+      }
       default:
         // 未知のskillIdの場合、タスク管理にフォールバック（汎用性が高い）
         systemPrompt = buildTaskPrompt(skillContext)
@@ -718,7 +747,7 @@ export async function POST(request: Request) {
     const prompt = `${historyContext ? `## 会話履歴\n${historyContext}\n\n` : ''}ユーザー: ${message.trim()}`
 
     // Vercel AI SDK で生成（ツール有効スキルはエージェントループ付き）
-    const isAgentMode = agentId === 'coach' || agentId === 'project-pm'
+    const isAgentMode = agentId === 'coach' || agentId === 'project-pm' || agentId === 'ideal-coach'
     const skillConfig = isAgentMode ? getConfigForAgent(agentId) : getConfigForSkill(activeSkillId)
     const useTools = isToolEnabledSkill(activeSkillId)
     const tools = useTools ? getToolsForSkill(activeSkillId) as ToolSet : undefined

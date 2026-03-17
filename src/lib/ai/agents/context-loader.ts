@@ -19,6 +19,7 @@ const AGENT_LAYER_MAP: Record<AgentId, LayerKey[]> = {
   'daily-planner':   ['layer2', 'layer1'],
   strategist:        ['layer4', 'layer3'],
   'memory-guardian': ['layer4', 'layer3', 'layer2'],
+  'ideal-coach':     ['layer4', 'layer2'],
 }
 
 /**

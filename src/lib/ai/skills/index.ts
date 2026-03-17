@@ -79,6 +79,16 @@ export const SKILLS: SkillDefinition[] = [
     needsProjects: true,
     needsFreeTime: false,
   },
+  {
+    id: 'ideal-coach',
+    label: '理想コーチ',
+    icon: 'Star',
+    description: '理想像の壁打ち・コーチング',
+    contextCategories: ['life_personality', 'life_purpose', 'current_situation'],
+    needsCalendar: false,
+    needsProjects: false,
+    needsFreeTime: false,
+  },
 ]
 
 export function getSkillById(id: string): SkillDefinition | undefined {

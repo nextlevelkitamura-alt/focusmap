@@ -3,14 +3,17 @@
 import { useState, useEffect, useCallback } from "react"
 import { IdealBoard } from "./ideal-board"
 import { IdealItemsPanel } from "./ideal-items-panel"
+import { IdealChatPanel } from "./ideal-chat-panel"
 import { CapacityBar } from "./capacity-bar"
 import { IdealGoalWithItems } from "@/types/database"
+import { MessageCircle } from "lucide-react"
 
 export function IdealView() {
     const [ideals, setIdeals] = useState<IdealGoalWithItems[]>([])
     const [selectedIdealId, setSelectedIdealId] = useState<string | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [dailyCapacityMinutes, setDailyCapacityMinutes] = useState<number>(120)
+    const [isChatOpen, setIsChatOpen] = useState(false)
 
     const fetchIdeals = useCallback(async () => {
         try {
@@ -116,7 +119,25 @@ export function IdealView() {
                         />
                     </div>
                 )}
+
+                {/* チャットパネル（トグル時に表示） */}
+                {isChatOpen && (
+                    <div className="w-full md:w-80 lg:w-96 border-t md:border-t-0 md:border-l flex-shrink-0 overflow-hidden h-full">
+                        <IdealChatPanel onClose={() => setIsChatOpen(false)} />
+                    </div>
+                )}
             </div>
+
+            {/* チャットトグルボタン（フローティング） */}
+            {!isChatOpen && (
+                <button
+                    onClick={() => setIsChatOpen(true)}
+                    className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-40 flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-4 py-2.5 shadow-lg hover:opacity-90 transition-opacity"
+                >
+                    <MessageCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">理想コーチ</span>
+                </button>
+            )}
         </div>
     )
 }

@@ -18,6 +18,7 @@ const SKILL_TO_AGENT: Record<string, AgentId> = {
   counseling:             'coach',
   'project-consultation': 'project-pm',
   brainstorm:             'coach',   // Phase B で専用エージェント化予定
+  'ideal-coach':          'ideal-coach',
 }
 
 /**

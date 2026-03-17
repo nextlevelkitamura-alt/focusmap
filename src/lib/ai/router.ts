@@ -12,6 +12,7 @@ export function routeToSkill(message: string): string | null {
     counseling: 0,
     'project-consultation': 0,
     brainstorm: 0,
+    'ideal-coach': 0,
   }
 
   // --- scheduling ---
@@ -61,6 +62,14 @@ export function routeToSkill(message: string): string | null {
   if (brainstormStrong.test(text)) scores.brainstorm += 3
   if (brainstormMedium.test(text)) scores.brainstorm += 2
   if (brainstormWeak.test(text)) scores.brainstorm += 1
+
+  // --- ideal-coach ---
+  const idealCoachStrong = /理想|ビジョン|なりたい|ideal/i
+  const idealCoachMedium = /将来.*自分|目標達成|キャパ|時間配分|ビジョンボード/
+  const idealCoachWeak = /夢|未来|成長/
+  if (idealCoachStrong.test(text)) scores['ideal-coach'] += 3
+  if (idealCoachMedium.test(text)) scores['ideal-coach'] += 2
+  if (idealCoachWeak.test(text)) scores['ideal-coach'] += 1
 
   // 最高スコアのSkillを選択（閾値2以上で確定）
   const entries = Object.entries(scores)

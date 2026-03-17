@@ -11,6 +11,7 @@ export type AgentId =
   | 'strategist'
   | 'task-executor'    // 既存6スキルを束ねる後方互換エージェント
   | 'memory-guardian'
+  | 'ideal-coach'
 
 export interface AgentContext {
   agentId: AgentId

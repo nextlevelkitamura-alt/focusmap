@@ -4,8 +4,9 @@ import { useState } from "react"
 import { IdealGoalWithItems, IdealItem, IdealItemType, FrequencyType, calcDailyMinutes } from "@/types/database"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { X, Plus, CheckCircle2, Circle, Trash2, Clock, Wallet, Milestone } from "lucide-react"
+import { X, Plus, CheckCircle2, Circle, Trash2, Clock, Wallet, Milestone, Link2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { IdealItemLinkPicker } from "./ideal-item-link-picker"
 
 interface IdealItemsPanelProps {
     ideal: IdealGoalWithItems
@@ -37,6 +38,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newCost, setNewCost] = useState('')
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
     const [isSaving, setIsSaving] = useState(false)
+    const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
 
     const items = ideal.ideal_items ?? []
 
@@ -105,6 +107,18 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         return ''
     }
 
+    const handleLink = async (itemId: string, link: { taskId?: string | null; habitId?: string | null }) => {
+        await fetch(`/api/ideals/${ideal.id}/items/${itemId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                linked_task_id: link.taskId ?? null,
+                linked_habit_id: link.habitId ?? null,
+            }),
+        })
+        onItemsChanged()
+    }
+
     const getItemIcon = (type: string) => {
         if (type === 'cost') return <Wallet className="h-3.5 w-3.5 text-amber-500" />
         if (type === 'milestone') return <Milestone className="h-3.5 w-3.5 text-violet-500" />
@@ -160,13 +174,37 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                     {formatItemMeta(item)}
                                 </span>
                             </div>
+                            {/* リンクバッジ */}
+                            {(item.linked_task_id || item.linked_habit_id) && (
+                                <button
+                                    onClick={() => setLinkingItemId(item.id)}
+                                    className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] hover:bg-primary/20 transition-colors"
+                                >
+                                    <Link2 className="h-2.5 w-2.5" />
+                                    {item.linked_habit_id ? 'ハビット連携中' : 'タスク連携中'}
+                                </button>
+                            )}
                         </div>
-                        <button
-                            onClick={() => handleDelete(item)}
-                            className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        >
-                            <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                            <button
+                                onClick={() => setLinkingItemId(item.id)}
+                                className={cn(
+                                    "transition-opacity text-muted-foreground hover:text-primary",
+                                    item.linked_task_id || item.linked_habit_id
+                                        ? "opacity-100"
+                                        : "opacity-0 group-hover:opacity-100"
+                                )}
+                                title="タスク/ハビットにリンク"
+                            >
+                                <Link2 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                                onClick={() => handleDelete(item)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
                     </div>
                 ))}
 
@@ -281,6 +319,20 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                     </Button>
                 </div>
             )}
+
+            {/* リンクピッカーモーダル */}
+            {linkingItemId && (() => {
+                const linkingItem = items.find(i => i.id === linkingItemId)
+                if (!linkingItem) return null
+                return (
+                    <IdealItemLinkPicker
+                        currentTaskId={linkingItem.linked_task_id}
+                        currentHabitId={linkingItem.linked_habit_id}
+                        onSelect={(link) => handleLink(linkingItemId, link)}
+                        onClose={() => setLinkingItemId(null)}
+                    />
+                )
+            })()}
         </div>
     )
 }
