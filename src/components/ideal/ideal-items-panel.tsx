@@ -175,12 +175,12 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 {items.map(item => (
                     <div
                         key={item.id}
-                        className="group flex items-start gap-2.5 p-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                        className="group flex items-start gap-2.5 p-3 rounded-lg hover:bg-muted/50 active:bg-muted/70 cursor-pointer transition-colors"
                         onClick={() => setSelectedItemId(item.id)}
                     >
                         {/* サムネイル or チェックボックス */}
                         {item.thumbnail_url ? (
-                            <div className="w-10 h-10 rounded-md overflow-hidden flex-shrink-0 border border-border">
+                            <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 border border-border">
                                 <img src={item.thumbnail_url} alt="" className="w-full h-full object-cover" />
                             </div>
                         ) : (
@@ -189,8 +189,8 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 className="mt-0.5 flex-shrink-0"
                             >
                                 {item.is_done
-                                    ? <CheckCircle2 className="h-4 w-4 text-primary" />
-                                    : <Circle className="h-4 w-4 text-muted-foreground" />
+                                    ? <CheckCircle2 className="h-5 w-5 text-primary" />
+                                    : <Circle className="h-5 w-5 text-muted-foreground" />
                                 }
                             </button>
                         )}
@@ -239,26 +239,14 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 </button>
                             )}
                         </div>
-                        <div className="flex items-center gap-0.5 flex-shrink-0">
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setLinkingItemId(item.id) }}
-                                className={cn(
-                                    "transition-opacity text-muted-foreground hover:text-primary",
-                                    item.linked_task_id || item.linked_habit_id
-                                        ? "opacity-100"
-                                        : "opacity-0 group-hover:opacity-100"
-                                )}
-                                title="タスク/ハビットにリンク"
-                            >
-                                <Link2 className="h-3.5 w-3.5" />
-                            </button>
+                        <div className="flex items-center gap-1 flex-shrink-0">
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(item) }}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                                className="p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive active:bg-destructive/10 transition-colors"
                             >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-4 w-4" />
                             </button>
-                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            <ChevronRight className="h-4 w-4 text-muted-foreground/30" />
                         </div>
                     </div>
                 ))}

@@ -109,7 +109,7 @@ export function IdealView() {
             />
 
             {/* タブ切り替え */}
-            <div className="flex items-center gap-1 px-4 py-1.5 border-b flex-shrink-0">
+            <div className="flex items-center gap-1 px-4 py-2 border-b flex-shrink-0">
                 <TabButton
                     active={activeTab === 'board'}
                     onClick={() => setActiveTab('board')}
@@ -145,7 +145,7 @@ export function IdealView() {
                     </div>
 
                     {selectedIdeal && (
-                        <div className="w-full md:w-80 lg:w-96 border-t md:border-t-0 md:border-l flex-shrink-0 overflow-hidden">
+                        <div className="fixed inset-0 z-40 bg-background md:static md:inset-auto md:z-auto md:w-80 lg:w-96 md:border-l md:flex-shrink-0 overflow-hidden">
                             <IdealItemsPanel
                                 ideal={selectedIdeal}
                                 onItemsChanged={handleItemsChanged}
@@ -202,7 +202,7 @@ function TabButton({ active, onClick, icon, label }: {
         <button
             onClick={onClick}
             className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                "flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-colors",
                 active
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"

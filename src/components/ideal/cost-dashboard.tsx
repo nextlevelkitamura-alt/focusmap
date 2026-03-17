@@ -90,7 +90,7 @@ export function CostDashboard({ ideals }: CostDashboardProps) {
     return (
         <div className="space-y-4">
             {/* KPIカード */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <KpiCard label="月額" value={totalMonthlyAll} suffix="/月" />
                 <KpiCard label="一括費用" value={totalOnce} />
                 <KpiCard label="年間" value={totalMonthlyAll * 12 + totalOnce} />
@@ -103,14 +103,14 @@ export function CostDashboard({ ideals }: CostDashboardProps) {
                     <div className="rounded-xl border p-4">
                         <p className="text-xs font-medium text-muted-foreground mb-3">理想別コスト構成</p>
                         <div className="flex items-center justify-center">
-                            <ResponsiveContainer width={200} height={200}>
+                            <ResponsiveContainer width="100%" height={200}>
                                 <PieChart>
                                     <Pie
                                         data={pieData}
                                         cx="50%"
                                         cy="50%"
-                                        innerRadius={50}
-                                        outerRadius={80}
+                                        innerRadius={45}
+                                        outerRadius={75}
                                         dataKey="value"
                                         stroke="none"
                                     >
@@ -126,8 +126,8 @@ export function CostDashboard({ ideals }: CostDashboardProps) {
                         </div>
                         <div className="flex flex-wrap gap-2 justify-center mt-2">
                             {pieData.map((d, i) => (
-                                <span key={i} className="inline-flex items-center gap-1 text-[10px]">
-                                    <span className="w-2 h-2 rounded-full" style={{ background: d.color }} />
+                                <span key={i} className="inline-flex items-center gap-1 text-xs">
+                                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
                                     {d.name}
                                 </span>
                             ))}
@@ -174,7 +174,7 @@ export function CostDashboard({ ideals }: CostDashboardProps) {
                         {costItems
                             .sort((a, b) => b.monthlyEquiv - a.monthlyEquiv)
                             .map((item, i) => (
-                                <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b last:border-0">
+                                <div key={i} className="flex items-center justify-between text-sm py-2.5 border-b last:border-0">
                                     <div className="min-w-0">
                                         <span className="text-[10px] text-muted-foreground mr-1.5">{item.idealTitle}</span>
                                         <span className="truncate">{item.itemTitle}</span>

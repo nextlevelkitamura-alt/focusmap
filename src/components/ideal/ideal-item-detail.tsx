@@ -158,22 +158,22 @@ export function IdealItemDetail({ item, idealId, onBack, onItemChanged }: IdealI
                         {images.map((img, idx) => (
                             <div key={img.id} className="relative flex-shrink-0 group/thumb">
                                 <div
-                                    className="w-14 h-14 rounded-md overflow-hidden cursor-pointer border border-border hover:border-primary transition-colors"
+                                    className="w-16 h-16 rounded-md overflow-hidden cursor-pointer border border-border hover:border-primary active:border-primary transition-colors"
                                     onClick={() => setLightboxIndex(idx)}
                                 >
                                     <img src={img.image_url} alt={img.caption || ''} className="w-full h-full object-cover" />
                                 </div>
                                 <button
                                     onClick={() => handleDeleteImage(img)}
-                                    className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+                                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center shadow-sm"
                                 >
-                                    <X className="w-2.5 h-2.5" />
+                                    <X className="w-3 h-3" />
                                 </button>
                             </div>
                         ))}
                         <button
                             onClick={() => fileInputRef.current?.click()}
-                            className="w-14 h-14 rounded-md border-2 border-dashed border-muted-foreground/20 flex items-center justify-center hover:border-muted-foreground/40 transition-colors flex-shrink-0"
+                            className="w-16 h-16 rounded-md border-2 border-dashed border-muted-foreground/20 flex items-center justify-center hover:border-muted-foreground/40 active:border-primary transition-colors flex-shrink-0"
                             disabled={isUploading}
                         >
                             <Upload className="w-4 h-4 text-muted-foreground/40" />
@@ -278,7 +278,7 @@ export function IdealItemDetail({ item, idealId, onBack, onItemChanged }: IdealI
                         <AddCandidateButton idealId={idealId} itemId={item.id} onAdded={onItemChanged} />
                     </div>
                     {candidates.length > 0 ? (
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {candidates.map(c => (
                                 <CandidateCard
                                     key={c.id}
@@ -336,7 +336,7 @@ function EditableUrl({ url, onSave }: { url: string | null; onSave: (url: string
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-primary hover:underline text-xs truncate max-w-[200px]"
+                    className="text-primary hover:underline text-xs truncate max-w-[60vw]"
                 >
                     {url.replace(/^https?:\/\//, '').split('/')[0]}
                 </a>
@@ -368,42 +368,55 @@ function EditableCost({ cost, costType, onSave }: {
 
     if (isEditing) {
         return (
-            <div className="flex items-center gap-1">
-                <Wallet className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                <Input
-                    type="number"
-                    value={costValue}
-                    onChange={e => setCostValue(e.target.value)}
-                    placeholder="金額（円）"
-                    className="h-7 text-xs w-24"
-                    autoFocus
-                    onKeyDown={e => {
-                        if (e.key === 'Enter') {
+            <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                    <Input
+                        type="number"
+                        value={costValue}
+                        onChange={e => setCostValue(e.target.value)}
+                        placeholder="金額（円）"
+                        className="h-8 text-sm flex-1"
+                        autoFocus
+                        inputMode="numeric"
+                        onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                                onSave(costValue ? Number(costValue) : null, typeValue)
+                                setIsEditing(false)
+                            }
+                            if (e.key === 'Escape') setIsEditing(false)
+                        }}
+                    />
+                    <select
+                        value={typeValue}
+                        onChange={e => setTypeValue(e.target.value)}
+                        className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                    >
+                        <option value="once">一括</option>
+                        <option value="monthly">月払い</option>
+                        <option value="annual">年払い</option>
+                    </select>
+                </div>
+                <div className="flex gap-2 pl-5">
+                    <Button
+                        size="sm"
+                        className="h-8 text-xs px-4"
+                        onClick={() => {
                             onSave(costValue ? Number(costValue) : null, typeValue)
                             setIsEditing(false)
-                        }
-                        if (e.key === 'Escape') setIsEditing(false)
-                    }}
-                />
-                <select
-                    value={typeValue}
-                    onChange={e => setTypeValue(e.target.value)}
-                    className="h-7 rounded-md border border-input bg-background px-1 text-xs"
-                >
-                    <option value="once">一括</option>
-                    <option value="monthly">月払い</option>
-                    <option value="annual">年払い</option>
-                </select>
-                <Button
-                    size="sm"
-                    className="h-6 text-xs px-2"
-                    onClick={() => {
-                        onSave(costValue ? Number(costValue) : null, typeValue)
-                        setIsEditing(false)
-                    }}
-                >
-                    保存
-                </Button>
+                        }}
+                    >
+                        保存
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-xs px-3"
+                        onClick={() => setIsEditing(false)}
+                    >
+                        取消
+                    </Button>
+                </div>
             </div>
         )
     }
@@ -499,27 +512,27 @@ function CandidateCard({ candidate, idealId, itemId, onChanged }: {
                 </div>
             )}
             {/* ステータスボタン */}
-            <div className="flex gap-1 mt-1.5">
+            <div className="flex gap-1.5 mt-2">
                 {candidate.status !== 'selected' && (
                     <button
                         onClick={() => handleStatusChange('selected')}
-                        className="px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50 transition-colors"
+                        className="px-2.5 py-1 rounded-md bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 active:bg-green-200 dark:active:bg-green-900/50 transition-colors text-xs"
                     >
-                        <Check className="w-3 h-3 inline" /> 選定
+                        <Check className="w-3 h-3 inline mr-0.5" /> 選定
                     </button>
                 )}
                 {candidate.status !== 'rejected' && (
                     <button
                         onClick={() => handleStatusChange('rejected')}
-                        className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                        className="px-2.5 py-1 rounded-md bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 active:bg-red-200 dark:active:bg-red-900/50 transition-colors text-xs"
                     >
-                        <XIcon className="w-3 h-3 inline" /> 却下
+                        <XIcon className="w-3 h-3 inline mr-0.5" /> 却下
                     </button>
                 )}
                 {candidate.status !== 'considering' && (
                     <button
                         onClick={() => handleStatusChange('considering')}
-                        className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
+                        className="px-2.5 py-1 rounded-md bg-muted text-muted-foreground active:bg-muted/80 transition-colors text-xs"
                     >
                         検討中
                     </button>

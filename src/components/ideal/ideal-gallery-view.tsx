@@ -108,7 +108,7 @@ export function IdealGalleryView({ ideals, onItemsChanged }: IdealGalleryViewPro
             </div>
 
             {/* フッターサマリー */}
-            <div className="border-t px-4 py-2 flex items-center gap-4 text-xs text-muted-foreground flex-shrink-0">
+            <div className="border-t px-4 py-3 flex items-center gap-4 text-xs text-muted-foreground flex-shrink-0">
                 <span>月¥{totalMonthly.toLocaleString()}</span>
                 <span>1日{totalDailyMin}分</span>
                 <span>進捗 {totalItems > 0 ? Math.round((doneItems / totalItems) * 100) : 0}%</span>
@@ -152,9 +152,9 @@ function GalleryCard({ item, idealTitle, idealColor, onClick }: {
             ) : null}
 
             {/* テキスト情報 */}
-            <div className="p-2.5">
+            <div className="p-3">
                 {/* 理想名バッジ */}
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary mb-1 inline-block">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary mb-1 inline-block">
                     {idealTitle}
                 </span>
 
@@ -168,13 +168,13 @@ function GalleryCard({ item, idealTitle, idealColor, onClick }: {
                 {/* メタ情報 */}
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     {item.scheduled_date && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
                             <Calendar className="w-2.5 h-2.5" />
                             {new Date(item.scheduled_date + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
                         </span>
                     )}
                     {item.item_cost && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
                             <Wallet className="w-2.5 h-2.5" />
                             ¥{item.item_cost.toLocaleString()}
                             {item.cost_type === 'monthly' && '/月'}
@@ -182,7 +182,7 @@ function GalleryCard({ item, idealTitle, idealColor, onClick }: {
                         </span>
                     )}
                     {item.session_minutes > 0 && item.item_type !== 'cost' && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
                             <Clock className="w-2.5 h-2.5" />
                             {item.frequency_type === 'daily' ? `毎日${item.session_minutes}分` : `${item.session_minutes}分`}
                         </span>
@@ -210,7 +210,7 @@ function GalleryCard({ item, idealTitle, idealColor, onClick }: {
                         <FileText className="w-3 h-3 text-muted-foreground/40" />
                     )}
                     {hasImage && item.ideal_item_images.length > 1 && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/40">
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground/40">
                             <ImageIcon className="w-3 h-3" />
                             {item.ideal_item_images.length}
                         </span>
