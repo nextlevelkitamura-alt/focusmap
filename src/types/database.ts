@@ -751,6 +751,11 @@ export interface Database {
                     linked_task_id: string | null
                     linked_habit_id: string | null
                     display_order: number
+                    description: string | null
+                    scheduled_date: string | null
+                    reference_url: string | null
+                    thumbnail_url: string | null
+                    thumbnail_path: string | null
                     created_at: string
                     updated_at: string
                 }
@@ -770,6 +775,11 @@ export interface Database {
                     linked_task_id?: string | null
                     linked_habit_id?: string | null
                     display_order?: number
+                    description?: string | null
+                    scheduled_date?: string | null
+                    reference_url?: string | null
+                    thumbnail_url?: string | null
+                    thumbnail_path?: string | null
                     created_at?: string
                     updated_at?: string
                 }
@@ -789,6 +799,11 @@ export interface Database {
                     linked_task_id?: string | null
                     linked_habit_id?: string | null
                     display_order?: number
+                    description?: string | null
+                    scheduled_date?: string | null
+                    reference_url?: string | null
+                    thumbnail_url?: string | null
+                    thumbnail_path?: string | null
                     updated_at?: string
                 }
             }
@@ -825,6 +840,124 @@ export interface Database {
                     file_type?: string
                     file_size?: number
                     created_at?: string
+                }
+            }
+            ideal_item_images: {
+                Row: {
+                    id: string
+                    item_id: string
+                    user_id: string
+                    image_url: string
+                    storage_path: string
+                    caption: string | null
+                    display_order: number
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    item_id: string
+                    user_id: string
+                    image_url: string
+                    storage_path: string
+                    caption?: string | null
+                    display_order?: number
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    item_id?: string
+                    user_id?: string
+                    image_url?: string
+                    storage_path?: string
+                    caption?: string | null
+                    display_order?: number
+                    created_at?: string
+                }
+            }
+            ideal_candidates: {
+                Row: {
+                    id: string
+                    item_id: string
+                    user_id: string
+                    title: string
+                    url: string | null
+                    image_url: string | null
+                    image_path: string | null
+                    price: number | null
+                    pros: string | null
+                    cons: string | null
+                    rating: number | null
+                    status: string
+                    display_order: number
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    item_id: string
+                    user_id: string
+                    title: string
+                    url?: string | null
+                    image_url?: string | null
+                    image_path?: string | null
+                    price?: number | null
+                    pros?: string | null
+                    cons?: string | null
+                    rating?: number | null
+                    status?: string
+                    display_order?: number
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    item_id?: string
+                    user_id?: string
+                    title?: string
+                    url?: string | null
+                    image_url?: string | null
+                    image_path?: string | null
+                    price?: number | null
+                    pros?: string | null
+                    cons?: string | null
+                    rating?: number | null
+                    status?: string
+                    display_order?: number
+                    updated_at?: string
+                }
+            }
+            ideal_item_completions: {
+                Row: {
+                    id: string
+                    ideal_item_id: string
+                    user_id: string
+                    completed_date: string
+                    is_completed: boolean
+                    elapsed_minutes: number
+                    note: string | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    ideal_item_id: string
+                    user_id: string
+                    completed_date: string
+                    is_completed?: boolean
+                    elapsed_minutes?: number
+                    note?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    ideal_item_id?: string
+                    user_id?: string
+                    completed_date?: string
+                    is_completed?: boolean
+                    elapsed_minutes?: number
+                    note?: string | null
+                    updated_at?: string
                 }
             }
             user_calendars: {
@@ -941,6 +1074,18 @@ export type IdealItemUpdate = Database['public']['Tables']['ideal_items']['Updat
 export type IdealAttachment = Database['public']['Tables']['ideal_attachments']['Row']
 export type IdealAttachmentInsert = Database['public']['Tables']['ideal_attachments']['Insert']
 
+export type IdealItemImage = Database['public']['Tables']['ideal_item_images']['Row']
+export type IdealItemImageInsert = Database['public']['Tables']['ideal_item_images']['Insert']
+
+export type IdealCandidate = Database['public']['Tables']['ideal_candidates']['Row']
+export type IdealCandidateInsert = Database['public']['Tables']['ideal_candidates']['Insert']
+export type IdealCandidateUpdate = Database['public']['Tables']['ideal_candidates']['Update']
+
+export type IdealItemCompletion = Database['public']['Tables']['ideal_item_completions']['Row']
+export type IdealItemCompletionInsert = Database['public']['Tables']['ideal_item_completions']['Insert']
+
+export type CandidateStatus = 'considering' | 'selected' | 'rejected'
+
 // ideal_items の item_type
 export type IdealItemType = 'habit' | 'action' | 'cost' | 'milestone'
 // ideal_items / ideal_goals の frequency_type
@@ -950,6 +1095,17 @@ export type IdealGoalStatus = 'active' | 'achieved' | 'archived'
 
 // IdealGoal に ideal_items を JOIN した拡張型
 export type IdealGoalWithItems = IdealGoal & { ideal_items: IdealItem[] }
+
+// IdealItem に images と candidates を JOIN した拡張型
+export type IdealItemWithDetails = IdealItem & {
+    ideal_item_images: IdealItemImage[]
+    ideal_candidates: IdealCandidate[]
+}
+
+// IdealGoal に詳細なアイテムを JOIN した拡張型
+export type IdealGoalFull = IdealGoal & { ideal_items: IdealItemWithDetails[] }
+
+export type CostType = 'once' | 'monthly' | 'annual'
 
 /** daily_minutes の正規化計算 */
 export function calcDailyMinutes(
@@ -962,5 +1118,30 @@ export function calcDailyMinutes(
         case 'weekly':  return Math.round(sessionMinutes * frequencyValue / 7)
         case 'monthly': return Math.round(sessionMinutes * frequencyValue / 30)
         default:        return 0
+    }
+}
+
+/** コストの月額換算（円） */
+export function calcMonthlyCost(
+    costType: CostType,
+    itemCost: number,
+    durationMonths: number | null
+): number {
+    switch (costType) {
+        case 'monthly': return itemCost
+        case 'annual':  return Math.round(itemCost / 12)
+        case 'once':    return Math.round(itemCost / (durationMonths ?? 12))
+    }
+}
+
+/** コストの年額換算（円） */
+export function calcAnnualCost(
+    costType: CostType,
+    itemCost: number,
+): number {
+    switch (costType) {
+        case 'monthly': return itemCost * 12
+        case 'annual':  return itemCost
+        case 'once':    return itemCost
     }
 }

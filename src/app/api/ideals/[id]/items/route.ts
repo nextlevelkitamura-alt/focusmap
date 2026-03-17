@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { calcDailyMinutes, FrequencyType } from '@/types/database'
+import { calcDailyMinutes, calcMonthlyCost, calcAnnualCost, FrequencyType, CostType } from '@/types/database'
 
 /**
  * GET /api/ideals/[id]/items
@@ -116,8 +116,9 @@ export async function POST(
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // ideal_goals の total_daily_minutes を再集計して更新
+  // ideal_goals の total_daily_minutes + コストを再集計して更新
   await recalcTotalDailyMinutes(supabase, idealId, user.id)
+  await recalcCostSummary(supabase, idealId, user.id)
 
   return NextResponse.json({ item }, { status: 201 })
 }
@@ -139,6 +140,59 @@ async function recalcTotalDailyMinutes(
   await supabase
     .from('ideal_goals')
     .update({ total_daily_minutes: total })
+    .eq('id', idealId)
+    .eq('user_id', userId)
+}
+
+/** ideal_goals.cost_total / cost_monthly を ideal_items + candidates から再計算 */
+async function recalcCostSummary(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  idealId: string,
+  userId: string
+) {
+  const { data: goal } = await supabase
+    .from('ideal_goals')
+    .select('duration_months')
+    .eq('id', idealId)
+    .single()
+
+  const { data: items } = await supabase
+    .from('ideal_items')
+    .select('item_cost, cost_type')
+    .eq('ideal_id', idealId)
+    .eq('user_id', userId)
+    .not('item_cost', 'is', null)
+
+  // selected な候補の price も集計
+  const { data: selectedCandidates } = await supabase
+    .from('ideal_candidates')
+    .select('price, ideal_items!inner(ideal_id)')
+    .eq('status', 'selected')
+    .eq('user_id', userId)
+    .not('price', 'is', null)
+
+  let costMonthly = 0
+  let costTotal = 0
+
+  for (const item of items ?? []) {
+    if (item.item_cost && item.cost_type) {
+      costMonthly += calcMonthlyCost(item.cost_type as CostType, item.item_cost, goal?.duration_months ?? null)
+      costTotal += calcAnnualCost(item.cost_type as CostType, item.item_cost)
+    }
+  }
+
+  // 候補の価格は一括として加算
+  for (const cand of selectedCandidates ?? []) {
+    const candItem = (cand as unknown as { ideal_items: { ideal_id: string } }).ideal_items
+    if (candItem?.ideal_id === idealId && cand.price) {
+      costMonthly += calcMonthlyCost('once', cand.price, goal?.duration_months ?? null)
+      costTotal += cand.price
+    }
+  }
+
+  await supabase
+    .from('ideal_goals')
+    .update({ cost_total: costTotal, cost_monthly: costMonthly })
     .eq('id', idealId)
     .eq('user_id', userId)
 }

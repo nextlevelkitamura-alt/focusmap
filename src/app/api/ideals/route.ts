@@ -14,7 +14,7 @@ export async function GET(_request: NextRequest) {
 
   const { data, error } = await supabase
     .from('ideal_goals')
-    .select('*, ideal_items(*)')
+    .select('*, ideal_items(*, ideal_item_images(*), ideal_candidates(*))')
     .eq('user_id', user.id)
     .order('display_order', { ascending: true })
     .order('created_at', { referencedTable: 'ideal_items', ascending: true })

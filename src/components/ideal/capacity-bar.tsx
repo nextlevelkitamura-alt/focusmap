@@ -9,6 +9,7 @@ interface CapacityBarProps {
     ideals: IdealGoalWithItems[]
     dailyCapacityMinutes?: number
     onCapacityChange?: (minutes: number) => void
+    todayElapsedMinutes?: number
 }
 
 // カテゴリ別カラー
@@ -22,7 +23,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const DEFAULT_CAPACITY = 120 // 分
 
-export function CapacityBar({ ideals, dailyCapacityMinutes, onCapacityChange }: CapacityBarProps) {
+export function CapacityBar({ ideals, dailyCapacityMinutes, onCapacityChange, todayElapsedMinutes = 0 }: CapacityBarProps) {
     const [isEditing, setIsEditing] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
 
@@ -100,7 +101,7 @@ export function CapacityBar({ ideals, dailyCapacityMinutes, onCapacityChange }: 
                     {ratio >= 1.0 && <span className="ml-1">⚠ キャパオーバー</span>}
                 </span>
             </div>
-            {/* バー */}
+            {/* 計画バー */}
             <div className="h-1 rounded-full bg-muted overflow-hidden">
                 <div
                     className={cn(
@@ -113,6 +114,19 @@ export function CapacityBar({ ideals, dailyCapacityMinutes, onCapacityChange }: 
                     style={{ width: `${Math.min(ratio * 100, 100)}%` }}
                 />
             </div>
+            {/* 実績バー */}
+            {todayElapsedMinutes > 0 && (
+                <div className="mt-0.5 flex items-center gap-1.5">
+                    <span className="text-[10px] text-muted-foreground">実績</span>
+                    <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+                        <div
+                            className="h-full rounded-full bg-primary/60 transition-all"
+                            style={{ width: `${Math.min((todayElapsedMinutes / capacity) * 100, 100)}%` }}
+                        />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground tabular-nums">{todayElapsedMinutes}分</span>
+                </div>
+            )}
         </div>
     )
 }

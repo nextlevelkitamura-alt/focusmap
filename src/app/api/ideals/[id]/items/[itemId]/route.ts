@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { calcDailyMinutes, FrequencyType } from '@/types/database'
+import { calcDailyMinutes, calcMonthlyCost, calcAnnualCost, FrequencyType, CostType } from '@/types/database'
 
 /**
  * PATCH /api/ideals/[id]/items/[itemId]
@@ -22,6 +22,7 @@ export async function PATCH(
     'title', 'item_type', 'frequency_type', 'frequency_value',
     'session_minutes', 'item_cost', 'cost_type', 'is_done',
     'linked_task_id', 'linked_habit_id', 'display_order',
+    'description', 'scheduled_date', 'reference_url',
   ]
   const updates: Record<string, unknown> = {}
   for (const field of allowedFields) {
@@ -69,6 +70,12 @@ export async function PATCH(
     await recalcTotalDailyMinutes(supabase, idealId, user.id)
   }
 
+  // コスト関連フィールドが変わった場合はコスト再集計
+  const needsCostRecalc = ['item_cost', 'cost_type'].some(f => f in body)
+  if (needsCostRecalc) {
+    await recalcCostSummary(supabase, idealId, user.id)
+  }
+
   return NextResponse.json({ item })
 }
 
@@ -97,8 +104,9 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // total_daily_minutes を再集計
+  // total_daily_minutes + コストを再集計
   await recalcTotalDailyMinutes(supabase, idealId, user.id)
+  await recalcCostSummary(supabase, idealId, user.id)
 
   return NextResponse.json({ success: true })
 }
@@ -119,6 +127,41 @@ async function recalcTotalDailyMinutes(
   await supabase
     .from('ideal_goals')
     .update({ total_daily_minutes: total })
+    .eq('id', idealId)
+    .eq('user_id', userId)
+}
+
+async function recalcCostSummary(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  idealId: string,
+  userId: string
+) {
+  const { data: goal } = await supabase
+    .from('ideal_goals')
+    .select('duration_months')
+    .eq('id', idealId)
+    .single()
+
+  const { data: items } = await supabase
+    .from('ideal_items')
+    .select('item_cost, cost_type')
+    .eq('ideal_id', idealId)
+    .eq('user_id', userId)
+    .not('item_cost', 'is', null)
+
+  let costMonthly = 0
+  let costTotal = 0
+
+  for (const item of items ?? []) {
+    if (item.item_cost && item.cost_type) {
+      costMonthly += calcMonthlyCost(item.cost_type as CostType, item.item_cost, goal?.duration_months ?? null)
+      costTotal += calcAnnualCost(item.cost_type as CostType, item.item_cost)
+    }
+  }
+
+  await supabase
+    .from('ideal_goals')
+    .update({ cost_total: costTotal, cost_monthly: costMonthly })
     .eq('id', idealId)
     .eq('user_id', userId)
 }

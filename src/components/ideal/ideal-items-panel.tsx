@@ -1,12 +1,13 @@
 "use client"
 
 import { useState } from "react"
-import { IdealGoalWithItems, IdealItem, IdealItemType, FrequencyType, calcDailyMinutes } from "@/types/database"
+import { IdealGoalWithItems, IdealItem, IdealItemWithDetails, IdealItemType, FrequencyType, calcDailyMinutes } from "@/types/database"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { X, Plus, CheckCircle2, Circle, Trash2, Clock, Wallet, Milestone, Link2 } from "lucide-react"
+import { X, Plus, CheckCircle2, Circle, Trash2, Clock, Wallet, Milestone, Link2, Calendar, ImageIcon, FileText, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { IdealItemLinkPicker } from "./ideal-item-link-picker"
+import { IdealItemDetail } from "./ideal-item-detail"
 
 interface IdealItemsPanelProps {
     ideal: IdealGoalWithItems
@@ -39,8 +40,33 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
     const [isSaving, setIsSaving] = useState(false)
     const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
+    const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
 
     const items = ideal.ideal_items ?? []
+
+    // アイテム詳細ドリルダウン
+    const selectedItem = selectedItemId ? items.find(i => i.id === selectedItemId) : null
+    if (selectedItem) {
+        // IdealItemWithDetails として扱う（images/candidates は親から渡される or デフォルト空）
+        const itemWithDetails: IdealItemWithDetails = {
+            ...selectedItem,
+            ideal_item_images: (selectedItem as IdealItemWithDetails).ideal_item_images ?? [],
+            ideal_candidates: (selectedItem as IdealItemWithDetails).ideal_candidates ?? [],
+        }
+        return (
+            <IdealItemDetail
+                item={itemWithDetails}
+                idealId={ideal.id}
+                onBack={() => setSelectedItemId(null)}
+                onItemChanged={onItemChanged}
+            />
+        )
+    }
+
+    function onItemChanged() {
+        onItemsChanged()
+        // 詳細から戻った後もデータリフレッシュ
+    }
 
     const handleToggleDone = async (item: IdealItem) => {
         await fetch(`/api/ideals/${ideal.id}/items/${item.id}`, {
@@ -148,17 +174,25 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 {items.map(item => (
                     <div
                         key={item.id}
-                        className="group flex items-start gap-2 p-2 rounded-lg hover:bg-muted/50"
+                        className="group flex items-start gap-2.5 p-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                        onClick={() => setSelectedItemId(item.id)}
                     >
-                        <button
-                            onClick={() => handleToggleDone(item)}
-                            className="mt-0.5 flex-shrink-0"
-                        >
-                            {item.is_done
-                                ? <CheckCircle2 className="h-4 w-4 text-primary" />
-                                : <Circle className="h-4 w-4 text-muted-foreground" />
-                            }
-                        </button>
+                        {/* サムネイル or チェックボックス */}
+                        {item.thumbnail_url ? (
+                            <div className="w-10 h-10 rounded-md overflow-hidden flex-shrink-0 border border-border">
+                                <img src={item.thumbnail_url} alt="" className="w-full h-full object-cover" />
+                            </div>
+                        ) : (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleToggleDone(item) }}
+                                className="mt-0.5 flex-shrink-0"
+                            >
+                                {item.is_done
+                                    ? <CheckCircle2 className="h-4 w-4 text-primary" />
+                                    : <Circle className="h-4 w-4 text-muted-foreground" />
+                                }
+                            </button>
+                        )}
                         <div className="flex-1 min-w-0">
                             <p className={cn(
                                 "text-sm",
@@ -166,18 +200,37 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                             )}>
                                 {item.title}
                             </p>
-                            <div className="flex items-center gap-1 mt-0.5">
-                                {getItemIcon(item.item_type)}
-                                <span className="text-[10px] text-muted-foreground">
-                                    {ITEM_TYPE_LABELS[item.item_type as IdealItemType] ?? item.item_type}
-                                    {' · '}
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                {/* 予定日 */}
+                                {item.scheduled_date && (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                        <Calendar className="h-2.5 w-2.5" />
+                                        {new Date(item.scheduled_date + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
+                                    </span>
+                                )}
+                                {/* コスト or 時間 */}
+                                <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                    {getItemIcon(item.item_type)}
                                     {formatItemMeta(item)}
                                 </span>
+                                {/* 画像あり */}
+                                {(item as IdealItemWithDetails).ideal_item_images?.length > 0 && (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                        <ImageIcon className="h-2.5 w-2.5" />
+                                        {(item as IdealItemWithDetails).ideal_item_images.length}
+                                    </span>
+                                )}
+                                {/* メモあり */}
+                                {item.description && (
+                                    <span className="text-[10px] text-muted-foreground">
+                                        <FileText className="h-2.5 w-2.5 inline" />
+                                    </span>
+                                )}
                             </div>
                             {/* リンクバッジ */}
                             {(item.linked_task_id || item.linked_habit_id) && (
                                 <button
-                                    onClick={() => setLinkingItemId(item.id)}
+                                    onClick={(e) => { e.stopPropagation(); setLinkingItemId(item.id) }}
                                     className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] hover:bg-primary/20 transition-colors"
                                 >
                                     <Link2 className="h-2.5 w-2.5" />
@@ -187,7 +240,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                         </div>
                         <div className="flex items-center gap-0.5 flex-shrink-0">
                             <button
-                                onClick={() => setLinkingItemId(item.id)}
+                                onClick={(e) => { e.stopPropagation(); setLinkingItemId(item.id) }}
                                 className={cn(
                                     "transition-opacity text-muted-foreground hover:text-primary",
                                     item.linked_task_id || item.linked_habit_id
@@ -199,11 +252,12 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 <Link2 className="h-3.5 w-3.5" />
                             </button>
                             <button
-                                onClick={() => handleDelete(item)}
+                                onClick={(e) => { e.stopPropagation(); handleDelete(item) }}
                                 className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                             >
                                 <Trash2 className="h-3.5 w-3.5" />
                             </button>
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
                     </div>
                 ))}
