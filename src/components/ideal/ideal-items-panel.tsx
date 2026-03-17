@@ -97,8 +97,9 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 body.session_minutes = newSessionMin
                 body.daily_minutes = calcDailyMinutes(newFreqType, newFreqValue, newSessionMin)
             }
-            if (newType === 'cost') {
-                body.item_cost = newCost ? Number(newCost) : null
+            // コストはどのタイプでも設定可能
+            if (newCost) {
+                body.item_cost = Number(newCost)
                 body.cost_type = newCostType
             }
 
@@ -325,28 +326,26 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                             </div>
                         )}
 
-                        {/* 費用設定（cost） */}
-                        {newType === 'cost' && (
-                            <div className="grid grid-cols-2 gap-2">
-                                <Input
-                                    type="number"
-                                    min={0}
-                                    placeholder="金額（円）"
-                                    value={newCost}
-                                    onChange={e => setNewCost(e.target.value)}
-                                    className="h-8 text-xs"
-                                />
-                                <select
-                                    value={newCostType}
-                                    onChange={e => setNewCostType(e.target.value as 'once' | 'monthly' | 'annual')}
-                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                                >
-                                    <option value="once">一括</option>
-                                    <option value="monthly">月払い</option>
-                                    <option value="annual">年払い</option>
-                                </select>
-                            </div>
-                        )}
+                        {/* 費用設定（全タイプ共通） */}
+                        <div className="grid grid-cols-2 gap-2">
+                            <Input
+                                type="number"
+                                min={0}
+                                placeholder="金額（円・任意）"
+                                value={newCost}
+                                onChange={e => setNewCost(e.target.value)}
+                                className="h-8 text-xs"
+                            />
+                            <select
+                                value={newCostType}
+                                onChange={e => setNewCostType(e.target.value as 'once' | 'monthly' | 'annual')}
+                                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                            >
+                                <option value="once">一括</option>
+                                <option value="monthly">月払い</option>
+                                <option value="annual">年払い</option>
+                            </select>
+                        </div>
 
                         <div className="flex gap-2">
                             <Button size="sm" onClick={handleAddItem} disabled={isSaving || !newTitle.trim()} className="flex-1">

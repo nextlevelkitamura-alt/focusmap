@@ -99,6 +99,15 @@ export function IdealItemDetail({ item, idealId, onBack, onItemChanged }: IdealI
         onItemChanged()
     }
 
+    const handleSaveCost = async (cost: number | null, costType: string) => {
+        await fetch(`/api/ideals/${idealId}/items/${item.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_cost: cost, cost_type: costType }),
+        })
+        onItemChanged()
+    }
+
     const handleSaveUrl = async (url: string) => {
         await fetch(`/api/ideals/${idealId}/items/${item.id}`, {
             method: 'PATCH',
@@ -206,13 +215,12 @@ export function IdealItemDetail({ item, idealId, onBack, onItemChanged }: IdealI
                         )}
                     </div>
 
-                    {/* コスト */}
-                    {item.item_cost && (
-                        <div className="flex items-center gap-2 text-sm">
-                            <Wallet className="w-3.5 h-3.5 text-muted-foreground" />
-                            <span className="font-medium">{formatCost(item.item_cost, item.cost_type)}</span>
-                        </div>
-                    )}
+                    {/* コスト（編集可能） */}
+                    <EditableCost
+                        cost={item.item_cost}
+                        costType={item.cost_type}
+                        onSave={handleSaveCost}
+                    />
 
                     {/* 参考URL */}
                     <EditableUrl
@@ -343,6 +351,79 @@ function EditableUrl({ url, onSave }: { url: string | null; onSave: (url: string
             {url && (
                 <button onClick={() => setIsEditing(true)} className="text-xs text-muted-foreground hover:text-foreground">
                     編集
+                </button>
+            )}
+        </div>
+    )
+}
+
+function EditableCost({ cost, costType, onSave }: {
+    cost: number | null
+    costType: string | null
+    onSave: (cost: number | null, costType: string) => void
+}) {
+    const [isEditing, setIsEditing] = useState(false)
+    const [costValue, setCostValue] = useState(cost?.toString() || '')
+    const [typeValue, setTypeValue] = useState(costType || 'once')
+
+    if (isEditing) {
+        return (
+            <div className="flex items-center gap-1">
+                <Wallet className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                <Input
+                    type="number"
+                    value={costValue}
+                    onChange={e => setCostValue(e.target.value)}
+                    placeholder="金額（円）"
+                    className="h-7 text-xs w-24"
+                    autoFocus
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                            onSave(costValue ? Number(costValue) : null, typeValue)
+                            setIsEditing(false)
+                        }
+                        if (e.key === 'Escape') setIsEditing(false)
+                    }}
+                />
+                <select
+                    value={typeValue}
+                    onChange={e => setTypeValue(e.target.value)}
+                    className="h-7 rounded-md border border-input bg-background px-1 text-xs"
+                >
+                    <option value="once">一括</option>
+                    <option value="monthly">月払い</option>
+                    <option value="annual">年払い</option>
+                </select>
+                <Button
+                    size="sm"
+                    className="h-6 text-xs px-2"
+                    onClick={() => {
+                        onSave(costValue ? Number(costValue) : null, typeValue)
+                        setIsEditing(false)
+                    }}
+                >
+                    保存
+                </Button>
+            </div>
+        )
+    }
+
+    return (
+        <div className="flex items-center gap-2 text-sm">
+            <Wallet className="w-3.5 h-3.5 text-muted-foreground" />
+            {cost ? (
+                <>
+                    <span className="font-medium">{formatCost(cost, costType)}</span>
+                    <button onClick={() => setIsEditing(true)} className="text-xs text-muted-foreground hover:text-foreground">
+                        編集
+                    </button>
+                </>
+            ) : (
+                <button
+                    onClick={() => setIsEditing(true)}
+                    className="text-xs text-muted-foreground/50 hover:text-muted-foreground"
+                >
+                    コストを設定
                 </button>
             )}
         </div>
