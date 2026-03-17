@@ -32,21 +32,61 @@ cd /Users/kitamuranaohiro/Private/P\ dev/shikumika-app
 supabase link --project-ref whsjsscgmkkkzgcwxjko
 ```
 
+## ✅ マイグレーション適用（推奨: Management API経由）
+
+**このプロジェクトでは Management API + アクセストークンでマイグレーションを適用する。**
+`supabase db push` はCLI管理テーブルの同期問題が起きやすいため、基本的に使わない。
+
+### 手順
+
+```bash
+# 1. SQLファイルを読み込んでAPIで実行
+SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec"
+SQL=$(cat supabase/migrations/<ファイル名>.sql)
+
+curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
+  -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"query\": $(echo "$SQL" | jq -Rs .)}"
+```
+
+### 新しいマイグレーションファイルの命名規則
+
+```
+supabase/migrations/YYYYMMDD_<説明>.sql
+```
+
+例: `supabase/migrations/20260316_create_ideal_goals.sql`
+
+### スクリプト（一括適用）
+
+```bash
+# 単一ファイルを適用するヘルパー
+apply_migration() {
+  local file="$1"
+  local token="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec"
+  local sql=$(cat "$file")
+  echo "Applying: $file"
+  curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": $(echo "$sql" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}"
+  echo ""
+}
+
+# 使用例
+apply_migration supabase/migrations/20260316_create_ideal_goals.sql
+```
+
 ## よく使うコマンド
 
-### DB操作
+### DB操作（CLIが必要な場合のみ）
 
 ```bash
 # マイグレーション一覧（リモートで適用済みかを確認）
-supabase migration list
+SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec" supabase migration list
 
-# 新しいマイグレーションを作成
-supabase migration new <名前>
-# → supabase/migrations/YYYYMMDDHHMMSS_<名前>.sql が作成される
-
-# リモートにプッシュ（新しいマイグレーションのみ）
-SUPABASE_ACCESS_TOKEN="<トークン>" supabase db push
-# ※ 既存マイグレーションが未記録の場合はエラーになることがある（下記「トラブルシューティング」参照）
+# ※ db push は管理テーブルとのズレが起きやすいため、上記Management API方式を優先する
 ```
 
 ### テーブルが存在するか確認（APIで）
@@ -101,7 +141,7 @@ done
 Management API を使って直接SQL実行が最も確実：
 
 ```bash
-SUPABASE_ACCESS_TOKEN="sbp_b878806b791cf66230e7b6e6e38884099078f5f7"
+SUPABASE_ACCESS_TOKEN="sbp_153e6bbaf018843eafeb2f8dea524378da7761ec"
 curl -s -X POST "https://api.supabase.com/v1/projects/whsjsscgmkkkzgcwxjko/database/query" \
   -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \

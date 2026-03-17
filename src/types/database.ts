@@ -670,6 +670,163 @@ export interface Database {
                     created_at?: string
                 }
             }
+            ideal_goals: {
+                Row: {
+                    id: string
+                    user_id: string
+                    title: string
+                    description: string | null
+                    cover_image_url: string | null
+                    cover_image_path: string | null
+                    category: string | null
+                    color: string
+                    status: string
+                    display_order: number
+                    duration_months: number | null
+                    start_date: string | null
+                    target_date: string | null
+                    total_daily_minutes: number
+                    cost_total: number | null
+                    cost_monthly: number | null
+                    ai_summary: string | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    title: string
+                    description?: string | null
+                    cover_image_url?: string | null
+                    cover_image_path?: string | null
+                    category?: string | null
+                    color?: string
+                    status?: string
+                    display_order?: number
+                    duration_months?: number | null
+                    start_date?: string | null
+                    target_date?: string | null
+                    total_daily_minutes?: number
+                    cost_total?: number | null
+                    cost_monthly?: number | null
+                    ai_summary?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    title?: string
+                    description?: string | null
+                    cover_image_url?: string | null
+                    cover_image_path?: string | null
+                    category?: string | null
+                    color?: string
+                    status?: string
+                    display_order?: number
+                    duration_months?: number | null
+                    start_date?: string | null
+                    target_date?: string | null
+                    total_daily_minutes?: number
+                    cost_total?: number | null
+                    cost_monthly?: number | null
+                    ai_summary?: string | null
+                    updated_at?: string
+                }
+            }
+            ideal_items: {
+                Row: {
+                    id: string
+                    ideal_id: string
+                    user_id: string
+                    title: string
+                    item_type: string
+                    frequency_type: string
+                    frequency_value: number
+                    session_minutes: number
+                    daily_minutes: number
+                    item_cost: number | null
+                    cost_type: string | null
+                    is_done: boolean
+                    linked_task_id: string | null
+                    linked_habit_id: string | null
+                    display_order: number
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    ideal_id: string
+                    user_id: string
+                    title: string
+                    item_type?: string
+                    frequency_type?: string
+                    frequency_value?: number
+                    session_minutes?: number
+                    daily_minutes?: number
+                    item_cost?: number | null
+                    cost_type?: string | null
+                    is_done?: boolean
+                    linked_task_id?: string | null
+                    linked_habit_id?: string | null
+                    display_order?: number
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    ideal_id?: string
+                    user_id?: string
+                    title?: string
+                    item_type?: string
+                    frequency_type?: string
+                    frequency_value?: number
+                    session_minutes?: number
+                    daily_minutes?: number
+                    item_cost?: number | null
+                    cost_type?: string | null
+                    is_done?: boolean
+                    linked_task_id?: string | null
+                    linked_habit_id?: string | null
+                    display_order?: number
+                    updated_at?: string
+                }
+            }
+            ideal_attachments: {
+                Row: {
+                    id: string
+                    user_id: string
+                    ideal_id: string
+                    file_name: string
+                    file_url: string
+                    storage_path: string
+                    file_type: string
+                    file_size: number
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    ideal_id: string
+                    file_name: string
+                    file_url: string
+                    storage_path: string
+                    file_type: string
+                    file_size: number
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    ideal_id?: string
+                    file_name?: string
+                    file_url?: string
+                    storage_path?: string
+                    file_type?: string
+                    file_size?: number
+                    created_at?: string
+                }
+            }
             user_calendars: {
                 Row: {
                     id: string
@@ -772,3 +929,38 @@ export type AiContextDocumentUpdate = Database['public']['Tables']['ai_context_d
 
 export type TaskAttachment = Database['public']['Tables']['task_attachments']['Row']
 export type TaskAttachmentInsert = Database['public']['Tables']['task_attachments']['Insert']
+
+export type IdealGoal = Database['public']['Tables']['ideal_goals']['Row']
+export type IdealGoalInsert = Database['public']['Tables']['ideal_goals']['Insert']
+export type IdealGoalUpdate = Database['public']['Tables']['ideal_goals']['Update']
+
+export type IdealItem = Database['public']['Tables']['ideal_items']['Row']
+export type IdealItemInsert = Database['public']['Tables']['ideal_items']['Insert']
+export type IdealItemUpdate = Database['public']['Tables']['ideal_items']['Update']
+
+export type IdealAttachment = Database['public']['Tables']['ideal_attachments']['Row']
+export type IdealAttachmentInsert = Database['public']['Tables']['ideal_attachments']['Insert']
+
+// ideal_items の item_type
+export type IdealItemType = 'habit' | 'action' | 'cost' | 'milestone'
+// ideal_items / ideal_goals の frequency_type
+export type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'once'
+// ideal_goals の status
+export type IdealGoalStatus = 'active' | 'achieved' | 'archived'
+
+// IdealGoal に ideal_items を JOIN した拡張型
+export type IdealGoalWithItems = IdealGoal & { ideal_items: IdealItem[] }
+
+/** daily_minutes の正規化計算 */
+export function calcDailyMinutes(
+    frequencyType: FrequencyType,
+    frequencyValue: number,
+    sessionMinutes: number
+): number {
+    switch (frequencyType) {
+        case 'daily':   return sessionMinutes
+        case 'weekly':  return Math.round(sessionMinutes * frequencyValue / 7)
+        case 'monthly': return Math.round(sessionMinutes * frequencyValue / 30)
+        default:        return 0
+    }
+}
