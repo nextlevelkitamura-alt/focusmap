@@ -160,8 +160,8 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                     <p className="text-xs text-muted-foreground">アイテム</p>
                     <p className="font-medium text-sm truncate">{ideal.title}</p>
                 </div>
-                <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-                    <X className="h-4 w-4" />
+                <button onClick={onClose} className="p-2 -mr-2 text-muted-foreground hover:text-foreground active:text-foreground">
+                    <X className="h-5 w-5 md:h-4 md:w-4" />
                 </button>
             </div>
 
@@ -242,7 +242,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                         <div className="flex items-center gap-1 flex-shrink-0">
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(item) }}
-                                className="p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive active:bg-destructive/10 transition-colors"
+                                className="p-2.5 md:p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive active:bg-destructive/10 transition-colors"
                             >
                                 <Trash2 className="h-4 w-4" />
                             </button>

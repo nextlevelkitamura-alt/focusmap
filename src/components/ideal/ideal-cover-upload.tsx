@@ -110,8 +110,14 @@ export function IdealCoverUpload({ open, idealId, onOpenChange, onUploaded }: Id
                     >
                         <Upload className="h-8 w-8 text-muted-foreground" />
                         <div className="text-center text-sm">
-                            <p className="font-medium">画像をドラッグ&ドロップ</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">またはクリックして選択（10MB以内）</p>
+                            <p className="font-medium">
+                                <span className="hidden md:inline">画像をドラッグ&ドロップ</span>
+                                <span className="md:hidden">タップして画像を選択</span>
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                <span className="hidden md:inline">またはクリックして選択（10MB以内）</span>
+                                <span className="md:hidden">カメラ撮影またはフォトライブラリから（10MB以内）</span>
+                            </p>
                         </div>
                     </div>
                 )}

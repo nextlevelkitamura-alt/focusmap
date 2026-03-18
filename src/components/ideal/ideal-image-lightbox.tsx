@@ -42,21 +42,21 @@ export function IdealImageLightbox({ images, initialIndex, onClose }: IdealImage
             {/* 閉じるボタン */}
             <button
                 onClick={onClose}
-                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                className="absolute top-4 right-4 z-10 p-3 md:p-2 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors"
             >
                 <X className="w-6 h-6" />
             </button>
 
             {/* メイン画像 */}
             <div
-                className="relative flex-1 flex items-center justify-center w-full px-16"
+                className="relative flex-1 flex items-center justify-center w-full px-4 md:px-16"
                 onClick={e => e.stopPropagation()}
             >
                 {/* 前へ */}
                 {images.length > 1 && (
                     <button
                         onClick={goPrev}
-                        className="absolute left-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                        className="absolute left-1 md:left-4 p-3 md:p-2 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors"
                     >
                         <ChevronLeft className="w-6 h-6" />
                     </button>
@@ -73,7 +73,7 @@ export function IdealImageLightbox({ images, initialIndex, onClose }: IdealImage
                 {images.length > 1 && (
                     <button
                         onClick={goNext}
-                        className="absolute right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                        className="absolute right-1 md:right-4 p-3 md:p-2 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors"
                     >
                         <ChevronRight className="w-6 h-6" />
                     </button>

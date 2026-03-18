@@ -119,13 +119,13 @@ export function IdealCard({ ideal, isSelected, onSelect, onUpdated, onDeleted }:
                     </div>
 
                     {/* メニューボタン */}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                    <div className="absolute top-2 right-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 bg-black/40 hover:bg-black/60 text-white rounded-full"
+                                    className="h-9 w-9 md:h-7 md:w-7 bg-black/40 hover:bg-black/60 text-white rounded-full"
                                 >
                                     <MoreHorizontal className="h-4 w-4" />
                                 </Button>
@@ -162,7 +162,7 @@ export function IdealCard({ ideal, isSelected, onSelect, onUpdated, onDeleted }:
                                 <span>{doneCount}/{totalCount} 完了</span>
                                 <span className="flex items-center gap-1">
                                     {progressPct}%
-                                    <span className="opacity-0 group-hover/progress:opacity-100 transition-opacity text-primary text-[10px]">
+                                    <span className="md:opacity-0 md:group-hover/progress:opacity-100 transition-opacity text-primary text-[10px]">
                                         ▶ 詳細
                                     </span>
                                 </span>

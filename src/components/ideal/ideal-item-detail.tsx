@@ -165,7 +165,7 @@ export function IdealItemDetail({ item, idealId, onBack, onItemChanged }: IdealI
                                 </div>
                                 <button
                                     onClick={() => handleDeleteImage(img)}
-                                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center shadow-sm"
+                                    className="absolute -top-1.5 -right-1.5 w-7 h-7 md:w-5 md:h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center shadow-sm"
                                 >
                                     <X className="w-3 h-3" />
                                 </button>
@@ -479,7 +479,7 @@ function CandidateCard({ candidate, idealId, itemId, onChanged }: {
             {/* 削除ボタン */}
             <button
                 onClick={handleDelete}
-                className="absolute top-1 right-1 p-0.5 rounded-full bg-background/80 text-muted-foreground hover:text-destructive opacity-0 group-hover/cand:opacity-100 transition-opacity"
+                className="absolute top-1 right-1 p-1.5 md:p-0.5 rounded-full bg-background/80 text-muted-foreground hover:text-destructive md:opacity-0 md:group-hover/cand:opacity-100 transition-opacity"
             >
                 <Trash2 className="w-3 h-3" />
             </button>
