@@ -180,7 +180,22 @@ export function IdealView() {
 
             {activeTab === 'timeline' && (
                 <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
-                    <IdealTimelineView ideals={ideals} onItemsChanged={handleItemsChanged} />
+                    <IdealTimelineView
+                        ideals={ideals}
+                        onItemsChanged={handleItemsChanged}
+                        onSelectItem={(idealId) => setSelectedIdealId(idealId)}
+                    />
+                </div>
+            )}
+
+            {/* timeline/gallery/cost からの items-panel オーバーレイ */}
+            {activeTab !== 'board' && selectedIdeal && (
+                <div className="fixed inset-0 z-40 bg-background md:inset-auto md:right-0 md:top-0 md:bottom-0 md:w-96 md:border-l md:shadow-xl overflow-hidden">
+                    <IdealItemsPanel
+                        ideal={selectedIdeal}
+                        onItemsChanged={handleItemsChanged}
+                        onClose={() => setSelectedIdealId(null)}
+                    />
                 </div>
             )}
 
