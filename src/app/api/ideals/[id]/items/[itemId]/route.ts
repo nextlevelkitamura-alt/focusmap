@@ -23,6 +23,7 @@ export async function PATCH(
     'session_minutes', 'item_cost', 'cost_type', 'is_done',
     'linked_task_id', 'linked_habit_id', 'display_order',
     'description', 'scheduled_date', 'reference_url',
+    'parent_item_id',
   ]
   const updates: Record<string, unknown> = {}
   for (const field of allowedFields) {

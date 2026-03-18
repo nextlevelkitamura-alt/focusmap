@@ -69,6 +69,7 @@ export async function POST(
     cost_type = 'once',
     linked_task_id,
     linked_habit_id,
+    parent_item_id,
   } = body
 
   if (!title?.trim()) {
@@ -107,6 +108,7 @@ export async function POST(
       cost_type,
       linked_task_id: linked_task_id || null,
       linked_habit_id: linked_habit_id || null,
+      parent_item_id: parent_item_id || null,
       display_order: nextOrder,
     })
     .select()

@@ -756,6 +756,7 @@ export interface Database {
                     reference_url: string | null
                     thumbnail_url: string | null
                     thumbnail_path: string | null
+                    parent_item_id: string | null
                     created_at: string
                     updated_at: string
                 }
@@ -780,6 +781,7 @@ export interface Database {
                     reference_url?: string | null
                     thumbnail_url?: string | null
                     thumbnail_path?: string | null
+                    parent_item_id?: string | null
                     created_at?: string
                     updated_at?: string
                 }
@@ -804,6 +806,7 @@ export interface Database {
                     reference_url?: string | null
                     thumbnail_url?: string | null
                     thumbnail_path?: string | null
+                    parent_item_id?: string | null
                     updated_at?: string
                 }
             }
@@ -1144,4 +1147,22 @@ export function calcAnnualCost(
         case 'annual':  return itemCost
         case 'once':    return itemCost
     }
+}
+
+/** 一括費用の月々必要積立額を計算 */
+export function calcMonthlySavings(
+    onceCostTotal: number,
+    targetDate: string | null,
+    paidOnceCost: number = 0
+): number {
+    const remaining = onceCostTotal - paidOnceCost
+    if (remaining <= 0) return 0
+    if (!targetDate) return 0
+    const now = new Date()
+    const target = new Date(targetDate)
+    const monthsLeft = Math.max(1,
+        (target.getFullYear() - now.getFullYear()) * 12 +
+        (target.getMonth() - now.getMonth())
+    )
+    return Math.ceil(remaining / monthsLeft)
 }

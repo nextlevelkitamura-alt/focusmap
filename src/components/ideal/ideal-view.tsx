@@ -6,14 +6,15 @@ import { IdealItemsPanel } from "./ideal-items-panel"
 import { IdealChatPanel } from "./ideal-chat-panel"
 import { IdealGalleryView } from "./ideal-gallery-view"
 import { CostDashboard } from "./cost-dashboard"
+import { IdealTimelineView } from "./ideal-timeline-view"
 import { CapacityBar } from "./capacity-bar"
 import { IdealGoalWithItems } from "@/types/database"
 import { useIdealTracking } from "@/hooks/useIdealTracking"
-import { MessageCircle, LayoutGrid, Image, Wallet } from "lucide-react"
+import { MessageCircle, LayoutGrid, Image, Wallet, CalendarRange } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 
-type ViewTab = 'board' | 'gallery' | 'cost'
+type ViewTab = 'board' | 'gallery' | 'cost' | 'timeline'
 
 export function IdealView() {
     const [ideals, setIdeals] = useState<IdealGoalWithItems[]>([])
@@ -128,6 +129,12 @@ export function IdealView() {
                     icon={<Wallet className="w-3.5 h-3.5" />}
                     label="コスト"
                 />
+                <TabButton
+                    active={activeTab === 'timeline'}
+                    onClick={() => setActiveTab('timeline')}
+                    icon={<CalendarRange className="w-3.5 h-3.5" />}
+                    label="タイムライン"
+                />
             </div>
 
             {/* メインエリア */}
@@ -168,6 +175,12 @@ export function IdealView() {
             {activeTab === 'cost' && (
                 <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
                     <CostDashboard ideals={ideals} />
+                </div>
+            )}
+
+            {activeTab === 'timeline' && (
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+                    <IdealTimelineView ideals={ideals} onItemsChanged={handleItemsChanged} />
                 </div>
             )}
 

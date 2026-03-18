@@ -3,7 +3,7 @@
 import React from "react";
 import { BaseEdge, EdgeProps } from "reactflow";
 
-const BRANCH_OFFSET = 40;
+const BRANCH_OFFSET = 24;
 const MIN_TARGET_GAP = 24;
 
 export function BranchEdge({
@@ -21,11 +21,18 @@ export function BranchEdge({
   const branchX =
     preferredBranchX < maxBranchX ? preferredBranchX : (sourceX + targetX) / 2;
 
+  // Round to integer pixels to eliminate subpixel anti-alias jaggedness.
+  const sx = Math.round(sourceX);
+  const sy = Math.round(sourceY);
+  const bx = Math.round(branchX);
+  const ty = Math.round(targetY);
+  const tx = Math.round(targetX);
+
   const edgePath = [
-    `M ${sourceX} ${sourceY}`,
-    `L ${branchX} ${sourceY}`,
-    `L ${branchX} ${targetY}`,
-    `L ${targetX} ${targetY}`,
+    `M ${sx} ${sy}`,
+    `L ${bx} ${sy}`,
+    `L ${bx} ${ty}`,
+    `L ${tx} ${ty}`,
   ].join(" ");
 
   return <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />;

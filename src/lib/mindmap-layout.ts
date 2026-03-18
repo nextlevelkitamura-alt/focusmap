@@ -86,7 +86,7 @@ export function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node
     dagreGraph.setGraph({
         rankdir: 'LR',
         nodesep: dynamicNodesep,
-        ranksep: 124,
+        ranksep: 80,
         edgesep: 26,
         ranker: 'network-simplex',
         align: undefined // Ensures children center around parent (default behavior)
