@@ -87,7 +87,7 @@ export function IdealGalleryView({ ideals, onItemsChanged }: IdealGalleryViewPro
             </div>
 
             {/* ギャラリーグリッド */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-4 pb-20 md:pb-4">
                 {allItems.length === 0 ? (
                     <p className="text-sm text-muted-foreground/60 text-center py-12">
                         アイテムがありません

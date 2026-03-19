@@ -140,7 +140,7 @@ export function IdealView() {
             {/* メインエリア */}
             {activeTab === 'board' && (
                 <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
-                    <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+                    <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-20 md:p-6 md:pb-6">
                         <IdealBoard
                             ideals={ideals}
                             selectedIdealId={selectedIdealId}
@@ -152,7 +152,7 @@ export function IdealView() {
                     </div>
 
                     {selectedIdeal && (
-                        <div className="fixed inset-0 z-40 bg-background md:static md:inset-auto md:z-auto md:w-80 lg:w-96 md:border-l md:flex-shrink-0 overflow-hidden">
+                        <div className="fixed inset-0 z-40 bg-background pb-16 md:pb-0 md:static md:inset-auto md:z-auto md:w-80 lg:w-96 md:border-l md:flex-shrink-0 overflow-hidden">
                             <IdealItemsPanel
                                 ideal={selectedIdeal}
                                 onItemsChanged={handleItemsChanged}
@@ -164,7 +164,7 @@ export function IdealView() {
             )}
 
             {activeTab === 'gallery' && (
-                <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-y-auto">
                     <IdealGalleryView
                         ideals={ideals}
                         onItemsChanged={handleItemsChanged}
@@ -173,13 +173,13 @@ export function IdealView() {
             )}
 
             {activeTab === 'cost' && (
-                <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-20 md:p-6 md:pb-6">
                     <CostDashboard ideals={ideals} />
                 </div>
             )}
 
             {activeTab === 'timeline' && (
-                <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-20 md:p-6 md:pb-6">
                     <IdealTimelineView
                         ideals={ideals}
                         onItemsChanged={handleItemsChanged}
@@ -190,7 +190,7 @@ export function IdealView() {
 
             {/* timeline/gallery/cost からの items-panel オーバーレイ */}
             {activeTab !== 'board' && selectedIdeal && (
-                <div className="fixed inset-0 z-40 bg-background md:inset-auto md:right-0 md:top-0 md:bottom-0 md:w-96 md:border-l md:shadow-xl overflow-hidden">
+                <div className="fixed inset-0 z-40 bg-background pb-16 md:pb-0 md:inset-auto md:right-0 md:top-0 md:bottom-0 md:w-96 md:border-l md:shadow-xl overflow-hidden">
                     <IdealItemsPanel
                         ideal={selectedIdeal}
                         onItemsChanged={handleItemsChanged}
