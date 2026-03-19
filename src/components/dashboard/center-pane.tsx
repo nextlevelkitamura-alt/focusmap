@@ -252,7 +252,7 @@ export function CenterPane({
                             variant="ghost"
                             size="icon"
                             onClick={() => setIsFullscreen(true)}
-                            className="absolute top-3 right-14 z-10 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute top-3 right-14 z-10 h-8 w-8 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                         >
                             <Maximize2 className="h-4 w-4" />
                         </Button>
@@ -413,7 +413,7 @@ export function CenterPane({
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-4 w-4 p-0 opacity-0 group-hover/estimated:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
+                                                                    className="h-4 w-4 p-0 md:opacity-0 md:group-hover/estimated:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
                                                                     onClick={(e) => {
                                                                         e.stopPropagation()
                                                                         onUpdateTask?.(group.id, { estimated_time: 0 })
@@ -434,7 +434,7 @@ export function CenterPane({
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
+                                                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
                                                                     title="見積もり（ルートタスク上書き）"
                                                                     onClick={(e) => e.stopPropagation()}
                                                                 >
@@ -479,7 +479,7 @@ export function CenterPane({
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
+                                                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
                                                                     title="優先度を設定"
                                                                 >
                                                                     <Target className="w-4 h-4" />
@@ -517,7 +517,7 @@ export function CenterPane({
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
+                                                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
                                                                     title="日時設定"
                                                                 >
                                                                     <CalendarIcon className="w-4 h-4" />
@@ -531,14 +531,14 @@ export function CenterPane({
                                                 <TaskCalendarSelect
                                                     value={group.calendar_id ?? null}
                                                     onChange={(calendarId) => onUpdateTask?.(group.id, { calendar_id: calendarId })}
-                                                    className={group.calendar_id ? "" : "opacity-0 group-hover:opacity-100"}
+                                                    className={group.calendar_id ? "" : "md:opacity-0 md:group-hover:opacity-100"}
                                                 />
 
                                                 {/* Add Task Button */}
                                                 <Button
                                                     variant="ghost"
                                                     size="sm"
-                                                    className="h-6 text-[10px] gap-1 opacity-0 group-hover:opacity-100"
+                                                    className="h-6 text-[10px] gap-1 md:opacity-0 md:group-hover:opacity-100"
                                                     onClick={() => handleAddTask(group.id)}
                                                     title="タスク追加"
                                                 >
@@ -550,7 +550,7 @@ export function CenterPane({
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    className="h-6 w-6 text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100"
+                                                    className="h-6 w-6 text-destructive hover:bg-destructive/10 md:opacity-0 md:group-hover:opacity-100"
                                                     onClick={() => onDeleteGroup?.(group.id)}
                                                     title="グループ削除"
                                                 >

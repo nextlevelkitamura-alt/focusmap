@@ -219,9 +219,9 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                             </div>
                         </div>
 
-                        <div className="border rounded-lg overflow-hidden">
+                        <div className="border rounded-lg overflow-x-auto">
                             {/* Day headers */}
-                            <div className="grid grid-cols-[1fr_repeat(7,_minmax(0,_1fr))] gap-0 bg-muted/30">
+                            <div className="grid grid-cols-[120px_repeat(7,_minmax(40px,_1fr))] min-w-[400px] gap-0 bg-muted/30">
                                 <div className="p-2 text-[10px] text-muted-foreground" />
                                 {weekDates.map((wd, i) => (
                                     <div
@@ -243,7 +243,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                 return (
                                     <div
                                         key={item.habit.id}
-                                        className="grid grid-cols-[1fr_repeat(7,_minmax(0,_1fr))] gap-0 border-t"
+                                        className="grid grid-cols-[120px_repeat(7,_minmax(40px,_1fr))] min-w-[400px] gap-0 border-t"
                                     >
                                         {/* Habit name */}
                                         <div className="p-2 flex items-center gap-1.5 min-w-0">

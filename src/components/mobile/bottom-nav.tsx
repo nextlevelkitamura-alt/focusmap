@@ -21,8 +21,8 @@ export function BottomNav() {
     const isSettingsPage = pathname.startsWith('/dashboard/settings')
 
     return (
-        <div className="fixed bottom-0 left-0 z-50 w-full h-16 bg-background border-t md:hidden">
-            <div className="grid h-full grid-cols-5 font-medium">
+        <div className="fixed bottom-0 left-0 z-50 w-full bg-background border-t md:hidden pb-[env(safe-area-inset-bottom,0px)]">
+            <div className="grid h-16 grid-cols-5 font-medium">
                 {navItems.map((item) => {
                     const isActive = !isSettingsPage && activeView === item.id
 

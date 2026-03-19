@@ -5,6 +5,7 @@ import { Task } from '@/types/database';
 import { format } from 'date-fns';
 import { Loader2, X, Square, CheckSquare, Play, Pause, Bell } from 'lucide-react';
 import { useMemo } from 'react';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { EVENT_FONT_SIZES } from '@/lib/calendar-constants';
 import { cn } from '@/lib/utils';
 import { formatTime } from '@/contexts/TimerContext';
@@ -45,6 +46,7 @@ export function CalendarEventCard({
   timerElapsedSeconds,
   reminderMinutes,
 }: CalendarEventCardProps) {
+  const isMobile = useIsMobile();
   const startTime = new Date(event.start_time);
   const isCompact = eventHeight != null && eventHeight < 40;
   const isDone = linkedTask?.status === 'done';
@@ -99,7 +101,7 @@ export function CalendarEventCard({
         boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
         cursor: isDraggable ? 'grab' : 'pointer',
       }}
-      draggable={isDraggable}
+      draggable={isDraggable && !isMobile}
       onDragStart={(e) => {
         if (isDraggable) {
           e.dataTransfer.setData('application/json', JSON.stringify({
@@ -141,7 +143,7 @@ export function CalendarEventCard({
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
-              className="flex-shrink-0 opacity-90 hover:opacity-100 transition-opacity"
+              className="relative flex-shrink-0 opacity-90 hover:opacity-100 transition-opacity before:absolute before:-inset-2 before:content-['']"
             >
               {isDone ? (
                 <CheckSquare className="w-3.5 h-3.5" style={{ color: textColor }} />
@@ -188,7 +190,7 @@ export function CalendarEventCard({
               onPointerDown={(e) => e.stopPropagation()}
               className={cn(
                 "flex-shrink-0 transition-opacity",
-                isCompact ? "opacity-0 group-hover:opacity-100" : "opacity-80 hover:opacity-100"
+                isCompact ? "md:opacity-0 md:group-hover:opacity-100" : "opacity-80 hover:opacity-100"
               )}
             >
               {isTimerRunning ? (
@@ -227,7 +229,7 @@ export function CalendarEventCard({
         <div
           role="button"
           tabIndex={0}
-          className="absolute top-0 right-0 z-20 w-6 h-6 flex items-center justify-center rounded-bl-lg opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          className="absolute top-0 right-0 z-20 w-6 h-6 flex items-center justify-center rounded-bl-lg md:opacity-0 md:group-hover:opacity-100 transition-opacity cursor-pointer"
           style={{ backgroundColor: `${textColor}30`, color: textColor }}
           onClick={(e) => {
             e.stopPropagation();

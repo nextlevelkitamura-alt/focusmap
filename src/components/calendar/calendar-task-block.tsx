@@ -4,6 +4,7 @@ import { Task } from '@/types/database';
 import { format } from 'date-fns';
 import { Target, Clock, Edit2, Trash2, Calendar } from 'lucide-react';
 import { useState } from 'react';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 
 interface CalendarTaskBlockProps {
@@ -29,7 +30,7 @@ export function CalendarTaskBlock({
   onTimeChange,
   className = ''
 }: CalendarTaskBlockProps) {
-  const [isHovered, setIsHovered] = useState(false);
+  const isMobile = useIsMobile();
   const [isDragging, setIsDragging] = useState(false);
 
   // タスクの色（イベントと区別するための配色）
@@ -52,7 +53,7 @@ export function CalendarTaskBlock({
   return (
     <div
       className={cn(
-        'relative rounded-md border-l-4 border-dashed p-1 transition-all cursor-pointer',
+        'group relative rounded-md border-l-4 border-dashed p-1 transition-all cursor-pointer',
         'hover:shadow-md hover:bg-blue-500/20',
         isDragging && 'opacity-50',
         className
@@ -62,9 +63,7 @@ export function CalendarTaskBlock({
         borderColor,
         color: textColor
       }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      draggable={!!onTimeChange}
+      draggable={!!onTimeChange && !isMobile}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
@@ -77,9 +76,9 @@ export function CalendarTaskBlock({
           </h4>
         </div>
 
-        {/* ホバー時の編集・削除ボタン */}
-        {isHovered && (onEdit || onDelete) && (
-          <div className="flex gap-0.5 flex-shrink-0">
+        {/* 編集・削除ボタン（モバイル常時表示、デスクトップはhoverで表示） */}
+        {(onEdit || onDelete) && (
+          <div className="flex gap-0.5 flex-shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
             {onEdit && (
               <button
                 onClick={(e) => {

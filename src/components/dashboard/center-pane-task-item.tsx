@@ -259,14 +259,14 @@ export function TaskItem({
                                             <span className="tabular-nums">{formatTime(taskElapsedSeconds)}</span>
 
                                             {/* 再開アイコン（ホバー時のみ表示） */}
-                                            <Play className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5" />
+                                            <Play className="w-2.5 h-2.5 md:opacity-0 md:group-hover:opacity-100 transition-opacity ml-0.5" />
                                         </button>
 
                                         {/* 削除ボタン（ホバー時のみ表示） */}
                                         <Button
                                             variant="ghost"
                                             size="icon"
-                                            className="h-4 w-4 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
+                                            className="h-4 w-4 p-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
                                             onClick={(e) => {
                                                 e.stopPropagation()
                                                 onUpdateTask?.(task.id, { total_elapsed_seconds: 0 })
@@ -333,7 +333,7 @@ export function TaskItem({
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-4 w-4 p-0 opacity-0 group-hover/estimated:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
+                                    className="h-4 w-4 p-0 md:opacity-0 md:group-hover/estimated:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
                                     onClick={(e) => {
                                         e.stopPropagation()
                                         onUpdateTask?.(task.id, { estimated_time: 0 })
@@ -353,7 +353,7 @@ export function TaskItem({
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 text-zinc-500 hover:text-zinc-400 opacity-0 group-hover:opacity-100"
+                                        className="h-6 w-6 text-zinc-500 hover:text-zinc-400 md:opacity-0 md:group-hover:opacity-100"
                                         title={hasChildren ? "見積もり（親タスク上書き）" : "見積もり時間を設定"}
                                         onClick={(e) => e.stopPropagation()}
                                     >
@@ -383,7 +383,7 @@ export function TaskItem({
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-4 w-4 p-0 opacity-0 group-hover/priority:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
+                                    className="h-4 w-4 p-0 md:opacity-0 md:group-hover/priority:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
                                     onClick={(e) => {
                                         e.stopPropagation()
                                         onUpdateTask?.(task.id, { priority: undefined as any })
@@ -402,7 +402,7 @@ export function TaskItem({
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
+                                        className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
                                         title="優先度を設定"
                                     >
                                         <Target className="w-4 h-4" />
@@ -431,7 +431,7 @@ export function TaskItem({
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-4 w-4 p-0 opacity-0 group-hover/datetime:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
+                                    className="h-4 w-4 p-0 md:opacity-0 md:group-hover/datetime:opacity-100 transition-opacity text-zinc-500 hover:text-red-400"
                                     onClick={(e) => {
                                         e.stopPropagation()
                                         onUpdateTask?.(task.id, { scheduled_at: null })
@@ -450,7 +450,7 @@ export function TaskItem({
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors opacity-0 group-hover:opacity-100"
+                                        className="h-6 w-6 text-zinc-500 hover:text-zinc-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
                                         title="日時設定"
                                     >
                                         <CalendarIcon className="w-4 h-4" />
@@ -465,7 +465,7 @@ export function TaskItem({
                         <TaskCalendarSelect
                             value={task.calendar_id}
                             onChange={(calendarId) => onUpdateTask?.(task.id, { calendar_id: calendarId })}
-                            className={task.calendar_id ? "" : "opacity-0 group-hover:opacity-100"}
+                            className={task.calendar_id ? "" : "md:opacity-0 md:group-hover:opacity-100"}
                         />
                         <TaskCalendarSyncStatus
                             status={syncStatus}
@@ -475,7 +475,7 @@ export function TaskItem({
                     </div>
 
                     {/* Group 4: Other Actions (Hover) */}
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                         {canAddChildren && (
                             <Button
                                 variant="ghost"

@@ -89,7 +89,7 @@ export function PriorityBadge({
         <span
             onClick={onClick}
             className={cn(
-                "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white transition-colors cursor-pointer",
+                "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white transition-colors cursor-pointer active:scale-95 active:opacity-80",
                 option.bgColor,
                 option.hoverColor,
                 className

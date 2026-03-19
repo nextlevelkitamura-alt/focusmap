@@ -79,7 +79,7 @@ export const OutlineItem = memo(function OutlineItem({
             <button
                 onClick={hasChildren ? onToggleCollapse : undefined}
                 className={cn(
-                    "flex items-center justify-center w-6 h-6 shrink-0 rounded transition-colors",
+                    "relative flex items-center justify-center w-6 h-6 shrink-0 rounded transition-colors before:absolute before:-inset-2 before:content-['']",
                     hasChildren ? "text-muted-foreground active:bg-muted" : "text-muted-foreground/30"
                 )}
             >
@@ -94,7 +94,7 @@ export const OutlineItem = memo(function OutlineItem({
             {!isRootGroup && (
                 <button
                     className={cn(
-                        "w-5 h-5 rounded border flex items-center justify-center transition-colors shrink-0",
+                        "relative w-5 h-5 rounded border flex items-center justify-center transition-all shrink-0 before:absolute before:-inset-2.5 before:content-[''] active:scale-90",
                         isDone
                             ? "bg-primary border-primary text-primary-foreground"
                             : "border-muted-foreground/30 active:border-primary"
