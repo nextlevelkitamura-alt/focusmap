@@ -70,6 +70,7 @@ export async function POST(
     linked_task_id,
     linked_habit_id,
     parent_item_id,
+    description,
   } = body
 
   if (!title?.trim()) {
@@ -109,6 +110,7 @@ export async function POST(
       linked_task_id: linked_task_id || null,
       linked_habit_id: linked_habit_id || null,
       parent_item_id: parent_item_id || null,
+      description: description?.trim() || null,
       display_order: nextOrder,
     })
     .select()

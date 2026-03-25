@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState } from "react"
-import { Task, Project } from "@/types/database"
+import { useRef, useState, useEffect } from "react"
+import { Task, Project, IdealGoalWithItems } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
     LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, Inbox, Trash2
@@ -69,6 +69,26 @@ export function DesktopTodayPanel({
         onNavigateLeft: logic.goToNextDay,
         onNavigateRight: logic.goToPrevDay,
     })
+
+    // 理想像との紐付きマップ
+    const [habitIdealMap, setHabitIdealMap] = useState<Map<string, string>>(new Map())
+    useEffect(() => {
+        fetch('/api/ideals')
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (!data?.ideals) return
+                const map = new Map<string, string>()
+                for (const ideal of data.ideals as IdealGoalWithItems[]) {
+                    for (const item of ideal.ideal_items ?? []) {
+                        if (item.linked_habit_id) {
+                            map.set(item.linked_habit_id, ideal.title)
+                        }
+                    }
+                }
+                setHabitIdealMap(map)
+            })
+            .catch(() => {})
+    }, [])
 
     const runningTask = allTasks.find(t => t.id === logic.timer.runningTaskId)
     const defaultQuickCreateCalendarId =
@@ -277,11 +297,18 @@ export function DesktopTodayPanel({
                                             : <Square className={cn("w-3 h-3 flex-shrink-0", hasChildren ? "text-muted-foreground/20" : "text-muted-foreground/40")} />
                                         }
                                         <span className="text-xs flex-shrink-0">{item.habit.habit_icon || '🔄'}</span>
-                                        <span className={cn(
-                                            "whitespace-nowrap",
-                                            isCompleted ? "text-primary font-medium line-through" : "text-foreground"
-                                        )}>
-                                            {item.habit.title}
+                                        <span className="flex flex-col leading-tight">
+                                            <span className={cn(
+                                                "whitespace-nowrap",
+                                                isCompleted ? "text-primary font-medium line-through" : "text-foreground"
+                                            )}>
+                                                {item.habit.title}
+                                            </span>
+                                            {habitIdealMap.get(item.habit.id) && (
+                                                <span className="text-[8px] text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                                                    {habitIdealMap.get(item.habit.id)}
+                                                </span>
+                                            )}
                                         </span>
                                         {hasChildren && (
                                             <span className="text-muted-foreground flex-shrink-0">

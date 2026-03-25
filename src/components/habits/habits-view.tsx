@@ -1,13 +1,13 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { Task } from "@/types/database"
+import { useState, useMemo, useEffect } from "react"
+import { Task, IdealGoalWithItems } from "@/types/database"
 import {
     useHabits, HabitWithDetails, DAY_KEYS, formatDateString, getTodayDateString, parseFrequency
 } from "@/hooks/useHabits"
 import {
     Target, ChevronDown, ChevronRight, ChevronLeft, Flame, Trash2,
-    Calendar as CalendarIcon, Repeat, Loader2, CheckCircle2, Settings2
+    Calendar as CalendarIcon, Repeat, Loader2, CheckCircle2, Settings2, Star
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { HabitSettingsSheet } from "./habit-settings-sheet"
@@ -89,6 +89,29 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
     const [weekOffset, setWeekOffset] = useState(0) // 0 = this week, -1 = last week, etc.
     const [settingsHabit, setSettingsHabit] = useState<Task | null>(null)
+
+    // 理想像データを取得して習慣との紐付きマップを構築
+    const [habitIdealMap, setHabitIdealMap] = useState<Map<string, { idealTitle: string; idealColor: string | null }>>(new Map())
+    useEffect(() => {
+        fetch('/api/ideals')
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (!data?.ideals) return
+                const map = new Map<string, { idealTitle: string; idealColor: string | null }>()
+                for (const ideal of data.ideals as IdealGoalWithItems[]) {
+                    for (const item of ideal.ideal_items ?? []) {
+                        if (item.linked_habit_id) {
+                            map.set(item.linked_habit_id, {
+                                idealTitle: ideal.title,
+                                idealColor: ideal.color,
+                            })
+                        }
+                    }
+                }
+                setHabitIdealMap(map)
+            })
+            .catch(() => {})
+    }, [])
 
     const toggleExpand = (habitId: string) => {
         setExpandedHabits(prev => {
@@ -325,6 +348,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onConfirmDelete={() => { removeHabit(item.habit.id); setConfirmDeleteId(null) }}
                                     onCancelDelete={() => setConfirmDeleteId(null)}
                                     onOpenSettings={() => setSettingsHabit(item.habit)}
+                                    idealInfo={habitIdealMap.get(item.habit.id)}
                                 />
                             ))
                         ) : (
@@ -350,6 +374,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onConfirmDelete={() => { removeHabit(item.habit.id); setConfirmDeleteId(null) }}
                                     onCancelDelete={() => setConfirmDeleteId(null)}
                                     onOpenSettings={() => setSettingsHabit(item.habit)}
+                                    idealInfo={habitIdealMap.get(item.habit.id)}
                                 />
                             ))
                         ) : (
@@ -388,9 +413,10 @@ interface HabitCardProps {
     onConfirmDelete: () => void
     onCancelDelete: () => void
     onOpenSettings: () => void
+    idealInfo?: { idealTitle: string; idealColor: string | null }
 }
 
-function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onToggleChild, isToday, isConfirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete, onOpenSettings }: HabitCardProps) {
+function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onToggleChild, isToday, isConfirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete, onOpenSettings, idealInfo }: HabitCardProps) {
     const { habit, childTasks, streak, isCompletedToday } = item
     const freq = habit.habit_frequency
     const icon = habit.habit_icon
@@ -457,11 +483,19 @@ function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onTog
                                 </span>
                             )}
                         </div>
-                        <div className="flex items-center gap-2 mt-0.5">
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <span className="text-xs text-muted-foreground">{frequencyLabel}</span>
                             {(startDate || endDate) && (
                                 <span className="text-xs text-muted-foreground">
                                     {formatDate(startDate)}〜{formatDate(endDate)}
+                                </span>
+                            )}
+                            {idealInfo && (
+                                <span
+                                    className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                                >
+                                    <Star className="w-2.5 h-2.5" />
+                                    {idealInfo.idealTitle}
                                 </span>
                             )}
                         </div>

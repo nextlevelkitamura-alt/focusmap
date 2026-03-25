@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { Task } from "@/types/database"
+import { useState, useCallback, useEffect } from "react"
+import { Task, IdealGoalWithItems } from "@/types/database"
 import { parseFrequency } from "@/hooks/useHabits"
 import { cn } from "@/lib/utils"
 import {
     Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from "@/components/ui/sheet"
+import { Star, Link2, Unlink } from "lucide-react"
 
 const HABIT_DAYS = [
     { key: 'mon', label: '月' },
@@ -50,6 +51,75 @@ export function HabitSettingsSheet({ open, onOpenChange, habit, onUpdate }: Habi
             habit_icon: ic || null,
         })
     }, [habit.id, frequency, startDate, endDate, icon, onUpdate])
+
+    // 理想像との紐付き
+    const [ideals, setIdeals] = useState<IdealGoalWithItems[]>([])
+    const [linkedIdealId, setLinkedIdealId] = useState<string | null>(null)
+    const [linkedItemId, setLinkedItemId] = useState<string | null>(null)
+    const [isLinking, setIsLinking] = useState(false)
+
+    useEffect(() => {
+        if (!open) return
+        fetch('/api/ideals')
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (!data?.ideals) return
+                const allIdeals = data.ideals as IdealGoalWithItems[]
+                setIdeals(allIdeals)
+                // 既存の紐付きを検索
+                for (const ideal of allIdeals) {
+                    const item = (ideal.ideal_items ?? []).find(i => i.linked_habit_id === habit.id)
+                    if (item) {
+                        setLinkedIdealId(ideal.id)
+                        setLinkedItemId(item.id)
+                        return
+                    }
+                }
+                setLinkedIdealId(null)
+                setLinkedItemId(null)
+            })
+            .catch(() => {})
+    }, [open, habit.id])
+
+    const handleLinkIdeal = async (idealId: string) => {
+        setIsLinking(true)
+        try {
+            // 既存の紐付きを解除
+            if (linkedItemId && linkedIdealId) {
+                await fetch(`/api/ideals/${linkedIdealId}/items/${linkedItemId}`, { method: 'DELETE' })
+            }
+            // 新しい紐付きを作成
+            const res = await fetch(`/api/ideals/${idealId}/items`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: habit.title,
+                    item_type: 'habit',
+                    linked_habit_id: habit.id,
+                    frequency_type: 'daily',
+                }),
+            })
+            if (res.ok) {
+                const { item } = await res.json()
+                setLinkedIdealId(idealId)
+                setLinkedItemId(item.id)
+            }
+        } finally {
+            setIsLinking(false)
+        }
+    }
+
+    const handleUnlinkIdeal = async () => {
+        if (!linkedItemId || !linkedIdealId) return
+        setIsLinking(true)
+        try {
+            await fetch(`/api/ideals/${linkedIdealId}/items/${linkedItemId}`, { method: 'DELETE' })
+            setLinkedIdealId(null)
+            setLinkedItemId(null)
+        } finally {
+            setIsLinking(false)
+        }
+    }
 
     const selectedDays = new Set(parseFrequency(frequency))
 
@@ -182,6 +252,50 @@ export function HabitSettingsSheet({ open, onOpenChange, habit, onUpdate }: Habi
                             ))}
                         </div>
                     </div>
+
+                    {/* 理想像との紐付け */}
+                    {ideals.length > 0 && (
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                                <Star className="h-3.5 w-3.5" />
+                                理想像との紐付け
+                            </label>
+                            {linkedIdealId ? (
+                                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+                                    <Link2 className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+                                    <span className="text-sm flex-1 truncate">
+                                        {ideals.find(i => i.id === linkedIdealId)?.title ?? '理想像'}
+                                    </span>
+                                    <button
+                                        onClick={handleUnlinkIdeal}
+                                        disabled={isLinking}
+                                        className="text-xs text-muted-foreground hover:text-red-500 transition-colors flex items-center gap-0.5"
+                                    >
+                                        <Unlink className="h-3 w-3" />
+                                        解除
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="space-y-1.5">
+                                    <p className="text-xs text-muted-foreground">
+                                        この習慣が貢献する理想像を選択
+                                    </p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {ideals.filter(i => i.status === 'active').map(ideal => (
+                                            <button
+                                                key={ideal.id}
+                                                onClick={() => handleLinkIdeal(ideal.id)}
+                                                disabled={isLinking}
+                                                className="px-3 py-1.5 text-xs rounded-lg border border-border hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
+                                            >
+                                                {ideal.title}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </SheetContent>
         </Sheet>

@@ -65,6 +65,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newSessionMin, setNewSessionMin] = useState(15)
     const [newCost, setNewCost] = useState('')
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
+    const [newDescription, setNewDescription] = useState('')
     const [isSaving, setIsSaving] = useState(false)
     const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
     const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -147,6 +148,9 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 body.item_cost = Number(newCost)
                 body.cost_type = newCostType
             }
+            if (newDescription.trim()) {
+                body.description = newDescription.trim()
+            }
 
             await fetch(`/api/ideals/${ideal.id}/items`, {
                 method: 'POST',
@@ -160,6 +164,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
             setNewFreqValue(1)
             setNewSessionMin(15)
             setNewCost('')
+            setNewDescription('')
             setIsAdding(false)
             setAddingParentId(null)
             onItemsChanged()
@@ -449,6 +454,15 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 <option value="annual">年払い</option>
                             </select>
                         </div>
+
+                        {/* 目的・メモ（任意） */}
+                        <textarea
+                            placeholder="なぜこれをやるのか？（例: 基礎体力をつけて仕事のパフォーマンスを上げる）"
+                            value={newDescription}
+                            onChange={e => setNewDescription(e.target.value)}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs resize-none placeholder:text-muted-foreground/50"
+                            rows={2}
+                        />
 
                         <div className="flex gap-2">
                             <Button size="sm" onClick={handleAddItem} disabled={isSaving || !newTitle.trim()} className="flex-1">
