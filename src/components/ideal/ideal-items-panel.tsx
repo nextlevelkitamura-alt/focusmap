@@ -74,6 +74,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newSessionMin, setNewSessionMin] = useState(15)
     const [newCost, setNewCost] = useState('')
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
+    const [newSubtasks, setNewSubtasks] = useState<string[]>([])
     const [isSaving, setIsSaving] = useState(false)
     const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
     const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -198,11 +199,27 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
             if (!newTitle.trim()) return
             setIsSaving(true)
             try {
-                await fetch(`/api/ideals/${ideal.id}/items`, {
+                const res = await fetch(`/api/ideals/${ideal.id}/items`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(buildItemBody(newTitle)),
                 })
+                // サブタスクがあれば親IDを取得して一括作成
+                const subtaskTitles = newSubtasks.filter(s => s.trim())
+                if (res.ok && subtaskTitles.length > 0) {
+                    const { item: parentItem } = await res.json()
+                    for (const subTitle of subtaskTitles) {
+                        await fetch(`/api/ideals/${ideal.id}/items`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                title: subTitle.trim(),
+                                item_type: 'action',
+                                parent_item_id: parentItem.id,
+                            }),
+                        })
+                    }
+                }
                 resetForm()
                 onItemsChanged()
             } finally {
@@ -218,6 +235,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         setNewHabitDays('mon,tue,wed,thu,fri,sat,sun')
         setNewSessionMin(15)
         setNewCost('')
+        setNewSubtasks([])
         setIsAdding(false)
         setIsBulkMode(false)
         setAddingParentId(null)
@@ -559,6 +577,63 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                     <option value="monthly">月払い</option>
                                     <option value="annual">年払い</option>
                                 </select>
+                            </div>
+                        )}
+
+                        {/* サブタスク（ルートアイテム + 単一追加モード時のみ） */}
+                        {!addingParentId && !isBulkMode && (
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[11px] text-muted-foreground">サブタスク（任意）</span>
+                                    {newSubtasks.length === 0 && (
+                                        <button
+                                            onClick={() => setNewSubtasks([''])}
+                                            className="text-[11px] text-muted-foreground hover:text-primary transition-colors flex items-center gap-0.5"
+                                        >
+                                            <Plus className="h-3 w-3" /> 追加
+                                        </button>
+                                    )}
+                                </div>
+                                {newSubtasks.map((sub, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5 pl-3 border-l-2 border-muted">
+                                        <Circle className="h-3 w-3 text-muted-foreground/30 flex-shrink-0" />
+                                        <Input
+                                            placeholder={`サブタスク ${idx + 1}`}
+                                            value={sub}
+                                            onChange={e => {
+                                                const next = [...newSubtasks]
+                                                next[idx] = e.target.value
+                                                setNewSubtasks(next)
+                                            }}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    setNewSubtasks([...newSubtasks, ''])
+                                                }
+                                                if (e.key === 'Backspace' && !sub && newSubtasks.length > 1) {
+                                                    const next = newSubtasks.filter((_, i) => i !== idx)
+                                                    setNewSubtasks(next)
+                                                }
+                                            }}
+                                            className="h-7 text-xs flex-1"
+                                            autoFocus={idx === newSubtasks.length - 1 && idx > 0}
+                                        />
+                                        <button
+                                            onClick={() => setNewSubtasks(newSubtasks.filter((_, i) => i !== idx))}
+                                            className="text-muted-foreground/30 hover:text-destructive transition-colors p-0.5"
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    </div>
+                                ))}
+                                {newSubtasks.length > 0 && (
+                                    <button
+                                        onClick={() => setNewSubtasks([...newSubtasks, ''])}
+                                        className="flex items-center gap-0.5 pl-3 text-[11px] text-muted-foreground hover:text-primary transition-colors"
+                                    >
+                                        <Plus className="h-3 w-3" /> サブタスクを追加
+                                    </button>
+                                )}
                             </div>
                         )}
 
