@@ -22,10 +22,20 @@ const ITEM_TYPE_CHIPS: { value: IdealItemType; label: string; icon: React.ReactN
     { value: 'milestone', label: '目標',     icon: <Target className="h-3 w-3" />,     desc: '達成点' },
 ]
 
-const FREQUENCY_OPTIONS: { value: FrequencyType; label: string }[] = [
-    { value: 'daily',   label: '毎日' },
-    { value: 'weekly',  label: '週N回' },
-    { value: 'monthly', label: '月N回' },
+const HABIT_DAYS = [
+    { key: 'mon', label: '月' },
+    { key: 'tue', label: '火' },
+    { key: 'wed', label: '水' },
+    { key: 'thu', label: '木' },
+    { key: 'fri', label: '金' },
+    { key: 'sat', label: '土' },
+    { key: 'sun', label: '日' },
+] as const
+
+const DAY_PRESETS = [
+    { label: '毎日', val: 'mon,tue,wed,thu,fri,sat,sun' },
+    { label: '平日', val: 'mon,tue,wed,thu,fri' },
+    { label: '土日', val: 'sat,sun' },
 ]
 
 type ItemWithChildren = IdealItem & { children: IdealItem[] }
@@ -60,8 +70,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newTitle, setNewTitle] = useState('')
     const [bulkTitles, setBulkTitles] = useState('')
     const [newType, setNewType] = useState<IdealItemType>('habit')
-    const [newFreqType, setNewFreqType] = useState<FrequencyType>('daily')
-    const [newFreqValue, setNewFreqValue] = useState(1)
+    const [newHabitDays, setNewHabitDays] = useState('mon,tue,wed,thu,fri,sat,sun')
     const [newSessionMin, setNewSessionMin] = useState(15)
     const [newCost, setNewCost] = useState('')
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
@@ -126,6 +135,16 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         setNewCost('')
     }
 
+    const selectedDaySet = new Set(newHabitDays.split(',').filter(Boolean))
+    const selectedDayCount = selectedDaySet.size
+
+    const toggleDay = (key: string) => {
+        const next = new Set(selectedDaySet)
+        if (next.has(key)) next.delete(key); else next.add(key)
+        const newVal = HABIT_DAYS.map(d => d.key).filter(k => next.has(k)).join(',')
+        setNewHabitDays(newVal)
+    }
+
     const buildItemBody = (title: string): Record<string, unknown> => {
         const body: Record<string, unknown> = {
             title: title.trim(),
@@ -135,10 +154,20 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
             body.parent_item_id = addingParentId
         }
         if (newType === 'habit') {
-            body.frequency_type = newFreqType
-            body.frequency_value = newFreqValue
+            // 曜日選択を frequency_type/value に変換
+            if (selectedDayCount === 7 || selectedDayCount === 0) {
+                body.frequency_type = 'daily'
+                body.frequency_value = 1
+            } else {
+                body.frequency_type = 'weekly'
+                body.frequency_value = selectedDayCount
+            }
             body.session_minutes = newSessionMin
-            body.daily_minutes = calcDailyMinutes(newFreqType, newFreqValue, newSessionMin)
+            body.daily_minutes = calcDailyMinutes(
+                body.frequency_type as FrequencyType,
+                body.frequency_value as number,
+                newSessionMin
+            )
         }
         if (newType === 'cost' && newCost) {
             body.item_cost = Number(newCost)
@@ -186,8 +215,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         setNewTitle('')
         setBulkTitles('')
         setNewType('habit')
-        setNewFreqType('daily')
-        setNewFreqValue(1)
+        setNewHabitDays('mon,tue,wed,thu,fri,sat,sun')
         setNewSessionMin(15)
         setNewCost('')
         setIsAdding(false)
@@ -459,37 +487,54 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                             )}
                         </div>
 
-                        {/* 習慣の場合のみ: 頻度設定（シンプル版） */}
+                        {/* 習慣の場合のみ: 曜日選択 + 時間 */}
                         {newType === 'habit' && (
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <select
-                                    value={newFreqType}
-                                    onChange={e => setNewFreqType(e.target.value as FrequencyType)}
-                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                                >
-                                    {FREQUENCY_OPTIONS.map(o => (
-                                        <option key={o.value} value={o.value}>{o.label}</option>
+                            <div className="space-y-2">
+                                {/* 曜日ボタン */}
+                                <div className="flex gap-1">
+                                    {HABIT_DAYS.map(({ key, label }) => (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            onClick={() => toggleDay(key)}
+                                            className={cn(
+                                                "flex-1 h-8 text-xs rounded-md font-medium transition-colors",
+                                                selectedDaySet.has(key)
+                                                    ? "bg-primary text-primary-foreground"
+                                                    : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                                            )}
+                                        >
+                                            {label}
+                                        </button>
                                     ))}
-                                </select>
-                                {(newFreqType === 'weekly' || newFreqType === 'monthly') && (
-                                    <Input
-                                        type="number"
-                                        min={1}
-                                        value={newFreqValue}
-                                        onChange={e => setNewFreqValue(Number(e.target.value))}
-                                        className="h-8 w-16 text-xs"
-                                        placeholder="回数"
-                                    />
-                                )}
-                                <div className="flex items-center gap-1">
-                                    <Input
-                                        type="number"
-                                        min={1}
-                                        value={newSessionMin}
-                                        onChange={e => setNewSessionMin(Number(e.target.value))}
-                                        className="h-8 w-16 text-xs"
-                                    />
-                                    <span className="text-xs text-muted-foreground">分/回</span>
+                                </div>
+                                {/* プリセット + 時間 */}
+                                <div className="flex items-center gap-1.5">
+                                    {DAY_PRESETS.map(p => (
+                                        <button
+                                            key={p.val}
+                                            type="button"
+                                            onClick={() => setNewHabitDays(p.val)}
+                                            className={cn(
+                                                "px-2 py-1 text-[11px] rounded-md transition-colors",
+                                                newHabitDays === p.val
+                                                    ? "bg-primary/20 text-primary font-medium"
+                                                    : "text-muted-foreground hover:bg-muted/50 border border-border"
+                                            )}
+                                        >
+                                            {p.label}
+                                        </button>
+                                    ))}
+                                    <div className="flex items-center gap-1 ml-auto">
+                                        <Input
+                                            type="number"
+                                            min={1}
+                                            value={newSessionMin}
+                                            onChange={e => setNewSessionMin(Number(e.target.value))}
+                                            className="h-7 w-14 text-xs"
+                                        />
+                                        <span className="text-xs text-muted-foreground">分</span>
+                                    </div>
                                 </div>
                             </div>
                         )}
