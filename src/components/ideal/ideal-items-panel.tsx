@@ -86,13 +86,14 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const items = ideal.ideal_items ?? []
     const { roots } = useMemo(() => buildItemTree(items), [items])
 
-    // アイテム詳細ドリルダウン
-    const selectedItem = selectedItemId ? items.find(i => i.id === selectedItemId) : null
-    if (selectedItem) {
+    // アイテム詳細画面（画像・候補管理）へのドリルダウン
+    const detailItemId = selectedItemId?.endsWith('_detail') ? selectedItemId.replace('_detail', '') : null
+    const detailItem = detailItemId ? items.find(i => i.id === detailItemId) : null
+    if (detailItem) {
         const itemWithDetails: IdealItemWithDetails = {
-            ...selectedItem,
-            ideal_item_images: (selectedItem as IdealItemWithDetails).ideal_item_images ?? [],
-            ideal_candidates: (selectedItem as IdealItemWithDetails).ideal_candidates ?? [],
+            ...detailItem,
+            ideal_item_images: (detailItem as IdealItemWithDetails).ideal_item_images ?? [],
+            ideal_candidates: (detailItem as IdealItemWithDetails).ideal_candidates ?? [],
         }
         return (
             <IdealItemDetail
@@ -349,78 +350,117 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         })
     }
 
-    const renderItem = (item: IdealItem, isChild = false) => (
-        <div
-            key={item.id}
-            className={cn(
-                "group flex items-start gap-2.5 p-3 rounded-lg hover:bg-muted/50 active:bg-muted/70 cursor-pointer transition-colors",
-                isChild && "ml-6 border-l-2 border-muted pl-3"
-            )}
-            onClick={() => setSelectedItemId(item.id)}
-        >
-            {item.thumbnail_url ? (
-                <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 border border-border">
-                    <img src={item.thumbnail_url} alt="" className="w-full h-full object-cover" />
-                </div>
-            ) : (
-                <button
-                    onClick={(e) => { e.stopPropagation(); handleToggleDone(item) }}
-                    className="mt-0.5 flex-shrink-0"
+    // インライン編集の保存
+    const handleInlineSave = async (itemId: string, field: string, value: string | null) => {
+        await fetch(`/api/ideals/${ideal.id}/items/${itemId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: value }),
+        })
+        onItemsChanged()
+    }
+
+    const renderItemRow = (item: IdealItem, isChild = false) => {
+        const isExpanded = selectedItemId === item.id
+        return (
+            <div key={item.id}>
+                {/* アイテム行 */}
+                <div
+                    className={cn(
+                        "flex items-center gap-2.5 p-3 rounded-lg cursor-pointer transition-colors",
+                        isExpanded ? "bg-muted/60" : "hover:bg-muted/40 active:bg-muted/60",
+                        isChild && "py-2"
+                    )}
+                    onClick={() => setSelectedItemId(isExpanded ? null : item.id)}
                 >
-                    {item.is_done
-                        ? <CheckCircle2 className="h-5 w-5 text-primary" />
-                        : <Circle className="h-5 w-5 text-muted-foreground" />
-                    }
-                </button>
-            )}
-            <div className="flex-1 min-w-0">
-                <p className={cn("text-sm", item.is_done && "line-through text-muted-foreground")}>
-                    {item.title}
-                </p>
-                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    {item.scheduled_date && (
-                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                            <Calendar className="h-3 w-3" />
-                            {new Date(item.scheduled_date + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
-                        </span>
-                    )}
-                    <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                        {getItemIcon(item.item_type)}
-                        {formatItemMeta(item)}
-                    </span>
-                    {(item as IdealItemWithDetails).ideal_item_images?.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                            <ImageIcon className="h-3 w-3" />
-                            {(item as IdealItemWithDetails).ideal_item_images.length}
-                        </span>
-                    )}
-                    {item.description && (
-                        <span className="text-xs text-muted-foreground">
-                            <FileText className="h-3 w-3 inline" />
-                        </span>
-                    )}
-                </div>
-                {(item.linked_task_id || item.linked_habit_id) && (
                     <button
-                        onClick={(e) => { e.stopPropagation(); setLinkingItemId(item.id) }}
-                        className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); handleToggleDone(item) }}
+                        className="flex-shrink-0"
                     >
-                        <Link2 className="h-3 w-3" />
-                        {item.linked_habit_id ? '習慣と連携中' : 'タスクと連携中'}
+                        {item.is_done
+                            ? <CheckCircle2 className="h-5 w-5 text-primary" />
+                            : <Circle className="h-5 w-5 text-muted-foreground/40" />
+                        }
                     </button>
+                    <div className="flex-1 min-w-0">
+                        <p className={cn("text-sm", item.is_done && "line-through text-muted-foreground")}>
+                            {item.title}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {item.scheduled_date && (
+                                <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                                    <Calendar className="h-3 w-3" />
+                                    {new Date(item.scheduled_date + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
+                                </span>
+                            )}
+                            <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                                {getItemIcon(item.item_type)}
+                                {formatItemMeta(item)}
+                            </span>
+                        </div>
+                    </div>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleDelete(item) }}
+                        className="p-1.5 rounded-md text-muted-foreground/30 hover:text-destructive transition-colors flex-shrink-0"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    {isExpanded
+                        ? <ChevronDown className="h-4 w-4 text-muted-foreground/50 flex-shrink-0" />
+                        : <ChevronRight className="h-4 w-4 text-muted-foreground/30 flex-shrink-0" />
+                    }
+                </div>
+
+                {/* インライン編集パネル */}
+                {isExpanded && (
+                    <div className="px-3 pb-3 space-y-2 animate-in slide-in-from-top-1 duration-150">
+                        <div className="ml-7 space-y-2 border-l-2 border-primary/20 pl-3">
+                            {/* メモ */}
+                            <div>
+                                <span className="text-[10px] text-muted-foreground">メモ</span>
+                                <textarea
+                                    defaultValue={item.description || ''}
+                                    placeholder="メモを入力..."
+                                    onBlur={e => {
+                                        if (e.target.value !== (item.description || ''))
+                                            handleInlineSave(item.id, 'description', e.target.value || null)
+                                    }}
+                                    className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs resize-none mt-0.5"
+                                    rows={2}
+                                />
+                            </div>
+                            {/* 予定日 */}
+                            <div className="flex items-center gap-2">
+                                <Calendar className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                <span className="text-[10px] text-muted-foreground">予定日</span>
+                                <input
+                                    type="date"
+                                    defaultValue={item.scheduled_date || ''}
+                                    onChange={e => handleInlineSave(item.id, 'scheduled_date', e.target.value || null)}
+                                    className="h-7 px-2 text-xs border rounded-md bg-background"
+                                />
+                            </div>
+                            {/* 連携 */}
+                            <button
+                                onClick={() => setLinkingItemId(item.id)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-muted transition-colors"
+                            >
+                                <Link2 className="h-3 w-3" />
+                                {item.linked_habit_id ? '習慣と連携中' : item.linked_task_id ? 'タスクと連携中' : '習慣/タスクと連携'}
+                            </button>
+                            {/* 詳細画面へ */}
+                            <button
+                                onClick={() => setSelectedItemId(item.id + '_detail')}
+                                className="text-[10px] text-primary hover:underline"
+                            >
+                                画像・候補を管理 →
+                            </button>
+                        </div>
+                    </div>
                 )}
             </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-                <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(item) }}
-                    className="p-2.5 md:p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive active:bg-destructive/10 transition-colors"
-                >
-                    <Trash2 className="h-4 w-4" />
-                </button>
-                <ChevronRight className="h-4 w-4 text-muted-foreground/30" />
-            </div>
-        </div>
-    )
+        )
+    }
 
     const canSubmit = isBulkMode
         ? bulkTitles.split('\n').some(t => t.trim())
@@ -452,53 +492,50 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                     const doneCount = item.children.filter(c => c.is_done).length
 
                     return (
-                        <div key={item.id}>
-                            {/* Parent item row */}
-                            <div className="relative">
+                        <div key={item.id} className={cn(
+                            "border rounded-lg transition-all",
+                            hasChildren && !isCollapsed && "border-border",
+                            hasChildren && isCollapsed && "border-border/50",
+                            !hasChildren && "border-transparent"
+                        )}>
+                            {/* 親アイテム行 */}
+                            <div className="flex items-center">
                                 {hasChildren && (
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); toggleCollapse(item.id) }}
-                                        className="absolute left-0 top-3 z-10 p-1 text-muted-foreground hover:text-foreground"
+                                        onClick={() => toggleCollapse(item.id)}
+                                        className="p-2 text-muted-foreground hover:text-foreground flex-shrink-0"
                                     >
                                         {isCollapsed
-                                            ? <ChevronRight className="h-3.5 w-3.5" />
-                                            : <ChevronDown className="h-3.5 w-3.5" />
+                                            ? <ChevronRight className="h-4 w-4" />
+                                            : <ChevronDown className="h-4 w-4" />
                                         }
                                     </button>
                                 )}
-                                <div className={hasChildren ? "ml-5" : ""}>
-                                    {renderItem(item)}
+                                <div className={cn("flex-1 min-w-0", !hasChildren && "pl-1")}>
+                                    {renderItemRow(item)}
                                 </div>
-                                {/* Progress badge for parents with children */}
                                 {hasChildren && (
-                                    <span className="absolute right-16 top-3 text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
+                                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full mr-3 flex-shrink-0">
                                         {doneCount}/{item.children.length}
                                     </span>
                                 )}
                             </div>
 
-                            {/* Children */}
+                            {/* 子アイテム（展開時） */}
                             {hasChildren && !isCollapsed && (
-                                <div className="ml-5 space-y-0.5">
-                                    {item.children.map(child => renderItem(child, true))}
-                                    {/* Add sub-item button */}
+                                <div className="border-t px-2 pb-2 space-y-0 animate-in slide-in-from-top-1 duration-150">
+                                    {item.children.map(child => (
+                                        <div key={child.id} className="ml-6">
+                                            {renderItemRow(child, true)}
+                                        </div>
+                                    ))}
                                     <button
                                         onClick={() => startAddingSubItem(item.id)}
-                                        className="flex items-center gap-1 ml-6 pl-3 py-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+                                        className="flex items-center gap-1 ml-8 py-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
                                     >
                                         <Plus className="h-3 w-3" /> ステップ追加
                                     </button>
                                 </div>
-                            )}
-
-                            {/* Add first sub-item button (when no children yet) */}
-                            {!hasChildren && !isCollapsed && (
-                                <button
-                                    onClick={() => startAddingSubItem(item.id)}
-                                    className="flex items-center gap-1 ml-8 py-1 text-xs text-muted-foreground/50 hover:text-primary transition-colors"
-                                >
-                                    <Plus className="h-3 w-3" /> ステップを追加
-                                </button>
                             )}
                         </div>
                     )
