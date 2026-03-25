@@ -75,6 +75,8 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
     const [newStartDate, setNewStartDate] = useState('')
     const [newEndDate, setNewEndDate] = useState('')
+    const [newMonthlyAmount, setNewMonthlyAmount] = useState('')
+    const [newPayDay, setNewPayDay] = useState(25)
     const [newSubtasks, setNewSubtasks] = useState<string[]>([])
     const [isSaving, setIsSaving] = useState(false)
     const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
@@ -147,6 +149,19 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         setNewHabitDays(newVal)
     }
 
+    // 貯蓄の月額自動計算
+    const autoMonthlyAmount = useMemo(() => {
+        if (newCostType !== 'annual' || !newCost || !newEndDate) return 0
+        const target = Number(newCost)
+        if (!target) return 0
+        const now = new Date()
+        const end = new Date(newEndDate + 'T00:00:00')
+        const months = Math.max(1, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24 * 30)))
+        return Math.ceil(target / months)
+    }, [newCost, newEndDate, newCostType])
+
+    const effectiveMonthlyAmount = newMonthlyAmount ? Number(newMonthlyAmount) : autoMonthlyAmount
+
     const buildItemBody = (title: string): Record<string, unknown> => {
         const body: Record<string, unknown> = {
             title: title.trim(),
@@ -212,10 +227,11 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(buildItemBody(newTitle)),
                 })
-                // サブタスクがあれば親IDを取得して一括作成
-                const subtaskTitles = newSubtasks.filter(s => s.trim())
-                if (res.ok && subtaskTitles.length > 0) {
+                if (res.ok) {
                     const { item: parentItem } = await res.json()
+
+                    // サブタスクがあれば一括作成
+                    const subtaskTitles = newSubtasks.filter(s => s.trim())
                     for (const subTitle of subtaskTitles) {
                         await fetch(`/api/ideals/${ideal.id}/items`, {
                             method: 'POST',
@@ -224,6 +240,40 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 title: subTitle.trim(),
                                 item_type: 'action',
                                 parent_item_id: parentItem.id,
+                            }),
+                        })
+                    }
+
+                    // 費用「貯めて買う」→ 貯蓄習慣を自動作成
+                    if (newType === 'cost' && newCostType === 'annual' && effectiveMonthlyAmount > 0) {
+                        await fetch(`/api/ideals/${ideal.id}/items`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                title: `毎月¥${effectiveMonthlyAmount.toLocaleString()}を貯蓄`,
+                                item_type: 'habit',
+                                frequency_type: 'monthly',
+                                frequency_value: 1,
+                                session_minutes: 5,
+                                parent_item_id: parentItem.id,
+                                description: `毎月${newPayDay}日に貯蓄 / 目標: ¥${Number(newCost).toLocaleString()} / 期限: ${newEndDate}`,
+                            }),
+                        })
+                    }
+
+                    // 費用「月額サブスク」→ 支払い習慣を自動作成
+                    if (newType === 'cost' && newCostType === 'monthly' && newCost) {
+                        await fetch(`/api/ideals/${ideal.id}/items`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                title: `毎月¥${Number(newCost).toLocaleString()}の支払い`,
+                                item_type: 'habit',
+                                frequency_type: 'monthly',
+                                frequency_value: 1,
+                                session_minutes: 5,
+                                parent_item_id: parentItem.id,
+                                description: `毎月${newPayDay}日に支払い`,
                             }),
                         })
                     }
@@ -245,6 +295,8 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         setNewCost('')
         setNewStartDate('')
         setNewEndDate('')
+        setNewMonthlyAmount('')
+        setNewPayDay(25)
         setNewSubtasks([])
         setIsAdding(false)
         setIsBulkMode(false)
@@ -638,19 +690,84 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                         </button>
                                     ))}
                                 </div>
-                                {/* 期限 */}
-                                <div className="flex items-center gap-2">
-                                    <Calendar className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                    <span className="text-xs text-muted-foreground flex-shrink-0">
-                                        {newCostType === 'monthly' ? '開始日' : '購入予定'}
-                                    </span>
-                                    <input
-                                        type="date"
-                                        value={newEndDate}
-                                        onChange={e => setNewEndDate(e.target.value)}
-                                        className="flex-1 h-8 px-2 text-xs border rounded-md bg-background"
-                                    />
-                                </div>
+                                {/* 一括購入: 購入予定日 */}
+                                {newCostType === 'once' && (
+                                    <div className="flex items-center gap-2">
+                                        <Calendar className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                        <span className="text-xs text-muted-foreground flex-shrink-0">購入予定</span>
+                                        <input
+                                            type="date"
+                                            value={newEndDate}
+                                            onChange={e => setNewEndDate(e.target.value)}
+                                            className="flex-1 h-8 px-2 text-xs border rounded-md bg-background"
+                                        />
+                                    </div>
+                                )}
+
+                                {/* 月額サブスク: 支払日 */}
+                                {newCostType === 'monthly' && (
+                                    <div className="flex items-center gap-2">
+                                        <Calendar className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                        <span className="text-xs text-muted-foreground flex-shrink-0">毎月</span>
+                                        <select
+                                            value={newPayDay}
+                                            onChange={e => setNewPayDay(Number(e.target.value))}
+                                            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                        >
+                                            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                                <option key={d} value={d}>{d}日</option>
+                                            ))}
+                                        </select>
+                                        <span className="text-xs text-muted-foreground">に支払い</span>
+                                    </div>
+                                )}
+
+                                {/* 貯めて買う: 期限 + 月額 + 貯蓄日 */}
+                                {newCostType === 'annual' && (
+                                    <div className="space-y-2 p-2 rounded-md bg-amber-50/50 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-800/30">
+                                        <div className="flex items-center gap-2">
+                                            <Calendar className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+                                            <span className="text-xs text-muted-foreground flex-shrink-0">購入期限</span>
+                                            <input
+                                                type="date"
+                                                value={newEndDate}
+                                                onChange={e => setNewEndDate(e.target.value)}
+                                                className="flex-1 h-8 px-2 text-xs border rounded-md bg-background"
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Wallet className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+                                            <span className="text-xs text-muted-foreground flex-shrink-0">毎月</span>
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                placeholder={autoMonthlyAmount > 0 ? `¥${autoMonthlyAmount.toLocaleString()}` : '金額'}
+                                                value={newMonthlyAmount}
+                                                onChange={e => setNewMonthlyAmount(e.target.value)}
+                                                className="h-8 text-xs flex-1"
+                                            />
+                                            <span className="text-xs text-muted-foreground">円</span>
+                                        </div>
+                                        {autoMonthlyAmount > 0 && !newMonthlyAmount && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                                                自動計算: 毎月 ¥{autoMonthlyAmount.toLocaleString()} × {Math.max(1, Math.ceil((new Date(newEndDate + 'T00:00:00').getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30)))}ヶ月
+                                            </p>
+                                        )}
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-muted-foreground flex-shrink-0">毎月</span>
+                                            <select
+                                                value={newPayDay}
+                                                onChange={e => setNewPayDay(Number(e.target.value))}
+                                                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                            >
+                                                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                                    <option key={d} value={d}>{d}日</option>
+                                                ))}
+                                            </select>
+                                            <span className="text-xs text-muted-foreground">に貯蓄する</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
