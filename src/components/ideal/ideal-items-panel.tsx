@@ -19,7 +19,6 @@ const ITEM_TYPE_CHIPS: { value: IdealItemType; label: string; icon: React.ReactN
     { value: 'habit',     label: '習慣',     icon: <Repeat className="h-3 w-3" />,    desc: '繰り返す' },
     { value: 'action',    label: 'やること', icon: <CheckCircle2 className="h-3 w-3" />, desc: '1回きり' },
     { value: 'cost',      label: '費用',     icon: <Wallet className="h-3 w-3" />,     desc: 'お金' },
-    { value: 'milestone', label: '目標',     icon: <Target className="h-3 w-3" />,     desc: '達成点' },
 ]
 
 const HABIT_DAYS = [
@@ -74,6 +73,8 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const [newSessionMin, setNewSessionMin] = useState(15)
     const [newCost, setNewCost] = useState('')
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
+    const [newStartDate, setNewStartDate] = useState('')
+    const [newEndDate, setNewEndDate] = useState('')
     const [newSubtasks, setNewSubtasks] = useState<string[]>([])
     const [isSaving, setIsSaving] = useState(false)
     const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
@@ -174,6 +175,13 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
             body.item_cost = Number(newCost)
             body.cost_type = newCostType
         }
+        // 日付
+        if (newType === 'habit') {
+            if (newEndDate) body.scheduled_date = newEndDate
+            if (newStartDate) body.description = `開始: ${newStartDate}`
+        } else if (newEndDate) {
+            body.scheduled_date = newEndDate
+        }
         return body
     }
 
@@ -235,6 +243,8 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         setNewHabitDays('mon,tue,wed,thu,fri,sat,sun')
         setNewSessionMin(15)
         setNewCost('')
+        setNewStartDate('')
+        setNewEndDate('')
         setNewSubtasks([])
         setIsAdding(false)
         setIsBulkMode(false)
@@ -505,7 +515,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                             )}
                         </div>
 
-                        {/* 習慣の場合のみ: 曜日選択 + 時間 */}
+                        {/* 習慣の場合: 曜日選択 + 時間 + 期間 */}
                         {newType === 'habit' && (
                             <div className="space-y-2">
                                 {/* 曜日ボタン */}
@@ -554,29 +564,93 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                         <span className="text-xs text-muted-foreground">分</span>
                                     </div>
                                 </div>
+                                {/* 期間 */}
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1 space-y-0.5">
+                                        <span className="text-[11px] text-muted-foreground">開始日</span>
+                                        <input
+                                            type="date"
+                                            value={newStartDate}
+                                            onChange={e => setNewStartDate(e.target.value)}
+                                            className="w-full h-8 px-2 text-xs border rounded-md bg-background"
+                                        />
+                                    </div>
+                                    <span className="text-muted-foreground mt-4">〜</span>
+                                    <div className="flex-1 space-y-0.5">
+                                        <span className="text-[11px] text-muted-foreground">終了日</span>
+                                        <input
+                                            type="date"
+                                            value={newEndDate}
+                                            onChange={e => setNewEndDate(e.target.value)}
+                                            className="w-full h-8 px-2 text-xs border rounded-md bg-background"
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         )}
 
-                        {/* 費用の場合のみ: 金額入力 */}
-                        {newType === 'cost' && (
+                        {/* やることの場合: 期限 */}
+                        {newType === 'action' && (
                             <div className="flex items-center gap-2">
-                                <Input
-                                    type="number"
-                                    min={0}
-                                    placeholder="金額（円）"
-                                    value={newCost}
-                                    onChange={e => setNewCost(e.target.value)}
-                                    className="h-8 text-xs flex-1"
+                                <Calendar className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                <span className="text-xs text-muted-foreground flex-shrink-0">期限</span>
+                                <input
+                                    type="date"
+                                    value={newEndDate}
+                                    onChange={e => setNewEndDate(e.target.value)}
+                                    className="flex-1 h-8 px-2 text-xs border rounded-md bg-background"
                                 />
-                                <select
-                                    value={newCostType}
-                                    onChange={e => setNewCostType(e.target.value as 'once' | 'monthly' | 'annual')}
-                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                                >
-                                    <option value="once">一括</option>
-                                    <option value="monthly">月払い</option>
-                                    <option value="annual">年払い</option>
-                                </select>
+                            </div>
+                        )}
+
+                        {/* 費用の場合: 金額 + 支払い形態 + 期限 */}
+                        {newType === 'cost' && (
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        type="number"
+                                        min={0}
+                                        placeholder="金額（円）"
+                                        value={newCost}
+                                        onChange={e => setNewCost(e.target.value)}
+                                        className="h-8 text-xs flex-1"
+                                    />
+                                </div>
+                                {/* 支払い形態チップ */}
+                                <div className="flex gap-1.5">
+                                    {([
+                                        { value: 'once', label: '一括購入' },
+                                        { value: 'monthly', label: '月額サブスク' },
+                                        { value: 'annual', label: '貯めて買う' },
+                                    ] as const).map(opt => (
+                                        <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => setNewCostType(opt.value)}
+                                            className={cn(
+                                                "px-2 py-1 text-[11px] rounded-md transition-colors flex-1",
+                                                newCostType === opt.value
+                                                    ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 font-medium"
+                                                    : "text-muted-foreground hover:bg-muted/50 border border-border"
+                                            )}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                {/* 期限 */}
+                                <div className="flex items-center gap-2">
+                                    <Calendar className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                    <span className="text-xs text-muted-foreground flex-shrink-0">
+                                        {newCostType === 'monthly' ? '開始日' : '購入予定'}
+                                    </span>
+                                    <input
+                                        type="date"
+                                        value={newEndDate}
+                                        onChange={e => setNewEndDate(e.target.value)}
+                                        className="flex-1 h-8 px-2 text-xs border rounded-md bg-background"
+                                    />
+                                </div>
                             </div>
                         )}
 
