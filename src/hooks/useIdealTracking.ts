@@ -41,9 +41,15 @@ export function useIdealTracking(
     const [isLoading, setIsLoading] = useState(true)
     const [refreshKey, setRefreshKey] = useState(0)
 
+    // 月次アイテムの完了判定のため、月初からのデータも取得
+    const expandedFrom = useMemo(() => {
+        const d = new Date(dateRange.from + 'T00:00:00')
+        return format(new Date(d.getFullYear(), d.getMonth(), 1), 'yyyy-MM-dd')
+    }, [dateRange.from])
+
     const fetchCompletions = useCallback(async () => {
         try {
-            const res = await fetch(`/api/ideals/completions?from=${dateRange.from}&to=${dateRange.to}`)
+            const res = await fetch(`/api/ideals/completions?from=${expandedFrom}&to=${dateRange.to}`)
             if (!res.ok) return
             const data = await res.json()
             setDirectCompletions(data.directCompletions ?? [])
@@ -53,7 +59,7 @@ export function useIdealTracking(
         } finally {
             setIsLoading(false)
         }
-    }, [dateRange.from, dateRange.to])
+    }, [expandedFrom, dateRange.to])
 
     useEffect(() => {
         fetchCompletions()
@@ -71,10 +77,25 @@ export function useIdealTracking(
             )
     }, [ideals])
 
+    // description から「毎月N日」のパターンを抽出
+    const extractPayDay = (desc: string | null): number | null => {
+        if (!desc) return null
+        const match = desc.match(/毎月(\d+)日/)
+        return match ? parseInt(match[1], 10) : null
+    }
+
+    // 月次アイテムの今月完了チェック
+    const isMonthlyCompletedThisMonth = (itemId: string, year: number, month: number): boolean => {
+        return directCompletions.some(c => {
+            if (c.ideal_item_id !== itemId || !c.is_completed) return false
+            const d = new Date(c.completed_date + 'T00:00:00')
+            return d.getFullYear() === year && d.getMonth() === month
+        })
+    }
+
     // 日別サマリーを構築
     const daySummaries = useMemo(() => {
         const map = new Map<string, DaySummary>()
-        const today = format(new Date(), 'yyyy-MM-dd')
 
         // 日付範囲内の各日について
         const start = new Date(dateRange.from + 'T00:00:00')
@@ -82,13 +103,28 @@ export function useIdealTracking(
 
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
             const dateStr = format(d, 'yyyy-MM-dd')
+            const currentDay = d.getDate()
+            const currentYear = d.getFullYear()
+            const currentMonth = d.getMonth()
             const items: IdealTrackingItem[] = []
 
             for (const { item, goal } of trackableItems) {
-                // 頻度チェック（daily は毎日、他はとりあえず毎日表示）
-                const shouldShow = item.frequency_type === 'daily'
-                    || item.frequency_type === 'weekly'
-                    || item.frequency_type === 'monthly'
+                let shouldShow = false
+
+                if (item.frequency_type === 'daily' || item.frequency_type === 'weekly') {
+                    shouldShow = true
+                } else if (item.frequency_type === 'monthly') {
+                    // 月次: 「毎月N日」以降 かつ 今月未チェックなら表示
+                    const payDay = extractPayDay(item.description)
+                    if (payDay) {
+                        const completedThisMonth = isMonthlyCompletedThisMonth(item.id, currentYear, currentMonth)
+                        shouldShow = currentDay >= payDay && !completedThisMonth
+                    } else {
+                        // payDay情報がない場合は月初から表示
+                        const completedThisMonth = isMonthlyCompletedThisMonth(item.id, currentYear, currentMonth)
+                        shouldShow = !completedThisMonth
+                    }
+                }
 
                 if (!shouldShow) continue
 

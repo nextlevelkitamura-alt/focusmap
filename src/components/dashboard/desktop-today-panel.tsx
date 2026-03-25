@@ -98,7 +98,7 @@ export function DesktopTodayPanel({
     // 理想進捗トラッキング
     const todayStr = format(new Date(), 'yyyy-MM-dd')
     const idealDateRange = useMemo(() => ({ from: todayStr, to: todayStr }), [todayStr])
-    const { todaySummary, refresh: refreshIdealTracking } = useIdealTracking(ideals, idealDateRange)
+    const { todaySummary, toggleItemCompletion, refresh: refreshIdealTracking } = useIdealTracking(ideals, idealDateRange)
 
     // 習慣完了時に理想進捗もリフレッシュ
     const originalToggleCompletion = logic.toggleCompletion
@@ -454,28 +454,39 @@ export function DesktopTodayPanel({
                             {todaySummary.completedCount}/{todaySummary.totalCount}
                         </span>
                     </div>
-                    {/* 理想ごとのプログレス */}
-                    <div className="space-y-1">
-                        {ideals.filter(g => g.status === 'active').map(goal => {
-                            const goalItems = todaySummary.items.filter(i => i.idealGoalTitle === goal.title)
-                            if (goalItems.length === 0) return null
-                            const done = goalItems.filter(i => i.completionStatus === 'completed').length
-                            const pct = Math.round((done / goalItems.length) * 100)
+                    {/* アイテム単位のチェックリスト */}
+                    <div className="space-y-0.5">
+                        {todaySummary.items.map(item => {
+                            const isCompleted = item.completionStatus === 'completed'
+                            const isHabitSource = item.source === 'habit'
                             return (
-                                <div key={goal.id} className="flex items-center gap-2">
-                                    <span className="text-[11px] truncate flex-1 min-w-0">
-                                        {goal.title}
+                                <button
+                                    key={item.idealItem.id}
+                                    onClick={() => {
+                                        if (!isHabitSource) {
+                                            toggleItemCompletion(item.idealItem.id, todayStr)
+                                        }
+                                    }}
+                                    disabled={isHabitSource}
+                                    className={cn(
+                                        "w-full flex items-center gap-1.5 py-0.5 rounded transition-colors text-left",
+                                        !isHabitSource && "hover:bg-muted/40 active:bg-muted/60"
+                                    )}
+                                >
+                                    {isCompleted
+                                        ? <CheckSquare className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                                        : <Square className="w-3 h-3 text-muted-foreground/40 flex-shrink-0" />
+                                    }
+                                    <span className={cn(
+                                        "text-[11px] flex-1 truncate",
+                                        isCompleted && "line-through text-muted-foreground"
+                                    )}>
+                                        {item.idealItem.title}
                                     </span>
-                                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex-shrink-0">
-                                        <div
-                                            className="h-full rounded-full transition-all bg-amber-500"
-                                            style={{ width: `${pct}%` }}
-                                        />
-                                    </div>
-                                    <span className="text-[10px] text-muted-foreground w-8 text-right flex-shrink-0">
-                                        {done}/{goalItems.length}
+                                    <span className="text-[9px] text-muted-foreground/50 flex-shrink-0">
+                                        {item.idealGoalTitle}
                                     </span>
-                                </div>
+                                </button>
                             )
                         })}
                     </div>
