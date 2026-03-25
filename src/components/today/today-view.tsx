@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useEffect } from "react"
+import { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { Task, Project, IdealGoalWithItems } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
@@ -17,6 +17,8 @@ import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
 import { formatTime } from "@/contexts/TimerContext"
+import { useIdealTracking } from "@/hooks/useIdealTracking"
+import { Star } from "lucide-react"
 
 // --- Types ---
 
@@ -44,18 +46,21 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onDeleteTask,
     })
 
-    // 理想像との紐付きマップ
+    // 理想像データ取得
+    const [ideals, setIdeals] = useState<IdealGoalWithItems[]>([])
     const [habitIdealMap, setHabitIdealMap] = useState<Map<string, string>>(new Map())
     useEffect(() => {
         fetch('/api/ideals')
             .then(res => res.ok ? res.json() : null)
             .then(data => {
                 if (!data?.ideals) return
+                const allIdeals = data.ideals as IdealGoalWithItems[]
+                setIdeals(allIdeals)
                 const map = new Map<string, string>()
-                for (const ideal of data.ideals as IdealGoalWithItems[]) {
-                    for (const item of ideal.ideal_items ?? []) {
+                for (const allIdeal of allIdeals) {
+                    for (const item of allIdeal.ideal_items ?? []) {
                         if (item.linked_habit_id) {
-                            map.set(item.linked_habit_id, ideal.title)
+                            map.set(item.linked_habit_id, allIdeal.title)
                         }
                     }
                 }
@@ -63,6 +68,18 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             })
             .catch(() => {})
     }, [])
+
+    // 理想進捗トラッキング
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    const idealDateRange = useMemo(() => ({ from: todayStr, to: todayStr }), [todayStr])
+    const { todaySummary, refresh: refreshIdealTracking } = useIdealTracking(ideals, idealDateRange)
+
+    // 習慣完了時に理想進捗もリフレッシュ
+    const originalToggleCompletion = logic.toggleCompletion
+    const wrappedToggleCompletion = useCallback(async (habitId: string) => {
+        await originalToggleCompletion(habitId)
+        setTimeout(() => refreshIdealTracking(), 500)
+    }, [originalToggleCompletion, refreshIdealTracking])
 
     // Swipe left/right to change date
     useSwipeNavigation({
@@ -261,7 +278,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                 logic.setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
                                                 return
                                             }
-                                            if (logic.isToday) logic.toggleCompletion(item.habit.id)
+                                            if (logic.isToday) wrappedToggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
                                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all flex-shrink-0 border",
@@ -412,6 +429,45 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     )}
                 </div>
             ) : null}
+
+            {/* 理想の今日の進捗 */}
+            {activeTab === 'today' && todaySummary && todaySummary.totalCount > 0 && (
+                <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-4 py-1.5">
+                    <div className="flex items-center gap-1.5 mb-1">
+                        <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                        <span className="text-[10px] font-medium text-muted-foreground flex-1">
+                            理想の進捗
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                            {todaySummary.completedCount}/{todaySummary.totalCount}
+                        </span>
+                    </div>
+                    <div className="space-y-1">
+                        {ideals.filter(g => g.status === 'active').map(goal => {
+                            const goalItems = todaySummary.items.filter(i => i.idealGoalTitle === goal.title)
+                            if (goalItems.length === 0) return null
+                            const done = goalItems.filter(i => i.completionStatus === 'completed').length
+                            const pct = Math.round((done / goalItems.length) * 100)
+                            return (
+                                <div key={goal.id} className="flex items-center gap-2">
+                                    <span className="text-[11px] truncate flex-1 min-w-0">
+                                        {goal.title}
+                                    </span>
+                                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex-shrink-0">
+                                        <div
+                                            className="h-full rounded-full transition-all bg-amber-500"
+                                            style={{ width: `${pct}%` }}
+                                        />
+                                    </div>
+                                    <span className="text-[10px] text-muted-foreground w-8 text-right flex-shrink-0">
+                                        {done}/{goalItems.length}
+                                    </span>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
 
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
