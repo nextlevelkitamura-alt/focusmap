@@ -4,7 +4,7 @@ import { useState, useMemo } from "react"
 import { IdealGoalWithItems, IdealItem, IdealItemWithDetails, IdealItemType, FrequencyType, calcDailyMinutes } from "@/types/database"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { X, Plus, CheckCircle2, Circle, Trash2, Clock, Wallet, Milestone, Link2, Calendar, ImageIcon, FileText, ChevronRight, ChevronDown } from "lucide-react"
+import { X, Plus, CheckCircle2, Circle, Trash2, Clock, Wallet, Milestone, Link2, Calendar, ImageIcon, FileText, ChevronRight, ChevronDown, Repeat, Target } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { IdealItemLinkPicker } from "./ideal-item-link-picker"
 import { IdealItemDetail } from "./ideal-item-detail"
@@ -15,24 +15,22 @@ interface IdealItemsPanelProps {
     onClose: () => void
 }
 
-const ITEM_TYPE_LABELS: Record<IdealItemType, string> = {
-    habit:     '定期行動',
-    action:    '単発アクション',
-    cost:      '費用',
-    milestone: 'マイルストーン',
-}
+const ITEM_TYPE_CHIPS: { value: IdealItemType; label: string; icon: React.ReactNode; desc: string }[] = [
+    { value: 'habit',     label: '習慣',     icon: <Repeat className="h-3 w-3" />,    desc: '繰り返す' },
+    { value: 'action',    label: 'やること', icon: <CheckCircle2 className="h-3 w-3" />, desc: '1回きり' },
+    { value: 'cost',      label: '費用',     icon: <Wallet className="h-3 w-3" />,     desc: 'お金' },
+    { value: 'milestone', label: '目標',     icon: <Target className="h-3 w-3" />,     desc: '達成点' },
+]
 
 const FREQUENCY_OPTIONS: { value: FrequencyType; label: string }[] = [
     { value: 'daily',   label: '毎日' },
     { value: 'weekly',  label: '週N回' },
     { value: 'monthly', label: '月N回' },
-    { value: 'once',    label: '単発（1回のみ）' },
 ]
 
 type ItemWithChildren = IdealItem & { children: IdealItem[] }
 
 function buildItemTree(items: IdealItem[]): { roots: ItemWithChildren[]; orphans: IdealItem[] } {
-    const itemMap = new Map(items.map(i => [i.id, i]))
     const childrenMap = new Map<string, IdealItem[]>()
     const roots: ItemWithChildren[] = []
     const orphans: IdealItem[] = []
@@ -57,15 +55,16 @@ function buildItemTree(items: IdealItem[]): { roots: ItemWithChildren[]; orphans
 
 export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPanelProps) {
     const [isAdding, setIsAdding] = useState(false)
+    const [isBulkMode, setIsBulkMode] = useState(false)
     const [addingParentId, setAddingParentId] = useState<string | null>(null)
     const [newTitle, setNewTitle] = useState('')
+    const [bulkTitles, setBulkTitles] = useState('')
     const [newType, setNewType] = useState<IdealItemType>('habit')
     const [newFreqType, setNewFreqType] = useState<FrequencyType>('daily')
     const [newFreqValue, setNewFreqValue] = useState(1)
     const [newSessionMin, setNewSessionMin] = useState(15)
     const [newCost, setNewCost] = useState('')
     const [newCostType, setNewCostType] = useState<'once' | 'monthly' | 'annual'>('once')
-    const [newDescription, setNewDescription] = useState('')
     const [isSaving, setIsSaving] = useState(false)
     const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
     const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -87,13 +86,9 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 item={itemWithDetails}
                 idealId={ideal.id}
                 onBack={() => setSelectedItemId(null)}
-                onItemChanged={onItemChanged}
+                onItemChanged={onItemsChanged}
             />
         )
-    }
-
-    function onItemChanged() {
-        onItemsChanged()
     }
 
     const handleToggleDone = async (item: IdealItem) => {
@@ -114,63 +109,90 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
     const startAddingSubItem = (parentId: string) => {
         setAddingParentId(parentId)
         setIsAdding(true)
+        setIsBulkMode(false)
         setNewType('action')
         setNewTitle('')
+        setBulkTitles('')
         setNewCost('')
     }
 
     const startAddingRootItem = () => {
         setAddingParentId(null)
         setIsAdding(true)
+        setIsBulkMode(false)
         setNewType('habit')
         setNewTitle('')
+        setBulkTitles('')
         setNewCost('')
     }
 
-    const handleAddItem = async () => {
-        if (!newTitle.trim()) return
-        setIsSaving(true)
-        try {
-            const body: Record<string, unknown> = {
-                title: newTitle.trim(),
-                item_type: newType,
-            }
-            if (addingParentId) {
-                body.parent_item_id = addingParentId
-            }
-            if (newType === 'habit' || newType === 'action') {
-                body.frequency_type = newFreqType
-                body.frequency_value = newFreqValue
-                body.session_minutes = newSessionMin
-                body.daily_minutes = calcDailyMinutes(newFreqType, newFreqValue, newSessionMin)
-            }
-            if (newCost) {
-                body.item_cost = Number(newCost)
-                body.cost_type = newCostType
-            }
-            if (newDescription.trim()) {
-                body.description = newDescription.trim()
-            }
-
-            await fetch(`/api/ideals/${ideal.id}/items`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            })
-
-            setNewTitle('')
-            setNewType('habit')
-            setNewFreqType('daily')
-            setNewFreqValue(1)
-            setNewSessionMin(15)
-            setNewCost('')
-            setNewDescription('')
-            setIsAdding(false)
-            setAddingParentId(null)
-            onItemsChanged()
-        } finally {
-            setIsSaving(false)
+    const buildItemBody = (title: string): Record<string, unknown> => {
+        const body: Record<string, unknown> = {
+            title: title.trim(),
+            item_type: newType,
         }
+        if (addingParentId) {
+            body.parent_item_id = addingParentId
+        }
+        if (newType === 'habit') {
+            body.frequency_type = newFreqType
+            body.frequency_value = newFreqValue
+            body.session_minutes = newSessionMin
+            body.daily_minutes = calcDailyMinutes(newFreqType, newFreqValue, newSessionMin)
+        }
+        if (newType === 'cost' && newCost) {
+            body.item_cost = Number(newCost)
+            body.cost_type = newCostType
+        }
+        return body
+    }
+
+    const handleAddItem = async () => {
+        if (isBulkMode) {
+            const titles = bulkTitles.split('\n').map(t => t.trim()).filter(Boolean)
+            if (titles.length === 0) return
+            setIsSaving(true)
+            try {
+                for (const title of titles) {
+                    await fetch(`/api/ideals/${ideal.id}/items`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(buildItemBody(title)),
+                    })
+                }
+                resetForm()
+                onItemsChanged()
+            } finally {
+                setIsSaving(false)
+            }
+        } else {
+            if (!newTitle.trim()) return
+            setIsSaving(true)
+            try {
+                await fetch(`/api/ideals/${ideal.id}/items`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(buildItemBody(newTitle)),
+                })
+                resetForm()
+                onItemsChanged()
+            } finally {
+                setIsSaving(false)
+            }
+        }
+    }
+
+    const resetForm = () => {
+        setNewTitle('')
+        setBulkTitles('')
+        setNewType('habit')
+        setNewFreqType('daily')
+        setNewFreqValue(1)
+        setNewSessionMin(15)
+        setNewCost('')
+        setIsAdding(false)
+        setIsBulkMode(false)
+        setAddingParentId(null)
     }
 
     const formatItemMeta = (item: IdealItem): string => {
@@ -178,6 +200,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
             const costLabel = item.cost_type === 'monthly' ? '/月' : item.cost_type === 'annual' ? '/年' : '(一括)'
             return item.item_cost ? `¥${item.item_cost.toLocaleString()}${costLabel}` : '費用未設定'
         }
+        if (item.item_type === 'milestone') return '目標'
         if (item.frequency_type === 'once') return '単発'
         if (item.frequency_type === 'daily') return `毎日 ${item.session_minutes}分`
         if (item.frequency_type === 'weekly') return `週${item.frequency_value}回・${item.session_minutes}分`
@@ -199,8 +222,14 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
 
     const getItemIcon = (type: string) => {
         if (type === 'cost') return <Wallet className="h-3.5 w-3.5 text-amber-500" />
-        if (type === 'milestone') return <Milestone className="h-3.5 w-3.5 text-violet-500" />
+        if (type === 'milestone') return <Target className="h-3.5 w-3.5 text-violet-500" />
+        if (type === 'habit') return <Repeat className="h-3.5 w-3.5 text-green-500" />
         return <Clock className="h-3.5 w-3.5 text-blue-500" />
+    }
+
+    const getItemTypeLabel = (type: string) => {
+        const chip = ITEM_TYPE_CHIPS.find(c => c.value === type)
+        return chip?.label ?? type
     }
 
     const toggleCollapse = (id: string) => {
@@ -242,34 +271,34 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 </p>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     {item.scheduled_date && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                            <Calendar className="h-2.5 w-2.5" />
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                            <Calendar className="h-3 w-3" />
                             {new Date(item.scheduled_date + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}
                         </span>
                     )}
-                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
                         {getItemIcon(item.item_type)}
                         {formatItemMeta(item)}
                     </span>
                     {(item as IdealItemWithDetails).ideal_item_images?.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                            <ImageIcon className="h-2.5 w-2.5" />
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                            <ImageIcon className="h-3 w-3" />
                             {(item as IdealItemWithDetails).ideal_item_images.length}
                         </span>
                     )}
                     {item.description && (
-                        <span className="text-[10px] text-muted-foreground">
-                            <FileText className="h-2.5 w-2.5 inline" />
+                        <span className="text-xs text-muted-foreground">
+                            <FileText className="h-3 w-3 inline" />
                         </span>
                     )}
                 </div>
                 {(item.linked_task_id || item.linked_habit_id) && (
                     <button
                         onClick={(e) => { e.stopPropagation(); setLinkingItemId(item.id) }}
-                        className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] hover:bg-primary/20 transition-colors"
+                        className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
                     >
-                        <Link2 className="h-2.5 w-2.5" />
-                        {item.linked_habit_id ? 'ハビット連携中' : 'タスク連携中'}
+                        <Link2 className="h-3 w-3" />
+                        {item.linked_habit_id ? '習慣と連携中' : 'タスクと連携中'}
                     </button>
                 )}
             </div>
@@ -284,6 +313,10 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
             </div>
         </div>
     )
+
+    const canSubmit = isBulkMode
+        ? bulkTitles.split('\n').some(t => t.trim())
+        : !!newTitle.trim()
 
     return (
         <div className="flex flex-col h-full">
@@ -330,7 +363,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 </div>
                                 {/* Progress badge for parents with children */}
                                 {hasChildren && (
-                                    <span className="absolute right-16 top-3 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
+                                    <span className="absolute right-16 top-3 text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
                                         {doneCount}/{item.children.length}
                                     </span>
                                 )}
@@ -343,9 +376,9 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                     {/* Add sub-item button */}
                                     <button
                                         onClick={() => startAddingSubItem(item.id)}
-                                        className="flex items-center gap-1 ml-6 pl-3 py-1.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                                        className="flex items-center gap-1 ml-6 pl-3 py-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
                                     >
-                                        <Plus className="h-3 w-3" /> サブアイテム追加
+                                        <Plus className="h-3 w-3" /> ステップ追加
                                     </button>
                                 </div>
                             )}
@@ -354,7 +387,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                             {!hasChildren && !isCollapsed && (
                                 <button
                                     onClick={() => startAddingSubItem(item.id)}
-                                    className="flex items-center gap-1 ml-8 py-1 text-[10px] text-muted-foreground/50 hover:text-primary transition-colors"
+                                    className="flex items-center gap-1 ml-8 py-1 text-xs text-muted-foreground/50 hover:text-primary transition-colors"
                                 >
                                     <Plus className="h-3 w-3" /> ステップを追加
                                 </button>
@@ -366,109 +399,130 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 {/* 追加フォーム */}
                 {isAdding && (
                     <div className={cn(
-                        "rounded-lg border p-3 space-y-2 bg-muted/30",
+                        "rounded-lg border p-3 space-y-3 bg-muted/30",
                         addingParentId && "ml-6 border-l-2 border-primary/30"
                     )}>
                         {addingParentId && (
-                            <p className="text-[10px] text-primary font-medium">
-                                サブアイテムを追加
+                            <p className="text-xs text-primary font-medium">
+                                ステップを追加
                             </p>
                         )}
-                        <Input
-                            autoFocus
-                            placeholder="アイテム名"
-                            value={newTitle}
-                            onChange={e => setNewTitle(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') handleAddItem(); if (e.key === 'Escape') { setIsAdding(false); setAddingParentId(null) } }}
-                            className="h-8 text-sm"
-                        />
-                        <select
-                            value={newType}
-                            onChange={e => setNewType(e.target.value as IdealItemType)}
-                            className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs"
-                        >
-                            {(Object.entries(ITEM_TYPE_LABELS) as [IdealItemType, string][]).map(([v, l]) => (
-                                <option key={v} value={v}>{l}</option>
-                            ))}
-                        </select>
 
-                        {/* 時間設定（habit/action） */}
-                        {(newType === 'habit' || newType === 'action') && (
-                            <div className="grid grid-cols-3 gap-2">
+                        {/* タイプ選択チップ */}
+                        <div className="flex gap-1.5 flex-wrap">
+                            {ITEM_TYPE_CHIPS.map(chip => (
+                                <button
+                                    key={chip.value}
+                                    onClick={() => setNewType(chip.value)}
+                                    className={cn(
+                                        "flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs transition-colors border",
+                                        newType === chip.value
+                                            ? "bg-primary text-primary-foreground border-primary"
+                                            : "bg-background text-muted-foreground border-border hover:border-primary/50"
+                                    )}
+                                >
+                                    {chip.icon}
+                                    {chip.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* アイテム名入力（単一 or 複数切り替え） */}
+                        <div>
+                            <div className="flex items-center justify-between mb-1">
+                                <button
+                                    onClick={() => setIsBulkMode(!isBulkMode)}
+                                    className="text-[11px] text-muted-foreground hover:text-primary transition-colors"
+                                >
+                                    {isBulkMode ? '1つずつ入力に戻す' : '複数まとめて追加'}
+                                </button>
+                            </div>
+                            {isBulkMode ? (
+                                <textarea
+                                    autoFocus
+                                    placeholder={"1行に1つずつ入力\n例:\nジムに通う\n英語の勉強\nプロテインを買う"}
+                                    value={bulkTitles}
+                                    onChange={e => setBulkTitles(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Escape') resetForm() }}
+                                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none placeholder:text-muted-foreground/40"
+                                    rows={4}
+                                />
+                            ) : (
+                                <Input
+                                    autoFocus
+                                    placeholder="アイテム名"
+                                    value={newTitle}
+                                    onChange={e => setNewTitle(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleAddItem(); if (e.key === 'Escape') resetForm() }}
+                                    className="h-9 text-sm"
+                                />
+                            )}
+                        </div>
+
+                        {/* 習慣の場合のみ: 頻度設定（シンプル版） */}
+                        {newType === 'habit' && (
+                            <div className="flex items-center gap-2 flex-wrap">
                                 <select
                                     value={newFreqType}
                                     onChange={e => setNewFreqType(e.target.value as FrequencyType)}
-                                    className="col-span-2 h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                                 >
                                     {FREQUENCY_OPTIONS.map(o => (
                                         <option key={o.value} value={o.value}>{o.label}</option>
                                     ))}
                                 </select>
-                                {newFreqType !== 'once' && (
-                                    <>
-                                        {(newFreqType === 'weekly' || newFreqType === 'monthly') && (
-                                            <Input
-                                                type="number"
-                                                min={1}
-                                                value={newFreqValue}
-                                                onChange={e => setNewFreqValue(Number(e.target.value))}
-                                                className="h-8 text-xs"
-                                                placeholder="回数"
-                                            />
-                                        )}
-                                        <div className="col-span-2 flex items-center gap-1">
-                                            <Input
-                                                type="number"
-                                                min={1}
-                                                value={newSessionMin}
-                                                onChange={e => setNewSessionMin(Number(e.target.value))}
-                                                className="h-8 text-xs"
-                                            />
-                                            <span className="text-xs text-muted-foreground whitespace-nowrap">分/回</span>
-                                        </div>
-                                        <p className="col-span-3 text-[10px] text-muted-foreground">
-                                            日次換算: {calcDailyMinutes(newFreqType, newFreqValue, newSessionMin)}分
-                                        </p>
-                                    </>
+                                {(newFreqType === 'weekly' || newFreqType === 'monthly') && (
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        value={newFreqValue}
+                                        onChange={e => setNewFreqValue(Number(e.target.value))}
+                                        className="h-8 w-16 text-xs"
+                                        placeholder="回数"
+                                    />
                                 )}
+                                <div className="flex items-center gap-1">
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        value={newSessionMin}
+                                        onChange={e => setNewSessionMin(Number(e.target.value))}
+                                        className="h-8 w-16 text-xs"
+                                    />
+                                    <span className="text-xs text-muted-foreground">分/回</span>
+                                </div>
                             </div>
                         )}
 
-                        {/* 費用設定（全タイプ共通） */}
-                        <div className="grid grid-cols-2 gap-2">
-                            <Input
-                                type="number"
-                                min={0}
-                                placeholder="金額（円・任意）"
-                                value={newCost}
-                                onChange={e => setNewCost(e.target.value)}
-                                className="h-8 text-xs"
-                            />
-                            <select
-                                value={newCostType}
-                                onChange={e => setNewCostType(e.target.value as 'once' | 'monthly' | 'annual')}
-                                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                            >
-                                <option value="once">一括</option>
-                                <option value="monthly">月払い</option>
-                                <option value="annual">年払い</option>
-                            </select>
-                        </div>
+                        {/* 費用の場合のみ: 金額入力 */}
+                        {newType === 'cost' && (
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    placeholder="金額（円）"
+                                    value={newCost}
+                                    onChange={e => setNewCost(e.target.value)}
+                                    className="h-8 text-xs flex-1"
+                                />
+                                <select
+                                    value={newCostType}
+                                    onChange={e => setNewCostType(e.target.value as 'once' | 'monthly' | 'annual')}
+                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                >
+                                    <option value="once">一括</option>
+                                    <option value="monthly">月払い</option>
+                                    <option value="annual">年払い</option>
+                                </select>
+                            </div>
+                        )}
 
-                        {/* 目的・メモ（任意） */}
-                        <textarea
-                            placeholder="なぜこれをやるのか？（例: 基礎体力をつけて仕事のパフォーマンスを上げる）"
-                            value={newDescription}
-                            onChange={e => setNewDescription(e.target.value)}
-                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs resize-none placeholder:text-muted-foreground/50"
-                            rows={2}
-                        />
-
+                        {/* ボタン */}
                         <div className="flex gap-2">
-                            <Button size="sm" onClick={handleAddItem} disabled={isSaving || !newTitle.trim()} className="flex-1">
-                                {isSaving ? '追加中...' : '追加'}
+                            <Button size="sm" onClick={handleAddItem} disabled={isSaving || !canSubmit} className="flex-1">
+                                {isSaving ? '追加中...' : isBulkMode ? 'まとめて追加' : '追加'}
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => { setIsAdding(false); setAddingParentId(null) }}>
+                            <Button size="sm" variant="outline" onClick={resetForm}>
                                 キャンセル
                             </Button>
                         </div>

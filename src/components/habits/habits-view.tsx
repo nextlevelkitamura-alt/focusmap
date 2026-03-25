@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils"
 import { HabitSettingsSheet } from "./habit-settings-sheet"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { useView } from "@/contexts/ViewContext"
 
 // --- Types ---
 
@@ -84,6 +85,7 @@ function getHeatmapColor(rate: number, isApplicable: boolean): string {
 // --- Main Component ---
 
 export function HabitsView({ onUpdateTask }: HabitsViewProps) {
+    const { setActiveView } = useView()
     const { habits, todayHabits, otherHabits, isLoading, error, toggleCompletion, toggleChildTaskCompletion, removeHabit } = useHabits()
     const [expandedHabits, setExpandedHabits] = useState<Set<string>>(new Set())
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
@@ -349,6 +351,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onCancelDelete={() => setConfirmDeleteId(null)}
                                     onOpenSettings={() => setSettingsHabit(item.habit)}
                                     idealInfo={habitIdealMap.get(item.habit.id)}
+                                    onNavigateToIdeal={() => setActiveView('ideal')}
                                 />
                             ))
                         ) : (
@@ -375,6 +378,7 @@ export function HabitsView({ onUpdateTask }: HabitsViewProps) {
                                     onCancelDelete={() => setConfirmDeleteId(null)}
                                     onOpenSettings={() => setSettingsHabit(item.habit)}
                                     idealInfo={habitIdealMap.get(item.habit.id)}
+                                    onNavigateToIdeal={() => setActiveView('ideal')}
                                 />
                             ))
                         ) : (
@@ -414,9 +418,10 @@ interface HabitCardProps {
     onCancelDelete: () => void
     onOpenSettings: () => void
     idealInfo?: { idealTitle: string; idealColor: string | null }
+    onNavigateToIdeal?: () => void
 }
 
-function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onToggleChild, isToday, isConfirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete, onOpenSettings, idealInfo }: HabitCardProps) {
+function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onToggleChild, isToday, isConfirmingDelete, onRequestDelete, onConfirmDelete, onCancelDelete, onOpenSettings, idealInfo, onNavigateToIdeal }: HabitCardProps) {
     const { habit, childTasks, streak, isCompletedToday } = item
     const freq = habit.habit_frequency
     const icon = habit.habit_icon
@@ -491,12 +496,13 @@ function HabitCard({ item, isExpanded, onToggleExpand, onToggleCompletion, onTog
                                 </span>
                             )}
                             {idealInfo && (
-                                <span
-                                    className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onNavigateToIdeal?.() }}
+                                    className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
                                 >
                                     <Star className="w-2.5 h-2.5" />
                                     {idealInfo.idealTitle}
-                                </span>
+                                </button>
                             )}
                         </div>
                     </div>
