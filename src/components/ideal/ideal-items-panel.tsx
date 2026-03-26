@@ -448,12 +448,14 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                 <Link2 className="h-3 w-3" />
                                 {item.linked_habit_id ? '習慣と連携中' : item.linked_task_id ? 'タスクと連携中' : '習慣/タスクと連携'}
                             </button>
-                            {/* 詳細画面へ */}
+                            {/* 詳細編集画面へ */}
                             <button
                                 onClick={() => setSelectedItemId(item.id + '_detail')}
-                                className="text-[10px] text-primary hover:underline"
+                                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                             >
-                                画像・候補を管理 →
+                                <FileText className="h-3 w-3" />
+                                詳細を編集
+                                <ChevronRight className="h-3 w-3" />
                             </button>
                         </div>
                     </div>
