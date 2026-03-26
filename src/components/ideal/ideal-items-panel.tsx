@@ -313,7 +313,11 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         if (item.frequency_type === 'once') return '単発'
         if (item.frequency_type === 'daily') return `毎日 ${item.session_minutes}分`
         if (item.frequency_type === 'weekly') return `週${item.frequency_value}回・${item.session_minutes}分`
-        if (item.frequency_type === 'monthly') return `月${item.frequency_value}回・${item.session_minutes}分`
+        if (item.frequency_type === 'monthly') {
+            const dayMatch = item.description?.match(/毎月(\d+)日/)
+            const dayLabel = dayMatch ? `${dayMatch[1]}日` : ''
+            return dayLabel ? `毎月${dayLabel}` : `月${item.frequency_value}回・${item.session_minutes}分`
+        }
         return ''
     }
 
@@ -449,7 +453,7 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                         <option value="monthly">月N回</option>
                                         <option value="once">単発</option>
                                     </select>
-                                    {(item.frequency_type === 'weekly' || item.frequency_type === 'monthly') && (
+                                    {item.frequency_type === 'weekly' && (
                                         <Input
                                             type="number"
                                             min={1}
@@ -458,12 +462,36 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                                 const fv = Number(e.target.value) || 1
                                                 handleInlineSave(item.id, {
                                                     frequency_value: fv,
-                                                    daily_minutes: calcDailyMinutes(item.frequency_type as FrequencyType, fv, item.session_minutes),
+                                                    daily_minutes: calcDailyMinutes('weekly', fv, item.session_minutes),
                                                 })
                                             }}
                                             className="h-7 w-14 text-xs"
                                             placeholder="回"
                                         />
+                                    )}
+                                    {item.frequency_type === 'monthly' && (
+                                        <>
+                                            <span className="text-xs text-muted-foreground">毎月</span>
+                                            <select
+                                                defaultValue={(() => {
+                                                    const m = item.description?.match(/毎月(\d+)日/)
+                                                    return m ? m[1] : '1'
+                                                })()}
+                                                onChange={e => {
+                                                    const day = e.target.value
+                                                    const existing = item.description || ''
+                                                    const newDesc = existing.replace(/毎月\d+日/, '').trim()
+                                                    handleInlineSave(item.id, {
+                                                        description: `毎月${day}日${newDesc ? ' / ' + newDesc : ''}`,
+                                                    })
+                                                }}
+                                                className="h-7 rounded-md border border-input bg-background px-1 text-xs"
+                                            >
+                                                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                                    <option key={d} value={d}>{d}日</option>
+                                                ))}
+                                            </select>
+                                        </>
                                     )}
                                     {item.frequency_type !== 'once' && (
                                         <div className="flex items-center gap-1">
