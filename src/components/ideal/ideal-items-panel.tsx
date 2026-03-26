@@ -350,12 +350,12 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
         })
     }
 
-    // インライン編集の保存
-    const handleInlineSave = async (itemId: string, field: string, value: string | null) => {
+    // インライン編集の保存（複数フィールド対応）
+    const handleInlineSave = async (itemId: string, updates: Record<string, unknown>) => {
         await fetch(`/api/ideals/${ideal.id}/items/${itemId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ [field]: value }),
+            body: JSON.stringify(updates),
         })
         onItemsChanged()
     }
@@ -414,7 +414,118 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                 {/* インライン編集パネル */}
                 {isExpanded && (
                     <div className="px-3 pb-3 space-y-2 animate-in slide-in-from-top-1 duration-150">
-                        <div className="ml-7 space-y-2 border-l-2 border-primary/20 pl-3">
+                        <div className="ml-7 space-y-2.5 border-l-2 border-primary/20 pl-3">
+                            {/* タイトル */}
+                            <div>
+                                <span className="text-[10px] text-muted-foreground">タイトル</span>
+                                <Input
+                                    defaultValue={item.title}
+                                    onBlur={e => {
+                                        if (e.target.value.trim() && e.target.value !== item.title)
+                                            handleInlineSave(item.id, { title: e.target.value.trim() })
+                                    }}
+                                    className="h-8 text-sm mt-0.5"
+                                />
+                            </div>
+
+                            {/* 頻度・時間（habit/action） */}
+                            {(item.item_type === 'habit' || item.item_type === 'action') && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <select
+                                        defaultValue={item.frequency_type || 'daily'}
+                                        onChange={e => {
+                                            const ft = e.target.value as FrequencyType
+                                            const fv = ft === 'daily' ? 1 : (item.frequency_value || 1)
+                                            handleInlineSave(item.id, {
+                                                frequency_type: ft,
+                                                frequency_value: fv,
+                                                daily_minutes: calcDailyMinutes(ft, fv, item.session_minutes),
+                                            })
+                                        }}
+                                        className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                                    >
+                                        <option value="daily">毎日</option>
+                                        <option value="weekly">週N回</option>
+                                        <option value="monthly">月N回</option>
+                                        <option value="once">単発</option>
+                                    </select>
+                                    {(item.frequency_type === 'weekly' || item.frequency_type === 'monthly') && (
+                                        <Input
+                                            type="number"
+                                            min={1}
+                                            defaultValue={item.frequency_value || 1}
+                                            onBlur={e => {
+                                                const fv = Number(e.target.value) || 1
+                                                handleInlineSave(item.id, {
+                                                    frequency_value: fv,
+                                                    daily_minutes: calcDailyMinutes(item.frequency_type as FrequencyType, fv, item.session_minutes),
+                                                })
+                                            }}
+                                            className="h-7 w-14 text-xs"
+                                            placeholder="回"
+                                        />
+                                    )}
+                                    {item.frequency_type !== 'once' && (
+                                        <div className="flex items-center gap-1">
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                defaultValue={item.session_minutes || 15}
+                                                onBlur={e => {
+                                                    const sm = Number(e.target.value) || 15
+                                                    handleInlineSave(item.id, {
+                                                        session_minutes: sm,
+                                                        daily_minutes: calcDailyMinutes(item.frequency_type as FrequencyType, item.frequency_value, sm),
+                                                    })
+                                                }}
+                                                className="h-7 w-14 text-xs"
+                                            />
+                                            <span className="text-xs text-muted-foreground">分</span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* 費用（cost） */}
+                            {item.item_type === 'cost' && (
+                                <div className="flex items-center gap-2">
+                                    <Wallet className="h-3 w-3 text-amber-500 flex-shrink-0" />
+                                    <Input
+                                        type="number"
+                                        min={0}
+                                        defaultValue={item.item_cost || ''}
+                                        placeholder="金額"
+                                        onBlur={e => {
+                                            const cost = Number(e.target.value) || null
+                                            handleInlineSave(item.id, { item_cost: cost })
+                                        }}
+                                        className="h-7 text-xs flex-1"
+                                    />
+                                    <span className="text-xs text-muted-foreground">円</span>
+                                    <select
+                                        defaultValue={item.cost_type || 'once'}
+                                        onChange={e => handleInlineSave(item.id, { cost_type: e.target.value })}
+                                        className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                                    >
+                                        <option value="once">一括</option>
+                                        <option value="monthly">月額</option>
+                                        <option value="annual">貯蓄</option>
+                                    </select>
+                                </div>
+                            )}
+
+                            {/* 予定日 */}
+                            <div className="flex items-center gap-2">
+                                <Calendar className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                <span className="text-[10px] text-muted-foreground">予定日</span>
+                                <input
+                                    type="date"
+                                    defaultValue={item.scheduled_date || ''}
+                                    onChange={e => handleInlineSave(item.id, { scheduled_date: e.target.value || null })}
+                                    className="h-7 px-2 text-xs border rounded-md bg-background"
+                                />
+                            </div>
+
                             {/* メモ */}
                             <div>
                                 <span className="text-[10px] text-muted-foreground">メモ</span>
@@ -423,40 +534,31 @@ export function IdealItemsPanel({ ideal, onItemsChanged, onClose }: IdealItemsPa
                                     placeholder="メモを入力..."
                                     onBlur={e => {
                                         if (e.target.value !== (item.description || ''))
-                                            handleInlineSave(item.id, 'description', e.target.value || null)
+                                            handleInlineSave(item.id, { description: e.target.value || null })
                                     }}
                                     className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs resize-none mt-0.5"
                                     rows={2}
                                 />
                             </div>
-                            {/* 予定日 */}
+
+                            {/* 連携 + 詳細 */}
                             <div className="flex items-center gap-2">
-                                <Calendar className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                                <span className="text-[10px] text-muted-foreground">予定日</span>
-                                <input
-                                    type="date"
-                                    defaultValue={item.scheduled_date || ''}
-                                    onChange={e => handleInlineSave(item.id, 'scheduled_date', e.target.value || null)}
-                                    className="h-7 px-2 text-xs border rounded-md bg-background"
-                                />
+                                <button
+                                    onClick={() => setLinkingItemId(item.id)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-muted transition-colors"
+                                >
+                                    <Link2 className="h-3 w-3" />
+                                    {item.linked_habit_id ? '習慣連携中' : item.linked_task_id ? 'タスク連携中' : '連携'}
+                                </button>
+                                <button
+                                    onClick={() => setSelectedItemId(item.id + '_detail')}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-muted transition-colors ml-auto"
+                                >
+                                    <ImageIcon className="h-3 w-3" />
+                                    画像・候補
+                                    <ChevronRight className="h-3 w-3" />
+                                </button>
                             </div>
-                            {/* 連携 */}
-                            <button
-                                onClick={() => setLinkingItemId(item.id)}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-muted transition-colors"
-                            >
-                                <Link2 className="h-3 w-3" />
-                                {item.linked_habit_id ? '習慣と連携中' : item.linked_task_id ? 'タスクと連携中' : '習慣/タスクと連携'}
-                            </button>
-                            {/* 詳細編集画面へ */}
-                            <button
-                                onClick={() => setSelectedItemId(item.id + '_detail')}
-                                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                            >
-                                <FileText className="h-3 w-3" />
-                                詳細を編集
-                                <ChevronRight className="h-3 w-3" />
-                            </button>
                         </div>
                     </div>
                 )}
