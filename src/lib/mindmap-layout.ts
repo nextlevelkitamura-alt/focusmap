@@ -5,21 +5,20 @@ import { Node, Edge } from 'reactflow';
 export const dagreGraph = new dagre.graphlib.Graph();
 dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-export const NODE_WIDTH = 160;
+export const NODE_WIDTH = 200;
 export const NODE_HEIGHT = 38;
 export const PROJECT_NODE_WIDTH = 250;
 export const PROJECT_NODE_HEIGHT = 52;
-export const NODE_MAX_WIDTH = 320;
+export const NODE_MAX_WIDTH = 360;
 const NODE_TEXT_LINE_HEIGHT = 16;
 const NODE_VERTICAL_PADDING = 12;
 const NODE_INFO_ROW_HEIGHT = 16;
-const NODE_TEXT_RESERVED_WIDTH = 64;
+const NODE_TEXT_RESERVED_WIDTH = 56;
 
-/** テキストの視覚的な幅をピクセル単位で推定（全角=13px, 半角=7px @13px font） */
+/** テキストの視覚的な幅をピクセル単位で推定（全角≈13.5px, 半角≈7.5px @13px font-semibold） */
 const estimateTextWidthPx = (text: string): number => {
     let width = 0;
     for (const ch of text) {
-        // CJK文字・全角記号は約13px、それ以外（ASCII等）は約7px
         const code = ch.codePointAt(0) ?? 0;
         const isWide =
             (code >= 0x3000 && code <= 0x9FFF) ||   // CJK統合漢字・ひらがな・カタカナ・記号
@@ -27,7 +26,8 @@ const estimateTextWidthPx = (text: string): number => {
             (code >= 0xFF01 && code <= 0xFF60) ||   // 全角英数・記号
             (code >= 0xFFE0 && code <= 0xFFE6) ||   // 全角通貨等
             (code >= 0x20000 && code <= 0x2FA1F);   // CJK拡張
-        width += isWide ? 13 : 7;
+        // font-semibold は通常より若干太いため余裕を持たせる
+        width += isWide ? 13.5 : 7.5;
     }
     return width;
 };

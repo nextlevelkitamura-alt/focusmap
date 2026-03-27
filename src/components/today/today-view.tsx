@@ -602,6 +602,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             onScrollPositionChange={(pos) => { logic.scrollPositionRef.current = pos }}
                             onQuickCreateTask={onCreateQuickTask}
                             defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
+                            selectedDate={logic.selectedDate}
                         />
                     ) : (
                         <div className="flex-1 overflow-y-auto no-scrollbar">

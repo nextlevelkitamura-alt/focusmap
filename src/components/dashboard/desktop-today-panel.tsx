@@ -611,16 +611,7 @@ export function DesktopTodayPanel({
                         onQuickCreateTask={onCreateQuickTask}
                         defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                         draftPreview={draftPreview}
-                        onQuickCreateRangeSelect={({ scheduledAt, estimatedTime }) => {
-                            setTaskFormPreset({ scheduledDate: scheduledAt, estimatedTime })
-                            setTaskFormDraft({
-                                title: '',
-                                scheduledDate: scheduledAt,
-                                estimatedTime,
-                                calendarId: defaultQuickCreateCalendarId,
-                            })
-                            setIsTaskFormOpen(true)
-                        }}
+                        selectedDate={logic.selectedDate}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">

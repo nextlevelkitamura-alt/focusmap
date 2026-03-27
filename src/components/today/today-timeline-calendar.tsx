@@ -54,6 +54,7 @@ interface TodayTimelineCalendarProps {
         color?: string
     } | null
     onQuickCreateRangeSelect?: (payload: { scheduledAt: Date; estimatedTime: number }) => void
+    selectedDate?: Date
 }
 
 // --- Helpers ---
@@ -101,6 +102,7 @@ export function TodayTimelineCalendar({
     defaultQuickCreateCalendarId = null,
     draftPreview,
     onQuickCreateRangeSelect,
+    selectedDate,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
@@ -400,14 +402,16 @@ export function TodayTimelineCalendar({
         return clamp(clientY - rect.top + grid.scrollTop, 0, TOTAL_HEIGHT)
     }, [])
 
+    const baseDate = selectedDate ?? currentTime
+
     const toDateFromGridY = useCallback((gridY: number) => {
         const totalMinutes = (clamp(gridY, 0, TOTAL_HEIGHT) / TOTAL_HEIGHT) * 24 * 60
         const snappedMinutes = snapDown(totalMinutes)
-        const d = new Date(currentTime)
+        const d = new Date(baseDate)
         d.setHours(0, 0, 0, 0)
         d.setMinutes(clamp(snappedMinutes, 0, 24 * 60 - QUICK_CREATE_MINUTES))
         return d
-    }, [currentTime])
+    }, [baseDate])
 
     const buildRangeFromSelection = useCallback((startY: number, endY: number) => {
         const startMinutes = (Math.min(startY, endY) / TOTAL_HEIGHT) * 24 * 60
@@ -419,16 +423,16 @@ export function TodayTimelineCalendar({
             24 * 60
         )
 
-        const start = new Date(currentTime)
+        const start = new Date(baseDate)
         start.setHours(0, 0, 0, 0)
         start.setMinutes(snappedStart)
 
-        const end = new Date(currentTime)
+        const end = new Date(baseDate)
         end.setHours(0, 0, 0, 0)
         end.setMinutes(snappedEnd)
 
         return { start, end }
-    }, [currentTime])
+    }, [baseDate])
 
     const finalizeQuickSelection = useCallback((state: NonNullable<typeof selectionState>) => {
         const movedPx = Math.abs(state.currentY - state.anchorY)
