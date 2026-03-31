@@ -437,6 +437,28 @@ export function useTodayViewLogic({
         await onUpdateTask(taskId, { status: newStatus })
     }, [localTasks, onUpdateTask])
 
+    // Toggle calendar event completion
+    const toggleEventCompletion = useCallback(async (eventId: string) => {
+        const event = localCalendarEvents.find(e => e.id === eventId)
+        if (!event) return
+        const newCompleted = !event.is_completed
+        setLocalCalendarEvents(prev => prev.map(e =>
+            e.id === eventId ? { ...e, is_completed: newCompleted } : e
+        ))
+        try {
+            const supabase = (await import('@/utils/supabase/client')).createClient()
+            await supabase
+                .from('calendar_events')
+                .update({ is_completed: newCompleted })
+                .eq('id', eventId)
+        } catch (err) {
+            console.error('[toggleEventCompletion] Failed:', err)
+            setLocalCalendarEvents(prev => prev.map(e =>
+                e.id === eventId ? { ...e, is_completed: !newCompleted } : e
+            ))
+        }
+    }, [localCalendarEvents])
+
     // Toggle child task
     const toggleChildTask = useCallback(async (
         taskId: string,
@@ -926,6 +948,7 @@ export function useTodayViewLogic({
 
         // CRUD operations
         toggleTask,
+        toggleEventCompletion,
         handleSaveTask,
         handleSaveEvent,
         handleDeleteTask,

@@ -29,6 +29,7 @@ interface TodayTimelineCalendarProps {
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
+    onToggleEvent?: (eventId: string) => void
     onItemTap?: (item: TimeBlock) => void
     onDragDrop?: (item: DragItem, newStartTime: Date, newEndTime: Date) => void
     childTasksMap?: Map<string, Task[]>
@@ -90,6 +91,7 @@ export function TodayTimelineCalendar({
     eventsLoading,
     currentTime,
     onToggleTask,
+    onToggleEvent,
     onItemTap,
     onDragDrop,
     childTasksMap,
@@ -865,6 +867,8 @@ export function TodayTimelineCalendar({
                                             event={item.originalEvent!}
                                             currentTime={currentTime}
                                             height={item.height}
+                                            isCompleted={item.isCompleted}
+                                            onToggle={onToggleEvent ? () => onToggleEvent(item.id) : undefined}
                                             onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && onItemTap ? () => onItemTap(item) : undefined}
                                         />
                                     ) : (
@@ -958,11 +962,15 @@ function EventBlock({
     event,
     currentTime,
     height,
+    isCompleted,
+    onToggle,
     onTap,
 }: {
     event: CalendarEvent
     currentTime: Date
     height: number
+    isCompleted?: boolean
+    onToggle?: () => void
     onTap?: () => void
 }) {
     const startTime = new Date(event.start_time)
@@ -970,6 +978,7 @@ function EventBlock({
     const isNow = currentTime >= startTime && currentTime < endTime
     const isCompact = height < 40
     const eventTitleLines = height >= 150 ? 5 : height >= 110 ? 4 : height >= 80 ? 3 : height >= 60 ? 2 : 1
+    const isDone = !!isCompleted
 
     const eventHex = getEventColor(event)
     const rgb = hexToRgb(eventHex)
@@ -982,7 +991,8 @@ function EventBlock({
             className={cn(
                 "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
-                isNow && "ring-1"
+                isNow && "ring-1",
+                isDone && "opacity-50"
             )}
             style={{
                 borderLeftColor: eventHex,
@@ -992,16 +1002,46 @@ function EventBlock({
         >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">
-                    <span className="text-[11px] font-medium truncate text-foreground">
+                    {onToggle && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onToggle() }}
+                            aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
+                            className="no-tap-highlight flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
+                        >
+                            {isDone ? (
+                                <CheckSquare className="w-4 h-4 text-primary" />
+                            ) : (
+                                <Square className="w-4 h-4" style={{ color: eventHex }} />
+                            )}
+                        </button>
+                    )}
+                    <span className={cn(
+                        "text-[11px] font-medium truncate",
+                        isDone ? "line-through text-muted-foreground" : "text-foreground"
+                    )}>
                         {event.title}
                     </span>
                 </div>
             ) : (
                 <>
                     <div className="flex items-center gap-1.5">
+                        {onToggle && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onToggle() }}
+                                aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
+                                className="no-tap-highlight flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
+                            >
+                                {isDone ? (
+                                    <CheckSquare className="w-4.5 h-4.5 text-primary" />
+                                ) : (
+                                    <Square className="w-4.5 h-4.5" style={{ color: eventHex }} />
+                                )}
+                            </button>
+                        )}
                         <span
                             className={cn(
-                                "text-[11px] font-medium leading-tight text-foreground break-words",
+                                "text-[11px] font-medium leading-tight break-words",
+                                isDone ? "line-through text-muted-foreground" : "text-foreground",
                                 eventTitleLines === 1
                                     ? "truncate"
                                     : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal"

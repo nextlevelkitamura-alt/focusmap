@@ -31,6 +31,7 @@ export interface CalendarEvent {
   priority?: 'high' | 'medium' | 'low'; // タスクの優先度（タスク紐付き時のみ）
   estimated_time?: number; // 所要時間（分）（タスク紐付き時のみ）
   reminders?: number[]; // リマインダー（分単位、Google Calendarから取得）
+  is_completed?: boolean; // イベントの完了状態
 }
 
 // ============================================================

@@ -20,6 +20,7 @@ interface TodayTimelineCardsProps {
     eventsLoading: boolean
     currentTime: Date
     onToggleTask: (taskId: string) => void
+    onToggleEvent?: (eventId: string) => void
     onItemTap?: (item: TimeBlock) => void
     projectNameMap?: Map<string, string>
 }
@@ -30,6 +31,7 @@ export function TodayTimelineCards({
     eventsLoading,
     currentTime,
     onToggleTask,
+    onToggleEvent,
     onItemTap,
     projectNameMap,
 }: TodayTimelineCardsProps) {
@@ -117,6 +119,7 @@ export function TodayTimelineCards({
                                 currentTime={currentTime}
                                 timer={timer}
                                 onToggleTask={onToggleTask}
+                                onToggleEvent={onToggleEvent}
                                 onTap={onItemTap ? () => onItemTap(item) : undefined}
                                 projectNameMap={projectNameMap}
                             />
@@ -150,6 +153,7 @@ function TimelineCard({
     currentTime,
     timer,
     onToggleTask,
+    onToggleEvent,
     onTap,
     projectNameMap,
 }: {
@@ -157,6 +161,7 @@ function TimelineCard({
     currentTime: Date
     timer: ReturnType<typeof useTimer>
     onToggleTask: (taskId: string) => void
+    onToggleEvent?: (eventId: string) => void
     onTap?: () => void
     projectNameMap?: Map<string, string>
 }) {
@@ -166,23 +171,38 @@ function TimelineCard({
     const isPast = currentTime >= item.endTime
 
     if (item.originalEvent) {
-        // Unimported event (transient state before import completes)
         const event = item.originalEvent
+        const isDone = item.isCompleted
         return (
             <div
                 onClick={onTap}
                 className={cn(
                 "relative flex gap-3 p-3 rounded-xl border transition-colors",
                 onTap ? "cursor-pointer active:opacity-80" : "",
-                isNow
-                    ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30"
-                    : "border-border"
+                isDone
+                    ? "border-border opacity-50"
+                    : isNow
+                        ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30"
+                        : "border-border"
             )}>
-                {isNow && (
+                {isNow && !isDone && (
                     <>
                         <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-blue-400 animate-pulse" />
                         <span className="absolute -top-2 left-3 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-blue-500 text-white rounded-full">Now</span>
                     </>
+                )}
+                {onToggleEvent && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onToggleEvent(item.id) }}
+                        className="no-tap-highlight flex-shrink-0 self-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 rounded"
+                        aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
+                    >
+                        {isDone ? (
+                            <CheckSquare className="w-5 h-5 text-primary" />
+                        ) : (
+                            <Square className="w-5 h-5 text-blue-500" />
+                        )}
+                    </button>
                 )}
                 <div className="flex-shrink-0 w-12 pt-0.5">
                     <div className="text-xs font-semibold">{startStr}</div>
@@ -190,7 +210,10 @@ function TimelineCard({
                 </div>
                 <div className="w-0.5 rounded-full bg-blue-400 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">
+                    <div className={cn(
+                        "text-sm font-medium truncate",
+                        isDone && "line-through text-muted-foreground"
+                    )}>
                         {item.title}
                     </div>
                     {event.location && (

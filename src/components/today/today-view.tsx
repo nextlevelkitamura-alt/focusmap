@@ -592,6 +592,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             eventsLoading={logic.eventsLoading}
                             currentTime={logic.currentTime}
                             onToggleTask={logic.toggleTask}
+                            onToggleEvent={logic.toggleEventCompletion}
                             onItemTap={logic.handleItemTap}
                             onDragDrop={logic.handleDragDrop}
                             childTasksMap={logic.childTasksMap}
@@ -612,6 +613,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                 eventsLoading={logic.eventsLoading}
                                 currentTime={logic.currentTime}
                                 onToggleTask={logic.toggleTask}
+                                onToggleEvent={logic.toggleEventCompletion}
                                 onItemTap={logic.handleItemTap}
                                 projectNameMap={logic.projectNameMap}
                             />

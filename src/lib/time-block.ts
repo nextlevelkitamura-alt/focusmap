@@ -102,7 +102,7 @@ export function eventToTimeBlock(event: CalendarEvent): TimeBlock {
     startTime: new Date(event.start_time),
     endTime: new Date(event.end_time),
     color: event.background_color || DEFAULT_EVENT_COLOR,
-    isCompleted: false,
+    isCompleted: event.is_completed ?? false,
     isTimerRunning: false,
     googleEventId: event.google_event_id,
     calendarId: event.calendar_id,
