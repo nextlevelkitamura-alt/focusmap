@@ -963,6 +963,75 @@ export interface Database {
                     updated_at?: string
                 }
             }
+            ai_todo_progress: {
+                Row: {
+                    id: string
+                    user_id: string
+                    session_date: string
+                    task_title: string
+                    task_status: string
+                    task_tag: string | null
+                    scheduled_time: string | null
+                    source: string
+                    completed_at: string | null
+                    order_index: number
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    session_date?: string
+                    task_title: string
+                    task_status?: string
+                    task_tag?: string | null
+                    scheduled_time?: string | null
+                    source?: string
+                    completed_at?: string | null
+                    order_index?: number
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    session_date?: string
+                    task_title?: string
+                    task_status?: string
+                    task_tag?: string | null
+                    scheduled_time?: string | null
+                    source?: string
+                    completed_at?: string | null
+                    order_index?: number
+                    updated_at?: string
+                }
+            }
+            ai_dashboard_snapshot: {
+                Row: {
+                    id: string
+                    user_id: string
+                    snapshot_date: string
+                    pipeline_summary: Json | null
+                    kpi_summary: Json | null
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    snapshot_date?: string
+                    pipeline_summary?: Json | null
+                    kpi_summary?: Json | null
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    snapshot_date?: string
+                    pipeline_summary?: Json | null
+                    kpi_summary?: Json | null
+                    updated_at?: string
+                }
+            }
             user_calendars: {
                 Row: {
                     id: string
