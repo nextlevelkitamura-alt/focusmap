@@ -13,7 +13,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target, ListTodo, Sparkles, Star } from "lucide-react"
+import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target, ListTodo, Sparkles, Star, ClipboardCheck } from "lucide-react"
 import { Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -103,6 +103,7 @@ export function Header({
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'map', label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
         { id: 'ai', label: 'AI', icon: <Sparkles className="h-3.5 w-3.5" /> },
+        { id: 'ai-todos', label: '進捗', icon: <ClipboardCheck className="h-3.5 w-3.5" /> },
         { id: 'habits', label: '習慣', icon: <Target className="h-3.5 w-3.5" /> },
         { id: 'ideal', label: '理想', icon: <Star className="h-3.5 w-3.5" /> },
     ]

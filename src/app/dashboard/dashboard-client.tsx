@@ -22,6 +22,7 @@ import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 import { AiView } from "@/components/ai/ai-view"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 import { IdealView } from "@/components/ideal/ideal-view"
+import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -856,11 +857,18 @@ export function DashboardClient({
                     </div>
                 )}
 
+                {/* === Desktop: AI Todos View === */}
+                {activeView === 'ai-todos' && (
+                    <div className="flex-1 w-full overflow-hidden hidden md:flex">
+                        <AiTodosView initialTasks={[]} initialSnapshot={null} />
+                    </div>
+                )}
+
                 {/* === Desktop: 3-pane layout === */}
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
-                    (activeView === 'ai' || activeView === 'ideal') ? "!hidden" : ""
+                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'ai-todos') ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(
@@ -953,12 +961,12 @@ export function DashboardClient({
                     />
                 </div>
             </div>
-            {/* AI Chat Floating Panel (AI・理想ビュー中は非表示) */}
-            {activeView !== 'ai' && activeView !== 'ideal' && (
+            {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
+            {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
-            {activeView !== 'ai' && activeView !== 'ideal' && (
+            {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <SchedulingPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             </TimerProvider>
