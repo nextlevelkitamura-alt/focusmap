@@ -1,74 +1,79 @@
-# CLAUDE.md (Architect-Builder Edition)
+# Focusmap（旧 shikumika）
 
-## 📖 まずここを読んでプロジェクトを理解する
-1. [docs/CONTEXT.md](docs/CONTEXT.md) - 全体像・ダッシュボード構成・コンポーネント一覧
-2. [docs/ROADMAP.md](docs/ROADMAP.md) - 機能一覧・完了履歴
+## プロダクト概要
+AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
+詳細: [docs/plans/focusmap-pivot.md](docs/plans/focusmap-pivot.md)
 
-## 👑 Role & Persona
-あなたは、要件定義から実装までを統括する**「プロダクトマネージャー」**であり、かつ**「実装特化型のシニアエンジニア」**です。
-ユーザーの指示を鵜呑みにせず、プロジェクトの成功（Core Value）を最優先に行動します。
+## まず読む
+1. [docs/plans/focusmap-pivot.md](docs/plans/focusmap-pivot.md) — 方向転換計画（最重要）
+2. [docs/CONTEXT.md](docs/CONTEXT.md) — 既存コードの全体像
+3. [docs/ROADMAP.md](docs/ROADMAP.md) — 既存機能の履歴
 
----
+## 技術スタック
+- Next.js (App Router) / React / TypeScript
+- Supabase (PostgreSQL + Realtime)
+- Tailwind CSS / Radix UI
+- Cloud Run デプロイ（GitHub Actions）
+- claude -p（Mac常駐スクリプトから実行、Max契約内）
 
-## 📂 File System Strategy (The "Truth")
-プロジェクトの状態管理は、以下の3層構造を厳守します。
+## Git ルール
 
-1. **`MAP.md` (Strategy Layer)**
-   - プロジェクト全体のロードマップと進捗状況。
-   - **更新タイミング:** 大きな機能の実装完了時。
-   - **内容:** 機能一覧、MVPのスコープ、完了済みのチェックマーク。
+### ブランチ戦略
+```
+main              ← 本番（Cloud Run自動デプロイ）
+  └── feat/*      ← 機能開発（1機能1ブランチ）
+  └── fix/*       ← バグ修正
+```
 
-2. **`docs/specs/*.md` (Design Layer)**
-   - 外部のArchitect AI (Sonnet/Opus) によって作成された詳細仕様書。
-   - **性質:** 原則として、ここにある仕様を「正」とする。
-   - **更新タイミング:** 実装着手前（ユーザーが配置）。
+### コミットルール
+- **こまめにコミットする**（1機能完成まで待たない）
+- 動く状態でコミット。壊れた状態でコミットしない
+- コミットメッセージは日本語OK
+- 例: `ダッシュボード: スキルカードコンポーネント追加`
+- 例: `ai_tasks: Supabase Realtime連携`
 
-3. **`NOW.md` (Execution Layer)**
-   - **今まさに実行しているタスク**専用の使い捨て手順書。
-   - **更新タイミング:** コードを書く前、およびコード変更のたび常に同期。
-   - **ルール:** 新しいタスクを開始する際は、必ず内容を上書き(Overwrite)する。
+### 開発の進め方
+1. `git checkout -b feat/xxx` でブランチ作成
+2. 小さく作って、動いたらコミット
+3. 1つの機能が完成したら main にマージ
+4. **迷ったらコミットしておく**（後で戻せるから）
 
----
+## 実装の原則
 
-## 🧭 Roadmap Protocol (Start with "Why")
-ユーザーが新しいプロジェクトや機能を提案した際、即座に `MAP.md` を作成・更新してはならない。必ず以下のプロセスを経ること。
+### モバイルファースト
+- スマホで片手操作できることが最優先
+- タップターゲット最低 44px
+- 一画面の情報量を絞る（スクロールより画面遷移）
 
-1. **Interview Phase (PM Mode)**
-   - まず「プロダクトマネージャー」として以下の点を深掘りする質問を行う。
-     - **Goal**: 誰のどんな課題を解決するのか？
-     - **Scope**: 今回実装するMVP（最小機能）の境界線はどこか？
-     - **Technical Context**: 推奨する技術スタックは何か？
-   
-2. **Draft & Approval**
-   - ヒアリング結果を元に、チャット上でロードマップ案を提示する。
-   - ユーザーの明確な合意（Goサイン）を得て初めて、`MAP.md` に書き込む。
+### シンプルに作る
+- 最小限の機能で動くものを先に作る
+- 「あったら便利」は後回し
+- コンポーネントは小さく分割
 
----
+### AI実行との連携
+- ai_tasks テーブルが全ての起点
+- status の遷移: pending → running → awaiting_approval / completed / failed
+- Supabase Realtime で画面自動更新
 
-## ⚡️ Implementation Protocol (Builder Mode)
-実装フェーズ（GLM-4.7等）では、以下のルールを徹底する。
+## ディレクトリ構造（主要）
+```
+src/
+  app/              ← ページ（App Router）
+  components/
+    dashboard/      ← ダッシュボード関連（メイン画面）
+    skills/         ← スキルカード関連（新規）
+    ui/             ← 共通UIコンポーネント
+  hooks/            ← カスタムフック
+  types/            ← 型定義
+  lib/              ← ユーティリティ
+docs/
+  plans/            ← 計画書
+  specs/            ← 仕様書
+scripts/
+  task-runner.ts    ← Mac常駐スクリプト（Phase 2）
+```
 
-1. **Read Specs First**
-   - `docs/specs/` にある該当の仕様書を読み込まずに `NOW.md` を作成してはならない。
-   
-2. **Plan before Act**
-   - いきなりコードを書くことは厳禁。まず `NOW.md` に詳細なステップ（Step 1, Step 2...）を書き出し、ユーザーの承認を得る。
-
-3. **Sync Documentation**
-   - コードを変更した際は、必ず `NOW.md` のチェックボックスを更新する。
-   - 「今どうなってる？」と聞かれたら、`NOW.md` を参照して即答する。
-
----
-
-## 🛠 Commands
-
-- **/start**: 新規プロジェクトや機能の相談を開始する（Interview Phaseの起動）。
-- **/map**: `MAP.md` を読み込み、プロジェクトの現在地を確認する。
-- **/plan [Specファイル名]**: 指定された仕様書（例: `specs/login.md`）を読み込み、実装手順を `NOW.md` に展開する。
-- **/act**: `NOW.md` の手順に従い、テスト駆動開発(TDD)を意識して実装を開始する。
-- **/done**: タスク完了宣言。`MAP.md` を更新し、`NOW.md` のクリアを提案する。
-
----
-
-## 外部リソース
-- NotebookLM: `1e2d5daf-bc9e-4cd2-84b4-f5d74998b8de` — Shikumika Project: The Final Master Blueprint
+## 安全策（最重要）
+- `ANTHROPIC_API_KEY` が環境変数にないことを確認してからclaude -pを使う
+- `--max-budget-usd 2.00` と `--max-turns 10` を必ず付ける
+- 認証情報（auth.json, .env.local）はコミットしない
