@@ -4,12 +4,15 @@ import { useState, useMemo, useCallback } from 'react'
 import {
   Square, CheckSquare, ChevronLeft, ChevronRight, Plus,
   ChevronDown, ChevronUp, Clock, Calendar as CalendarIcon,
+  MessageCircle, Send, Loader2, Bot, CheckCircle2, AlertCircle,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
 import { Task, Project } from '@/types/database'
 import { useTodayViewLogic } from '@/hooks/useTodayViewLogic'
+import { useAiTasks } from '@/hooks/useAiTasks'
+import type { AiTask, AiTaskStatus } from '@/types/ai-task'
 
 interface TodayBoardProps {
   allTasks: Task[]
@@ -36,6 +39,42 @@ function formatTimeRange(start: string, end: string): string {
   return `${format(new Date(start), 'H:mm')}–${format(new Date(end), 'H:mm')}`
 }
 
+function AiTaskStatusIcon({ status }: { status: AiTaskStatus }) {
+  switch (status) {
+    case 'completed':
+      return <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+    case 'running':
+      return <Loader2 className="w-4 h-4 text-blue-500 shrink-0 animate-spin" />
+    case 'failed':
+      return <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+    case 'awaiting_approval':
+      return <Clock className="w-4 h-4 text-amber-500 shrink-0" />
+    default:
+      return <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
+  }
+}
+
+function aiTaskStatusLabel(status: AiTaskStatus): string {
+  switch (status) {
+    case 'pending': return '待機中'
+    case 'running': return '実行中'
+    case 'completed': return '完了'
+    case 'failed': return '失敗'
+    case 'awaiting_approval': return '確認待ち'
+    case 'needs_input': return '入力待ち'
+  }
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return 'たった今'
+  if (min < 60) return `${min}分前`
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour}時間前`
+  return `${Math.floor(hour / 24)}日前`
+}
+
 export function TodayBoard({
   allTasks,
   onUpdateTask,
@@ -46,6 +85,11 @@ export function TodayBoard({
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [isAdding, setIsAdding] = useState(false)
   const [showCompleted, setShowCompleted] = useState(true)
+  const [chatInput, setChatInput] = useState('')
+  const [isSending, setIsSending] = useState(false)
+  const [showAiLog, setShowAiLog] = useState(true)
+
+  const { tasks: aiTasks, sendPrompt } = useAiTasks({ limit: 10 })
 
   const logic = useTodayViewLogic({
     allTasks,
@@ -121,6 +165,27 @@ export function TodayBoard({
       handleAddTask()
     }
   }, [handleAddTask])
+
+  const handleSendChat = useCallback(async () => {
+    const prompt = chatInput.trim()
+    if (!prompt) return
+    setIsSending(true)
+    try {
+      await sendPrompt(prompt)
+      setChatInput('')
+    } catch {
+      // エラーはAIログに表示される
+    } finally {
+      setIsSending(false)
+    }
+  }, [chatInput, sendPrompt])
+
+  const handleChatKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      handleSendChat()
+    }
+  }, [handleSendChat])
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-background">
@@ -279,6 +344,103 @@ export function TodayBoard({
                       </span>
                     )}
                   </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* 壁打ち Section */}
+        <section>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+            <MessageCircle className="w-3.5 h-3.5" />
+            <span>壁打ち</span>
+          </h2>
+          <div className="flex items-end gap-2">
+            <div className="flex-1 rounded-lg border border-border/60 bg-background px-3 py-2 min-h-[44px]">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleChatKeyDown}
+                placeholder="AIに相談..."
+                rows={1}
+                className="w-full bg-transparent text-sm outline-none resize-none placeholder:text-muted-foreground/40"
+                disabled={isSending}
+              />
+            </div>
+            <button
+              onClick={handleSendChat}
+              disabled={isSending || !chatInput.trim()}
+              className={cn(
+                'p-2.5 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors',
+                chatInput.trim()
+                  ? 'bg-primary text-primary-foreground active:opacity-80'
+                  : 'bg-muted text-muted-foreground'
+              )}
+            >
+              {isSending ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground/50 mt-1">
+            AIが30秒後に回答（Phase 2で実装）
+          </p>
+        </section>
+
+        {/* AI実行ログ Section */}
+        {aiTasks.length > 0 && (
+          <section>
+            <button
+              onClick={() => setShowAiLog(prev => !prev)}
+              className="flex items-center gap-1.5 mb-2 text-sm font-semibold text-muted-foreground"
+            >
+              {showAiLog ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+              <Bot className="w-3.5 h-3.5" />
+              <span>AI実行ログ</span>
+              <span className="text-xs tabular-nums bg-muted rounded-full px-1.5 py-0.5">
+                {aiTasks.length}
+              </span>
+            </button>
+            {showAiLog && (
+              <div className="space-y-1.5">
+                {aiTasks.map(task => (
+                  <div
+                    key={task.id}
+                    className={cn(
+                      'flex items-start gap-2.5 py-2.5 px-3 rounded-lg border min-h-[44px]',
+                      task.status === 'failed' && 'border-red-200 bg-red-50/50 dark:border-red-900/30 dark:bg-red-950/20',
+                      task.status === 'awaiting_approval' && 'border-amber-200 bg-amber-50/50 dark:border-amber-900/30 dark:bg-amber-950/20',
+                      task.status === 'running' && 'border-blue-200 bg-blue-50/50 dark:border-blue-900/30 dark:bg-blue-950/20',
+                      task.status === 'completed' && 'border-border/40 bg-muted/20',
+                      task.status === 'pending' && 'border-border/40',
+                    )}
+                  >
+                    <AiTaskStatusIcon status={task.status} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm leading-snug line-clamp-2">{task.prompt}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[11px] text-muted-foreground">
+                          {aiTaskStatusLabel(task.status)}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground/50">
+                          {formatRelativeTime(task.created_at)}
+                        </span>
+                      </div>
+                      {task.status === 'completed' && task.result && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-3">
+                          {typeof task.result === 'object' && 'message' in task.result
+                            ? String(task.result.message)
+                            : JSON.stringify(task.result).slice(0, 200)}
+                        </p>
+                      )}
+                      {task.status === 'failed' && task.error && (
+                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">{task.error}</p>
+                      )}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
