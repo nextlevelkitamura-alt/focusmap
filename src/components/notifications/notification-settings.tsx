@@ -68,7 +68,7 @@ export function NotificationSettings() {
     setIsSendingTest(true);
     try {
       if (typeof Notification !== 'undefined') {
-        new Notification('Shikumika テスト通知', {
+        new Notification('Focusmap テスト通知', {
           body: '通知機能が正常に動作しています',
           icon: '/icon-192x192.png',
           badge: '/badge-72x72.png',

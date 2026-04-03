@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 
 export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'ideal' | 'ai-todos'
 
-const STORAGE_KEY = 'shikumika:activeView'
+const STORAGE_KEY = 'focusmap:activeView'
 
 interface ViewContextType {
     activeView: DashboardView

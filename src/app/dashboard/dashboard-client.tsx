@@ -52,7 +52,7 @@ export function DashboardClient({
     // Restore from localStorage after mount (client-only)
     const selectionRestoredRef = useRef(false)
     useEffect(() => {
-        const savedProject = localStorage.getItem('shikumika:lastProjectId')
+        const savedProject = localStorage.getItem('focusmap:lastProjectId')
         if (savedProject && initialProjects.some(p => p.id === savedProject)) {
             setSelectedProjectId(savedProject)
         }
@@ -62,8 +62,8 @@ export function DashboardClient({
     // Persist selection to localStorage (only after restore to avoid overwriting saved values)
     useEffect(() => {
         if (!selectionRestoredRef.current) return
-        if (selectedProjectId) localStorage.setItem('shikumika:lastProjectId', selectedProjectId)
-        else localStorage.removeItem('shikumika:lastProjectId')
+        if (selectedProjectId) localStorage.setItem('focusmap:lastProjectId', selectedProjectId)
+        else localStorage.removeItem('focusmap:lastProjectId')
     }, [selectedProjectId])
 
     // STABLE reference for filtered projects using useMemo
