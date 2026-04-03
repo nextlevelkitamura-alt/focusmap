@@ -766,15 +766,30 @@ export function DashboardClient({
                 )}
                 {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
                 {isViewReady && activeView === 'today' && (
-                    <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
-                        <TodayBoard
-                            allTasks={allTasksMerged}
-                            onUpdateTask={handleUpdateTaskWithQuickSync}
-                            projects={projects}
-                            onCreateQuickTask={handleCreateQuickTask}
-                            onDeleteTask={handleDeleteTaskFromToday}
-                        />
-                    </div>
+                    <>
+                        {/* Mobile */}
+                        <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
+                            <TodayBoard
+                                allTasks={allTasksMerged}
+                                onUpdateTask={handleUpdateTaskWithQuickSync}
+                                projects={projects}
+                                onCreateQuickTask={handleCreateQuickTask}
+                                onDeleteTask={handleDeleteTaskFromToday}
+                            />
+                        </div>
+                        {/* Desktop */}
+                        <div className="hidden md:flex flex-1 min-h-0 justify-center overflow-hidden">
+                            <div className="w-full max-w-2xl">
+                                <TodayBoard
+                                    allTasks={allTasksMerged}
+                                    onUpdateTask={handleUpdateTaskWithQuickSync}
+                                    projects={projects}
+                                    onCreateQuickTask={handleCreateQuickTask}
+                                    onDeleteTask={handleDeleteTaskFromToday}
+                                />
+                            </div>
+                        </div>
+                    </>
                 )}
 
                 {isViewReady && activeView === 'habits' && (
