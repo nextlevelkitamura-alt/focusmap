@@ -13,6 +13,7 @@ import { Task, Project } from '@/types/database'
 import { useTodayViewLogic } from '@/hooks/useTodayViewLogic'
 import { useAiTasks } from '@/hooks/useAiTasks'
 import type { AiTask, AiTaskStatus } from '@/types/ai-task'
+import { AiTaskApprovalCard } from './ai-task-approval-card'
 
 interface TodayBoardProps {
   allTasks: Task[]
@@ -89,7 +90,17 @@ export function TodayBoard({
   const [isSending, setIsSending] = useState(false)
   const [showAiLog, setShowAiLog] = useState(true)
 
-  const { tasks: aiTasks, sendPrompt } = useAiTasks({ limit: 10 })
+  const { tasks: aiTasks, sendPrompt, approve, reject, requestRevision } = useAiTasks({ limit: 10 })
+
+  // 確認待ちタスクとそれ以外を分離
+  const pendingApprovalTasks = useMemo(
+    () => aiTasks.filter(t => t.status === 'awaiting_approval'),
+    [aiTasks]
+  )
+  const otherAiTasks = useMemo(
+    () => aiTasks.filter(t => t.status !== 'awaiting_approval'),
+    [aiTasks]
+  )
 
   const logic = useTodayViewLogic({
     allTasks,
@@ -224,6 +235,21 @@ export function TodayBoard({
 
       {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+
+        {/* 確認待ち Section */}
+        {pendingApprovalTasks.length > 0 && (
+          <section className="space-y-2">
+            {pendingApprovalTasks.map(task => (
+              <AiTaskApprovalCard
+                key={task.id}
+                task={task}
+                onApprove={approve}
+                onReject={reject}
+                onRequestRevision={requestRevision}
+              />
+            ))}
+          </section>
+        )}
 
         {/* 予定 Section (calendar events) */}
         {calendarOnlyEvents.length > 0 && (
@@ -391,7 +417,7 @@ export function TodayBoard({
         </section>
 
         {/* AI実行ログ Section */}
-        {aiTasks.length > 0 && (
+        {otherAiTasks.length > 0 && (
           <section>
             <button
               onClick={() => setShowAiLog(prev => !prev)}
@@ -401,12 +427,12 @@ export function TodayBoard({
               <Bot className="w-3.5 h-3.5" />
               <span>AI実行ログ</span>
               <span className="text-xs tabular-nums bg-muted rounded-full px-1.5 py-0.5">
-                {aiTasks.length}
+                {otherAiTasks.length}
               </span>
             </button>
             {showAiLog && (
               <div className="space-y-1.5">
-                {aiTasks.map(task => (
+                {otherAiTasks.map(task => (
                   <div
                     key={task.id}
                     className={cn(

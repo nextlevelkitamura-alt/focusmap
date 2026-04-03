@@ -84,11 +84,41 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     return (await res.json()) as AiTask
   }, [])
 
+  // 承認（completed にする）
+  const approve = useCallback(async (taskId: string) => {
+    const res = await fetch(`/api/ai-tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'completed' }),
+    })
+    if (!res.ok) throw new Error('Failed to approve')
+    return (await res.json()) as AiTask
+  }, [])
+
+  // 却下（failed にする）
+  const reject = useCallback(async (taskId: string, reason?: string) => {
+    const res = await fetch(`/api/ai-tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'failed', error: reason || 'ユーザーにより却下' }),
+    })
+    if (!res.ok) throw new Error('Failed to reject')
+    return (await res.json()) as AiTask
+  }, [])
+
+  // 修正指示（親タスクに紐づく新タスクを作成）
+  const requestRevision = useCallback(async (parentTaskId: string, instruction: string) => {
+    return sendPrompt(instruction, { parent_task_id: parentTaskId })
+  }, [sendPrompt])
+
   return {
     tasks,
     isLoading,
     error,
     sendPrompt,
+    approve,
+    reject,
+    requestRevision,
     refresh: fetchTasks,
   }
 }
