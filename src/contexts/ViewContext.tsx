@@ -22,7 +22,7 @@ export const useView = () => useContext(ViewContext)
 
 export function ViewProvider({ children }: { children: React.ReactNode }) {
     // Use consistent default for SSR and client initial render to avoid hydration mismatch
-    const [activeView, setActiveViewState] = useState<DashboardView>('map')
+    const [activeView, setActiveViewState] = useState<DashboardView>('today')
     const [isViewReady, setIsViewReady] = useState(false)
 
     // Read localStorage after mount (client-only)
@@ -30,8 +30,6 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
         const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
         if (saved && ['today', 'map', 'habits', 'ai', 'ideal', 'ai-todos'].includes(saved)) {
             setActiveViewState(saved)
-        } else if (window.innerWidth < 768) {
-            setActiveViewState('today')
         }
         setIsViewReady(true)
     }, [])

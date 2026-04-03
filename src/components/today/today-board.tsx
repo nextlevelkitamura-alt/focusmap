@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useMemo, useCallback } from 'react'
-import { Square, CheckSquare, ChevronLeft, ChevronRight, Plus, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  Square, CheckSquare, ChevronLeft, ChevronRight, Plus,
+  ChevronDown, ChevronUp, Clock, Calendar as CalendarIcon,
+} from 'lucide-react'
 import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
@@ -26,8 +29,11 @@ interface TodayBoardProps {
 
 function formatScheduledTime(scheduledAt: string | null): string | null {
   if (!scheduledAt) return null
-  const d = new Date(scheduledAt)
-  return format(d, 'H:mm')
+  return format(new Date(scheduledAt), 'H:mm')
+}
+
+function formatTimeRange(start: string, end: string): string {
+  return `${format(new Date(start), 'H:mm')}–${format(new Date(end), 'H:mm')}`
 }
 
 export function TodayBoard({
@@ -48,13 +54,12 @@ export function TodayBoard({
     onDeleteTask,
   })
 
-  // 今日のタスク（スケジュール済み + 未スケジュール）を todo / done に分割
+  // 今日のタスクを todo / done に分割
   const { todoTasks, doneTasks } = useMemo(() => {
     const allToday = [
       ...logic.todayScheduledTasks,
       ...logic.unscheduledTasks,
     ]
-    // 重複除去
     const seen = new Set<string>()
     const unique = allToday.filter(t => {
       if (seen.has(t.id)) return false
@@ -63,7 +68,6 @@ export function TodayBoard({
     })
     const todo = unique.filter(t => t.status !== 'done')
     const done = unique.filter(t => t.status === 'done')
-    // スケジュール済みを時間順に並べ、未スケジュールを後ろに
     const sortBySchedule = (a: Task, b: Task) => {
       if (a.scheduled_at && b.scheduled_at) return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime()
       if (a.scheduled_at) return -1
@@ -74,6 +78,22 @@ export function TodayBoard({
     done.sort(sortBySchedule)
     return { todoTasks: todo, doneTasks: done }
   }, [logic.todayScheduledTasks, logic.unscheduledTasks])
+
+  // カレンダーイベント（タスクと紐づいていないもの）
+  const calendarOnlyEvents = useMemo(() => {
+    const taskGoogleEventIds = new Set(
+      allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
+    )
+    return logic.calendarEvents
+      .filter(e => {
+        if (taskGoogleEventIds.has(e.google_event_id)) return false
+        if (e.is_all_day) return false
+        const start = new Date(e.start_time)
+        const end = new Date(e.end_time)
+        return start >= logic.today && start < logic.tomorrow
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+  }, [logic.calendarEvents, logic.today, logic.tomorrow, allTasks])
 
   const handleAddTask = useCallback(async () => {
     const title = newTaskTitle.trim()
@@ -106,40 +126,65 @@ export function TodayBoard({
     <div className="flex flex-col h-full overflow-hidden bg-background">
       {/* Date Header */}
       <div className="flex-shrink-0 px-4 py-3 border-b">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={logic.goToPrevDay}
-              className="p-2 rounded-full active:bg-muted transition-colors text-muted-foreground"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <div>
-              <div className="flex items-center gap-2">
-                {logic.isToday && (
-                  <span className="inline-flex items-center rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary leading-none">
-                    TODAY
-                  </span>
-                )}
-                <h1 className="text-lg font-bold">{logic.dateFmt}</h1>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {todoTasks.length}件のタスク
-                {doneTasks.length > 0 && ` / ${doneTasks.length}件完了`}
-              </p>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={logic.goToPrevDay}
+            className="p-2 rounded-full active:bg-muted transition-colors text-muted-foreground"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="flex-1 text-center">
+            <div className="flex items-center justify-center gap-2">
+              {logic.isToday && (
+                <span className="inline-flex items-center rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary leading-none">
+                  TODAY
+                </span>
+              )}
+              <h1 className="text-lg font-bold">{logic.dateFmt}</h1>
             </div>
-            <button
-              onClick={logic.goToNextDay}
-              className="p-2 rounded-full active:bg-muted transition-colors text-muted-foreground"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {todoTasks.length > 0 ? `${todoTasks.length}件のタスク` : 'タスクなし'}
+              {calendarOnlyEvents.length > 0 && ` · ${calendarOnlyEvents.length}件の予定`}
+              {doneTasks.length > 0 && ` · ${doneTasks.length}件完了`}
+            </p>
           </div>
+          <button
+            onClick={logic.goToNextDay}
+            className="p-2 rounded-full active:bg-muted transition-colors text-muted-foreground"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
         </div>
       </div>
 
       {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+
+        {/* 予定 Section (calendar events) */}
+        {calendarOnlyEvents.length > 0 && (
+          <section>
+            <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+              <CalendarIcon className="w-3.5 h-3.5" />
+              <span>予定</span>
+            </h2>
+            <div className="space-y-1">
+              {calendarOnlyEvents.map(event => (
+                <div
+                  key={event.id}
+                  className="flex items-center gap-3 py-2.5 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 min-h-[44px]"
+                >
+                  <Clock className="w-4 h-4 text-blue-500 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm">{event.title}</span>
+                  </div>
+                  <span className="text-xs text-blue-600 dark:text-blue-400 tabular-nums shrink-0">
+                    {formatTimeRange(event.start_time, event.end_time)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* やること Section */}
         <section>
@@ -170,7 +215,7 @@ export function TodayBoard({
               </button>
             ))}
 
-            {todoTasks.length === 0 && (
+            {todoTasks.length === 0 && !calendarOnlyEvents.length && (
               <p className="text-sm text-muted-foreground/50 py-3 text-center">
                 タスクはありません
               </p>
@@ -240,10 +285,6 @@ export function TodayBoard({
           </section>
         )}
 
-        {/* Week 2 placeholder sections */}
-        {/* 壁打ち・AI実行ログは Week 2 で実装 */}
-
-        {/* Bottom padding for safe area */}
         <div className="h-20" />
       </div>
     </div>
