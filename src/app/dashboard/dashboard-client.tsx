@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
 import { TodayView } from "@/components/today/today-view"
+import { TodayBoard } from "@/components/today/today-board"
 import { HabitsView } from "@/components/habits/habits-view"
 import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
@@ -97,7 +98,7 @@ export function DashboardClient({
     // Reload時はマインドマップを開いた状態に揃える
     useEffect(() => {
         if (!isViewReady) return
-        setActiveView('map')
+        setActiveView('today')
     }, [isViewReady, setActiveView])
 
     // AI Chat open state (controlled from desktop panel FAB + mobile BottomNav)
@@ -766,14 +767,12 @@ export function DashboardClient({
                 {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
                 {isViewReady && activeView === 'today' && (
                     <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
-                        <TodayView
+                        <TodayBoard
                             allTasks={allTasksMerged}
                             onUpdateTask={handleUpdateTaskWithQuickSync}
                             projects={projects}
                             onCreateQuickTask={handleCreateQuickTask}
-                            onCreateSubTask={handleCreateSubTask}
                             onDeleteTask={handleDeleteTaskFromToday}
-                            onOpenAiChat={() => setIsAiChatOpen(true)}
                         />
                     </div>
                 )}
