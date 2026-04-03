@@ -14,6 +14,7 @@ import { useTodayViewLogic } from '@/hooks/useTodayViewLogic'
 import { useAiTasks } from '@/hooks/useAiTasks'
 import type { AiTask, AiTaskStatus } from '@/types/ai-task'
 import { AiTaskApprovalCard } from './ai-task-approval-card'
+import { AuthStatusBar } from './auth-status-bar'
 
 interface TodayBoardProps {
   allTasks: Task[]
@@ -233,6 +234,9 @@ export function TodayBoard({
         </div>
       </div>
 
+      {/* Auth Status (only shown when there's an issue) */}
+      <AuthStatusBar />
+
       {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
 
@@ -373,6 +377,28 @@ export function TodayBoard({
                 ))}
               </div>
             )}
+          </section>
+        )}
+
+        {/* 過去日の振り返りサマリー */}
+        {!logic.isToday && (doneTasks.length > 0 || calendarOnlyEvents.length > 0) && (
+          <section className="rounded-lg bg-muted/30 px-3 py-3">
+            <h2 className="text-sm font-semibold text-muted-foreground mb-1.5">
+              {format(logic.selectedDate, 'M月d日', { locale: ja })}の振り返り
+            </h2>
+            <div className="space-y-0.5 text-xs text-muted-foreground">
+              {doneTasks.length > 0 && (
+                <p>タスク {doneTasks.length}件完了</p>
+              )}
+              {calendarOnlyEvents.length > 0 && (
+                <p>予定 {calendarOnlyEvents.length}件</p>
+              )}
+              {todoTasks.length > 0 && (
+                <p className="text-amber-600 dark:text-amber-400">
+                  未完了 {todoTasks.length}件
+                </p>
+              )}
+            </div>
           </section>
         )}
 
