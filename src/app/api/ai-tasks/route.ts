@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
-  const limit = parseInt(searchParams.get('limit') || '50', 10)
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '50', 10) || 50, 1), 500)
 
   let query = supabase
     .from('ai_tasks')
@@ -23,7 +23,10 @@ export async function GET(req: NextRequest) {
   }
 
   const { data, error } = await query
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[ai-tasks]', error.message)
+    return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+  }
 
   return NextResponse.json(data)
 }
@@ -54,7 +57,10 @@ export async function POST(req: NextRequest) {
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[ai-tasks]', error.message)
+    return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+  }
 
   return NextResponse.json(data, { status: 201 })
 }

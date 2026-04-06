@@ -80,7 +80,7 @@ export function AiTaskApprovalCard({
         <div className="px-4 pb-2">
           <button
             onClick={() => setShowResult(prev => !prev)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors min-h-[44px] px-1"
           >
             {showResult ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             実行結果を表示

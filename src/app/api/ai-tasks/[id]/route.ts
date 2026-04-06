@@ -18,7 +18,10 @@ export async function GET(
     .eq('user_id', user.id)
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 404 })
+  if (error) {
+    console.error('[ai-tasks/id]', error.message)
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   return NextResponse.json(data)
 }
 
@@ -62,6 +65,9 @@ export async function PATCH(
     .select()
     .single()
 
-  if (dbError) return NextResponse.json({ error: dbError.message }, { status: 500 })
+  if (dbError) {
+    console.error('[ai-tasks/id]', dbError.message)
+    return NextResponse.json({ error: 'Update failed' }, { status: 500 })
+  }
   return NextResponse.json(data)
 }

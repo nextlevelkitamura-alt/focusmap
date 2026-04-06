@@ -484,8 +484,8 @@ export function TodayBoard({
                       {task.status === 'completed' && task.result && (
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-3">
                           {typeof task.result === 'object' && 'message' in task.result
-                            ? String(task.result.message)
-                            : JSON.stringify(task.result).slice(0, 200)}
+                            ? String(task.result.message).slice(0, 200)
+                            : JSON.stringify(task.result).replace(/[<>]/g, '').slice(0, 200)}
                         </p>
                       )}
                       {task.status === 'failed' && task.error && (
