@@ -38,23 +38,24 @@ export async function GET() {
 
   for (const repo of SKILL_REPOS) {
     const skillsDir = path.join(repo.path, '.claude', 'skills')
-    if (!fs.existsSync(skillsDir)) continue
+    let skills: SkillInfo[] = []
 
-    try {
-      const entries = fs.readdirSync(skillsDir, { withFileTypes: true })
-      const skills: SkillInfo[] = entries
-        .filter(e => e.isDirectory())
-        .map(e => ({
-          name: e.name,
-          description: readSkillDescription(path.join(skillsDir, e.name)),
-        }))
-
-      if (skills.length > 0) {
-        repos.push({ label: repo.label, path: repo.path, skills })
+    if (fs.existsSync(skillsDir)) {
+      try {
+        const entries = fs.readdirSync(skillsDir, { withFileTypes: true })
+        skills = entries
+          .filter(e => e.isDirectory())
+          .map(e => ({
+            name: e.name,
+            description: readSkillDescription(path.join(skillsDir, e.name)),
+          }))
+      } catch {
+        // ディレクトリ読み取り失敗は無視
       }
-    } catch {
-      // ディレクトリ読み取り失敗は無視
     }
+
+    // スキルの有無に関わらず全リポを返す（cwd 設定用）
+    repos.push({ label: repo.label, path: repo.path, skills })
   }
 
   return NextResponse.json(repos)

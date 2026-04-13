@@ -119,7 +119,7 @@ export function TodayTaskBoard({
     if (selectedRepo) localStorage.setItem('focusmap-schedule-repo', selectedRepo)
   }, [selectedRepo])
 
-  const { tasks: aiTasks, sendPrompt, approve, reject, requestRevision, refresh: refreshAiTasks } = useAiTasks({ limit: 20 })
+  const { tasks: aiTasks, sendPrompt, approve, reject, requestRevision, addTaskOptimistic, refresh: refreshAiTasks } = useAiTasks({ limit: 20 })
   const { tasks: scheduledTasks, isLoading: scheduledLoading, deleteTask: deleteScheduledTask, refresh: refreshScheduled } = useScheduledTasks()
 
   const pendingApprovalTasks = useMemo(
@@ -288,6 +288,9 @@ export function TodayTaskBoard({
         const err = await res.json()
         throw new Error(err.error || 'Failed to schedule')
       }
+      // 楽観的UI: レスポンスのタスクを即座にリストへ追加
+      const created = await res.json()
+      if (created?.id) addTaskOptimistic(created)
       setScheduleSuccess(true)
       setSchedulePrompt('')
       setScheduleDatetime(undefined)
@@ -308,7 +311,7 @@ export function TodayTaskBoard({
     } finally {
       setIsScheduling(false)
     }
-  }, [schedulePrompt, scheduleDatetime, scheduleRecurrence, scheduleCustomCron, scheduleDays, selectedRepo, scheduleApprovalType, refreshScheduled, refreshAiTasks])
+  }, [schedulePrompt, scheduleDatetime, scheduleRecurrence, scheduleCustomCron, scheduleDays, selectedRepo, scheduleApprovalType, addTaskOptimistic, refreshScheduled, refreshAiTasks])
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-background">
@@ -342,8 +345,8 @@ export function TodayTaskBoard({
       {/* Auth Status */}
       <AuthStatusBar />
 
-      {/* セットアップガイド（Claude Code/task-runner 未設定時） */}
-      <SetupGuideBanner />
+      {/* セットアップガイド — Claude Code 導入済みのため非表示 */}
+      {/* <SetupGuideBanner /> */}
 
       {/* 承認待ちAIタスク（スクロール外固定） */}
       {pendingApprovalTasks.length > 0 && (
@@ -606,19 +609,19 @@ export function TodayTaskBoard({
 
                 {/* フォルダ + 開始日時（横並び） */}
                 <div className="flex gap-2">
-                  {skillRepos.length > 0 && (
-                    <select
-                      value={selectedRepo}
-                      onChange={(e) => setSelectedRepo(e.target.value)}
-                      className="flex-1 min-h-[44px] bg-background text-sm outline-none border border-border/60 rounded-lg px-3 py-2"
-                      disabled={isScheduling}
-                    >
-                      <option value="">フォルダ</option>
-                      {skillRepos.map(repo => (
-                        <option key={repo.path} value={repo.path}>{repo.label}</option>
-                      ))}
-                    </select>
-                  )}
+                  <select
+                    value={selectedRepo}
+                    onChange={(e) => setSelectedRepo(e.target.value)}
+                    className="flex-1 min-h-[44px] bg-background text-sm outline-none border border-border/60 rounded-lg px-3 py-2"
+                    disabled={isScheduling}
+                  >
+                    <option value="">フォルダを選択</option>
+                    {skillRepos.map(repo => (
+                      <option key={repo.path} value={repo.path}>
+                        {repo.label}{repo.skills.length > 0 ? ` (${repo.skills.length}スキル)` : ''}
+                      </option>
+                    ))}
+                  </select>
 
                 {/* 開始日時 */}
                 <DateTimePicker

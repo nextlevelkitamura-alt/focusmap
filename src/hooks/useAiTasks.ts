@@ -111,6 +111,14 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     return sendPrompt(instruction, { parent_task_id: parentTaskId })
   }, [sendPrompt])
 
+  // 楽観的にタスクを追加（Realtime到着前にUIへ即反映）
+  const addTaskOptimistic = useCallback((task: AiTask) => {
+    setTasks(prev => {
+      if (prev.some(t => t.id === task.id)) return prev
+      return [task, ...prev].slice(0, limit)
+    })
+  }, [limit])
+
   return {
     tasks,
     isLoading,
@@ -119,6 +127,7 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     approve,
     reject,
     requestRevision,
+    addTaskOptimistic,
     refresh: fetchTasks,
   }
 }
