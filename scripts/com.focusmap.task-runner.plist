@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Focusmap Task Runner — launchd plist
+  =====================================
+  インストール手順:
+    cp scripts/com.focusmap.task-runner.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.focusmap.task-runner.plist
+
+  アンインストール:
+    launchctl unload ~/Library/LaunchAgents/com.focusmap.task-runner.plist
+    rm ~/Library/LaunchAgents/com.focusmap.task-runner.plist
+
+  ログ確認:
+    tail -f /tmp/focusmap-task-runner.log
+    tail -f /tmp/focusmap-task-runner.err
+
+  注意:
+    - USERNAME を実際のユーザー名に変更してください
+    - PROJECT_PATH をプロジェクトのパスに変更してください
+    - StartInterval: 60 = 毎分実行（60秒ごと）
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.focusmap.task-runner</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/run-task-runner.sh</string>
+  </array>
+
+  <!-- 毎60秒（1分）ごとに実行 -->
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <!-- 作業ディレクトリ -->
+  <key>WorkingDirectory</key>
+  <string>/Users/kitamuranaohiro/Private/P dev/focusmap</string>
+
+  <!-- 環境変数（.env.local に書かない場合はここで設定） -->
+  <!--
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NEXT_PUBLIC_SUPABASE_URL</key>
+    <string>https://YOUR_PROJECT_ID.supabase.co</string>
+    <key>SUPABASE_SERVICE_ROLE_KEY</key>
+    <string>eyJ...</string>
+  </dict>
+  -->
+
+  <key>StandardOutPath</key>
+  <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/task-runner.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/task-runner.err</string>
+
+  <!-- Mac 起動時に自動スタート -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- クラッシュ時に再起動しない（毎分実行なので不要） -->
+  <key>KeepAlive</key>
+  <false/>
+</dict>
+</plist>

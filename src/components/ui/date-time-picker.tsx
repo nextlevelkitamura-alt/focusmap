@@ -307,12 +307,12 @@ export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: D
                 <>
                     {/* Backdrop */}
                     <div
-                        className="fixed inset-0 z-[80] bg-black/50 animate-in fade-in duration-150"
+                        className="fixed inset-0 z-[200] bg-black/50 animate-in fade-in duration-150"
                         onClick={handleCancel}
                     />
 
                     {/* Sheet */}
-                    <div className="fixed inset-x-0 bottom-0 z-[80] bg-background rounded-t-2xl shadow-2xl animate-in slide-in-from-bottom duration-200">
+                    <div className="fixed inset-x-0 bottom-0 z-[200] bg-background rounded-t-2xl shadow-2xl animate-in slide-in-from-bottom duration-200">
                         {/* Drag handle */}
                         <div className="flex justify-center pt-3 pb-1">
                             <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />

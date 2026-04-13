@@ -24,6 +24,8 @@ import { AiView } from "@/components/ai/ai-view"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 import { IdealView } from "@/components/ideal/ideal-view"
 import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
+import { TodayTaskBoard } from "@/components/today/today-task-board"
+import { TodayDateProvider } from "@/contexts/TodayDateContext"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -642,6 +644,12 @@ export function DashboardClient({
 
     // Sidebar State
     const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
+
+    // today ビューでは左サイドバーを自動折りたたみ、map に戻すと開く
+    useEffect(() => {
+        if (!isViewReady) return
+        setIsLeftSidebarCollapsed(activeView === 'today')
+    }, [activeView, isViewReady])
     const [rightSidebarWidth, setRightSidebarWidth] = useState(320)
     const isDraggingRightRef = useRef(false)
     const dragStartXRef = useRef(0)
@@ -732,7 +740,7 @@ export function DashboardClient({
                     onCreateSpace={handleCreateSpace}
                     onUpdateSpace={handleUpdateSpace}
                     onDeleteSpace={handleDeleteSpace}
-                    showTaskListToggle
+                    showTaskListToggle={activeView !== 'today'}
                     isTaskListVisible={isTaskListVisible}
                     onToggleTaskList={() => setIsTaskListVisible(prev => !prev)}
                 />
@@ -776,18 +784,6 @@ export function DashboardClient({
                                 onCreateQuickTask={handleCreateQuickTask}
                                 onDeleteTask={handleDeleteTaskFromToday}
                             />
-                        </div>
-                        {/* Desktop */}
-                        <div className="hidden md:flex flex-1 min-h-0 justify-center overflow-hidden">
-                            <div className="w-full max-w-2xl">
-                                <TodayBoard
-                                    allTasks={allTasksMerged}
-                                    onUpdateTask={handleUpdateTaskWithQuickSync}
-                                    projects={projects}
-                                    onCreateQuickTask={handleCreateQuickTask}
-                                    onDeleteTask={handleDeleteTaskFromToday}
-                                />
-                            </div>
                         </div>
                     </>
                 )}
@@ -879,6 +875,7 @@ export function DashboardClient({
                 )}
 
                 {/* === Desktop: 3-pane layout === */}
+                <TodayDateProvider>
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
@@ -923,10 +920,18 @@ export function DashboardClient({
                     />
                 </div>
 
-                {/* Pane 2: Center (MindMap + Lists / Habits) */}
+                {/* Pane 2: Center (TodayTaskBoard / MindMap / Habits) */}
                 <div className="flex-1 min-w-0 overflow-hidden h-full w-full" style={{ minWidth: 0 }}>
                     {activeView === 'habits' ? (
                         <HabitsView onUpdateTask={updateTask} />
+                    ) : activeView === 'today' ? (
+                        <TodayTaskBoard
+                            allTasks={allTasksMerged}
+                            onUpdateTask={handleUpdateTaskWithQuickSync}
+                            projects={projects}
+                            onCreateQuickTask={handleCreateQuickTask}
+                            onDeleteTask={handleDeleteTaskFromToday}
+                        />
                     ) : (
                         <CenterPane
                             project={selectedProject}
@@ -975,6 +980,7 @@ export function DashboardClient({
                     />
                 </div>
             </div>
+            </TodayDateProvider>
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
             {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />

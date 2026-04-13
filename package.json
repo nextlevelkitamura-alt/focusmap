@@ -6,7 +6,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "(sleep 3 && open http://localhost:3001 &) && NODE_OPTIONS='--max-http-header-size=65536' next dev -p 3001",
     "build": "next build",
     "build:render": "NODE_OPTIONS='--max-old-space-size=512' next build",
     "start": "next start",

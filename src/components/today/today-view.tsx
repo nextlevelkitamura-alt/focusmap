@@ -19,6 +19,7 @@ import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
 import { formatTime } from "@/contexts/TimerContext"
 import { useIdealTracking } from "@/hooks/useIdealTracking"
 import { Star } from "lucide-react"
+import { useView } from "@/contexts/ViewContext"
 
 // --- Types ---
 
@@ -37,6 +38,7 @@ interface TodayViewProps {
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const [activeTab, setActiveTab] = useState<'today' | 'inbox'>('today')
+    const { setActiveView } = useView()
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -430,13 +432,13 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 </div>
             ) : null}
 
-            {/* 理想の今日の進捗 */}
-            {activeTab === 'today' && todaySummary && todaySummary.totalCount > 0 && (
+            {/* 今日のアクション（習慣連携以外の理想アイテム） */}
+            {activeTab === 'today' && todaySummary && todaySummary.items.some(i => i.source !== 'habit') && (
                 <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-4 py-1.5">
                     <div className="flex items-center gap-1.5 mb-1">
                         <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />
                         <span className="text-[10px] font-medium text-muted-foreground flex-1">
-                            理想の進捗
+                            今日のアクション
                         </span>
                         <span className="text-[10px] text-muted-foreground">
                             {todaySummary.completedCount}/{todaySummary.totalCount}
@@ -444,37 +446,35 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
                     {/* アイテム単位のチェックリスト */}
                     <div className="space-y-0.5">
-                        {todaySummary.items.map(item => {
+                        {todaySummary.items.filter(item => item.source !== 'habit').map(item => {
                             const isCompleted = item.completionStatus === 'completed'
-                            const isHabitSource = item.source === 'habit'
                             return (
-                                <button
+                                <div
                                     key={item.idealItem.id}
-                                    onClick={() => {
-                                        if (!isHabitSource) {
-                                            toggleItemCompletion(item.idealItem.id, todayStr)
-                                        }
-                                    }}
-                                    disabled={isHabitSource}
-                                    className={cn(
-                                        "w-full flex items-center gap-1.5 py-0.5 rounded transition-colors text-left",
-                                        !isHabitSource && "hover:bg-muted/40 active:bg-muted/60"
-                                    )}
+                                    className="w-full flex items-center gap-1.5 py-2 rounded transition-colors"
                                 >
-                                    {isCompleted
-                                        ? <CheckSquare className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                                        : <Square className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
-                                    }
-                                    <span className={cn(
-                                        "text-xs flex-1 truncate",
-                                        isCompleted && "line-through text-muted-foreground"
-                                    )}>
-                                        {item.idealItem.title}
-                                    </span>
-                                    <span className="text-[9px] text-muted-foreground/50 flex-shrink-0">
+                                    <button
+                                        onClick={() => toggleItemCompletion(item.idealItem.id, todayStr)}
+                                        className="flex items-center gap-1.5 flex-1 min-w-0 hover:bg-muted/40 active:bg-muted/60 rounded py-0.5 px-0.5 text-left"
+                                    >
+                                        {isCompleted
+                                            ? <CheckSquare className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                                            : <Square className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
+                                        }
+                                        <span className={cn(
+                                            "text-xs flex-1 truncate",
+                                            isCompleted && "line-through text-muted-foreground"
+                                        )}>
+                                            {item.idealItem.title}
+                                        </span>
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveView('ideal')}
+                                        className="text-[9px] text-muted-foreground/50 flex-shrink-0 hover:text-amber-500 active:text-amber-600 transition-colors py-0.5 px-1 rounded"
+                                    >
                                         {item.idealGoalTitle}
-                                    </span>
-                                </button>
+                                    </button>
+                                </div>
                             )
                         })}
                     </div>

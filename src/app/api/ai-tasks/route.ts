@@ -22,6 +22,12 @@ export async function GET(req: NextRequest) {
     query = query.eq('status', status)
   }
 
+  // scheduled=true のとき recurrence_cron が設定されたタスクのみ返す
+  const scheduled = searchParams.get('scheduled')
+  if (scheduled === 'true') {
+    query = query.not('recurrence_cron', 'is', null)
+  }
+
   const { data, error } = await query
   if (error) {
     console.error('[ai-tasks]', error.message)

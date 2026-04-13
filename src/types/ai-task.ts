@@ -23,4 +23,10 @@ export interface AiTask {
   created_at: string
   started_at: string | null
   completed_at: string | null
+  /** スケジュール実行時刻（NULLなら即時実行） */
+  scheduled_at: string | null
+  /** 繰り返しcron式（例: "0 9 * * *"）*/
+  recurrence_cron: string | null
+  /** 作業ディレクトリ（特定リポのスキルを実行する場合） */
+  cwd: string | null
 }

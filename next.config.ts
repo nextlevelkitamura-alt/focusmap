@@ -7,6 +7,12 @@ const nextConfig: NextConfig = {
   },
   // Cloud Run デプロイ用の設定
   output: 'standalone',
+  // HTTP 431 対策: リクエストヘッダーサイズ制限を緩和
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '2mb',
+    },
+  },
 };
 
 export default nextConfig;

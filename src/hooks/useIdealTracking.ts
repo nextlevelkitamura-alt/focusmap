@@ -180,26 +180,53 @@ export function useIdealTracking(
         const existing = directCompletions.find(
             c => c.ideal_item_id === itemId && c.completed_date === date
         )
+        const isCurrentlyCompleted = existing?.is_completed ?? false
 
-        if (existing?.is_completed) {
-            await fetch('/api/ideals/completions', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ideal_item_id: itemId, completed_date: date }),
-            })
-        } else {
-            await fetch('/api/ideals/completions', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+        // 楽観的更新（即時UI反映）
+        setDirectCompletions(prev => {
+            const filtered = prev.filter(
+                c => !(c.ideal_item_id === itemId && c.completed_date === date)
+            )
+            if (!isCurrentlyCompleted) {
+                return [...filtered, {
+                    id: `temp-${Date.now()}`,
                     ideal_item_id: itemId,
+                    user_id: '',
                     completed_date: date,
                     is_completed: true,
-                }),
-            })
-        }
+                    elapsed_minutes: 0,
+                    note: null,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                } as IdealItemCompletion]
+            }
+            return filtered
+        })
 
-        setRefreshKey(k => k + 1)
+        try {
+            if (isCurrentlyCompleted) {
+                await fetch('/api/ideals/completions', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ideal_item_id: itemId, completed_date: date }),
+                })
+            } else {
+                await fetch('/api/ideals/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ideal_item_id: itemId,
+                        completed_date: date,
+                        is_completed: true,
+                    }),
+                })
+            }
+            // 整合性確認のため再フェッチ
+            setRefreshKey(k => k + 1)
+        } catch {
+            // エラー時はサーバー状態に戻す
+            setRefreshKey(k => k + 1)
+        }
     }, [directCompletions])
 
     const updateElapsedMinutes = useCallback(async (itemId: string, date: string, minutes: number) => {

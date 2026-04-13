@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useClickOutside } from '@/hooks/useClickOutside'
 
 interface ServiceStatus {
   name: string
@@ -16,17 +17,19 @@ export function AuthStatusBar() {
     { name: 'calendar', status: 'checking', label: 'カレンダー' },
   ])
   const [expanded, setExpanded] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  useClickOutside(containerRef, useCallback(() => setExpanded(false), []), expanded)
 
   useEffect(() => {
     const checkServices = async () => {
       const results: ServiceStatus[] = []
 
-      // Supabase check
+      // Supabase check（401=認証切れはDB自体は正常）
       try {
         const res = await fetch('/api/tasks?limit=1')
         results.push({
           name: 'supabase',
-          status: res.ok ? 'ok' : 'warning',
+          status: (res.ok || res.status === 401) ? 'ok' : 'warning',
           label: 'DB',
         })
       } catch {
@@ -58,7 +61,7 @@ export function AuthStatusBar() {
   if (!hasWarning && !isChecking) return null
 
   return (
-    <div className="px-4 py-2 border-b">
+    <div ref={containerRef} className="px-4 py-2 border-b">
       <button
         onClick={() => setExpanded(prev => !prev)}
         className="flex items-center gap-2 w-full text-left"

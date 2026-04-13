@@ -71,3 +71,26 @@ export async function PATCH(
   }
   return NextResponse.json(data)
 }
+
+// DELETE /api/ai-tasks/:id — AIタスク削除（スケジュール削除）
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { error } = await supabase
+    .from('ai_tasks')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id)
+
+  if (error) {
+    console.error('[ai-tasks/id DELETE]', error.message)
+    return NextResponse.json({ error: 'Delete failed' }, { status: 500 })
+  }
+  return new NextResponse(null, { status: 204 })
+}

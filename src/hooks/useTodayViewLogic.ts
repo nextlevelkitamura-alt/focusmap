@@ -16,6 +16,7 @@ import { type QuickTaskData } from "@/components/today/quick-task-fab"
 import { type EditTarget } from "@/components/today/mobile-event-edit-modal"
 import { isSameDay, format } from "date-fns"
 import { ja } from "date-fns/locale"
+import { useTodayDateContext } from "@/contexts/TodayDateContext"
 
 // --- Types ---
 
@@ -85,10 +86,13 @@ export function useTodayViewLogic({
         })
     }, [allTasks, pendingDeleteTaskIds])
 
-    // Selected date (ssr:false なのでクライアント直接初期化OK)
-    const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    // Shared date context (desktop: sync both panels; mobile: null → use local state)
+    const dateCtx = useTodayDateContext()
+    const [localSelectedDate, localSetSelectedDate] = useState<Date>(() => {
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
     })
+    const selectedDate = dateCtx ? dateCtx.selectedDate : localSelectedDate
+    const setSelectedDate = dateCtx ? dateCtx.setSelectedDate : localSetSelectedDate
 
     // 1ヶ月間フェッチウィンドウ（-7日〜+30日）
     const [fetchWindow, setFetchWindow] = useState(() => {

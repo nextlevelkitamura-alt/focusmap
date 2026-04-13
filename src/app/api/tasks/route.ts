@@ -2,6 +2,70 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 
 /**
+ * タスク一覧を取得
+ * GET /api/tasks
+ *
+ * クエリパラメータ:
+ *   limit: 取得件数（オプション）
+ *   scheduled_date: 日付フィルタ YYYY-MM-DD（オプション）
+ *   status: ステータスフィルタ（オプション）
+ */
+export async function GET(request: NextRequest) {
+  const supabase = await createClient();
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json(
+      { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } },
+      { status: 401 }
+    );
+  }
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const limit = searchParams.get('limit');
+    const scheduledDate = searchParams.get('scheduled_date');
+    const status = searchParams.get('status');
+
+    let query = supabase
+      .from('tasks')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('order_index', { ascending: true });
+
+    if (scheduledDate) {
+      query = query
+        .gte('scheduled_at', `${scheduledDate}T00:00:00`)
+        .lte('scheduled_at', `${scheduledDate}T23:59:59`);
+    }
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    if (limit) {
+      query = query.limit(parseInt(limit, 10));
+    }
+
+    const { data: tasks, error } = await query;
+
+    if (error) {
+      return NextResponse.json(
+        { success: false, error: { code: error.code, message: error.message } },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true, tasks });
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: { code: 'API_ERROR', message: error.message } },
+      { status: 500 }
+    );
+  }
+}
+
+/**
  * タスクを新規作成
  * POST /api/tasks
  *

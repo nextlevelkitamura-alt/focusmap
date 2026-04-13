@@ -20,6 +20,7 @@ import { PanelQuickTaskForm } from "@/components/dashboard/panel-quick-task-form
 import { DesktopPanelFab } from "@/components/dashboard/desktop-panel-fab"
 import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useIdealTracking } from "@/hooks/useIdealTracking"
+import { useClickOutside } from "@/hooks/useClickOutside"
 import { Star } from "lucide-react"
 
 // --- Types ---
@@ -46,6 +47,7 @@ export function DesktopTodayPanel({
     onOpenAiChat,
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
+    const calendarAreaRef = useRef<HTMLDivElement>(null)
     const [isTaskFormOpen, setIsTaskFormOpen] = useState(false)
     const [taskFormPreset, setTaskFormPreset] = useState<{ scheduledDate: Date; estimatedTime: number } | null>(null)
     const [taskFormDraft, setTaskFormDraft] = useState<{
@@ -64,6 +66,9 @@ export function DesktopTodayPanel({
         onDeleteTask,
     })
     const scrollPositionRef = logic.scrollPositionRef
+
+    // Close calendar on outside click
+    useClickOutside(calendarAreaRef, useCallback(() => logic.setCalendarOpen(false), [logic.setCalendarOpen]), logic.calendarOpen)
 
     // 2-finger horizontal trackpad swipe for date navigation
     useTrackpadNavigation({
@@ -134,29 +139,32 @@ export function DesktopTodayPanel({
 
             {/* ① Header: date nav + add button + mode toggle */}
             <div className="flex-shrink-0 flex items-center justify-between px-2 py-1.5 border-b border-border/30 bg-background/80 gap-1">
-                {/* Date navigation */}
-                <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                {/* Date navigation — arrows are flex-none so they never shift */}
+                <div className="flex items-center min-w-0 flex-1">
                     <button
                         onClick={logic.goToPrevDay}
-                        className="p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground flex-shrink-0"
+                        className="flex-none p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
                     >
                         <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <button
-                        onClick={() => logic.setCalendarOpen(prev => !prev)}
-                        className={cn(
-                            "flex items-center gap-1 px-2 py-0.5 rounded-md transition-colors text-sm font-semibold min-w-0",
-                            logic.calendarOpen ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
+                    <div className="flex-1 flex flex-col items-center min-w-0">
+                        {logic.isToday && (
+                            <span className="text-[9px] font-semibold text-primary leading-none mb-0.5 tracking-wide">Today</span>
                         )}
-                    >
-                        <CalendarDays className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="truncate">
-                            {logic.isToday ? `今日 · ${logic.dateFmt}` : logic.dateFmt}
-                        </span>
-                    </button>
+                        <button
+                            onClick={() => logic.setCalendarOpen(prev => !prev)}
+                            className={cn(
+                                "flex items-center gap-1 px-2 py-0.5 rounded-md transition-colors text-sm font-semibold",
+                                logic.calendarOpen ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
+                            )}
+                        >
+                            <CalendarDays className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span>{logic.dateFmt}</span>
+                        </button>
+                    </div>
                     <button
                         onClick={logic.goToNextDay}
-                        className="p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground flex-shrink-0"
+                        className="flex-none p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
                     >
                         <ChevronRight className="w-4 h-4" />
                     </button>
@@ -229,7 +237,7 @@ export function DesktopTodayPanel({
 
             {/* ② Collapsible mini-calendar */}
             {activeTab === 'today' && logic.calendarOpen && (
-                <div className="flex-shrink-0 border-b border-border/30 px-3 py-2 bg-background/60 animate-in slide-in-from-top-2 duration-200">
+                <div ref={calendarAreaRef} className="flex-shrink-0 border-b border-border/30 px-3 py-2 bg-background/60 animate-in slide-in-from-top-2 duration-200">
                     <SimpleCalendar
                         selected={logic.selectedDate}
                         onSelect={logic.handleDateSelect}
