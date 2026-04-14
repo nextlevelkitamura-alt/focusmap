@@ -318,6 +318,8 @@ export async function GET(request: NextRequest) {
     const now = new Date().toISOString();
     const eventsWithSyncTime = googleEventsWithId.map(event => ({
       ...event,
+      // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
+      is_completed: completionMap.get(event.google_event_id) ?? false,
       synced_at: now
     }));
 

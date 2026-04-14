@@ -461,25 +461,34 @@ export function useTodayViewLogic({
 
     // Toggle calendar event completion
     const toggleEventCompletion = useCallback(async (eventId: string) => {
-        let newCompleted = true
-        setLocalCalendarEvents(prev => {
-            const event = prev.find(e => e.id === eventId)
-            if (!event) return prev
-            newCompleted = !event.is_completed
-            return prev.map(e =>
-                e.id === eventId ? { ...e, is_completed: newCompleted } : e
-            )
-        })
+        // setState callback 外でイベントを取得（React の updater は render 時実行のため）
+        const targetEvent = localCalendarEvents.find(e => e.id === eventId)
+        if (!targetEvent) return
+
+        const newCompleted = !targetEvent.is_completed
+        const googleEventId = targetEvent.google_event_id
+
+        // ローカル状態を即時更新
+        setLocalCalendarEvents(prev => prev.map(e =>
+            e.id === eventId ? { ...e, is_completed: newCompleted } : e
+        ))
         // 他パネルに即時反映（API ラウンドトリップ不要）
         broadcastEventCompletion(eventId, newCompleted)
         try {
             const supabase = (await import('@/utils/supabase/client')).createClient()
-            // API は id を google_event_id に書き換えて返すため、
-            // google_event_id または id（ローカルイベント用）で照合する
-            await supabase
-                .from('calendar_events')
-                .update({ is_completed: newCompleted })
-                .or(`google_event_id.eq.${eventId},id.eq.${eventId}`)
+            if (googleEventId) {
+                // Google イベント: google_event_id（text型）で安全に更新
+                await supabase
+                    .from('calendar_events')
+                    .update({ is_completed: newCompleted })
+                    .eq('google_event_id', googleEventId)
+            } else {
+                // ローカルイベント: id（UUID型）で更新
+                await supabase
+                    .from('calendar_events')
+                    .update({ is_completed: newCompleted })
+                    .eq('id', eventId)
+            }
             // キャッシュ無効化（次回取得時に最新データを使う）
             invalidateCalendarCache()
         } catch (err) {
@@ -490,7 +499,7 @@ export function useTodayViewLogic({
             // 失敗時はロールバックも即時通知
             broadcastEventCompletion(eventId, !newCompleted)
         }
-    }, [])
+    }, [localCalendarEvents])
 
     // Toggle child task
     const toggleChildTask = useCallback(async (
