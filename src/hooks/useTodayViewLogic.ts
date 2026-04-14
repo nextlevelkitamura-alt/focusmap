@@ -463,10 +463,15 @@ export function useTodayViewLogic({
     const toggleEventCompletion = useCallback(async (eventId: string) => {
         // setState callback 外でイベントを取得（React の updater は render 時実行のため）
         const targetEvent = localCalendarEvents.find(e => e.id === eventId)
-        if (!targetEvent) return
+        console.log('[toggleEventCompletion] eventId:', eventId, 'found:', !!targetEvent, 'localCount:', localCalendarEvents.length)
+        if (!targetEvent) {
+            console.error('[toggleEventCompletion] Event not found in localCalendarEvents! IDs:', localCalendarEvents.slice(0, 3).map(e => e.id))
+            return
+        }
 
         const newCompleted = !targetEvent.is_completed
         const googleEventId = targetEvent.google_event_id
+        console.log('[toggleEventCompletion] googleEventId:', googleEventId, 'newCompleted:', newCompleted)
 
         // ローカル状態を即時更新
         setLocalCalendarEvents(prev => prev.map(e =>
@@ -482,6 +487,7 @@ export function useTodayViewLogic({
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ google_event_id: googleEventId, is_completed: newCompleted }),
                 })
+                console.log('[toggleEventCompletion] API response:', response.status, response.ok)
                 if (!response.ok) {
                     const errData = await response.json().catch(() => ({}))
                     throw new Error(errData.error || `HTTP ${response.status}`)
@@ -496,6 +502,7 @@ export function useTodayViewLogic({
                 if (error) throw error
             }
             // キャッシュ無効化（次回取得時に最新データを使う）
+            console.log('[toggleEventCompletion] DB update succeeded')
             invalidateCalendarCache()
         } catch (err) {
             console.error('[toggleEventCompletion] Failed:', err)
