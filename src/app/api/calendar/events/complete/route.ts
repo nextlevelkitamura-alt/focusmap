@@ -31,17 +31,24 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'google_event_id is required' }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const { data: updatedRows, error } = await supabase
     .from('calendar_events')
     .update({ is_completed })
     .eq('user_id', user.id)
-    .eq('google_event_id', google_event_id);
+    .eq('google_event_id', google_event_id)
+    .select('id');
 
   if (error) {
     console.error('[events/complete] Update failed:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 
-  console.log('[events/complete] Updated is_completed:', { google_event_id, is_completed });
+  if (!updatedRows || updatedRows.length === 0) {
+    // 行が存在しない場合（upsert が正常に動作していれば発生しないはず）
+    console.warn('[events/complete] No rows matched for update:', { google_event_id, is_completed });
+    return NextResponse.json({ success: false, error: 'Event not found in database' }, { status: 404 });
+  }
+
+  console.log('[events/complete] Updated is_completed:', { google_event_id, is_completed, rows: updatedRows.length });
   return NextResponse.json({ success: true });
 }

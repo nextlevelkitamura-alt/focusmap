@@ -316,7 +316,10 @@ export async function GET(request: NextRequest) {
 
     // DBに非同期で保存（エラーがあっても返却をブロックしない）
     const now = new Date().toISOString();
-    const eventsWithSyncTime = googleEventsWithId.map(event => ({
+    // id は UUID カラム（DB が自動生成）のため除外する。
+    // google_event_id は UUID 形式ではないため id に渡すと PostgreSQL の型エラーで
+    // INSERT が失敗し、新規行が一切 upsert されない原因となっていた。
+    const eventsWithSyncTime = googleEventsWithId.map(({ id: _id, ...event }) => ({
       ...event,
       // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
       is_completed: completionMap.get(event.google_event_id) ?? false,
@@ -337,6 +340,18 @@ export async function GET(request: NextRequest) {
         console.log('[events/list] Successfully upserted', eventsWithSyncTime.length, 'events to database');
       }
     }
+
+    // 30日以上前のイベントを DB からクリーンアップ（レスポンスをブロックしない）
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    supabase
+      .from('calendar_events')
+      .delete()
+      .eq('user_id', user.id)
+      .lt('end_time', thirtyDaysAgo.toISOString())
+      .then(({ error: cleanupErr }) => {
+        if (cleanupErr) console.error('[events/list] Old event cleanup failed:', cleanupErr);
+      });
 
     return NextResponse.json({
       success: true,
