@@ -475,19 +475,25 @@ export function useTodayViewLogic({
         // 他パネルに即時反映（API ラウンドトリップ不要）
         broadcastEventCompletion(eventId, newCompleted)
         try {
-            const supabase = (await import('@/utils/supabase/client')).createClient()
             if (googleEventId) {
-                // Google イベント: google_event_id（text型）で安全に更新
-                await supabase
-                    .from('calendar_events')
-                    .update({ is_completed: newCompleted })
-                    .eq('google_event_id', googleEventId)
+                // Google イベント: サーバー側 API 経由で更新（RLS/型の問題を回避）
+                const response = await fetch('/api/calendar/events/complete', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ google_event_id: googleEventId, is_completed: newCompleted }),
+                })
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}))
+                    throw new Error(errData.error || `HTTP ${response.status}`)
+                }
             } else {
-                // ローカルイベント: id（UUID型）で更新
-                await supabase
+                // ローカルイベント: id（UUID型）でブラウザクライアント更新
+                const supabase = (await import('@/utils/supabase/client')).createClient()
+                const { error } = await supabase
                     .from('calendar_events')
                     .update({ is_completed: newCompleted })
                     .eq('id', eventId)
+                if (error) throw error
             }
             // キャッシュ無効化（次回取得時に最新データを使う）
             invalidateCalendarCache()

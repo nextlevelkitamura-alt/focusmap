@@ -57,8 +57,8 @@ export function AuthStatusBar() {
   const hasWarning = services.some(s => s.status === 'warning')
   const isChecking = services.some(s => s.status === 'checking')
 
-  // 全部 OK なら何も表示しない
-  if (!hasWarning && !isChecking) return null
+  // 確認中 or 全部 OK なら何も表示しない（確認中は不要なノイズ）
+  if (!hasWarning) return null
 
   return (
     <div ref={containerRef} className="px-4 py-2 border-b">

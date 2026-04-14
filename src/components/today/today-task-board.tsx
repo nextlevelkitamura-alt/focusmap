@@ -452,6 +452,9 @@ export function TodayTaskBoard({
                   {boardItems.length}
                 </span>
               )}
+              {logic.eventsLoading && (
+                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/40 ml-1" />
+              )}
             </h2>
             <div className="space-y-1">
               {boardItems.map(item => {
