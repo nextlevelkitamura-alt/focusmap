@@ -40,6 +40,27 @@ export function invalidateCalendarCache() {
   inflightRequests.clear();
 }
 
+const CALENDAR_SYNC_EVENT = 'focusmap:calendar-sync-request';
+const EVENT_COMPLETION_EVENT = 'focusmap:event-completion-changed';
+
+/** 全 useCalendarEvents インスタンスにキャッシュ再取得を通知 */
+export function broadcastCalendarSync() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(CALENDAR_SYNC_EVENT));
+  }
+}
+
+/** イベント完了状態の変更を即時ブロードキャスト（API ラウンドトリップ不要） */
+export function broadcastEventCompletion(eventId: string, isCompleted: boolean) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENT_COMPLETION_EVENT, {
+      detail: { eventId, isCompleted },
+    }));
+  }
+}
+
+export { EVENT_COMPLETION_EVENT };
+
 function isQuotaError(error: unknown): boolean {
   const message = error instanceof Error
     ? error.message
@@ -271,6 +292,18 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
     return () => clearInterval(interval);
   }, [options.autoSync, options.syncInterval, options.enabled, fetchEvents]);
+
+  // Cross-instance sync: listen for broadcast events from other panels
+  useEffect(() => {
+    if (typeof window === 'undefined' || options.enabled === false) return;
+
+    const handler = () => {
+      fetchEvents({ forceSync: true, silent: true });
+    };
+
+    window.addEventListener(CALENDAR_SYNC_EVENT, handler);
+    return () => window.removeEventListener(CALENDAR_SYNC_EVENT, handler);
+  }, [fetchEvents, options.enabled]);
 
   // Manual sync (force refresh)
   const syncNow = useCallback((options?: { silent?: boolean }) => {

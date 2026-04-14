@@ -40,6 +40,10 @@ interface QuickTaskFabProps {
     calendars: CalendarOption[]
     onCreateTask: (data: QuickTaskData) => Promise<void>
     onOpenAiChat?: () => void
+    externalOpen?: boolean
+    onExternalOpenChange?: (open: boolean) => void
+    initialScheduledAt?: Date
+    initialEstimatedTime?: number
 }
 
 const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
@@ -62,7 +66,7 @@ const REMINDER_OPTIONS: Array<{ label: string; value: number }> = [
     { label: "通知なし", value: -1 },
 ]
 
-export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }: QuickTaskFabProps) {
+export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, externalOpen, onExternalOpenChange, initialScheduledAt, initialEstimatedTime }: QuickTaskFabProps) {
     const [isOpen, setIsOpen] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
@@ -80,12 +84,26 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
 
     const titleInputRef = useRef<HTMLInputElement>(null)
 
+    // External open control: when externalOpen becomes true, preset values and open sheet
+    useEffect(() => {
+        if (externalOpen) {
+            if (initialScheduledAt) setScheduledDate(initialScheduledAt)
+            if (initialEstimatedTime) setEstimatedTime(initialEstimatedTime)
+            setIsOpen(true)
+        }
+    }, [externalOpen, initialScheduledAt, initialEstimatedTime])
+
     // Auto-focus title input when sheet opens
     useEffect(() => {
         if (isOpen) {
             setTimeout(() => titleInputRef.current?.focus(), 300)
         }
     }, [isOpen])
+
+    const closeSheet = useCallback(() => {
+        setIsOpen(false)
+        onExternalOpenChange?.(false)
+    }, [onExternalOpenChange])
 
     const resetForm = useCallback(() => {
         setTitle("")
@@ -119,9 +137,9 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
         })
 
         resetForm()
-        setIsOpen(false)
+        closeSheet()
         setIsSubmitting(false)
-    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, isSubmitting, onCreateTask, resetForm])
+    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, isSubmitting, onCreateTask, resetForm, closeSheet])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey && title.trim()) {
@@ -228,7 +246,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat }
             </div>
 
             {/* Bottom Sheet */}
-            <Sheet open={isOpen} onOpenChange={setIsOpen}>
+            <Sheet open={isOpen} onOpenChange={(open) => { if (!open) { closeSheet(); resetForm() } else setIsOpen(true) }}>
                 <SheetContent side="bottom" className="rounded-t-2xl max-h-[85vh] px-4 pb-8">
                     {/* Drag Handle */}
                     <div className="flex justify-center pt-2 pb-1">

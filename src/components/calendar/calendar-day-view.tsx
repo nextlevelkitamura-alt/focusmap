@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback, RefObject } from "react"
 import { calculateEventLayout } from "@/lib/calendar-layout"
-import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WIDTH_DAY, QUARTER_HOURS } from "@/lib/calendar-constants"
+import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WIDTH_DAY, QUARTER_HOURS, GUTTER_WIDTH } from "@/lib/calendar-constants"
 import { useCalendarDragDropDay } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
@@ -358,6 +358,13 @@ export function CalendarDayView({
                     onDragLeave={onDragLeave}
                     onDrop={onDrop}
                 >
+                    {/* Gutter: 右端の余白エリア（予定が重なっていてもここからドラッグで追加可能） */}
+                    <div
+                        className="absolute top-0 bottom-0 border-l border-border/10 pointer-events-none"
+                        style={{ right: 0, width: GUTTER_WIDTH }}
+                        aria-hidden="true"
+                    />
+
                     {/* Grid Lines */}
                     {HOURS.map((hour) => (
                         <div key={`grid-${hour}`} className="absolute w-full border-t border-border/30" style={{ top: hour * hourHeight }} />
@@ -429,7 +436,7 @@ export function CalendarDayView({
                                         top: previewPosition.top,
                                         height: previewHeightPx,
                                         left: '4px',
-                                        right: '4px',
+                                        right: GUTTER_WIDTH + 4,
                                         zIndex: 30,
                                         padding: '1px 1px 1px 2px'
                                     }}
@@ -481,8 +488,8 @@ export function CalendarDayView({
                                 style={{
                                     top: `${topPercent}%`,
                                     height: `${heightPercent}%`,
-                                    left: `${layout.left}%`,
-                                    width: `${layout.width}%`,
+                                    left: `calc((100% - ${GUTTER_WIDTH}px) * ${layout.left / 100})`,
+                                    width: `calc((100% - ${GUTTER_WIDTH}px) * ${layout.width / 100})`,
                                     zIndex: 20,
                                     padding: '1px 1px 1px 2px' // Google Calendar風のマージン
                                 }}

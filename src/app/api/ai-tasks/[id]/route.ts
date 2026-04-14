@@ -36,7 +36,7 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { status, result, error: taskError } = body
+  const { status, result, error: taskError, prompt, scheduled_at, recurrence_cron, cwd, approval_type } = body
 
   const updates: Record<string, unknown> = {}
 
@@ -52,6 +52,11 @@ export async function PATCH(
 
   if (result !== undefined) updates.result = result
   if (taskError !== undefined) updates.error = taskError
+  if (prompt !== undefined) updates.prompt = prompt
+  if (scheduled_at !== undefined) updates.scheduled_at = scheduled_at
+  if (recurrence_cron !== undefined) updates.recurrence_cron = recurrence_cron
+  if (cwd !== undefined) updates.cwd = cwd
+  if (approval_type !== undefined) updates.approval_type = approval_type
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No updates provided' }, { status: 400 })

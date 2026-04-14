@@ -94,6 +94,12 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         logic.calendars.find(c =>
             c.selected && (c.access_level === 'owner' || c.access_level === 'writer')
         )?.google_calendar_id
+
+    // タイムライングリッドのクリック/ドラッグ → FABシート連携
+    const [fabRangeSelect, setFabRangeSelect] = useState<{
+        scheduledAt: Date
+        estimatedTime: number
+    } | null>(null)
         ?? logic.writableCalendars[0]?.id
         ?? null
 
@@ -604,6 +610,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             onQuickCreateTask={onCreateQuickTask}
                             defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                             selectedDate={logic.selectedDate}
+                            onQuickCreateRangeSelect={setFabRangeSelect}
                         />
                     ) : (
                         <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -654,6 +661,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     calendars={logic.writableCalendars}
                     onCreateTask={onCreateQuickTask}
                     onOpenAiChat={onOpenAiChat}
+                    externalOpen={!!fabRangeSelect}
+                    onExternalOpenChange={(open) => { if (!open) setFabRangeSelect(null) }}
+                    initialScheduledAt={fabRangeSelect?.scheduledAt}
+                    initialEstimatedTime={fabRangeSelect?.estimatedTime}
                 />
             )}
         </div>

@@ -650,7 +650,12 @@ export function DashboardClient({
         if (!isViewReady) return
         setIsLeftSidebarCollapsed(activeView === 'today')
     }, [activeView, isViewReady])
-    const [rightSidebarWidth, setRightSidebarWidth] = useState(320)
+    const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return Math.max(320, Math.floor(window.innerWidth * 0.38))
+        }
+        return 480
+    })
     const isDraggingRightRef = useRef(false)
     const dragStartXRef = useRef(0)
     const dragStartWidthRightRef = useRef(0)
@@ -698,7 +703,8 @@ export function DashboardClient({
         const handleMouseMove = (e: MouseEvent) => {
             if (isDraggingRightRef.current) {
                 const delta = dragStartXRef.current - e.clientX
-                const newWidth = Math.max(200, Math.min(600, dragStartWidthRightRef.current + delta))
+                const maxW = window.innerWidth * 0.7
+                const newWidth = Math.max(280, Math.min(maxW, dragStartWidthRightRef.current + delta))
                 setRightSidebarWidth(newWidth)
             }
         }
@@ -706,7 +712,8 @@ export function DashboardClient({
         const handleTouchMove = (e: TouchEvent) => {
             if (isDraggingRightRef.current) {
                 const delta = dragStartXRef.current - e.touches[0].clientX
-                const newWidth = Math.max(200, Math.min(600, dragStartWidthRightRef.current + delta))
+                const maxW = window.innerWidth * 0.7
+                const newWidth = Math.max(280, Math.min(maxW, dragStartWidthRightRef.current + delta))
                 setRightSidebarWidth(newWidth)
             }
         }

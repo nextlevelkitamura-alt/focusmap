@@ -302,6 +302,7 @@ export interface Database {
                     google_created_at: string | null
                     google_updated_at: string | null
                     reminders: number[] | null
+                    is_completed: boolean
                     synced_at: string
                     created_at: string
                     updated_at: string
@@ -325,6 +326,7 @@ export interface Database {
                     google_created_at?: string | null
                     google_updated_at?: string | null
                     reminders?: number[] | null
+                    is_completed?: boolean
                     synced_at?: string
                     created_at?: string
                     updated_at?: string
@@ -348,6 +350,7 @@ export interface Database {
                     google_created_at?: string | null
                     google_updated_at?: string | null
                     reminders?: number[] | null
+                    is_completed?: boolean
                     synced_at?: string
                     created_at?: string
                     updated_at?: string

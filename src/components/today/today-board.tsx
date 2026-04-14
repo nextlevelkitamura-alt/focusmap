@@ -10,11 +10,16 @@ import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
 import { Task, Project } from '@/types/database'
+import type { CalendarEvent } from '@/types/calendar'
 import { useTodayViewLogic } from '@/hooks/useTodayViewLogic'
 import { useAiTasks } from '@/hooks/useAiTasks'
 import type { AiTask, AiTaskStatus } from '@/types/ai-task'
 import { AiTaskApprovalCard } from './ai-task-approval-card'
 import { AuthStatusBar } from './auth-status-bar'
+
+type BoardItem =
+  | { kind: 'event'; data: CalendarEvent; sortTime: number }
+  | { kind: 'task';  data: Task;          sortTime: number }
 
 interface TodayBoardProps {
   allTasks: Task[]
@@ -110,8 +115,8 @@ export function TodayBoard({
     onDeleteTask,
   })
 
-  // 今日のタスクを todo / done に分割
-  const { todoTasks, doneTasks } = useMemo(() => {
+  const { boardItems, doneTasks, eventCount, todoCount } = useMemo(() => {
+    // タスクの重複除去
     const allToday = [
       ...logic.todayScheduledTasks,
       ...logic.unscheduledTasks,
@@ -124,32 +129,42 @@ export function TodayBoard({
     })
     const todo = unique.filter(t => t.status !== 'done')
     const done = unique.filter(t => t.status === 'done')
-    const sortBySchedule = (a: Task, b: Task) => {
+    done.sort((a, b) => {
       if (a.scheduled_at && b.scheduled_at) return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime()
       if (a.scheduled_at) return -1
       if (b.scheduled_at) return 1
       return 0
-    }
-    todo.sort(sortBySchedule)
-    done.sort(sortBySchedule)
-    return { todoTasks: todo, doneTasks: done }
-  }, [logic.todayScheduledTasks, logic.unscheduledTasks])
+    })
 
-  // カレンダーイベント（タスクと紐づいていないもの）
-  const calendarOnlyEvents = useMemo(() => {
+    // カレンダーイベント（タスクと紐づいていないもの）
     const taskGoogleEventIds = new Set(
       allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
     )
-    return logic.calendarEvents
+    const events = logic.calendarEvents
       .filter(e => {
         if (taskGoogleEventIds.has(e.google_event_id)) return false
         if (e.is_all_day) return false
         const start = new Date(e.start_time)
-        const end = new Date(e.end_time)
         return start >= logic.today && start < logic.tomorrow
       })
-      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-  }, [logic.calendarEvents, logic.today, logic.tomorrow, allTasks])
+
+    // 統合 + 時間順ソート
+    const items: BoardItem[] = [
+      ...events.map(e => ({
+        kind: 'event' as const,
+        data: e,
+        sortTime: new Date(e.start_time).getTime(),
+      })),
+      ...todo.map(t => ({
+        kind: 'task' as const,
+        data: t,
+        sortTime: t.scheduled_at ? new Date(t.scheduled_at).getTime() : Infinity,
+      })),
+    ]
+    items.sort((a, b) => a.sortTime - b.sortTime)
+
+    return { boardItems: items, doneTasks: done, eventCount: events.length, todoCount: todo.length }
+  }, [logic.todayScheduledTasks, logic.unscheduledTasks, logic.calendarEvents, logic.today, logic.tomorrow, allTasks])
 
   const handleAddTask = useCallback(async () => {
     const title = newTaskTitle.trim()
@@ -220,8 +235,8 @@ export function TodayBoard({
               <h1 className="text-lg font-bold">{logic.dateFmt}</h1>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {todoTasks.length > 0 ? `${todoTasks.length}件のタスク` : 'タスクなし'}
-              {calendarOnlyEvents.length > 0 && ` · ${calendarOnlyEvents.length}件の予定`}
+              {todoCount > 0 ? `${todoCount}件のタスク` : 'タスクなし'}
+              {eventCount > 0 && ` · ${eventCount}件の予定`}
               {doneTasks.length > 0 && ` · ${doneTasks.length}件完了`}
             </p>
           </div>
@@ -255,62 +270,65 @@ export function TodayBoard({
           </section>
         )}
 
-        {/* 予定 Section (calendar events) */}
-        {calendarOnlyEvents.length > 0 && (
-          <section>
-            <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-              <CalendarIcon className="w-3.5 h-3.5" />
-              <span>予定</span>
-            </h2>
-            <div className="space-y-1">
-              {calendarOnlyEvents.map(event => (
-                <div
-                  key={event.id}
-                  className="flex items-center gap-3 py-2.5 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 min-h-[44px]"
-                >
-                  <Clock className="w-4 h-4 text-blue-500 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm">{event.title}</span>
-                  </div>
-                  <span className="text-xs text-blue-600 dark:text-blue-400 tabular-nums shrink-0">
-                    {formatTimeRange(event.start_time, event.end_time)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* やること Section */}
+        {/* やること（予定・タスク統合） */}
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
             <span>やること</span>
-            {todoTasks.length > 0 && (
+            {boardItems.length > 0 && (
               <span className="text-xs tabular-nums bg-muted rounded-full px-1.5 py-0.5">
-                {todoTasks.length}
+                {boardItems.length}
               </span>
             )}
           </h2>
           <div className="space-y-1">
-            {todoTasks.map(task => (
-              <button
-                key={task.id}
-                onClick={() => logic.toggleTask(task.id)}
-                className="w-full flex items-center gap-3 py-3 px-3 rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-colors text-left min-h-[44px]"
-              >
-                <Square className="w-5 h-5 text-muted-foreground/40 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm">{task.title}</span>
-                </div>
-                {task.scheduled_at && (
-                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                    {formatScheduledTime(task.scheduled_at)}
-                  </span>
-                )}
-              </button>
-            ))}
+            {boardItems.map(item => {
+              if (item.kind === 'event') {
+                const event = item.data
+                const isDone = !!event.is_completed
+                return (
+                  <button
+                    key={`event-${event.id}`}
+                    onClick={() => logic.toggleEventCompletion(event.id)}
+                    className="w-full flex items-center gap-3 py-3 px-3 rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-colors text-left min-h-[44px]"
+                  >
+                    {isDone
+                      ? <CheckSquare className="w-5 h-5 text-primary shrink-0" />
+                      : <Square className="w-5 h-5 text-muted-foreground/40 shrink-0" />
+                    }
+                    <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
+                      {formatTimeRange(event.start_time, event.end_time)}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className={cn("text-sm", isDone && "line-through text-muted-foreground")}>{event.title}</span>
+                    </div>
+                  </button>
+                )
+              }
+              const task = item.data
+              const taskDone = task.status === 'done'
+              return (
+                <button
+                  key={`task-${task.id}`}
+                  onClick={() => logic.toggleTask(task.id)}
+                  className="w-full flex items-center gap-3 py-3 px-3 rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-colors text-left min-h-[44px]"
+                >
+                  {taskDone
+                    ? <CheckSquare className="w-5 h-5 text-primary shrink-0" />
+                    : <Square className="w-5 h-5 text-muted-foreground/40 shrink-0" />
+                  }
+                  {task.scheduled_at && (
+                    <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
+                      {formatScheduledTime(task.scheduled_at)}
+                    </span>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <span className={cn("text-sm", taskDone && "line-through text-muted-foreground")}>{task.title}</span>
+                  </div>
+                </button>
+              )
+            })}
 
-            {todoTasks.length === 0 && !calendarOnlyEvents.length && (
+            {boardItems.length === 0 && (
               <p className="text-sm text-muted-foreground/50 py-3 text-center">
                 タスクはありません
               </p>
@@ -381,7 +399,7 @@ export function TodayBoard({
         )}
 
         {/* 過去日の振り返りサマリー */}
-        {!logic.isToday && (doneTasks.length > 0 || calendarOnlyEvents.length > 0) && (
+        {!logic.isToday && (doneTasks.length > 0 || eventCount > 0) && (
           <section className="rounded-lg bg-muted/30 px-3 py-3">
             <h2 className="text-sm font-semibold text-muted-foreground mb-1.5">
               {format(logic.selectedDate, 'M月d日', { locale: ja })}の振り返り
@@ -390,12 +408,12 @@ export function TodayBoard({
               {doneTasks.length > 0 && (
                 <p>タスク {doneTasks.length}件完了</p>
               )}
-              {calendarOnlyEvents.length > 0 && (
-                <p>予定 {calendarOnlyEvents.length}件</p>
+              {eventCount > 0 && (
+                <p>予定 {eventCount}件</p>
               )}
-              {todoTasks.length > 0 && (
+              {todoCount > 0 && (
                 <p className="text-amber-600 dark:text-amber-400">
-                  未完了 {todoTasks.length}件
+                  未完了 {todoCount}件
                 </p>
               )}
             </div>

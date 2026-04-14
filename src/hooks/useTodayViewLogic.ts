@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
-import { useCalendarEvents, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, EVENT_COMPLETION_EVENT } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails, formatDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
@@ -64,6 +64,8 @@ export function useTodayViewLogic({
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([])
+    const pendingDeleteRef = useRef<string[]>([])
+    pendingDeleteRef.current = pendingDeleteTaskIds
     const [calendarOpen, setCalendarOpen] = useState(false)
     const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
@@ -74,9 +76,9 @@ export function useTodayViewLogic({
     const [prefetchedEventReminders, setPrefetchedEventReminders] = useState<Record<string, number[]>>({})
     const reminderPrefetchInFlightRef = useRef<Set<string>>(new Set())
 
-    // Sync local tasks with prop changes
+    // Sync local tasks with prop changes (allTasks のみに依存)
     useEffect(() => {
-        setLocalTasks(allTasks.filter(task => !pendingDeleteTaskIds.includes(task.id)))
+        setLocalTasks(allTasks.filter(task => !pendingDeleteRef.current.includes(task.id)))
         setPendingDeleteTaskIds(prev => {
             const next = prev.filter(id => allTasks.some(task => task.id === id))
             if (next.length === prev.length && next.every((id, idx) => id === prev[idx])) {
@@ -84,7 +86,7 @@ export function useTodayViewLogic({
             }
             return next
         })
-    }, [allTasks, pendingDeleteTaskIds])
+    }, [allTasks])
 
     // Shared date context (desktop: sync both panels; mobile: null → use local state)
     const dateCtx = useTodayDateContext()
@@ -202,6 +204,19 @@ export function useTodayViewLogic({
 
     const [localCalendarEvents, setLocalCalendarEvents] = useState<CalendarEvent[]>(fetchedCalendarEventsWithPrefetchedReminders)
     useEffect(() => { setLocalCalendarEvents(fetchedCalendarEventsWithPrefetchedReminders) }, [fetchedCalendarEventsWithPrefetchedReminders])
+
+    // 他パネルからのイベント完了状態の即時反映
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        const handler = (e: Event) => {
+            const { eventId, isCompleted } = (e as CustomEvent<{ eventId: string; isCompleted: boolean }>).detail
+            setLocalCalendarEvents(prev => prev.map(ev =>
+                ev.id === eventId ? { ...ev, is_completed: isCompleted } : ev
+            ))
+        }
+        window.addEventListener(EVENT_COMPLETION_EVENT, handler)
+        return () => window.removeEventListener(EVENT_COMPLETION_EVENT, handler)
+    }, [])
 
     const eventByGoogleKey = useMemo(() => {
         const map = new Map<string, CalendarEvent>()
@@ -432,36 +447,50 @@ export function useTodayViewLogic({
 
     // Toggle task completion
     const toggleTask = useCallback(async (taskId: string) => {
-        const task = localTasks.find(t => t.id === taskId)
-        if (!task) return
-        const newStatus = task.status === 'done' ? 'todo' : 'done'
-        setLocalTasks(prev => prev.map(t =>
-            t.id === taskId ? { ...t, status: newStatus } : t
-        ))
+        let newStatus: string = 'done'
+        setLocalTasks(prev => {
+            const task = prev.find(t => t.id === taskId)
+            if (!task) return prev
+            newStatus = task.status === 'done' ? 'todo' : 'done'
+            return prev.map(t =>
+                t.id === taskId ? { ...t, status: newStatus } : t
+            )
+        })
         await onUpdateTask(taskId, { status: newStatus })
-    }, [localTasks, onUpdateTask])
+    }, [onUpdateTask])
 
     // Toggle calendar event completion
     const toggleEventCompletion = useCallback(async (eventId: string) => {
-        const event = localCalendarEvents.find(e => e.id === eventId)
-        if (!event) return
-        const newCompleted = !event.is_completed
-        setLocalCalendarEvents(prev => prev.map(e =>
-            e.id === eventId ? { ...e, is_completed: newCompleted } : e
-        ))
+        let newCompleted = true
+        setLocalCalendarEvents(prev => {
+            const event = prev.find(e => e.id === eventId)
+            if (!event) return prev
+            newCompleted = !event.is_completed
+            return prev.map(e =>
+                e.id === eventId ? { ...e, is_completed: newCompleted } : e
+            )
+        })
+        // 他パネルに即時反映（API ラウンドトリップ不要）
+        broadcastEventCompletion(eventId, newCompleted)
         try {
             const supabase = (await import('@/utils/supabase/client')).createClient()
+            // API は id を google_event_id に書き換えて返すため、
+            // google_event_id または id（ローカルイベント用）で照合する
             await supabase
                 .from('calendar_events')
                 .update({ is_completed: newCompleted })
-                .eq('id', eventId)
+                .or(`google_event_id.eq.${eventId},id.eq.${eventId}`)
+            // キャッシュ無効化（次回取得時に最新データを使う）
+            invalidateCalendarCache()
         } catch (err) {
             console.error('[toggleEventCompletion] Failed:', err)
             setLocalCalendarEvents(prev => prev.map(e =>
                 e.id === eventId ? { ...e, is_completed: !newCompleted } : e
             ))
+            // 失敗時はロールバックも即時通知
+            broadcastEventCompletion(eventId, !newCompleted)
         }
-    }, [localCalendarEvents])
+    }, [])
 
     // Toggle child task
     const toggleChildTask = useCallback(async (
@@ -703,14 +732,14 @@ export function useTodayViewLogic({
                 throw new Error(data.error?.message || 'Failed to update event')
             }
             invalidateCalendarCache()
-            await syncNow({ silent: true })
+            broadcastCalendarSync()
         } catch (err) {
             console.error('[useTodayViewLogic] Failed to update event, rolling back:', err)
             setLocalCalendarEvents(previousEvents)
             setLocalTasks(previousTasks)
             throw err
         }
-    }, [localCalendarEvents, localTasks, syncNow])
+    }, [localCalendarEvents, localTasks])
 
     // Delete task
     const handleDeleteTask = useCallback(async (taskId: string) => {
@@ -735,14 +764,14 @@ export function useTodayViewLogic({
             }
 
             invalidateCalendarCache()
-            await syncNow({ silent: true })
+            broadcastCalendarSync()
         } catch (err) {
             console.error('[useTodayViewLogic] Failed to delete task:', err)
             setLocalTasks(previousTasks)
             setLocalCalendarEvents(previousEvents)
             setPendingDeleteTaskIds(prev => prev.filter(id => id !== taskId))
         }
-    }, [onDeleteTaskProp, syncNow, localTasks, localCalendarEvents])
+    }, [onDeleteTaskProp, localTasks, localCalendarEvents])
 
     // Delete event
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
@@ -762,15 +791,16 @@ export function useTodayViewLogic({
                     throw new Error(data?.error?.message || 'Failed to delete event')
                 }
                 invalidateCalendarCache()
-                await syncNow({ silent: true })
+                broadcastCalendarSync()
             })
             .catch(err => {
                 console.error('[useTodayViewLogic] Failed to delete event:', err)
                 setLocalCalendarEvents(previousEvents)
                 setLocalTasks(previousTasks)
-                syncNow({ silent: true })
+                invalidateCalendarCache()
+                broadcastCalendarSync()
             })
-    }, [removeOptimisticEvent, syncNow, localCalendarEvents, localTasks])
+    }, [removeOptimisticEvent, localCalendarEvents, localTasks])
 
     // Writable calendars
     const writableCalendars = useMemo(() =>
@@ -823,7 +853,7 @@ export function useTodayViewLogic({
                     throw new Error(data.error?.message || 'Failed to update event')
                 }
                 invalidateCalendarCache()
-                await syncNow({ silent: true })
+                broadcastCalendarSync()
             }
             setSyncState('done')
             setTimeout(() => setSyncState('idle'), 1500)
@@ -836,7 +866,7 @@ export function useTodayViewLogic({
             }
             setSyncState('idle')
         }
-    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask, syncNow])
+    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask])
 
     // Date header
     const dateFmt = format(today, 'M月d日(E)', { locale: ja })

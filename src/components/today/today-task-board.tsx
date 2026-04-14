@@ -11,6 +11,7 @@ import { format } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
 import { Task, Project } from '@/types/database'
+import type { CalendarEvent } from '@/types/calendar'
 import { useTodayViewLogic } from '@/hooks/useTodayViewLogic'
 import { useAiTasks } from '@/hooks/useAiTasks'
 import { useScheduledTasks } from '@/hooks/useScheduledTasks'
@@ -21,6 +22,11 @@ import { SetupGuideBanner } from './setup-guide-banner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { useClickOutside } from '@/hooks/useClickOutside'
+
+type BoardItem =
+  | { kind: 'event'; data: CalendarEvent; sortTime: number }
+  | { kind: 'task';  data: Task;          sortTime: number }
+  | { kind: 'ai';    data: AiTask;        sortTime: number }
 
 interface TodayTaskBoardProps {
   allTasks: Task[]
@@ -85,7 +91,8 @@ export function TodayTaskBoard({
   // 壁打ちセクションのタブ
   const [chatTab, setChatTab] = useState<'chat' | 'scheduled'>('chat')
 
-  // スケジュール設定フォーム
+  // スケジュール設定フォーム（編集モード対応）
+  const [editingTask, setEditingTask] = useState<AiTask | null>(null)
   const [showScheduleForm, setShowScheduleForm] = useState(false)
   const scheduleFormRef = useRef<HTMLDivElement>(null)
   useClickOutside(scheduleFormRef, useCallback(() => setShowScheduleForm(false), []), showScheduleForm)
@@ -142,21 +149,34 @@ export function TodayTaskBoard({
     onDeleteTask,
   })
 
-  // 選択日のAIスケジュール（scheduled_at が選択日のタスク）
+  // 選択日のAIスケジュール（ワンタイム + 定期タスクのcronマッチ）
   const todayAiSchedule = useMemo(() => {
     const sel = logic.selectedDate
     const dayStart = new Date(sel.getFullYear(), sel.getMonth(), sel.getDate())
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
-    return aiTasks
-      .filter(t => {
-        if (!t.scheduled_at) return false
-        const d = new Date(t.scheduled_at)
-        return d >= dayStart && d < dayEnd
-      })
-      .sort((a, b) => new Date(a.scheduled_at!).getTime() - new Date(b.scheduled_at!).getTime())
-  }, [aiTasks, logic.selectedDate])
 
-  const { todoTasks, doneTasks } = useMemo(() => {
+    // ワンタイムタスク: scheduled_atが選択日内
+    const oneTime = aiTasks.filter(t => {
+      if (!t.scheduled_at || t.recurrence_cron) return false
+      const d = new Date(t.scheduled_at)
+      return d >= dayStart && d < dayEnd
+    })
+
+    // 定期タスク: cronの曜日が選択日にマッチ
+    const seenIds = new Set(oneTime.map(t => t.id))
+    const recurring = scheduledTasks.filter(t => {
+      if (!t.recurrence_cron || seenIds.has(t.id)) return false
+      return cronMatchesDate(t.recurrence_cron, sel)
+    })
+
+    return [...oneTime, ...recurring].sort((a, b) => {
+      const timeA = a.scheduled_at ? new Date(a.scheduled_at).getTime() : cronToSortTime(a.recurrence_cron, sel)
+      const timeB = b.scheduled_at ? new Date(b.scheduled_at).getTime() : cronToSortTime(b.recurrence_cron, sel)
+      return timeA - timeB
+    })
+  }, [aiTasks, scheduledTasks, logic.selectedDate])
+
+  const { boardItems, doneCount, eventCount, todoCount } = useMemo(() => {
     const allToday = [
       ...logic.todayScheduledTasks,
       ...logic.unscheduledTasks,
@@ -167,32 +187,34 @@ export function TodayTaskBoard({
       seen.add(t.id)
       return true
     })
-    const todo = unique.filter(t => t.status !== 'done')
-    const done = unique.filter(t => t.status === 'done')
-    const sortBySchedule = (a: Task, b: Task) => {
-      if (a.scheduled_at && b.scheduled_at) return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime()
-      if (a.scheduled_at) return -1
-      if (b.scheduled_at) return 1
-      return 0
-    }
-    todo.sort(sortBySchedule)
-    done.sort(sortBySchedule)
-    return { todoTasks: todo, doneTasks: done }
-  }, [logic.todayScheduledTasks, logic.unscheduledTasks])
+    const todo = unique
+    const doneCount = unique.filter(t => t.status === 'done').length
 
-  const calendarOnlyEvents = useMemo(() => {
     const taskGoogleEventIds = new Set(
       allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
     )
-    return logic.calendarEvents
-      .filter(e => {
-        if (taskGoogleEventIds.has(e.google_event_id)) return false
-        if (e.is_all_day) return false
-        const start = new Date(e.start_time)
-        return start >= logic.today && start < logic.tomorrow
-      })
-      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-  }, [logic.calendarEvents, logic.today, logic.tomorrow, allTasks])
+    const events = logic.calendarEvents.filter(e => {
+      if (taskGoogleEventIds.has(e.google_event_id)) return false
+      if (e.is_all_day) return false
+      const start = new Date(e.start_time)
+      return start >= logic.today && start < logic.tomorrow
+    })
+
+    const items: BoardItem[] = [
+      ...events.map(e => ({ kind: 'event' as const, data: e, sortTime: new Date(e.start_time).getTime() })),
+      ...todo.map(t => ({ kind: 'task' as const, data: t, sortTime: t.scheduled_at ? new Date(t.scheduled_at).getTime() : Infinity })),
+      ...todayAiSchedule.map(a => ({
+        kind: 'ai' as const,
+        data: a,
+        sortTime: a.recurrence_cron
+          ? cronToSortTime(a.recurrence_cron, logic.selectedDate)
+          : a.scheduled_at ? new Date(a.scheduled_at).getTime() : Infinity,
+      })),
+    ]
+    items.sort((a, b) => a.sortTime - b.sortTime)
+
+    return { boardItems: items, doneCount, eventCount: events.length, todoCount: todo.length - doneCount }
+  }, [logic.todayScheduledTasks, logic.unscheduledTasks, logic.calendarEvents, logic.today, logic.tomorrow, allTasks, todayAiSchedule])
 
   const projectNameMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -248,6 +270,36 @@ export function TodayTaskBoard({
     }
   }, [handleSendChat])
 
+  // 定期タスクの編集を開始
+  const handleEditScheduledTask = useCallback((task: AiTask) => {
+    setEditingTask(task)
+    setSchedulePrompt(task.prompt)
+    setScheduleDatetime(task.scheduled_at ? new Date(task.scheduled_at) : undefined)
+    setSelectedRepo(task.cwd || '')
+    setScheduleApprovalType(task.approval_type === 'auto' ? 'auto' : 'confirm')
+    // cron式からrecurrenceパース
+    if (!task.recurrence_cron) {
+      setScheduleRecurrence('none')
+      setScheduleDays([])
+    } else {
+      const parts = task.recurrence_cron.trim().split(/\s+/)
+      if (parts.length === 5) {
+        const [, , , , dow] = parts
+        if (dow === '*') {
+          setScheduleRecurrence('daily')
+          setScheduleDays([])
+        } else {
+          setScheduleRecurrence('weekly')
+          setScheduleDays(dow.split(',').map(Number).filter(n => !isNaN(n)))
+        }
+      } else {
+        setScheduleRecurrence('custom')
+        setScheduleCustomCron(task.recurrence_cron)
+      }
+    }
+    setShowScheduleForm(true)
+  }, [])
+
   const handleScheduleSubmit = useCallback(async () => {
     const prompt = schedulePrompt.trim()
     if (!prompt || !scheduleDatetime) return
@@ -272,26 +324,46 @@ export function TodayTaskBoard({
         }
       }
 
-      const res = await fetch('/api/ai-tasks/schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          scheduled_at,
-          recurrence_cron,
-          skill_id: undefined,
-          cwd: selectedRepo || undefined,
-          approval_type: scheduleApprovalType,
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Failed to schedule')
+      if (editingTask) {
+        // 編集モード: PATCH
+        const res = await fetch(`/api/ai-tasks/${editingTask.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            scheduled_at,
+            recurrence_cron: recurrence_cron || null,
+            cwd: selectedRepo || null,
+            approval_type: scheduleApprovalType,
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error || 'Failed to update')
+        }
+      } else {
+        // 新規作成モード: POST
+        const res = await fetch('/api/ai-tasks/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            scheduled_at,
+            recurrence_cron,
+            skill_id: undefined,
+            cwd: selectedRepo || undefined,
+            approval_type: scheduleApprovalType,
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error || 'Failed to schedule')
+        }
+        const created = await res.json()
+        if (created?.id) addTaskOptimistic(created)
       }
-      // 楽観的UI: レスポンスのタスクを即座にリストへ追加
-      const created = await res.json()
-      if (created?.id) addTaskOptimistic(created)
       setScheduleSuccess(true)
+      setEditingTask(null)
       setSchedulePrompt('')
       setScheduleDatetime(undefined)
       setScheduleRecurrence('none')
@@ -311,7 +383,7 @@ export function TodayTaskBoard({
     } finally {
       setIsScheduling(false)
     }
-  }, [schedulePrompt, scheduleDatetime, scheduleRecurrence, scheduleCustomCron, scheduleDays, selectedRepo, scheduleApprovalType, addTaskOptimistic, refreshScheduled, refreshAiTasks])
+  }, [editingTask, schedulePrompt, scheduleDatetime, scheduleRecurrence, scheduleCustomCron, scheduleDays, selectedRepo, scheduleApprovalType, addTaskOptimistic, refreshScheduled, refreshAiTasks])
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-background">
@@ -328,9 +400,9 @@ export function TodayTaskBoard({
             <h1 className="text-lg font-bold">{logic.dateFmt}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               {logic.isToday && <span className="text-primary font-semibold">Today · </span>}
-              {todoTasks.length > 0 ? `${todoTasks.length}件のタスク` : 'タスクなし'}
-              {calendarOnlyEvents.length > 0 && ` · ${calendarOnlyEvents.length}件の予定`}
-              {doneTasks.length > 0 && ` · ${doneTasks.length}件完了`}
+              {todoCount > 0 ? `${todoCount}件のタスク` : 'タスクなし'}
+              {eventCount > 0 && ` · ${eventCount}件の予定`}
+              {doneCount > 0 && ` · ${doneCount}件完了`}
             </p>
           </div>
           <button
@@ -371,99 +443,86 @@ export function TodayTaskBoard({
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-4 py-4 space-y-5 pb-10">
 
-          {/* 今日のAIスケジュール（カレンダー予定と同じスタイル） */}
-          {todayAiSchedule.length > 0 && (
-            <section>
-              <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5" />
-                <span>{logic.isToday ? 'AIスケジュール' : `AIスケジュール (${logic.dateFmt})`}</span>
-              </h2>
-              <div className="space-y-1">
-                {todayAiSchedule.map(task => {
-                  const time = task.scheduled_at ? format(new Date(task.scheduled_at), 'HH:mm') : ''
-                  const isDone = task.status === 'completed'
-                  const isFailed = task.status === 'failed'
-                  const isRunning = task.status === 'running'
-                  return (
-                    <AiScheduleRow key={task.id} task={task} time={time} isDone={isDone} isFailed={isFailed} isRunning={isRunning} onCancel={reject} />
-                  )
-                })}
-              </div>
-            </section>
-          )}
-
-          {/* 予定 */}
-          {calendarOnlyEvents.length > 0 && (
-            <section>
-              <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                <CalendarIcon className="w-3.5 h-3.5" />
-                <span>予定</span>
-              </h2>
-              <div className="space-y-1">
-                {calendarOnlyEvents.map(event => (
-                  <div
-                    key={event.id}
-                    className="flex items-center gap-3 py-2.5 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30"
-                  >
-                    <Clock className="w-4 h-4 text-blue-500 shrink-0" />
-                    <span className="flex-1 text-sm min-w-0 truncate">{event.title}</span>
-                    <span className="text-xs text-blue-600 dark:text-blue-400 tabular-nums shrink-0">
-                      {formatTimeRange(event.start_time, event.end_time)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* やること */}
+          {/* やること（予定・タスク・AIスケジュール統合） */}
           <section>
             <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
               <span>やること</span>
-              {todoTasks.length > 0 && (
+              {boardItems.length > 0 && (
                 <span className="text-xs tabular-nums bg-muted rounded-full px-1.5 py-0.5">
-                  {todoTasks.length}
+                  {boardItems.length}
                 </span>
               )}
             </h2>
             <div className="space-y-1">
-              {todoTasks.map(task => {
+              {boardItems.map(item => {
+                if (item.kind === 'event') {
+                  const event = item.data
+                  const isDone = !!event.is_completed
+                  return (
+                    <div
+                      key={`event-${event.id}`}
+                      className="group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
+                    >
+                      <button
+                        onClick={() => logic.toggleEventCompletion(event.id)}
+                        className="flex items-center gap-3 py-2.5 px-3 flex-1 min-w-0 text-left"
+                      >
+                        {isDone
+                          ? <CheckSquare className="w-4 h-4 text-primary shrink-0" />
+                          : <Square className="w-4 h-4 text-muted-foreground/40 shrink-0" />
+                        }
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
+                          {formatTimeRange(event.start_time, event.end_time)}
+                        </span>
+                        <span className={cn("text-sm truncate", isDone && "line-through text-muted-foreground")}>{event.title}</span>
+                      </button>
+                    </div>
+                  )
+                }
+                if (item.kind === 'ai') {
+                  const aiTask = item.data
+                  const time = aiTask.recurrence_cron
+                    ? (() => { const p = aiTask.recurrence_cron!.trim().split(/\s+/); return `${p[1]?.padStart(2,'0')}:${p[0]?.padStart(2,'0')}` })()
+                    : aiTask.scheduled_at ? format(new Date(aiTask.scheduled_at), 'HH:mm') : ''
+                  const isDone = aiTask.status === 'completed'
+                  const isFailed = aiTask.status === 'failed'
+                  const isRunning = aiTask.status === 'running'
+                  return (
+                    <AiScheduleRow key={`ai-${aiTask.id}`} task={aiTask} time={time} isDone={isDone} isFailed={isFailed} isRunning={isRunning} onCancel={reject} />
+                  )
+                }
+                const task = item.data
                 const projectName = task.project_id ? projectNameMap.get(task.project_id) : null
+                const taskDone = task.status === 'done'
                 return (
                   <div
-                    key={task.id}
-                    className="group flex items-center gap-3 py-2.5 px-3 rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
+                    key={`task-${task.id}`}
+                    className="group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
                   >
                     <button
                       onClick={() => logic.toggleTask(task.id)}
-                      className="shrink-0"
+                      className="flex items-center gap-3 py-2.5 px-3 flex-1 min-w-0 text-left"
                     >
-                      <Square className="w-4 h-4 text-muted-foreground/40 hover:text-primary transition-colors" />
-                    </button>
-                    <button
-                      onClick={() => logic.toggleTask(task.id)}
-                      className="flex-1 min-w-0 text-left"
-                    >
-                      <span className="text-sm">{task.title}</span>
+                      {taskDone
+                        ? <CheckSquare className="w-4 h-4 text-primary shrink-0" />
+                        : <Square className="w-4 h-4 text-muted-foreground/40 shrink-0" />
+                      }
+                      {task.scheduled_at && (
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
+                          {formatScheduledTime(task.scheduled_at)}
+                          {(task.estimated_time ?? 0) > 0 && <span className="text-muted-foreground/50 ml-1">{task.estimated_time}分</span>}
+                        </span>
+                      )}
+                      <span className={cn("text-sm truncate", taskDone && "line-through text-muted-foreground")}>{task.title}</span>
                       {projectName && (
                         <span className="ml-2 text-[10px] text-muted-foreground/60 bg-muted rounded px-1.5 py-0.5">
                           {projectName}
                         </span>
                       )}
                     </button>
-                    {task.scheduled_at && (
-                      <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                        {formatScheduledTime(task.scheduled_at)}
-                      </span>
-                    )}
-                    {(task.estimated_time ?? 0) > 0 && (
-                      <span className="text-xs text-muted-foreground/50 tabular-nums shrink-0">
-                        {task.estimated_time}分
-                      </span>
-                    )}
                     <button
                       onClick={() => onDeleteTask?.(task.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-muted-foreground hover:text-destructive transition-all shrink-0"
+                      className="opacity-0 group-hover:opacity-100 p-1 mr-2 rounded text-muted-foreground hover:text-destructive transition-all shrink-0"
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -471,7 +530,7 @@ export function TodayTaskBoard({
                 )
               })}
 
-              {todoTasks.length === 0 && calendarOnlyEvents.length === 0 && (
+              {boardItems.length === 0 && (
                 <p className="text-sm text-muted-foreground/50 py-3 text-center">
                   タスクはありません
                 </p>
@@ -502,54 +561,17 @@ export function TodayTaskBoard({
             </div>
           </section>
 
-          {/* 完了済み */}
-          {doneTasks.length > 0 && (
-            <section>
-              <button
-                onClick={() => setShowCompleted(prev => !prev)}
-                className="flex items-center gap-1.5 mb-2 text-sm font-semibold text-muted-foreground"
-              >
-                {showCompleted ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-                <span>完了済み</span>
-                <span className="text-xs tabular-nums bg-muted rounded-full px-1.5 py-0.5">
-                  {doneTasks.length}
-                </span>
-              </button>
-              {showCompleted && (
-                <div className="space-y-1">
-                  {doneTasks.map(task => (
-                    <button
-                      key={task.id}
-                      onClick={() => logic.toggleTask(task.id)}
-                      className="w-full flex items-center gap-3 py-2 px-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-                    >
-                      <CheckSquare className="w-4 h-4 text-primary shrink-0" />
-                      <span className="flex-1 text-sm text-muted-foreground line-through min-w-0 truncate">
-                        {task.title}
-                      </span>
-                      {task.scheduled_at && (
-                        <span className="text-xs text-muted-foreground/50 tabular-nums shrink-0">
-                          {formatScheduledTime(task.scheduled_at)}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
           {/* 過去日の振り返り */}
-          {!logic.isToday && (doneTasks.length > 0 || calendarOnlyEvents.length > 0) && (
+          {!logic.isToday && (doneCount > 0 || eventCount > 0) && (
             <section className="rounded-lg bg-muted/30 px-3 py-3">
               <h2 className="text-sm font-semibold text-muted-foreground mb-1.5">
                 {format(logic.selectedDate, 'M月d日', { locale: ja })}の振り返り
               </h2>
               <div className="space-y-0.5 text-xs text-muted-foreground">
-                {doneTasks.length > 0 && <p>タスク {doneTasks.length}件完了</p>}
-                {calendarOnlyEvents.length > 0 && <p>予定 {calendarOnlyEvents.length}件</p>}
-                {todoTasks.length > 0 && (
-                  <p className="text-amber-600 dark:text-amber-400">未完了 {todoTasks.length}件</p>
+                {doneCount > 0 && <p>タスク {doneCount}件完了</p>}
+                {eventCount > 0 && <p>予定 {eventCount}件</p>}
+                {todoCount > 0 && (
+                  <p className="text-amber-600 dark:text-amber-400">未完了 {todoCount}件</p>
                 )}
               </div>
             </section>
@@ -557,42 +579,42 @@ export function TodayTaskBoard({
 
           {/* 定期タスク */}
           <section ref={scheduleFormRef}>
-            <div className="flex items-center gap-1 mb-2">
-              <div className="flex items-center gap-1.5 flex-1 text-xs font-medium text-muted-foreground">
-                <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>定期タスク</span>
-                {scheduledTasks.length > 0 && (
-                  <span className="text-[10px] bg-primary/10 text-primary rounded-full px-1.5 tabular-nums">
-                    {scheduledTasks.length}
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => setShowScheduleForm(prev => !prev)}
-                aria-expanded={showScheduleForm}
-                aria-label={showScheduleForm ? 'スケジュール設定を閉じる' : 'スケジュール設定を開く'}
-                className={cn(
-                  'flex items-center gap-1 min-h-[44px] min-w-[44px] px-2.5 rounded-lg text-xs font-medium transition-colors',
-                  showScheduleForm
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:bg-muted/60'
-                )}
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                <span className="hidden sm:inline">予約</span>
-              </button>
+            <div className="flex items-center gap-1.5 mb-2 text-xs font-medium text-muted-foreground">
+              <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>定期タスク</span>
+              {scheduledTasks.length > 0 && (
+                <span className="text-[10px] bg-primary/10 text-primary rounded-full px-1.5 tabular-nums">
+                  {scheduledTasks.length}
+                </span>
+              )}
             </div>
+            <button
+              onClick={() => { setEditingTask(null); setShowScheduleForm(prev => !prev) }}
+              aria-expanded={showScheduleForm}
+              aria-label={showScheduleForm ? 'スケジュール設定を閉じる' : 'スケジュール設定を開く'}
+              className={cn(
+                'w-full flex items-center justify-center gap-1.5 min-h-[44px] rounded-lg text-sm font-medium transition-colors mb-3',
+                showScheduleForm
+                  ? 'bg-primary/10 text-primary border border-primary/20'
+                  : 'bg-muted/60 text-muted-foreground hover:bg-muted border border-border/60'
+              )}
+            >
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              <span>予約</span>
+            </button>
 
             <ScheduledTaskList
               tasks={scheduledTasks}
               isLoading={scheduledLoading}
               onDelete={deleteScheduledTask}
               onRefresh={refreshScheduled}
+              onEdit={handleEditScheduledTask}
             />
 
-            {/* スケジュール設定フォーム（折りたたみ） */}
+            {/* スケジュール設定フォーム（ポップアップ） */}
             {showScheduleForm && (
-              <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-3">
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowScheduleForm(false)}>
+              <div className="w-full max-w-md mx-4 max-h-[80vh] overflow-y-auto rounded-xl border border-primary/20 bg-background p-4 space-y-3 shadow-xl" onClick={(e) => e.stopPropagation()}>
                 {/* 実行内容（自然言語） */}
                 <div>
                   <textarea
@@ -839,13 +861,14 @@ export function TodayTaskBoard({
                   )}
                 >
                   {isScheduling ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /><span>登録中...</span></>
+                    <><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /><span>{editingTask ? '更新中...' : '登録中...'}</span></>
                   ) : scheduleSuccess ? (
-                    <><CheckCircle2 className="w-4 h-4" aria-hidden="true" /><span>登録完了</span></>
+                    <><CheckCircle2 className="w-4 h-4" aria-hidden="true" /><span>{editingTask ? '更新完了' : '登録完了'}</span></>
                   ) : (
-                    <><CalendarClock className="w-4 h-4" aria-hidden="true" /><span>スケジュール登録</span></>
+                    <><CalendarClock className="w-4 h-4" aria-hidden="true" /><span>{editingTask ? '更新する' : 'スケジュール登録'}</span></>
                   )}
                 </button>
+              </div>
               </div>
             )}
           </section>
@@ -878,6 +901,33 @@ export function TodayTaskBoard({
       </ScrollArea>
     </div>
   )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cronマッチング
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** cron式の曜日が指定日にマッチするか判定 */
+function cronMatchesDate(cron: string, date: Date): boolean {
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) return false
+  const dow = parts[4]
+  if (dow === '*') return true // 毎日
+  // カンマ区切り対応 (例: "1,3,5")
+  const days = dow.split(',').map(Number)
+  return days.includes(date.getDay())
+}
+
+/** cron式の時刻をその日のsortTime（ms）に変換 */
+function cronToSortTime(cron: string | null, date: Date): number {
+  if (!cron) return Infinity
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) return Infinity
+  const [min, hour] = parts
+  const h = parseInt(hour)
+  const m = parseInt(min)
+  if (isNaN(h) || isNaN(m)) return Infinity
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, m).getTime()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -914,11 +964,13 @@ function ScheduledTaskList({
   isLoading,
   onDelete,
   onRefresh,
+  onEdit,
 }: {
   tasks: AiTask[]
   isLoading: boolean
   onDelete: (id: string) => Promise<void>
   onRefresh: () => void
+  onEdit: (task: AiTask) => void
 }) {
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
@@ -965,7 +1017,8 @@ function ScheduledTaskList({
       {tasks.map(task => (
         <div
           key={task.id}
-          className="flex items-start gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5"
+          onClick={() => onEdit(task)}
+          className="flex items-start gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5 cursor-pointer hover:bg-muted/40 transition-colors"
         >
           <CalendarClock className="w-4 h-4 text-primary/70 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
@@ -992,7 +1045,7 @@ function ScheduledTaskList({
             </div>
           </div>
           <button
-            onClick={() => handleDelete(task.id)}
+            onClick={(e) => { e.stopPropagation(); handleDelete(task.id) }}
             disabled={deletingId === task.id}
             aria-label="削除"
             className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-muted-foreground/40 hover:text-red-500 transition-colors shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center disabled:opacity-40"
@@ -1034,43 +1087,35 @@ function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel }: {
     try { await onCancel(task.id) } finally { setCancelling(false) }
   }
 
-  // カレンダー予定と同じレイアウト
   return (
     <div>
-      <button
-        onClick={() => resultText && setExpanded(p => !p)}
-        className={cn(
-          'w-full flex items-center gap-3 py-2.5 px-3 rounded-lg border transition-colors text-left',
-          isDone && 'bg-green-50 dark:bg-green-950/20 border-green-100 dark:border-green-900/30',
-          isFailed && 'bg-red-50 dark:bg-red-950/20 border-red-100 dark:border-red-900/30',
-          isRunning && 'bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30',
-          isPending && 'bg-purple-50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-900/30',
-        )}
+      <div
+        className="w-full flex items-center gap-3 py-2.5 px-3 rounded-lg border transition-colors text-left bg-purple-50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-900/30"
       >
-        {/* チェック / ステータスアイコン */}
-        {isDone ? (
-          <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
-        ) : isFailed ? (
-          <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+        {/* チェックボックス（完了/失敗で自動チェック） */}
+        {(isDone || isFailed) ? (
+          <CheckSquare className="w-4 h-4 text-purple-500 shrink-0" />
         ) : isRunning ? (
-          <Loader2 className="w-4 h-4 text-blue-500 shrink-0 animate-spin" />
+          <Loader2 className="w-4 h-4 text-purple-500 shrink-0 animate-spin" />
         ) : (
-          <Bot className="w-4 h-4 text-purple-500 shrink-0" />
+          <Square className="w-4 h-4 text-purple-400 shrink-0" />
         )}
 
-        {/* タスク名 */}
-        <span className={cn('flex-1 text-sm min-w-0 truncate', isDone && 'line-through text-muted-foreground')}>
-          {task.skill_id && <span className="text-primary/70 font-medium">/{task.skill_id} </span>}
-          {task.prompt}
-        </span>
-
-        {/* 時刻 */}
-        <span className={cn(
-          'text-xs tabular-nums shrink-0',
-          isDone ? 'text-green-600 dark:text-green-400' : isFailed ? 'text-red-600 dark:text-red-400' : isRunning ? 'text-blue-600 dark:text-blue-400' : 'text-purple-600 dark:text-purple-400'
-        )}>
+        {/* 時刻（左側） */}
+        <span className="text-xs text-purple-600 dark:text-purple-400 tabular-nums shrink-0 w-[90px]">
           {time}
         </span>
+
+        {/* タスク名（クリックで結果展開） */}
+        <button
+          onClick={() => resultText && setExpanded(p => !p)}
+          className="flex-1 min-w-0 text-left"
+        >
+          <span className={cn('text-sm truncate', (isDone || isFailed) && 'line-through text-muted-foreground')}>
+            {task.skill_id && <span className="text-purple-500/70 font-medium">/{task.skill_id} </span>}
+            {task.prompt}
+          </span>
+        </button>
 
         {/* キャンセル（pending / running のみ） */}
         {(isPending || isRunning) && (
@@ -1084,11 +1129,11 @@ function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel }: {
 
         {/* 結果あり表示 */}
         {resultText && (
-          <span className="text-muted-foreground/30">
+          <button onClick={() => setExpanded(p => !p)} className="text-muted-foreground/30">
             {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </span>
+          </button>
         )}
-      </button>
+      </div>
 
       {/* エラー */}
       {isFailed && task.error && (

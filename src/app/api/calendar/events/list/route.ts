@@ -250,7 +250,17 @@ export async function GET(request: NextRequest) {
       console.log('[events/list] Task map size:', taskMap.size);
     }
 
-    // Google Calendar API のイベントとローカルのみのイベントをマージ（task_id, priority, estimated_time を追加）
+    // Build is_completed map from DB events
+    const completionMap = new Map<string, boolean>();
+    if (allDbEvents) {
+      allDbEvents.forEach(event => {
+        if (event.google_event_id && event.is_completed) {
+          completionMap.set(event.google_event_id, event.is_completed);
+        }
+      });
+    }
+
+    // Google Calendar API のイベントとローカルのみのイベントをマージ（task_id, priority, estimated_time, is_completed を追加）
     const allEvents = [
       ...googleEventsWithId.map(event => {
         const taskInfo = taskMap.get(event.google_event_id);
@@ -259,6 +269,7 @@ export async function GET(request: NextRequest) {
           task_id: taskInfo?.id,
           priority: numericPriorityToString(taskInfo?.priority),
           estimated_time: taskInfo?.estimated_time ?? undefined,
+          is_completed: completionMap.get(event.google_event_id) || false,
         };
       }),
       ...localOnlyEvents.map(event => {
@@ -268,6 +279,7 @@ export async function GET(request: NextRequest) {
           task_id: taskInfo?.id,
           priority: numericPriorityToString(taskInfo?.priority),
           estimated_time: taskInfo?.estimated_time ?? undefined,
+          is_completed: event.is_completed || false,
         };
       })
     ];

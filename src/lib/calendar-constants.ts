@@ -19,6 +19,10 @@ export const QUARTER_HOURS = [0, 15, 30, 45]
 export const MIN_GRID_WIDTH_WEEK = 600
 export const MIN_GRID_WIDTH_DAY = 300
 
+/** Width in pixels for the gutter area on the right side of the calendar grid.
+ *  Provides a drop zone for adding events even when existing events overlap. */
+export const GUTTER_WIDTH = 40
+
 /** Dynamic font sizes based on event duration (in minutes) */
 export const EVENT_FONT_SIZES = {
   VERY_SHORT: { duration: 30, timeSize: 10, titleSize: 11 },   // < 30分

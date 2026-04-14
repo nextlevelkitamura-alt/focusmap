@@ -16,6 +16,7 @@ const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const DEFAULT_SCROLL_HOUR = 7 // scroll to 7am by default
 const TOTAL_HEIGHT = HOUR_HEIGHT * 24
+const GUTTER_WIDTH = 40 // px: 右端の余白エリア（予定が重なっていてもドラッグ追加可能）
 const QUICK_CREATE_MINUTES = 15
 const QUICK_CREATE_DEFAULT_MINUTES = 30
 const TOUCH_LONG_PRESS_MS = 260
@@ -715,6 +716,12 @@ export function TodayTimelineCalendar({
                         onPointerCancel={handleGridPointerCancel}
                         onClickCapture={handleGridClickCapture}
                     >
+                        {/* Gutter: 右端の余白エリア（予定が重なっていてもここからドラッグで追加可能） */}
+                        <div
+                            className="absolute top-0 bottom-0 border-l border-border/10 pointer-events-none"
+                            style={{ right: 0, width: GUTTER_WIDTH }}
+                            aria-hidden="true"
+                        />
                         {/* Hour Grid Lines */}
                         {HOURS.map((hour) => (
                             <div
@@ -747,18 +754,19 @@ export function TodayTimelineCalendar({
                         {/* Quick-create selection preview */}
                         {quickSelectionPreview && (
                             <div
-                                className="absolute left-[14px] right-[2px] rounded-md border border-primary/40 bg-primary/12 pointer-events-none z-[15]"
-                                style={{ top: quickSelectionPreview.top, height: quickSelectionPreview.height }}
+                                className="absolute left-[14px] rounded-md border border-primary/40 bg-primary/12 pointer-events-none z-[15]"
+                                style={{ top: quickSelectionPreview.top, height: quickSelectionPreview.height, right: GUTTER_WIDTH + 2 }}
                             />
                         )}
 
                         {/* Draft preview from side form */}
                         {draftPreviewLayout && (
                             <div
-                                className="absolute left-[14px] right-[2px] rounded-md border-l-[3px] border border-dashed pointer-events-none z-[16] px-2 py-1"
+                                className="absolute left-[14px] rounded-md border-l-[3px] border border-dashed pointer-events-none z-[16] px-2 py-1"
                                 style={{
                                     top: draftPreviewLayout.top,
                                     height: draftPreviewLayout.height,
+                                    right: GUTTER_WIDTH + 2,
                                     borderColor: draftPreviewLayout.borderColor,
                                     borderLeftColor: draftPreviewLayout.color,
                                     backgroundColor: draftPreviewLayout.bgColor,
@@ -778,8 +786,8 @@ export function TodayTimelineCalendar({
                         {/* Quick-create draft input */}
                         {quickDraftLayout && quickDraft && (
                             <div
-                                className="absolute left-[14px] right-[2px] rounded-md border border-primary/50 bg-background/95 shadow-sm z-40 px-2 py-1"
-                                style={{ top: quickDraftLayout.top, height: quickDraftLayout.height }}
+                                className="absolute left-[14px] rounded-md border border-primary/50 bg-background/95 shadow-sm z-40 px-2 py-1"
+                                style={{ top: quickDraftLayout.top, height: quickDraftLayout.height, right: GUTTER_WIDTH + 2 }}
                                 data-no-quick-create="true"
                             >
                                 <div className="flex items-center justify-between gap-1 mb-0.5">
@@ -856,8 +864,8 @@ export function TodayTimelineCalendar({
                                     style={{
                                         top: item.top,
                                         height: item.height,
-                                        left: `calc(${leftPercent}% + 2px)`,
-                                        width: `calc(${widthPercent}% - 4px)`,
+                                        left: `calc((100% - ${GUTTER_WIDTH}px) * ${leftPercent / 100} + 2px)`,
+                                        width: `calc((100% - ${GUTTER_WIDTH}px) * ${widthPercent / 100} - 4px)`,
                                     }}
                                     onMouseDown={(e) => handleDesktopItemMouseDown(e, dragItem, item.top)}
                                     {...touchHandlers}
@@ -932,8 +940,8 @@ export function TodayTimelineCalendar({
                                 {[{ top: 120, h: 56 }, { top: 224, h: 84 }, { top: 364, h: 56 }, { top: 476, h: 112 }].map((s, i) => (
                                     <div
                                         key={i}
-                                        className="absolute left-[14px] right-[2px] rounded-md bg-muted/40 animate-pulse"
-                                        style={{ top: s.top, height: s.h, animationDelay: `${i * 0.12}s` }}
+                                        className="absolute left-[14px] rounded-md bg-muted/40 animate-pulse"
+                                        style={{ top: s.top, height: s.h, right: GUTTER_WIDTH + 2, animationDelay: `${i * 0.12}s` }}
                                     />
                                 ))}
                             </div>
@@ -1302,10 +1310,11 @@ function DragPreview({
 
     return (
         <div
-            className="absolute z-40 left-[2px] right-[2px] pointer-events-none"
+            className="absolute z-40 left-[2px] pointer-events-none"
             style={{
                 top: dragState.previewTop,
                 height: Math.max(heightPx, HOUR_HEIGHT * 0.4),
+                right: GUTTER_WIDTH + 2,
             }}
         >
             {/* Preview block */}

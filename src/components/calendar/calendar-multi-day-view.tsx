@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, RefObject } from "react"
 import { cn } from "@/lib/utils"
 import { calculateEventLayout } from "@/lib/calendar-layout"
-import { HOUR_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS } from "@/lib/calendar-constants"
+import { HOUR_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, GUTTER_WIDTH } from "@/lib/calendar-constants"
 import { useCalendarDragDropMultiDay } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
@@ -304,8 +304,8 @@ export function CalendarMultiDayView({
                                                     style={{
                                                         top: `${position.top}%`,
                                                         height: `${position.height}%`,
-                                                        left: `${position.left}%`,
-                                                        width: `${position.width}%`,
+                                                        left: `calc((100% - ${GUTTER_WIDTH}px) * ${position.left / 100})`,
+                                                        width: `calc((100% - ${GUTTER_WIDTH}px) * ${position.width / 100})`,
                                                         zIndex: 20
                                                     }}
                                                 >
