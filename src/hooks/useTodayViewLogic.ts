@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
-import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, EVENT_COMPLETION_EVENT } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, broadcastCalendarEventTimeUpdate, EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails, formatDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
@@ -216,6 +216,19 @@ export function useTodayViewLogic({
         }
         window.addEventListener(EVENT_COMPLETION_EVENT, handler)
         return () => window.removeEventListener(EVENT_COMPLETION_EVENT, handler)
+    }, [])
+
+    // 他パネルからのイベント時刻変更の即時反映（ドラッグ楽観UI）
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        const handler = (e: Event) => {
+            const { eventId, startTime, endTime } = (e as CustomEvent<{ eventId: string; startTime: string; endTime: string }>).detail
+            setLocalCalendarEvents(prev => prev.map(ev =>
+                ev.id === eventId ? { ...ev, start_time: startTime, end_time: endTime } : ev
+            ))
+        }
+        window.addEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, handler)
+        return () => window.removeEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, handler)
     }, [])
 
     const eventByGoogleKey = useMemo(() => {
@@ -846,9 +859,8 @@ export function useTodayViewLogic({
                 t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
             ))
         } else {
-            setLocalCalendarEvents(prev => prev.map(e =>
-                e.id === item.id ? { ...e, start_time: newStartTime.toISOString(), end_time: newEndTime.toISOString() } : e
-            ))
+            // 全パネルに即時ブロードキャスト（楽観UI）
+            broadcastCalendarEventTimeUpdate(item.id, newStartTime.toISOString(), newEndTime.toISOString())
         }
 
         setSyncState('syncing')
@@ -859,23 +871,34 @@ export function useTodayViewLogic({
             } else {
                 const event = calendarEvents.find(e => e.id === item.id)
                 if (!event) return
-                const res = await fetch(`/api/calendar/events/${item.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: event.title,
-                        start_time: newStartTime.toISOString(),
-                        end_time: newEndTime.toISOString(),
-                        googleEventId: event.google_event_id,
-                        calendarId: event.calendar_id,
-                    }),
-                })
-                if (!res.ok) {
-                    const data = await res.json()
-                    throw new Error(data.error?.message || 'Failed to update event')
+                // リンク先タスクも楽観的に更新
+                if (event.task_id) {
+                    setLocalTasks(prev => prev.map(t =>
+                        t.id === event.task_id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
+                    ))
+                    await onUpdateTask(event.task_id, {
+                        scheduled_at: newStartTime.toISOString(),
+                        estimated_time: Math.round((newEndTime.getTime() - newStartTime.getTime()) / 60000),
+                    })
+                } else {
+                    const res = await fetch(`/api/calendar/events/${item.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            title: event.title,
+                            start_time: newStartTime.toISOString(),
+                            end_time: newEndTime.toISOString(),
+                            googleEventId: event.google_event_id,
+                            calendarId: event.calendar_id,
+                        }),
+                    })
+                    if (!res.ok) {
+                        const data = await res.json()
+                        throw new Error(data.error?.message || 'Failed to update event')
+                    }
+                    invalidateCalendarCache()
+                    broadcastCalendarSync()
                 }
-                invalidateCalendarCache()
-                broadcastCalendarSync()
             }
             setSyncState('done')
             setTimeout(() => setSyncState('idle'), 1500)
@@ -884,6 +907,11 @@ export function useTodayViewLogic({
             if (item.type === 'task') {
                 setLocalTasks(previousTasks)
             } else {
+                // ロールバックもブロードキャスト
+                const prev = previousEvents.find(e => e.id === item.id)
+                if (prev) {
+                    broadcastCalendarEventTimeUpdate(item.id, prev.start_time, prev.end_time)
+                }
                 setLocalCalendarEvents(previousEvents)
             }
             setSyncState('idle')

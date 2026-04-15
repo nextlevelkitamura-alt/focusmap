@@ -42,6 +42,7 @@ export function invalidateCalendarCache() {
 
 const CALENDAR_SYNC_EVENT = 'focusmap:calendar-sync-request';
 const EVENT_COMPLETION_EVENT = 'focusmap:event-completion-changed';
+const CALENDAR_EVENT_TIME_UPDATE_EVENT = 'focusmap:calendar-event-time-update';
 
 /** 全 useCalendarEvents インスタンスにキャッシュ再取得を通知 */
 export function broadcastCalendarSync() {
@@ -59,7 +60,20 @@ export function broadcastEventCompletion(eventId: string, isCompleted: boolean) 
   }
 }
 
-export { EVENT_COMPLETION_EVENT };
+/** イベントの時刻変更を全インスタンスに即時ブロードキャスト（ドラッグ楽観UI用） */
+export function broadcastCalendarEventTimeUpdate(
+  eventId: string,
+  startTime: string,
+  endTime: string,
+) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(CALENDAR_EVENT_TIME_UPDATE_EVENT, {
+      detail: { eventId, startTime, endTime },
+    }));
+  }
+}
+
+export { EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT };
 
 function isQuotaError(error: unknown): boolean {
   const message = error instanceof Error
