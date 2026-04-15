@@ -119,6 +119,33 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     })
   }, [limit])
 
+  // 完了トグル（completed ↔ pending）
+  const toggleComplete = useCallback(async (taskId: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'completed' ? 'pending' : 'completed'
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as AiTask['status'] } : t))
+    const res = await fetch(`/api/ai-tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    })
+    if (!res.ok) {
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: currentStatus as AiTask['status'] } : t))
+      throw new Error('Failed to toggle ai task')
+    }
+    const updated = await res.json() as AiTask
+    setTasks(prev => prev.map(t => t.id === taskId ? updated : t))
+  }, [])
+
+  // 削除
+  const deleteTask = useCallback(async (taskId: string) => {
+    setTasks(prev => prev.filter(t => t.id !== taskId))
+    const res = await fetch(`/api/ai-tasks/${taskId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      await fetchTasks()
+      throw new Error('Failed to delete ai task')
+    }
+  }, [fetchTasks])
+
   return {
     tasks,
     isLoading,
@@ -128,6 +155,8 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     reject,
     requestRevision,
     addTaskOptimistic,
+    deleteTask,
+    toggleComplete,
     refresh: fetchTasks,
   }
 }

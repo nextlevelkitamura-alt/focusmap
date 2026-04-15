@@ -126,7 +126,7 @@ export function TodayTaskBoard({
     if (selectedRepo) localStorage.setItem('focusmap-schedule-repo', selectedRepo)
   }, [selectedRepo])
 
-  const { tasks: aiTasks, sendPrompt, approve, reject, requestRevision, addTaskOptimistic, refresh: refreshAiTasks } = useAiTasks({ limit: 20 })
+  const { tasks: aiTasks, sendPrompt, approve, reject, requestRevision, addTaskOptimistic, deleteTask: deleteAiTask, toggleComplete: toggleAiComplete, refresh: refreshAiTasks } = useAiTasks({ limit: 20 })
   const { tasks: scheduledTasks, isLoading: scheduledLoading, deleteTask: deleteScheduledTask, refresh: refreshScheduled } = useScheduledTasks()
 
   const pendingApprovalTasks = useMemo(
@@ -467,6 +467,12 @@ export function TodayTaskBoard({
                       className="group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
                     >
                       <button
+                        onClick={() => logic.handleDeleteEvent(event.id, event.google_event_id, event.calendar_id)}
+                        className="opacity-0 group-hover:opacity-100 pl-2 pr-1 py-1 text-muted-foreground hover:text-destructive transition-all shrink-0"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                      <button
                         onClick={() => logic.toggleEventCompletion(event.id)}
                         className="flex items-center gap-3 py-2.5 px-3 flex-1 min-w-0 text-left"
                       >
@@ -491,7 +497,7 @@ export function TodayTaskBoard({
                   const isFailed = aiTask.status === 'failed'
                   const isRunning = aiTask.status === 'running'
                   return (
-                    <AiScheduleRow key={`ai-${aiTask.id}`} task={aiTask} time={time} isDone={isDone} isFailed={isFailed} isRunning={isRunning} onCancel={reject} />
+                    <AiScheduleRow key={`ai-${aiTask.id}`} task={aiTask} time={time} isDone={isDone} isFailed={isFailed} isRunning={isRunning} onCancel={reject} onDelete={deleteAiTask} onToggle={toggleAiComplete} />
                   )
                 }
                 const task = item.data
@@ -502,6 +508,12 @@ export function TodayTaskBoard({
                     key={`task-${task.id}`}
                     className="group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
                   >
+                    <button
+                      onClick={() => onDeleteTask?.(task.id)}
+                      className="opacity-0 group-hover:opacity-100 pl-2 pr-1 py-1 text-muted-foreground hover:text-destructive transition-all shrink-0"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                     <button
                       onClick={() => logic.toggleTask(task.id)}
                       className="flex items-center gap-3 py-2.5 px-3 flex-1 min-w-0 text-left"
@@ -522,12 +534,6 @@ export function TodayTaskBoard({
                           {projectName}
                         </span>
                       )}
-                    </button>
-                    <button
-                      onClick={() => onDeleteTask?.(task.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 mr-2 rounded text-muted-foreground hover:text-destructive transition-all shrink-0"
-                    >
-                      <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
                 )
@@ -1067,16 +1073,20 @@ function ScheduledTaskList({
 // ─────────────────────────────────────────────────────────────────────────────
 // AIスケジュール行（カレンダー予定と同じスタイル）
 // ─────────────────────────────────────────────────────────────────────────────
-function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel }: {
+function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel, onDelete, onToggle }: {
   task: AiTask
   time: string
   isDone: boolean
   isFailed: boolean
   isRunning: boolean
   onCancel: (id: string) => Promise<unknown>
+  onDelete?: (id: string) => Promise<void>
+  onToggle?: (taskId: string, currentStatus: string) => Promise<void>
 }) {
   const [expanded, setExpanded] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [toggling, setToggling] = useState(false)
   const isPending = task.status === 'pending'
 
   const resultText = task.result
@@ -1090,18 +1100,50 @@ function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel }: {
     try { await onCancel(task.id) } finally { setCancelling(false) }
   }
 
+  const handleDelete = async () => {
+    if (!onDelete) return
+    setDeleting(true)
+    try { await onDelete(task.id) } finally { setDeleting(false) }
+  }
+
+  const handleToggle = async () => {
+    if (!onToggle || isRunning) return
+    setToggling(true)
+    try { await onToggle(task.id, task.status) } finally { setToggling(false) }
+  }
+
   return (
     <div>
       <div
-        className="w-full flex items-center gap-3 py-2.5 px-3 rounded-lg border transition-colors text-left bg-purple-50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-900/30"
+        className="group w-full flex items-center gap-3 py-2.5 px-3 rounded-lg border transition-colors text-left bg-purple-50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-900/30"
       >
-        {/* チェックボックス（完了/失敗で自動チェック） */}
-        {(isDone || isFailed) ? (
-          <CheckSquare className="w-4 h-4 text-purple-500 shrink-0" />
-        ) : isRunning ? (
+        {/* 左側ゴミ箱 */}
+        {onDelete && (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleDelete() }}
+            disabled={deleting}
+            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0 disabled:opacity-40"
+          >
+            {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+          </button>
+        )}
+
+        {/* チェックボックス（手動トグル可能、running中は操作不可） */}
+        {isRunning ? (
           <Loader2 className="w-4 h-4 text-purple-500 shrink-0 animate-spin" />
         ) : (
-          <Square className="w-4 h-4 text-purple-400 shrink-0" />
+          <button
+            onClick={(e) => { e.stopPropagation(); handleToggle() }}
+            disabled={toggling}
+            className="shrink-0 disabled:opacity-40"
+          >
+            {toggling
+              ? <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+              : (isDone || isFailed)
+                ? <CheckSquare className="w-4 h-4 text-purple-500" />
+                : <Square className="w-4 h-4 text-purple-400" />
+            }
+          </button>
         )}
 
         {/* 時刻（左側） */}
