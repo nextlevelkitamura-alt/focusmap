@@ -104,6 +104,7 @@ type TaskNodeData = {
     calendar_id?: string | null;
     onUpdateCalendar?: (calendarId: string | null) => void;
     onUpdateMemo?: (memo: string | null) => void;
+    onRegisterSchedule?: (params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<void>;
 };
 
 type HabitSettingsPanelData = {
@@ -130,6 +131,7 @@ type MindMapCallbacks = {
     endDrag: () => void;
     createRootTaskAndFocus: (title: string) => Promise<void>;
     onUpdateProject?: (projectId: string, title: string) => Promise<void>;
+    registerSchedule: (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<void>;
 };
 
 // --- Error Boundary ---
@@ -304,8 +306,9 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps<ProjectNodeData>) 
     return (
         <div
             ref={wrapperRef}
+            style={{ width: PROJECT_NODE_WIDTH, minHeight: PROJECT_NODE_HEIGHT }}
             className={cn(
-                "w-[250px] px-3 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-center shadow-lg transition-all outline-none min-h-[52px] flex items-center justify-center",
+                "px-3 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-center shadow-lg transition-all outline-none flex items-center justify-center",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 data?.isDropTarget && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background bg-sky-500/10"
             )}
@@ -476,6 +479,11 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     const [showScheduleMenu, setShowScheduleMenu] = useState<boolean>(false);
     const [imageUrlInput, setImageUrlInput] = useState<string>('');
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+    // スケジュールパネル用ローカル状態（登録ボタンを押すまで確定しない）
+    const [localScheduledAt, setLocalScheduledAt] = useState<Date | null>(null);
+    const [localDurationMinutes, setLocalDurationMinutes] = useState<number>(0);
+    const [localCalendarId, setLocalCalendarId] = useState<string | null>(null);
+    const [isRegistering, setIsRegistering] = useState<boolean>(false);
 
 
     // Flag to prevent double-save when exiting via keyboard (Enter/Tab/Escape)
@@ -484,6 +492,15 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     const wasSelectedRef = useRef(false);
     // Guard: prevent focus operations from triggering onChange → edit mode
     const justFocusedRef = useRef(false);
+
+    // スケジュールパネルが開いた時にローカル状態を現在値で初期化
+    useEffect(() => {
+        if (showScheduleMenu) {
+            setLocalScheduledAt(data?.scheduled_at ? new Date(data.scheduled_at) : null);
+            setLocalDurationMinutes(data?.estimatedDisplayMinutes ?? 0);
+            setLocalCalendarId(data?.calendar_id || null);
+        }
+    }, [showScheduleMenu]);
 
     // Trigger edit from external
     useEffect(() => {
@@ -867,7 +884,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
         <div
             ref={wrapperRef}
             className={cn(
-                "relative px-1.5 py-1 rounded bg-background border text-[13px] shadow-sm flex flex-col gap-0 transition-all outline-none min-h-[30px] group",
+                "relative px-1.5 py-1 rounded-lg bg-background border text-[13px] shadow-sm flex flex-col gap-0 transition-all outline-none min-h-[30px] group",
                 !isEditing && "cursor-grab active:cursor-grabbing",
                 dragging && "is-dragging-active",
                 (data?.is_habit || data?.parentIsHabit) && "border-blue-400",
@@ -877,7 +894,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
             )}
             tabIndex={0}
-            style={{ width: typeof data?.nodeWidth === 'number' ? data.nodeWidth : NODE_WIDTH }}
+            style={{ width: isEditing ? estimateTaskNodeWidth(editValue) : (typeof data?.nodeWidth === 'number' ? data.nodeWidth : NODE_WIDTH) }}
             onKeyDown={handleWrapperKeyDown}
             onDoubleClick={handleDoubleClick}
             onMouseDown={handleWrapperMouseDown}
@@ -1038,60 +1055,128 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                             />
                         </div>
 
-                        {/* Estimated Time */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">所要時間</div>
-                        <div className="px-2 pb-2">
-                            <EstimatedTimePopover
-                                valueMinutes={data?.estimatedDisplayMinutes ?? 0}
-                                onChangeMinutes={(minutes) => data?.onUpdateEstimatedTime?.(minutes)}
-                                isOverridden={!!data?.estimatedIsOverride}
-                                autoMinutes={data?.estimatedAutoMinutes}
-                                onResetAuto={data?.hasChildren ? () => data?.onUpdateEstimatedTime?.(0) : undefined}
-                                trigger={
-                                    <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
-                                        <Clock className="w-3 h-3 mr-2" />
-                                        {(data?.estimatedDisplayMinutes ?? 0) > 0 ? (
-                                            <EstimatedTimeBadge minutes={data.estimatedDisplayMinutes ?? 0} />
-                                        ) : (
-                                            <span className="text-muted-foreground">所要時間を設定</span>
-                                        )}
-                                    </Button>
-                                }
-                            />
-                        </div>
-
-                        {/* Scheduled At */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">スケジュール</div>
-                        <div className="px-2 pb-2">
-                            <DateTimePicker
-                                date={data?.scheduled_at ? new Date(data.scheduled_at) : undefined}
-                                setDate={(date) => {
-                                    data?.onUpdateScheduledAt?.(date ? date.toISOString() : null);
-                                }}
-                                trigger={
-                                    <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
-                                        <CalendarIcon className="w-3 h-3 mr-2" />
-                                        {data?.scheduled_at ? (
-                                            <span>{format(new Date(data.scheduled_at), 'M/d HH:mm', { locale: ja })}</span>
-                                        ) : (
-                                            <span className="text-muted-foreground">日時を設定</span>
-                                        )}
-                                    </Button>
-                                }
-                            />
-                        </div>
-
-                        {/* Calendar Selection */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">カレンダー</div>
-                        <div className="px-2 pb-2">
-                            <TaskCalendarSelect
-                                value={data?.calendar_id || null}
-                                onChange={(calendarId) => {
-                                    data?.onUpdateCalendar?.(calendarId);
-                                }}
-                                className="w-full h-8 justify-start"
-                            />
-                        </div>
+                        {/* Schedule Section */}
+                        {(() => {
+                            const hasDuration = localDurationMinutes > 0;
+                            const hasDate = !!localScheduledAt;
+                            const hasCalendar = !!localCalendarId;
+                            const isReady = hasDuration && hasDate && hasCalendar;
+                            const steps = [
+                                { label: '所要時間', done: hasDuration },
+                                { label: '日時', done: hasDate },
+                                { label: 'カレンダー', done: hasCalendar },
+                            ];
+                            return (
+                                <div className="px-2 pt-2 pb-1">
+                                    <div className={cn(
+                                        "rounded-xl border-2 transition-colors duration-300 overflow-hidden",
+                                        isReady ? "border-primary/60 bg-primary/5" : "border-border bg-muted/20"
+                                    )}>
+                                        {/* ヘッダー */}
+                                        <div className={cn(
+                                            "flex items-center justify-between px-3 py-2 border-b transition-colors duration-300",
+                                            isReady ? "border-primary/30 bg-primary/10" : "border-border"
+                                        )}>
+                                            <div className="flex items-center gap-1.5">
+                                                <CalendarIcon className={cn("w-4 h-4 transition-colors", isReady ? "text-primary" : "text-muted-foreground")} />
+                                                <span className={cn("text-sm font-semibold transition-colors", isReady ? "text-primary" : "text-foreground")}>スケジュール</span>
+                                            </div>
+                                            {/* ステップインジケーター */}
+                                            <div className="flex items-center gap-1">
+                                                {steps.map((s, i) => (
+                                                    <div key={i} className={cn(
+                                                        "w-1.5 h-1.5 rounded-full transition-all duration-300",
+                                                        s.done ? "bg-primary scale-110" : "bg-muted-foreground/30"
+                                                    )} title={s.label} />
+                                                ))}
+                                            </div>
+                                        </div>
+                                        {/* フィールド群 */}
+                                        <div className="p-3 space-y-2.5">
+                                            {/* ① 所要時間 */}
+                                            <div className="flex items-center gap-2">
+                                                <span className={cn("text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-colors duration-200",
+                                                    hasDuration ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                                                )}>1</span>
+                                                <div className="flex-1">
+                                                    <EstimatedTimePopover
+                                                        valueMinutes={localDurationMinutes}
+                                                        onChangeMinutes={(minutes) => setLocalDurationMinutes(minutes)}
+                                                        isOverridden={!!data?.estimatedIsOverride}
+                                                        autoMinutes={data?.estimatedAutoMinutes}
+                                                        onResetAuto={data?.hasChildren ? () => setLocalDurationMinutes(0) : undefined}
+                                                        trigger={
+                                                            <Button variant="outline" size="sm" className={cn("w-full justify-start text-xs h-8 transition-colors", hasDuration && "border-primary/40 text-foreground")}>
+                                                                <Clock className="w-3 h-3 mr-2 shrink-0" />
+                                                                {hasDuration ? <EstimatedTimeBadge minutes={localDurationMinutes} /> : <span className="text-muted-foreground">所要時間を設定</span>}
+                                                            </Button>
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                            {/* ② 日時 */}
+                                            <div className="flex items-center gap-2">
+                                                <span className={cn("text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-colors duration-200",
+                                                    hasDate ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                                                )}>2</span>
+                                                <div className="flex-1">
+                                                    <DateTimePicker
+                                                        date={localScheduledAt ?? undefined}
+                                                        setDate={(date) => setLocalScheduledAt(date ?? null)}
+                                                        trigger={
+                                                            <Button variant="outline" size="sm" className={cn("w-full justify-start text-xs h-8 transition-colors", hasDate && "border-primary/40")}>
+                                                                <CalendarIcon className="w-3 h-3 mr-2 shrink-0" />
+                                                                {hasDate ? <span>{format(localScheduledAt!, 'M/d (E) HH:mm', { locale: ja })}</span> : <span className="text-muted-foreground">日時を設定</span>}
+                                                            </Button>
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                            {/* ③ カレンダー */}
+                                            <div className="flex items-center gap-2">
+                                                <span className={cn("text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-colors duration-200",
+                                                    hasCalendar ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                                                )}>3</span>
+                                                <div className="flex-1">
+                                                    <TaskCalendarSelect
+                                                        value={localCalendarId}
+                                                        onChange={(calendarId) => setLocalCalendarId(calendarId)}
+                                                        className={cn("w-full h-8 justify-start transition-colors", hasCalendar && "border-primary/40")}
+                                                    />
+                                                </div>
+                                            </div>
+                                            {/* 登録ボタン */}
+                                            <button
+                                                type="button"
+                                                disabled={!isReady || isRegistering}
+                                                onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    if (!isReady) return;
+                                                    setIsRegistering(true);
+                                                    try {
+                                                        await data?.onRegisterSchedule?.({
+                                                            scheduledAt: localScheduledAt!.toISOString(),
+                                                            estimatedMinutes: localDurationMinutes,
+                                                            calendarId: localCalendarId,
+                                                        });
+                                                    } finally {
+                                                        setIsRegistering(false);
+                                                    }
+                                                }}
+                                                className={cn(
+                                                    "w-full h-10 rounded-lg text-sm font-semibold mt-1 transition-all duration-300",
+                                                    isReady
+                                                        ? "bg-primary text-primary-foreground shadow-md shadow-primary/30 hover:brightness-110 active:scale-[0.98] cursor-pointer animate-[pulse_2s_ease-in-out_1]"
+                                                        : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                                                )}
+                                            >
+                                                {isRegistering ? '登録中...' : isReady ? '✓ スケジュールに登録' : 'スケジュールに登録'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
 
                         {/* Memo */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">メモ</div>
@@ -2136,6 +2221,16 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [onUpdateTask]);
 
+    const registerSchedule = useCallback(async (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => {
+        if (onUpdateTask) {
+            await onUpdateTask(taskId, {
+                scheduled_at: params.scheduledAt,
+                estimated_time: params.estimatedMinutes || null,
+                calendar_id: params.calendarId,
+            });
+        }
+    }, [onUpdateTask]);
+
     const updateTaskPriority = useCallback(async (taskId: string, priority: number | null) => {
         if (onUpdateTask) {
             await onUpdateTask(taskId, { priority });
@@ -2153,7 +2248,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         handleNavigate, promoteTask, updateTaskScheduledAt,
         updateTaskPriority, updateTaskEstimatedTime,
         onUpdateTask, toggleTaskCollapse, startDrag, endDrag,
-        createRootTaskAndFocus, onUpdateProject,
+        createRootTaskAndFocus, onUpdateProject, registerSchedule,
     }), [
         saveTaskTitle,
         addChildTask,
@@ -2170,6 +2265,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         endDrag,
         createRootTaskAndFocus,
         onUpdateProject,
+        registerSchedule,
     ]);
 
     // ===== STEP 1: Structure + dagre layout (expensive, only on data/collapse change) =====
@@ -2306,7 +2402,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 });
 
                 // ノード実高さ + マージンで次のY位置を計算（固定40pxだと長いテキストで重なる）
-                yOffsetCursor.value += taskNodeHeight + 12;
+                yOffsetCursor.value += taskNodeHeight + 6;
 
                 if (!collapsedTaskIds.has(task.id)) {
                     const children = childTasksByParent[task.id] ?? [];
@@ -2324,6 +2420,38 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 renderTasksRecursively(rootTask, 'project-root', 0, yOffsetCursor);
                 globalYOffset = Math.max(globalYOffset + 80, yOffsetCursor.value + 30);
             }
+
+            // 同じ親を持つ兄弟ノードの幅を最大幅に統一する
+            const parentToChildIds = new Map<string, string[]>();
+            resultEdges.forEach(e => {
+                if (!parentToChildIds.has(e.source)) parentToChildIds.set(e.source, []);
+                parentToChildIds.get(e.source)!.push(e.target);
+            });
+
+            const nodeById = new Map<string, Node>();
+            resultNodes.forEach(n => nodeById.set(n.id, n));
+
+            parentToChildIds.forEach((childIds) => {
+                const taskChildren = childIds.filter(id => nodeById.get(id)?.type === 'taskNode');
+                if (taskChildren.length < 2) return;
+                const maxWidth = Math.max(...taskChildren.map(id => (nodeById.get(id)?.width as number) ?? 0));
+                taskChildren.forEach(id => {
+                    const n = nodeById.get(id);
+                    if (!n || n.width === maxWidth) return;
+                    const task = dataMap.get(id);
+                    const hasInfo = task ? (
+                        (task.estimatedDisplayMinutes > 0) ||
+                        task.priority != null ||
+                        !!task.scheduled_at ||
+                        !!task.memo ||
+                        !!(task.memo_images && task.memo_images.length > 0)
+                    ) : false;
+                    const newHeight = estimateTaskNodeHeight(task?.title || String(n.data?.label ?? ''), hasInfo, maxWidth);
+                    n.width = maxWidth;
+                    n.height = newHeight;
+                    (n.data as Record<string, unknown>).nodeWidth = maxWidth;
+                });
+            });
         } catch (err) {
             console.error('[MindMap] Error:', err);
         }
@@ -2382,6 +2510,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onUpdatePriority: (p: number) => cbs.updateTaskPriority(taskId, p),
                     onUpdateEstimatedTime: (m: number) => cbs.updateTaskEstimatedTime(taskId, m),
                     onUpdateCalendar: (calendarId: string | null) => cbs.onUpdateTask?.(taskId, { calendar_id: calendarId }),
+                    onRegisterSchedule: (params) => cbs.registerSchedule(taskId, params),
                     is_habit: taskData?.is_habit ?? false,
                     parentIsHabit: taskData?.parent_task_id ? (taskDataMap.get(taskData.parent_task_id)?.is_habit ?? false) : false,
                     habit_frequency: taskData?.habit_frequency ?? null,
@@ -2905,7 +3034,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onSelectionChange={handleSelectionChange}
                 onWheel={handlePaneWheel}
                 fitView
-                fitViewOptions={{ padding: 0.2 }}
+                fitViewOptions={{ padding: 0.35 }}
                 deleteKeyCode={null}
                 nodesConnectable={false}
                 nodesDraggable={true}

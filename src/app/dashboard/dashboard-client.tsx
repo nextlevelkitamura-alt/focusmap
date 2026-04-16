@@ -97,12 +97,6 @@ export function DashboardClient({
     // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
     const { activeView, setActiveView, isViewReady } = useView()
 
-    // Reload時はマインドマップを開いた状態に揃える
-    useEffect(() => {
-        if (!isViewReady) return
-        setActiveView('today')
-    }, [isViewReady, setActiveView])
-
     // AI Chat open state (controlled from desktop panel FAB + mobile BottomNav)
     const [isAiChatOpen, setIsAiChatOpen] = useState(false)
     // Scheduling panel open state
@@ -645,10 +639,10 @@ export function DashboardClient({
     // Sidebar State
     const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
 
-    // today ビューでは左サイドバーを自動折りたたみ、map に戻すと開く
+    // today / map ビューでは左サイドバーを自動折りたたみ
     useEffect(() => {
         if (!isViewReady) return
-        setIsLeftSidebarCollapsed(activeView === 'today')
+        setIsLeftSidebarCollapsed(activeView === 'today' || activeView === 'map')
     }, [activeView, isViewReady])
     const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
         if (typeof window !== 'undefined') {

@@ -5,15 +5,18 @@ import { Node, Edge } from 'reactflow';
 export const dagreGraph = new dagre.graphlib.Graph();
 dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-export const NODE_WIDTH = 200;
-export const NODE_HEIGHT = 38;
-export const PROJECT_NODE_WIDTH = 250;
+export const NODE_WIDTH = 224;
+export const NODE_HEIGHT = 36;
+export const PROJECT_NODE_WIDTH = 220;
 export const PROJECT_NODE_HEIGHT = 52;
-export const NODE_MAX_WIDTH = 360;
+export const NODE_MAX_WIDTH = 200;
 const NODE_TEXT_LINE_HEIGHT = 16;
 const NODE_VERTICAL_PADDING = 12;
 const NODE_INFO_ROW_HEIGHT = 16;
-const NODE_TEXT_RESERVED_WIDTH = 56;
+// 固定要素の実幅: padding(12) + grip(16) + gap×3(12) + statusDot(6) + menuBtn(20) ≈ 70px
+// collapseBtn有りの場合は+16px。NODE_MIN_WIDTHでカバー
+const NODE_TEXT_RESERVED_WIDTH = 70;
+const NODE_MIN_WIDTH = 120;
 
 /** テキストの視覚的な幅をピクセル単位で推定（全角≈13.5px, 半角≈7.5px @13px font-semibold） */
 const estimateTextWidthPx = (text: string): number => {
@@ -32,17 +35,16 @@ const estimateTextWidthPx = (text: string): number => {
     return width;
 };
 
-/** タイトル長からTaskNodeの横幅を推定（最大NODE_MAX_WIDTH） */
+/** タイトル長からTaskNodeの横幅を推定（テキストにフィット、最大NODE_MAX_WIDTH） */
 export const estimateTaskNodeWidth = (title: string) => {
     const text = (title || '').trim();
+    if (!text) return NODE_MIN_WIDTH;
     const longestLinePx = text
         .split('\n')
         .reduce((max, line) => Math.max(max, estimateTextWidthPx(line)), 0);
-    // テキスト利用可能幅 = ノード幅 - 左右パディング・アイコン等の予約領域
-    const baseAvailablePx = NODE_WIDTH - NODE_TEXT_RESERVED_WIDTH;
-    const extraPx = Math.max(0, longestLinePx - baseAvailablePx);
-    const estimated = NODE_WIDTH + extraPx;
-    return Math.min(NODE_MAX_WIDTH, Math.max(NODE_WIDTH, estimated));
+    // ノード幅 = 予約領域（アイコン等）+ テキスト幅 + 右側の余白バッファ
+    const estimated = NODE_TEXT_RESERVED_WIDTH + longestLinePx + 16;
+    return Math.min(NODE_MAX_WIDTH, Math.max(NODE_MIN_WIDTH, estimated));
 };
 
 /** タイトル長とメタデータ有無からTaskNodeの高さを推定（dagre layout用） */
@@ -80,13 +82,13 @@ export function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node
         const h = node.type === 'projectNode' ? PROJECT_NODE_HEIGHT : (node.height ?? NODE_HEIGHT);
         if (h > maxNodeHeight) maxNodeHeight = h;
     });
-    // nodesep = 最大ノード高さの半分 + 20px余白（最低24px）
-    const dynamicNodesep = Math.max(24, Math.round(maxNodeHeight / 2) + 20);
+    // nodesep = 最大ノード高さの半分 + 8px余白（最低10px）
+    const dynamicNodesep = Math.max(10, Math.round(maxNodeHeight / 2) + 8);
 
     dagreGraph.setGraph({
         rankdir: 'LR',
         nodesep: dynamicNodesep,
-        ranksep: 80,
+        ranksep: 70,
         edgesep: 26,
         ranker: 'network-simplex',
         align: undefined // Ensures children center around parent (default behavior)

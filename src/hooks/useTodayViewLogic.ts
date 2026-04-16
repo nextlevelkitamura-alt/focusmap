@@ -825,8 +825,8 @@ export function useTodayViewLogic({
                     const data = await res.json().catch(() => null)
                     throw new Error(data?.error?.message || 'Failed to delete event')
                 }
+                // refetchは呼ばず、楽観的削除済みのため不要（再フェッチするとサーバーからイベントが復元されてしまう）
                 invalidateCalendarCache()
-                broadcastCalendarSync()
             })
             .catch(err => {
                 console.error('[useTodayViewLogic] Failed to delete event:', err)

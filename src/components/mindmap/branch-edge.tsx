@@ -37,4 +37,3 @@ export function BranchEdge({
 
   return <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />;
 }
-
