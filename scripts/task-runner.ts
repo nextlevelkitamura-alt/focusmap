@@ -99,26 +99,30 @@ end tell`
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// cron 式から次回実行時刻を計算（分・時 のみ対応）
+// cron 式から次回実行時刻を計算（分・時・曜日 対応、ローカル時刻で比較）
+// UIは getHours()/getMinutes()（JST）でcronを生成するため、
+// ここもローカル時刻でマッチングする必要がある
 // ─────────────────────────────────────────────────────────────────────────
 function getNextScheduledAt(cronExpr: string, from: Date): Date {
   const parts = cronExpr.trim().split(/\s+/)
   if (parts.length !== 5) throw new Error(`Invalid cron expression: ${cronExpr}`)
 
-  const [minutePart, hourPart] = parts
+  const [minutePart, hourPart, , , dowPart] = parts
   const now = new Date(from.getTime() + 60 * 1000)
   now.setSeconds(0, 0)
 
-  const limit = new Date(from.getTime() + 7 * 24 * 60 * 60 * 1000)
+  const limit = new Date(from.getTime() + 8 * 24 * 60 * 60 * 1000)
 
   while (now < limit) {
-    const minute = now.getUTCMinutes()
-    const hour = now.getUTCHours()
+    const minute = now.getMinutes()  // ローカル時刻（JST）
+    const hour = now.getHours()      // ローカル時刻（JST）
+    const dow = now.getDay()         // 曜日（0=日, 1=月, ..., 6=土）
 
     const minuteMatch = minutePart === '*' || parseInt(minutePart) === minute
     const hourMatch = hourPart === '*' || parseInt(hourPart) === hour
+    const dowMatch = dowPart === '*' || dowPart.split(',').map(Number).includes(dow)
 
-    if (minuteMatch && hourMatch) return new Date(now)
+    if (minuteMatch && hourMatch && dowMatch) return new Date(now)
     now.setTime(now.getTime() + 60 * 1000)
   }
 
