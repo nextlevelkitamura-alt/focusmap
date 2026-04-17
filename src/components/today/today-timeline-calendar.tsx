@@ -322,15 +322,15 @@ export function TodayTimelineCalendar({
 
     // Current time position
     const currentTimeTop = useMemo(() => getTopPx(currentTime), [currentTime])
-    // currentTime は親コンポーネントから渡される現在時刻（常に「今」を表す）
-    // SSRセーフ: new Date()を使わず、currentTimeのみで判定
+    // 表示中の日付が「今日」かどうかを判定（赤線を当日のみ表示するため）
     const isToday = useMemo(() => {
-        const ct = new Date(currentTime)
-        ct.setHours(0, 0, 0, 0)
+        const displayDate = selectedDate ?? currentTime
+        const d = new Date(displayDate)
+        d.setHours(0, 0, 0, 0)
         const today = new Date(currentTime)
         today.setHours(0, 0, 0, 0)
-        return ct.getTime() === today.getTime()
-    }, [currentTime])
+        return d.getTime() === today.getTime()
+    }, [currentTime, selectedDate])
 
     // Calculate event layout (handle overlapping)
     const layoutItems = useMemo(() => {
