@@ -36,7 +36,7 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { status, result, error: taskError, prompt, scheduled_at, recurrence_cron, cwd, approval_type } = body
+  const { status, result, error: taskError, prompt, scheduled_at, recurrence_cron, cwd, approval_type, completed_at } = body
 
   const updates: Record<string, unknown> = {}
 
@@ -49,6 +49,10 @@ export async function PATCH(
     if (status === 'completed') updates.completed_at = new Date().toISOString()
     if (status === 'running') updates.started_at = new Date().toISOString()
   }
+
+  // 繰り返しタスク用: completed_at を直接更新（status は維持）
+  // null を渡すとチェック解除、ISO文字列なら完了時刻を書き込み
+  if (completed_at !== undefined) updates.completed_at = completed_at
 
   if (result !== undefined) updates.result = result
   if (taskError !== undefined) updates.error = taskError
