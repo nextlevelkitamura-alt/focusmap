@@ -13,10 +13,13 @@ export interface ApiAuthResult {
 /**
  * Authenticate a request using Bearer token (API key).
  * Returns the user_id and scopes, or an error response.
+ *
+ * requiredScope: 1つの scope 文字列、または「any-of」判定用の配列を渡せる。
+ *   配列の場合、1つでも含まれていれば OK（後方互換用途に便利）。
  */
 export async function authenticateApiKey(
   request: NextRequest,
-  requiredScope?: string,
+  requiredScope?: string | string[],
 ): Promise<ApiAuthResult | Response> {
   const authHeader = request.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) {
@@ -62,9 +65,13 @@ export async function authenticateApiKey(
     return apiError('UNAUTHORIZED', 'API key has expired', 401)
   }
 
-  // Scope check
-  if (requiredScope && !apiKey.scopes.includes(requiredScope)) {
-    return apiError('FORBIDDEN', `Missing required scope: ${requiredScope}`, 403)
+  // Scope check (単一 or any-of 配列)
+  if (requiredScope) {
+    const required = Array.isArray(requiredScope) ? requiredScope : [requiredScope]
+    const hasAny = required.some(s => apiKey.scopes.includes(s))
+    if (!hasAny) {
+      return apiError('FORBIDDEN', `Missing required scope: ${required.join(' or ')}`, 403)
+    }
   }
 
   // Update last_used_at (fire-and-forget)
