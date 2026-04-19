@@ -634,15 +634,18 @@ export function TodayTaskBoard({
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowScheduleForm(false)}>
               <div className="w-full max-w-md mx-4 max-h-[80vh] overflow-y-auto rounded-xl border border-primary/20 bg-background p-4 space-y-3 shadow-xl" onClick={(e) => e.stopPropagation()}>
                 {/* 実行内容（自然言語） */}
-                <div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="schedule-prompt" className="text-xs text-muted-foreground/70">
+                    実行内容（タップして編集）
+                  </label>
                   <textarea
                     id="schedule-prompt"
                     value={schedulePrompt}
                     onChange={(e) => setSchedulePrompt(e.target.value)}
                     placeholder="例: 経理やって、朝の確認して"
-                    rows={2}
+                    rows={3}
                     aria-label="実行内容"
-                    className="w-full bg-transparent text-sm outline-none resize-none placeholder:text-muted-foreground/40 border-b border-border/40 pb-2"
+                    className="w-full min-h-[72px] bg-background text-sm outline-none resize-y placeholder:text-muted-foreground/40 border border-border/60 rounded-lg px-3 py-2 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
                     disabled={isScheduling}
                   />
                 </div>
@@ -886,6 +889,38 @@ export function TodayTaskBoard({
                     <><CalendarClock className="w-4 h-4" aria-hidden="true" /><span>{editingTask ? '更新する' : 'スケジュール登録'}</span></>
                   )}
                 </button>
+
+                {/* 編集モード時: 習慣の削除ボタン（確認ダイアログ付き） */}
+                {editingTask && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const isRecurring = !!editingTask.recurrence_cron
+                      const shortPrompt = editingTask.prompt.length > 40
+                        ? editingTask.prompt.slice(0, 40) + '…'
+                        : editingTask.prompt
+                      const msg = isRecurring
+                        ? `「${shortPrompt}」を削除すると、今後この習慣の実行がすべて止まります。\n本当に削除しますか？`
+                        : `「${shortPrompt}」を削除しますか？`
+                      if (!confirm(msg)) return
+                      try {
+                        await deleteScheduledTask(editingTask.id)
+                        setEditingTask(null)
+                        setSchedulePrompt('')
+                        setScheduleDatetime(undefined)
+                        setShowScheduleForm(false)
+                        refreshAiTasks()
+                      } catch (err) {
+                        console.error('[delete scheduled task]', err)
+                      }
+                    }}
+                    disabled={isScheduling}
+                    className="w-full min-h-[40px] rounded-lg text-sm font-medium text-red-500 hover:bg-red-500/10 transition-colors flex items-center justify-center gap-2 mt-1"
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    <span>{editingTask.recurrence_cron ? 'この習慣を削除（今後の実行もすべて止まる）' : 'このタスクを削除'}</span>
+                  </button>
+                )}
               </div>
               </div>
             )}
@@ -992,10 +1027,20 @@ function ScheduledTaskList({
 }) {
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  const handleDelete = async (id: string) => {
-    setDeletingId(id)
+  // 削除時に「今後の実行もすべて止まる」ことを明示して確認する
+  // 定期タスクは単一行で管理されており（task-runner が scheduled_at を次回に更新）、
+  // この1行を削除すれば将来の実行はすべてキャンセルされる
+  const handleDelete = async (task: AiTask) => {
+    const isRecurring = !!task.recurrence_cron
+    const shortPrompt = task.prompt.length > 40 ? task.prompt.slice(0, 40) + '…' : task.prompt
+    const confirmMessage = isRecurring
+      ? `「${shortPrompt}」を削除すると、今後この習慣の実行がすべて止まります。\n本当に削除しますか？`
+      : `「${shortPrompt}」を削除しますか？`
+    if (!confirm(confirmMessage)) return
+
+    setDeletingId(task.id)
     try {
-      await onDelete(id)
+      await onDelete(task.id)
     } finally {
       setDeletingId(null)
     }
@@ -1063,9 +1108,10 @@ function ScheduledTaskList({
             </div>
           </div>
           <button
-            onClick={(e) => { e.stopPropagation(); handleDelete(task.id) }}
+            onClick={(e) => { e.stopPropagation(); handleDelete(task) }}
             disabled={deletingId === task.id}
-            aria-label="削除"
+            aria-label={task.recurrence_cron ? '習慣を削除（今後の実行もすべて止まる）' : '削除'}
+            title={task.recurrence_cron ? '削除すると今後の実行もすべて止まります' : '削除'}
             className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-muted-foreground/40 hover:text-red-500 transition-colors shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center disabled:opacity-40"
           >
             {deletingId === task.id
