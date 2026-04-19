@@ -9,6 +9,7 @@ import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wh
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import type { TimeBlock } from "@/lib/time-block"
+import { EventMemoPopup } from "@/components/calendar/event-memo-popup"
 
 // --- Types ---
 
@@ -19,7 +20,7 @@ interface MobileEventEditModalProps {
     isOpen: boolean
     onClose: () => void
     onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[] }) => Promise<void>
-    onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[] }) => Promise<void>
+    onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]; description?: string }) => Promise<void>
     onDeleteTask?: (taskId: string) => void
     onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
     availableCalendars: { id: string; name: string; background_color?: string }[]
@@ -61,6 +62,8 @@ export function MobileEventEditModal({
     const [duration, setDuration] = useState(60)
     const [calendarId, setCalendarId] = useState('')
     const [memo, setMemo] = useState('')
+    const [eventDescription, setEventDescription] = useState('')
+    const [isEventMemoOpen, setIsEventMemoOpen] = useState(false)
     const [reminder, setReminder] = useState(-1)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
 
@@ -93,6 +96,7 @@ export function MobileEventEditModal({
     }, [onClose])
 
     // Initialize form when target changes
+    /* eslint-disable react-hooks/set-state-in-effect */
     useEffect(() => {
         if (!target) return
 
@@ -100,6 +104,7 @@ export function MobileEventEditModal({
         setScheduledDate(new Date(target.startTime))
         setCalendarId(target.calendarId || '')
         setMemo(target.originalTask?.memo || '')
+        setEventDescription(target.originalEvent?.description || '')
         if (target.source === 'task') {
             setDuration(target.estimatedTime || 60)
         } else {
@@ -119,6 +124,7 @@ export function MobileEventEditModal({
             setReminder(15)
         }
     }, [target])
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     // Handle swipe down to close
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -174,6 +180,7 @@ export function MobileEventEditModal({
                 googleEventId: target.googleEventId || '',
                 calendarId: target.calendarId || '',
                 reminders: reminder >= 0 ? [reminder] : [],
+                description: eventDescription,
             }).catch(err => {
                 console.error('[MobileEventEditModal] Save event error:', err)
             })
@@ -460,6 +467,31 @@ export function MobileEventEditModal({
                         </div>
                     )}
 
+                    {/* Memo (Event only) — ポップアップ起動ボタン */}
+                    {!isTask && (
+                        <div className="space-y-1.5">
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                <StickyNote className="w-3.5 h-3.5" />
+                                メモ
+                            </label>
+                            <button
+                                type="button"
+                                onClick={() => setIsEventMemoOpen(true)}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-sm border rounded-lg bg-background hover:bg-muted transition-colors text-left"
+                            >
+                                <StickyNote className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
+                                <span className={cn(
+                                    "truncate",
+                                    !eventDescription.trim() && "text-muted-foreground"
+                                )}>
+                                    {eventDescription.trim()
+                                        ? eventDescription.replace(/\s+/g, ' ').slice(0, 40) + (eventDescription.length > 40 ? '…' : '')
+                                        : 'メモを追加'}
+                                </span>
+                            </button>
+                        </div>
+                    )}
+
                 </div>
 
                 {/* Footer: Save + Delete side by side */}
@@ -489,6 +521,14 @@ export function MobileEventEditModal({
                     </div>
                 </div>
             </div>
+
+            {/* メモポップアップ（イベントのみ） */}
+            <EventMemoPopup
+                initialValue={eventDescription}
+                isOpen={isEventMemoOpen}
+                onClose={() => setIsEventMemoOpen(false)}
+                onSave={(memo) => setEventDescription(memo)}
+            />
         </>
     )
 }

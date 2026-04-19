@@ -8,8 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { DurationWheelPicker, formatDuration } from '@/components/ui/duration-wheel-picker';
-import { Trash2, X } from 'lucide-react';
+import { Trash2, X, StickyNote } from 'lucide-react';
 import { format, addMinutes } from 'date-fns';
+import { EventMemoPopup } from './event-memo-popup';
 
 interface CalendarEventEditModalProps {
   event: CalendarEvent | null;
@@ -28,6 +29,7 @@ export interface EventUpdatePayload {
   reminders?: number[]; // minutes before event
   calendar_id?: string;
   estimated_time?: number; // 所要時間（分）
+  description?: string; // メモ（Google Calendar description と同期）
 }
 
 const BASE_REMINDER_OPTIONS = [
@@ -55,6 +57,8 @@ export function CalendarEventEditModal({
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [reminder, setReminder] = useState<number>(-1);
   const [calendarId, setCalendarId] = useState<string>('');
+  const [description, setDescription] = useState<string>('');
+  const [isMemoOpen, setIsMemoOpen] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -84,6 +88,7 @@ export function CalendarEventEditModal({
       setStartDate(new Date(event.start_time));
       setPriority(event.priority || 'medium');
       setCalendarId(event.calendar_id);
+      setDescription(event.description || '');
       // Googleイベント: 未設定は「なし」、設定済みはその値を表示
       if (event.reminders && event.reminders.length > 0) {
         setReminder(event.reminders[0]); // 最初のリマインダー値を使用（0=予定の時刻）
@@ -136,6 +141,7 @@ export function CalendarEventEditModal({
       reminders: reminder >= 0 ? [reminder] : [], // -1=なし(空配列), 0=予定の時刻, N>0=N分前
       calendar_id: calendarId,
       estimated_time: saveDuration,
+      description,
     });
   };
 
@@ -220,6 +226,24 @@ export function CalendarEventEditModal({
               終了: {format(endTime, 'MM/dd HH:mm')}
             </div>
           )}
+
+          {/* メモ（description）— ボタン押下でポップアップ */}
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs">メモ</Label>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsMemoOpen(true)}
+              className="w-full justify-start text-left font-normal h-8 text-xs px-2 gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <StickyNote className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">
+                {description.trim()
+                  ? description.replace(/\s+/g, ' ').slice(0, 40) + (description.length > 40 ? '…' : '')
+                  : 'メモを追加'}
+              </span>
+            </Button>
+          </div>
 
           {/* タスク紐付き: 優先度 + カレンダー */}
           {isTaskLinked && (
@@ -328,6 +352,14 @@ export function CalendarEventEditModal({
           </div>
         </div>
       </div>
+
+      {/* メモポップアップ（モーダルに重ねて表示） */}
+      <EventMemoPopup
+        initialValue={description}
+        isOpen={isMemoOpen}
+        onClose={() => setIsMemoOpen(false)}
+        onSave={(memo) => setDescription(memo)}
+      />
     </div>
   );
 }
