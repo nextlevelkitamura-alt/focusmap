@@ -119,8 +119,37 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     })
   }, [limit])
 
-  // 完了トグル（completed ↔ pending）
-  const toggleComplete = useCallback(async (taskId: string, currentStatus: string) => {
+  // 完了トグル
+  // 単発タスク（recurrence_cron なし）: status を completed ↔ pending
+  // 繰り返しタスク（recurrence_cron あり）: completed_at を「今日」⇔ null でトグル
+  //   status は常に pending のまま（task-runner が毎日再実行するため）
+  const toggleComplete = useCallback(async (task: AiTask) => {
+    const taskId = task.id
+    const isRecurring = !!task.recurrence_cron
+
+    if (isRecurring) {
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+      const isDoneToday = !!(task.completed_at && new Date(task.completed_at) >= todayStart)
+      const newCompletedAt = isDoneToday ? null : new Date().toISOString()
+      const prevCompletedAt = task.completed_at
+
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, completed_at: newCompletedAt } : t))
+      const res = await fetch(`/api/ai-tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed_at: newCompletedAt }),
+      })
+      if (!res.ok) {
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, completed_at: prevCompletedAt } : t))
+        throw new Error('Failed to toggle ai task')
+      }
+      const updated = await res.json() as AiTask
+      setTasks(prev => prev.map(t => t.id === taskId ? updated : t))
+      return
+    }
+
+    // 単発タスク: 従来通り status をトグル
+    const currentStatus = task.status
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed'
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as AiTask['status'] } : t))
     const res = await fetch(`/api/ai-tasks/${taskId}`, {

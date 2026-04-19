@@ -493,7 +493,16 @@ export function TodayTaskBoard({
                   const time = aiTask.recurrence_cron
                     ? (() => { const p = aiTask.recurrence_cron!.trim().split(/\s+/); return `${p[1]?.padStart(2,'0')}:${p[0]?.padStart(2,'0')}` })()
                     : aiTask.scheduled_at ? format(new Date(aiTask.scheduled_at), 'HH:mm') : ''
-                  const isDone = aiTask.status === 'completed'
+                  // 単発: status が completed で完了扱い
+                  // 繰り返し: 今日の completed_at があれば「今日分は完了」
+                  const selDayStart = new Date(logic.selectedDate.getFullYear(), logic.selectedDate.getMonth(), logic.selectedDate.getDate())
+                  const selDayEnd = new Date(selDayStart.getTime() + 24 * 60 * 60 * 1000)
+                  const completedToday = aiTask.completed_at
+                    ? (() => { const d = new Date(aiTask.completed_at); return d >= selDayStart && d < selDayEnd })()
+                    : false
+                  const isDone = aiTask.recurrence_cron
+                    ? completedToday
+                    : aiTask.status === 'completed'
                   const isFailed = aiTask.status === 'failed'
                   const isRunning = aiTask.status === 'running'
                   return (
@@ -1081,7 +1090,7 @@ function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel, onDe
   isRunning: boolean
   onCancel: (id: string) => Promise<unknown>
   onDelete?: (id: string) => Promise<void>
-  onToggle?: (taskId: string, currentStatus: string) => Promise<void>
+  onToggle?: (task: AiTask) => Promise<void>
 }) {
   const [expanded, setExpanded] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -1109,7 +1118,7 @@ function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel, onDe
   const handleToggle = async () => {
     if (!onToggle || isRunning) return
     setToggling(true)
-    try { await onToggle(task.id, task.status) } finally { setToggling(false) }
+    try { await onToggle(task) } finally { setToggling(false) }
   }
 
   return (

@@ -197,19 +197,28 @@ async function main() {
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
   // ─── 1. due なタスクを取得 ───────────────────────────────────────────
-  const { data: dueTasks, error } = await supabase
+  const { data: rawDueTasks, error } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd')
+    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at')
     .eq('status', 'pending')
     .not('scheduled_at', 'is', null)
     .lte('scheduled_at', new Date().toISOString())
     .order('scheduled_at', { ascending: true })
-    .limit(5)
+    .limit(10)
 
   if (error) {
     console.error('[task-runner] DB error:', error.message)
     process.exit(1)
   }
+
+  // ユーザーが UI で「今日分完了」をチェックした繰り返しタスクはスキップ
+  // completed_at が当日（ローカル時刻）以降なら今日分実行済みとみなす
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const dueTasks = (rawDueTasks || []).filter(t => {
+    if (!t.recurrence_cron) return true
+    if (!t.completed_at) return true
+    return new Date(t.completed_at) < todayStart
+  }).slice(0, 5)
 
   if (!dueTasks || dueTasks.length === 0) {
     console.log('[task-runner] No due tasks at', new Date().toISOString())
