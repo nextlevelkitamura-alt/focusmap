@@ -181,6 +181,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 ...(updates.priority ? { priority: updates.priority } : {}),
                 ...(updates.calendar_id ? { calendar_id: updates.calendar_id } : {}),
                 ...(updates.estimated_time ? { estimated_time: updates.estimated_time } : {}),
+                ...(updates.description !== undefined ? { description: updates.description } : {}),
             }
             setEvents(prev => prev.map(e => e.id === eventId ? updatedEvent : e))
 
@@ -199,7 +200,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         title: updates.title,
                         start_time: updates.start_time,
                         end_time: updates.end_time,
-                        description: event.description,
+                        // メモ（description）は編集モーダルで更新された値を優先、なければ既存値
+                        description: updates.description !== undefined ? updates.description : event.description,
                         location: event.location,
                         googleEventId: event.google_event_id,
                         calendarId: updates.calendar_id || event.calendar_id,

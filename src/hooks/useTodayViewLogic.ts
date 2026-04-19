@@ -718,7 +718,7 @@ export function useTodayViewLogic({
 
     // Save event
     const handleSaveEvent = useCallback(async (eventId: string, updates: {
-        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]
+        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]; description?: string
     }) => {
         const previousEvents = localCalendarEvents
         const previousTasks = localTasks
@@ -729,7 +729,14 @@ export function useTodayViewLogic({
 
         setLocalCalendarEvents(prev => prev.map(e =>
             e.id === eventId
-                ? { ...e, title: updates.title, start_time: updates.start_time, end_time: updates.end_time, reminders: updates.reminders }
+                ? {
+                    ...e,
+                    title: updates.title,
+                    start_time: updates.start_time,
+                    end_time: updates.end_time,
+                    reminders: updates.reminders,
+                    ...(updates.description !== undefined ? { description: updates.description } : {}),
+                }
                 : e
         ))
         // Google連携タスクは timeline 表示が task 側を優先するため、task も同時に更新して即時反映する
@@ -760,6 +767,7 @@ export function useTodayViewLogic({
                     googleEventId: updates.googleEventId,
                     calendarId: updates.calendarId,
                     reminders: updates.reminders,
+                    ...(updates.description !== undefined ? { description: updates.description } : {}),
                 }),
             })
             if (!res.ok) {
