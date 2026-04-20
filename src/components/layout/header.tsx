@@ -17,6 +17,7 @@ import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Chec
 import { Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
+import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -111,12 +112,7 @@ export function Header({
         <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
             {/* Left: Logo & Space Switcher */}
             <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-bold">
-                        F
-                    </div>
-                    <span className="font-semibold text-lg hidden md:block">Focusmap</span>
-                </div>
+                <FocusmapLogo className="h-9 w-auto text-foreground" />
 
                 <div className="h-6 w-px bg-border mx-2" />
 
