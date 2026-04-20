@@ -76,14 +76,14 @@ export function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node
     // This prevents "gap" issues when nodes are deleted and new ones are added
     dagreGraph.nodes().forEach(n => dagreGraph.removeNode(n));
 
-    // nodesep は固定値。過去に最大ノード高さに連動させた結果、
-    // 長文/メモ付きノードが1つあるだけで兄弟ノード間のギャップが全体的に膨張する副作用があったため、
-    // 固定の小さい値に戻す。ノード重なり防止はノード自体の height プロパティで dagre が担保する。
+    // nodesep/edgesep は固定の小さい値。BranchEdge は親の右側 sourceX+24 を
+    // 共有トランクとして使うため、edgesep を大きく取る必要はない。
+    // edgesep を 26 にしていた時は 5 兄弟で +104px の余白が発生し間延びしていた。
     dagreGraph.setGraph({
         rankdir: 'LR',
-        nodesep: 12,
-        ranksep: 70,
-        edgesep: 26,
+        nodesep: 4,
+        ranksep: 60,
+        edgesep: 4,
         ranker: 'network-simplex',
         align: undefined
     });

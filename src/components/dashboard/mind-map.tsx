@@ -337,7 +337,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps<ProjectNodeData>) 
             ) : (
                 <div className="w-full truncate">{data?.label ?? 'Project'}</div>
             )}
-            <Handle type="source" position={Position.Right} className="!w-0 !h-0 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
+            <Handle type="source" position={Position.Right} className="!w-1 !h-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
         </div>
     );
 });
@@ -930,7 +930,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
             )}
             {/* Row 1: テキスト + メニュー */}
             <div className="flex items-center gap-1 w-full">
-                <Handle type="target" position={Position.Left} className="!w-0 !h-0 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
+                <Handle type="target" position={Position.Left} className="!w-1 !h-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
 
                 {/* Done Checkbox (完了トグル) */}
                 {settings.showStatus && (
@@ -1466,7 +1466,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 )
             }
 
-            <Handle type="source" position={Position.Right} className="!w-0 !h-0 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
+            <Handle type="source" position={Position.Right} className="!w-1 !h-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
         </div >
     );
 });

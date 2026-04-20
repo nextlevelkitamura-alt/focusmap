@@ -15,13 +15,11 @@ export function BranchEdge({
   style,
   markerEnd,
 }: EdgeProps) {
-  // Use a fixed branch axis from the source so sibling edges share one trunk.
   const preferredBranchX = sourceX + BRANCH_OFFSET;
   const maxBranchX = targetX - MIN_TARGET_GAP;
   const branchX =
     preferredBranchX < maxBranchX ? preferredBranchX : (sourceX + targetX) / 2;
 
-  // Round to integer pixels to eliminate subpixel anti-alias jaggedness.
   const sx = Math.round(sourceX);
   const sy = Math.round(sourceY);
   const bx = Math.round(branchX);
@@ -35,5 +33,13 @@ export function BranchEdge({
     `L ${tx} ${ty}`,
   ].join(" ");
 
-  return <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />;
+  const mergedStyle: React.CSSProperties = {
+    stroke: "var(--muted-foreground)",
+    strokeOpacity: 0.7,
+    strokeWidth: 1.5,
+    fill: "none",
+    ...style,
+  };
+
+  return <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={mergedStyle} />;
 }
