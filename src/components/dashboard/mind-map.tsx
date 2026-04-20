@@ -947,12 +947,12 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         title={isTaskDone ? '完了を取消' : '完了にする'}
                     >
                         <span className={cn(
-                            "w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors",
+                            "w-3 h-3 rounded-[3px] border flex items-center justify-center transition-colors",
                             isTaskDone
                                 ? "bg-primary border-primary text-primary-foreground"
                                 : "border-muted-foreground/50 hover:border-foreground bg-background"
                         )}>
-                            {isTaskDone && <Check className="w-3 h-3" strokeWidth={3} />}
+                            {isTaskDone && <Check className="w-2 h-2" strokeWidth={3.5} />}
                         </span>
                     </button>
                 )}
@@ -1021,36 +1021,37 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                     </div>
                 )}
 
-                {/* Child Count Badge (折りたたみ兼子数表示) */}
-                {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
-                    <button
-                        type="button"
-                        className={cn(
-                            "nodrag nopan shrink-0 flex items-center gap-0.5 pl-1.5 pr-1 h-5 rounded-full text-[10px] font-semibold transition-colors",
-                            data?.collapsed
-                                ? "bg-primary/15 text-primary hover:bg-primary/25"
-                                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            data.onToggleCollapse?.();
-                        }}
-                        aria-label={data?.collapsed ? `${data.childCount ?? 0}件の子を展開` : '折りたたむ'}
-                        title={data?.collapsed ? `${data.childCount ?? 0}件の子を展開` : '折りたたむ'}
-                    >
-                        <span className="leading-none">{data?.childCount ?? 0}</span>
-                        {data?.collapsed
-                            ? <ChevronRight className="w-2.5 h-2.5" strokeWidth={2.5} />
-                            : <ChevronDown className="w-2.5 h-2.5" strokeWidth={2.5} />}
-                    </button>
-                )}
+                {/* Menu column: 子数バッジ(上段・極小) + ハンバーガー(下段) を縦積み */}
+                <div className="flex flex-col items-center shrink-0 ml-0.5 leading-none gap-0">
+                    {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
+                        <button
+                            type="button"
+                            className={cn(
+                                "nodrag nopan flex items-center gap-px px-0.5 h-2.5 rounded-sm text-[9px] font-semibold transition-colors",
+                                data?.collapsed
+                                    ? "text-primary hover:bg-primary/15"
+                                    : "text-muted-foreground/70 hover:text-foreground hover:bg-muted/50"
+                            )}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                data.onToggleCollapse?.();
+                            }}
+                            aria-label={data?.collapsed ? `${data.childCount ?? 0}件の子を展開` : '折りたたむ'}
+                            title={data?.collapsed ? `${data.childCount ?? 0}件の子を展開` : '折りたたむ'}
+                        >
+                            <span>{data?.childCount ?? 0}</span>
+                            {data?.collapsed
+                                ? <ChevronRight className="w-2 h-2" strokeWidth={3} />
+                                : <ChevronDown className="w-2 h-2" strokeWidth={3} />}
+                        </button>
+                    )}
 
                 {/* Quick Action Menu */}
                 <Dialog open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
                     <DialogTrigger asChild>
                         <button
                             type="button"
-                            className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0 ml-0.5"
+                            className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0"
                             onClick={(e) => e.stopPropagation()}
                             title="タスク詳細設定"
                         >
@@ -1356,6 +1357,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         </div>
                     </DialogContent>
                 </Dialog>
+                </div>
             </div>
 
             {/* Row 2: メタデータ（値が設定されている場合のみ表示） */}
