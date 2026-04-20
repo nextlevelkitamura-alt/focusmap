@@ -20,7 +20,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, StickyNote, ImagePlus, Copy, Link2, Sparkles } from "lucide-react";
+import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, StickyNote, ImagePlus, Copy, Link2, Sparkles, Check, ChevronDown, ChevronRight } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
@@ -28,7 +28,6 @@ import { useDrag } from "@/contexts/DragContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
 import { DateTimePicker } from "@/lib/dynamic-imports";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
@@ -76,6 +75,7 @@ type TaskNodeData = {
     habit_end_date?: string | null;
     status?: string;
     hasChildren?: boolean;
+    childCount?: number;
     onSave?: (title: string) => Promise<void> | void;
     onPromote?: () => Promise<void> | void;
     onAddChild?: () => Promise<void> | void;
@@ -337,7 +337,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps<ProjectNodeData>) 
             ) : (
                 <div className="w-full truncate">{data?.label ?? 'Project'}</div>
             )}
-            <Handle type="source" position={Position.Right} className="!bg-primary-foreground" />
+            <Handle type="source" position={Position.Right} className="!w-0 !h-0 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
         </div>
     );
 });
@@ -552,7 +552,29 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     }, [editValue]);
 
     const saveValue = useCallback(async () => {
-        const trimmed = editValue.trim() || 'Task';
+        const rawTrimmed = editValue.trim();
+
+        // 空タイトルかつ他に情報を持たない（子・メモ・画像・スケジュール・見積もり・優先度がない）
+        // タスクは自動削除する。新規作成時に何も入力せず離脱した場合のゴーストノード残留を防ぐため。
+        if (!rawTrimmed) {
+            const hasAttachedData =
+                !!data?.hasChildren ||
+                !!data?.memo ||
+                (Array.isArray(data?.memo_images) && data.memo_images.length > 0) ||
+                !!data?.scheduled_at ||
+                ((data?.estimatedDisplayMinutes ?? 0) > 0) ||
+                data?.priority != null;
+            if (!hasAttachedData && data?.onDelete) {
+                Promise.resolve()
+                    .then(() => data.onDelete!())
+                    .catch((error: unknown) => {
+                        console.error('[TaskNode] Auto-delete failed:', error);
+                    });
+                return '';
+            }
+        }
+
+        const trimmed = rawTrimmed || 'Task';
 
         if (trimmed !== data?.label && data?.onSave) {
             Promise.resolve()
@@ -908,20 +930,32 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
             )}
             {/* Row 1: テキスト + メニュー */}
             <div className="flex items-center gap-1 w-full">
-                {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
+                <Handle type="target" position={Position.Left} className="!w-0 !h-0 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
+
+                {/* Done Checkbox (完了トグル) */}
+                {settings.showStatus && (
                     <button
                         type="button"
-                        className="nodrag nopan w-3 h-3 text-[10px] leading-none text-muted-foreground hover:text-foreground shrink-0"
+                        role="checkbox"
+                        aria-checked={isTaskDone}
+                        aria-label={isTaskDone ? '完了を取消' : '完了にする'}
+                        className="nodrag nopan shrink-0 p-1 -m-1 flex items-center justify-center"
                         onClick={(e) => {
                             e.stopPropagation();
-                            data.onToggleCollapse?.();
+                            data?.onUpdateStatus?.(isTaskDone ? 'todo' : 'done');
                         }}
-                        aria-label={data?.collapsed ? 'Expand' : 'Collapse'}
+                        title={isTaskDone ? '完了を取消' : '完了にする'}
                     >
-                        {data?.collapsed ? '>' : 'v'}
+                        <span className={cn(
+                            "w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors",
+                            isTaskDone
+                                ? "bg-primary border-primary text-primary-foreground"
+                                : "border-muted-foreground/50 hover:border-foreground bg-background"
+                        )}>
+                            {isTaskDone && <Check className="w-3 h-3" strokeWidth={3} />}
+                        </span>
                     </button>
                 )}
-                <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-1 !h-1" />
 
                 {/* Calendar Drag Handle (HTML5 Drag) */}
                 <div
@@ -933,10 +967,6 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 >
                     <GripVertical className="w-3 h-3" />
                 </div>
-
-                {settings.showStatus && (
-                    <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", isTaskDone ? "bg-primary" : "bg-muted-foreground/30")} />
-                )}
 
                 {/* Habit Icon Badge */}
                 {data?.is_habit && data?.habit_icon && (
@@ -991,6 +1021,30 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                     </div>
                 )}
 
+                {/* Child Count Badge (折りたたみ兼子数表示) */}
+                {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
+                    <button
+                        type="button"
+                        className={cn(
+                            "nodrag nopan shrink-0 flex items-center gap-0.5 pl-1.5 pr-1 h-5 rounded-full text-[10px] font-semibold transition-colors",
+                            data?.collapsed
+                                ? "bg-primary/15 text-primary hover:bg-primary/25"
+                                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            data.onToggleCollapse?.();
+                        }}
+                        aria-label={data?.collapsed ? `${data.childCount ?? 0}件の子を展開` : '折りたたむ'}
+                        title={data?.collapsed ? `${data.childCount ?? 0}件の子を展開` : '折りたたむ'}
+                    >
+                        <span className="leading-none">{data?.childCount ?? 0}</span>
+                        {data?.collapsed
+                            ? <ChevronRight className="w-2.5 h-2.5" strokeWidth={2.5} />
+                            : <ChevronDown className="w-2.5 h-2.5" strokeWidth={2.5} />}
+                    </button>
+                )}
+
                 {/* Quick Action Menu */}
                 <Dialog open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
                     <DialogTrigger asChild>
@@ -1016,26 +1070,6 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                     >
                         <div className="grid h-full grid-cols-2 gap-3">
                             <div className="min-h-0 overflow-y-auto pr-1 space-y-1.5">
-                        {/* Task Completion */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">タスク</div>
-                        <div className="nodrag nopan px-2 pb-2">
-                            <button
-                                type="button"
-                                className="flex items-center justify-between w-full h-8 rounded px-1 hover:bg-muted/40 transition-colors"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    data?.onUpdateStatus?.(isTaskDone ? 'todo' : 'done');
-                                }}
-                            >
-                                <span className="text-xs">完了</span>
-                                <Switch
-                                    checked={isTaskDone}
-                                    onCheckedChange={(checked) => data?.onUpdateStatus?.(checked ? 'done' : 'todo')}
-                                    onClick={(e) => e.stopPropagation()}
-                                />
-                            </button>
-                        </div>
-
                         {/* Priority */}
                         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">優先度</div>
                         <div className="px-2 pb-2">
@@ -1430,7 +1464,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 )
             }
 
-            <Handle type="source" position={Position.Right} className="!bg-muted-foreground/50 !w-1 !h-1" />
+            <Handle type="source" position={Position.Right} className="!w-0 !h-0 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
         </div >
     );
 });
@@ -1560,7 +1594,33 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const [clipboardFeedback, setClipboardFeedback] = useState<string | null>(null);
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null);
-    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set());
+    const collapsedStorageKey = projectId ? `focusmap:collapsed:${projectId}` : '';
+    const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(() => {
+        if (typeof window === 'undefined' || !collapsedStorageKey) return new Set();
+        try {
+            const raw = window.localStorage.getItem(collapsedStorageKey);
+            if (!raw) return new Set();
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return new Set(parsed as string[]);
+        } catch (err) {
+            console.warn('[MindMap] Failed to restore collapsed state:', err);
+        }
+        return new Set();
+    });
+
+    // localStorage 永続化: collapsedTaskIds 変化時に保存
+    useEffect(() => {
+        if (typeof window === 'undefined' || !collapsedStorageKey) return;
+        try {
+            if (collapsedTaskIds.size === 0) {
+                window.localStorage.removeItem(collapsedStorageKey);
+            } else {
+                window.localStorage.setItem(collapsedStorageKey, JSON.stringify(Array.from(collapsedTaskIds)));
+            }
+        } catch (err) {
+            console.warn('[MindMap] Failed to persist collapsed state:', err);
+        }
+    }, [collapsedTaskIds, collapsedStorageKey]);
     const dropInfoRef = useRef<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
     const dragPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
     const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -2390,6 +2450,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         estimatedAutoMinutes: taskAutoEstimatedMinutes,
                         estimatedIsOverride: taskIsEstimatedOverride,
                         hasChildren: taskHasChildren,
+                        childCount: childTasksByParent[task.id]?.length ?? 0,
                     },
                     position: { x: xPos, y: yOffsetCursor.value },
                     draggable: true,
