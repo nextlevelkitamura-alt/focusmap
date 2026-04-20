@@ -5,6 +5,7 @@ import { Task } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
+import { useClickOutside } from "@/hooks/useClickOutside"
 import { Play, Pause, Check, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
@@ -111,6 +112,12 @@ export function TodayTimelineCalendar({
     const gridRef = useRef<HTMLDivElement>(null)
     const lastTouchYRef = useRef<number | null>(null)
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+    const expandedTaskRef = useRef<HTMLDivElement>(null)
+    useClickOutside(
+        expandedTaskRef,
+        () => setExpandedTaskId(null),
+        expandedTaskId !== null
+    )
     const [selectionState, setSelectionState] = useState<{
         pointerId: number
         anchorY: number
@@ -854,6 +861,7 @@ export function TodayTimelineCalendar({
                             return (
                                 <div
                                     key={`${item.source}-${id}`}
+                                    ref={isExpanded ? expandedTaskRef : undefined}
                                     className={cn(
                                         "absolute select-none",
                                         isDragTarget ? "touch-none" : "touch-pan-y",
