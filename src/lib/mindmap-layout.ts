@@ -76,22 +76,16 @@ export function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node
     // This prevents "gap" issues when nodes are deleted and new ones are added
     dagreGraph.nodes().forEach(n => dagreGraph.removeNode(n));
 
-    // ノードの最大高さに基づいて nodesep を動的に計算（重なり防止）
-    let maxNodeHeight = NODE_HEIGHT;
-    nodes.forEach(node => {
-        const h = node.type === 'projectNode' ? PROJECT_NODE_HEIGHT : (node.height ?? NODE_HEIGHT);
-        if (h > maxNodeHeight) maxNodeHeight = h;
-    });
-    // nodesep = 最大ノード高さの半分 + 8px余白（最低10px）
-    const dynamicNodesep = Math.max(10, Math.round(maxNodeHeight / 2) + 8);
-
+    // nodesep は固定値。過去に最大ノード高さに連動させた結果、
+    // 長文/メモ付きノードが1つあるだけで兄弟ノード間のギャップが全体的に膨張する副作用があったため、
+    // 固定の小さい値に戻す。ノード重なり防止はノード自体の height プロパティで dagre が担保する。
     dagreGraph.setGraph({
         rankdir: 'LR',
-        nodesep: dynamicNodesep,
+        nodesep: 12,
         ranksep: 70,
         edgesep: 26,
         ranker: 'network-simplex',
-        align: undefined // Ensures children center around parent (default behavior)
+        align: undefined
     });
 
     nodes.forEach((node) => {
