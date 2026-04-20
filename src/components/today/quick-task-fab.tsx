@@ -27,6 +27,7 @@ export interface QuickTaskData {
     reminders: number[]
     calendar_id: string | null
     priority: number
+    memo?: string | null
 }
 
 export interface CalendarOption {
@@ -81,6 +82,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
     const [isDurationPickerOpen, setIsDurationPickerOpen] = useState(false)
     const [calendarId, setCalendarId] = useState<string | null>(null)
     const [priority, setPriority] = useState<Priority>(3)
+    const [memo, setMemo] = useState("")
+    const memoRef = useRef<HTMLTextAreaElement>(null)
 
     const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -114,6 +117,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
         setIsDurationPickerOpen(false)
         setCalendarId(null)
         setPriority(3)
+        setMemo("")
+        if (memoRef.current) memoRef.current.style.height = "auto"
     }, [])
 
     const handleScheduledDateChange = useCallback((nextDate: Date | undefined) => {
@@ -134,6 +139,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
             reminders: reminder >= 0 ? [reminder] : [],
             calendar_id: calendarId,
             priority,
+            memo: memo.trim() || null,
         })
 
         resetForm()
@@ -354,6 +360,27 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
                                 open={isDurationPickerOpen}
                                 onOpenChange={setIsDurationPickerOpen}
                                 trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
+                            />
+                        </div>
+
+                        {/* Memo */}
+                        <div>
+                            <label className="text-xs text-muted-foreground mb-1 block">メモ（任意）</label>
+                            <textarea
+                                ref={memoRef}
+                                placeholder="メモを入力..."
+                                value={memo}
+                                onChange={(e) => {
+                                    setMemo(e.target.value)
+                                    e.target.style.height = "auto"
+                                    e.target.style.height = `${e.target.scrollHeight}px`
+                                }}
+                                rows={1}
+                                className={cn(
+                                    "w-full px-3 py-2.5 rounded-md border border-input bg-background text-sm",
+                                    "focus:outline-none focus:ring-2 focus:ring-ring",
+                                    "resize-none overflow-hidden leading-relaxed"
+                                )}
                             />
                         </div>
 

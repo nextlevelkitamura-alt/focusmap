@@ -19,6 +19,7 @@ import type { AiTask, AiTaskStatus } from '@/types/ai-task'
 import { AiTaskApprovalCard } from './ai-task-approval-card'
 import { AuthStatusBar } from './auth-status-bar'
 import { SetupGuideBanner } from './setup-guide-banner'
+import { YarukotoTaskRow } from './yarukoto-task-row'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { useClickOutside } from '@/hooks/useClickOutside'
@@ -187,7 +188,11 @@ export function TodayTaskBoard({
       seen.add(t.id)
       return true
     })
-    const todo = unique
+
+    // 親タスクがこのリストに居る場合、サブタスクは親の下に再帰展開されるため
+    // boardItems からは除外（孤児サブタスクは単独で表示される）
+    const uniqueIds = new Set(unique.map(t => t.id))
+    const rootTasks = unique.filter(t => !t.parent_task_id || !uniqueIds.has(t.parent_task_id))
     const doneCount = unique.filter(t => t.status === 'done').length
 
     const taskGoogleEventIds = new Set(
@@ -202,7 +207,7 @@ export function TodayTaskBoard({
 
     const items: BoardItem[] = [
       ...events.map(e => ({ kind: 'event' as const, data: e, sortTime: new Date(e.start_time).getTime() })),
-      ...todo.map(t => ({ kind: 'task' as const, data: t, sortTime: t.scheduled_at ? new Date(t.scheduled_at).getTime() : Infinity })),
+      ...rootTasks.map(t => ({ kind: 'task' as const, data: t, sortTime: t.scheduled_at ? new Date(t.scheduled_at).getTime() : Infinity })),
       ...todayAiSchedule.map(a => ({
         kind: 'ai' as const,
         data: a,
@@ -213,7 +218,7 @@ export function TodayTaskBoard({
     ]
     items.sort((a, b) => a.sortTime - b.sortTime)
 
-    return { boardItems: items, doneCount, eventCount: events.length, todoCount: todo.length - doneCount }
+    return { boardItems: items, doneCount, eventCount: events.length, todoCount: unique.length - doneCount }
   }, [logic.todayScheduledTasks, logic.unscheduledTasks, logic.calendarEvents, logic.today, logic.tomorrow, allTasks, todayAiSchedule])
 
   const projectNameMap = useMemo(() => {
@@ -510,41 +515,17 @@ export function TodayTaskBoard({
                   )
                 }
                 const task = item.data
-                const projectName = task.project_id ? projectNameMap.get(task.project_id) : null
-                const taskDone = task.status === 'done'
                 return (
-                  <div
+                  <YarukotoTaskRow
                     key={`task-${task.id}`}
-                    className="group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
-                  >
-                    <button
-                      onClick={() => onDeleteTask?.(task.id)}
-                      className="opacity-0 group-hover:opacity-100 pl-2 pr-1 py-1 text-muted-foreground hover:text-destructive transition-all shrink-0"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={() => logic.toggleTask(task.id)}
-                      className="flex items-center gap-3 py-2.5 px-3 flex-1 min-w-0 text-left"
-                    >
-                      {taskDone
-                        ? <CheckSquare className="w-4 h-4 text-primary shrink-0" />
-                        : <Square className="w-4 h-4 text-muted-foreground/40 shrink-0" />
-                      }
-                      {task.scheduled_at && (
-                        <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
-                          {formatScheduledTime(task.scheduled_at)}
-                          {(task.estimated_time ?? 0) > 0 && <span className="text-muted-foreground/50 ml-1">{task.estimated_time}分</span>}
-                        </span>
-                      )}
-                      <span className={cn("text-sm truncate", taskDone && "line-through text-muted-foreground")}>{task.title}</span>
-                      {projectName && (
-                        <span className="ml-2 text-[10px] text-muted-foreground/60 bg-muted rounded px-1.5 py-0.5">
-                          {projectName}
-                        </span>
-                      )}
-                    </button>
-                  </div>
+                    task={task}
+                    depth={0}
+                    childTasksByParentId={logic.childTasksByParentId}
+                    projectNameMap={projectNameMap}
+                    onToggle={logic.toggleTask}
+                    onDelete={onDeleteTask}
+                    variant="desktop"
+                  />
                 )
               })}
 

@@ -16,6 +16,7 @@ import { useAiTasks } from '@/hooks/useAiTasks'
 import type { AiTask, AiTaskStatus } from '@/types/ai-task'
 import { AiTaskApprovalCard } from './ai-task-approval-card'
 import { AuthStatusBar } from './auth-status-bar'
+import { YarukotoTaskRow } from './yarukoto-task-row'
 
 type BoardItem =
   | { kind: 'event'; data: CalendarEvent; sortTime: number }
@@ -136,6 +137,11 @@ export function TodayBoard({
       return 0
     })
 
+    // 親タスクが todo に居る場合、サブタスクは親の下に再帰展開されるため
+    // boardItems からは除外（孤児サブタスクは単独で表示される）
+    const todoIds = new Set(todo.map(t => t.id))
+    const rootTodo = todo.filter(t => !t.parent_task_id || !todoIds.has(t.parent_task_id))
+
     // カレンダーイベント（タスクと紐づいていないもの）
     const taskGoogleEventIds = new Set(
       allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
@@ -155,7 +161,7 @@ export function TodayBoard({
         data: e,
         sortTime: new Date(e.start_time).getTime(),
       })),
-      ...todo.map(t => ({
+      ...rootTodo.map(t => ({
         kind: 'task' as const,
         data: t,
         sortTime: t.scheduled_at ? new Date(t.scheduled_at).getTime() : Infinity,
@@ -305,26 +311,15 @@ export function TodayBoard({
                 )
               }
               const task = item.data
-              const taskDone = task.status === 'done'
               return (
-                <button
+                <YarukotoTaskRow
                   key={`task-${task.id}`}
-                  onClick={() => logic.toggleTask(task.id)}
-                  className="w-full flex items-center gap-3 py-3 px-3 rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-colors text-left min-h-[44px]"
-                >
-                  {taskDone
-                    ? <CheckSquare className="w-5 h-5 text-primary shrink-0" />
-                    : <Square className="w-5 h-5 text-muted-foreground/40 shrink-0" />
-                  }
-                  {task.scheduled_at && (
-                    <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
-                      {formatScheduledTime(task.scheduled_at)}
-                    </span>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <span className={cn("text-sm", taskDone && "line-through text-muted-foreground")}>{task.title}</span>
-                  </div>
-                </button>
+                  task={task}
+                  depth={0}
+                  childTasksByParentId={logic.childTasksByParentId}
+                  onToggle={logic.toggleTask}
+                  variant="mobile"
+                />
               )
             })}
 

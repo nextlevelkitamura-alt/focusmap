@@ -326,6 +326,7 @@ export function DashboardClient({
         reminders: number[]
         calendar_id: string | null
         priority: number
+        memo?: string | null
     }) => {
         const optimisticId = crypto.randomUUID()
         const optimisticTask: Task = {
@@ -393,6 +394,7 @@ export function DashboardClient({
                         estimated_time: taskData.estimated_time,
                         calendar_id: taskData.calendar_id,
                         priority: taskData.priority,
+                        memo: taskData.memo ?? null,
                     }),
                 })
 

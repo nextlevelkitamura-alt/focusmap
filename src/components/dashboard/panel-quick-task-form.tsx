@@ -65,6 +65,8 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
     const [calendarId, setCalendarId] = useState<string | null>(null)
     const [priority, setPriority] = useState<Priority>(3)
     const [isDurationPickerOpen, setIsDurationPickerOpen] = useState(false)
+    const [memo, setMemo] = useState("")
+    const memoRef = useRef<HTMLTextAreaElement>(null)
 
     const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -102,6 +104,8 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
         setCalendarId(null)
         setPriority(3)
         setIsDurationPickerOpen(false)
+        setMemo("")
+        if (memoRef.current) memoRef.current.style.height = "auto"
         onDraftChange?.({
             title: "",
             scheduledDate: null,
@@ -123,6 +127,7 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
                 reminders: reminder >= 0 ? [reminder] : [],
                 calendar_id: calendarId,
                 priority,
+                memo: memo.trim() || null,
             })
             resetForm()
             setIsOpen(false)
@@ -249,6 +254,22 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
                                 <ChevronDown className="w-4 h-4 text-muted-foreground" />
                             </button>
                         }
+                    />
+                </div>
+
+                <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground block">メモ（任意）</label>
+                    <textarea
+                        ref={memoRef}
+                        placeholder="メモを入力..."
+                        value={memo}
+                        onChange={(e) => {
+                            setMemo(e.target.value)
+                            e.target.style.height = "auto"
+                            e.target.style.height = `${e.target.scrollHeight}px`
+                        }}
+                        rows={1}
+                        className="w-full px-3 py-2.5 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none overflow-hidden leading-relaxed"
                     />
                 </div>
 

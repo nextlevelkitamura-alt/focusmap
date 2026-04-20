@@ -328,6 +328,25 @@ export function useTodayViewLogic({
         [localTasks]
     )
 
+    // 親タスク ID → 子タスク配列 のマップ（やることカラムでサブタスクを
+    // 親の下にインデント展開するために使用）
+    const childTasksByParentId = useMemo(() => {
+        const map = new Map<string, Task[]>()
+        for (const t of localTasks) {
+            if (t.deleted_at) continue
+            if (t.is_group) continue
+            if (!t.parent_task_id) continue
+            const arr = map.get(t.parent_task_id) ?? []
+            arr.push(t)
+            map.set(t.parent_task_id, arr)
+        }
+        for (const [k, arr] of map.entries()) {
+            arr.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+            map.set(k, arr)
+        }
+        return map
+    }, [localTasks])
+
     // Project name map
     const projectNameMap = useMemo(() => {
         const map = new Map<string, string>()
@@ -1000,6 +1019,7 @@ export function useTodayViewLogic({
         todayScheduledTasks,
         overflowTasks,
         unscheduledTasks,
+        childTasksByParentId,
 
         // Calendar
         calendars,
