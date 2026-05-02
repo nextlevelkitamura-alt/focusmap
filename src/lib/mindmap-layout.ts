@@ -10,13 +10,14 @@ export const NODE_HEIGHT = 36;
 export const PROJECT_NODE_WIDTH = 220;
 export const PROJECT_NODE_HEIGHT = 52;
 export const NODE_MAX_WIDTH = 200;
+export const NODE_MIN_WIDTH = 120;
+export const NODE_RESIZE_MAX_WIDTH = 500;
 const NODE_TEXT_LINE_HEIGHT = 16;
 const NODE_VERTICAL_PADDING = 12;
 const NODE_INFO_ROW_HEIGHT = 16;
 // 固定要素の実幅: padding(12) + grip(16) + gap×3(12) + statusDot(6) + menuBtn(20) ≈ 70px
 // collapseBtn有りの場合は+16px。NODE_MIN_WIDTHでカバー
 const NODE_TEXT_RESERVED_WIDTH = 70;
-const NODE_MIN_WIDTH = 120;
 
 /** テキストの視覚的な幅をピクセル単位で推定（全角≈13.5px, 半角≈7.5px @13px font-semibold） */
 const estimateTextWidthPx = (text: string): number => {

@@ -35,7 +35,8 @@ import { format } from "date-fns";
 import { ja } from "date-fns/locale";
 import {
     NODE_WIDTH, NODE_HEIGHT, PROJECT_NODE_WIDTH, PROJECT_NODE_HEIGHT,
-    estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements
+    estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements,
+    NODE_MIN_WIDTH, NODE_RESIZE_MAX_WIDTH,
 } from "@/lib/mindmap-layout";
 import { BranchEdge } from "@/components/mindmap/branch-edge";
 
@@ -98,6 +99,7 @@ type TaskNodeData = {
     collapsed?: boolean;
     google_event_id?: string | null;
     onUpdateStatus?: (status: string) => void;
+    onResize?: (newWidth: number, commit: boolean) => void;
     estimatedIsOverride?: boolean;
     estimatedAutoMinutes?: number;
     onUpdateScheduledAt?: (scheduledAt: string | null) => void;
@@ -1486,6 +1488,41 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
             }
 
             <Handle type="source" position={Position.Right} className="!w-1 !h-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0 !pointer-events-none" />
+
+            {/* Resize handle — right edge */}
+            {data?.onResize && (
+                <div
+                    className="nodrag nopan absolute top-0 bottom-0 flex items-center justify-center cursor-col-resize select-none opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                    style={{ right: -5, width: 10 }}
+                    onPointerDown={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const el = e.currentTarget as HTMLElement;
+                        el.setPointerCapture(e.pointerId);
+                        const startX = e.clientX;
+                        const startWidth = typeof data.nodeWidth === 'number' ? data.nodeWidth : NODE_WIDTH;
+
+                        const onMove = (me: PointerEvent) => {
+                            const delta = me.clientX - startX;
+                            const newWidth = Math.max(NODE_MIN_WIDTH, Math.min(NODE_RESIZE_MAX_WIDTH, startWidth + delta));
+                            data.onResize?.(newWidth, false);
+                        };
+
+                        const onUp = (me: PointerEvent) => {
+                            const delta = me.clientX - startX;
+                            const newWidth = Math.max(NODE_MIN_WIDTH, Math.min(NODE_RESIZE_MAX_WIDTH, startWidth + delta));
+                            data.onResize?.(newWidth, true);
+                            el.removeEventListener('pointermove', onMove as EventListener);
+                            el.removeEventListener('pointerup', onUp as EventListener);
+                        };
+
+                        el.addEventListener('pointermove', onMove as EventListener);
+                        el.addEventListener('pointerup', onUp as EventListener);
+                    }}
+                >
+                    <div className="w-0.5 h-8 bg-muted-foreground/30 group-hover:bg-primary/50 rounded-full transition-colors" />
+                </div>
+            )}
         </div >
     );
 });
@@ -1654,6 +1691,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // Local node state for smooth drag tracking (decoupled from static dagre layout)
     const [nodes, setNodes] = useState<Node[]>([]);
+
+    // User-resized node widths (taskId → custom width)
+    const [nodeWidthOverrides, setNodeWidthOverrides] = useState<Map<string, number>>(new Map());
 
     const markUserAction = useCallback(() => {
         lastUserActionAtRef.current = Date.now();
@@ -2452,7 +2492,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     ? (taskIsEstimatedOverride ? (task.estimated_time ?? 0) : taskAutoEstimatedMinutes)
                     : (task.estimated_time ?? 0);
                 const xPos = BASE_X + (depth * X_STEP);
-                const taskNodeWidth = estimateTaskNodeWidth(task.title || '');
+                const taskNodeWidth = nodeWidthOverrides.get(task.id) ?? estimateTaskNodeWidth(task.title || '');
 
                 const taskHasInfo = (taskDisplayEstimatedMinutes > 0)
                     || task.priority != null
@@ -2533,8 +2573,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             parentToChildIds.forEach((childIds) => {
                 const taskChildren = childIds.filter(id => nodeById.get(id)?.type === 'taskNode');
                 if (taskChildren.length < 2) return;
+                // 手動リサイズ済みノードを除いた最大幅で揃える（オーバーライドは個別に確定済み）
                 const maxWidth = Math.max(...taskChildren.map(id => (nodeById.get(id)?.width as number) ?? 0));
                 taskChildren.forEach(id => {
+                    // 手動リサイズ済みノードは兄弟揃えをスキップ
+                    if (nodeWidthOverrides.has(id)) return;
                     const n = nodeById.get(id);
                     if (!n || n.width === maxWidth) return;
                     const task = dataMap.get(id);
@@ -2557,7 +2600,31 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
         const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(resultNodes, resultEdges);
         return { structureNodes: layouted, edges: layoutedEdges, taskDataMap: dataMap };
-    }, [projectId, groupsJson, tasksJson, project?.title, collapsedTaskIds]);
+    }, [projectId, groupsJson, tasksJson, project?.title, collapsedTaskIds, nodeWidthOverrides]);
+
+    const handleResizeNode = useCallback((taskId: string, newWidth: number, commit: boolean) => {
+        setNodes(nds => nds.map(n => {
+            if (n.id !== taskId) return n;
+            const label = (n.data as TaskNodeData).label ?? '';
+            const taskData = taskDataMap.get(taskId);
+            const hasInfo = taskData ? (
+                (taskData.estimatedDisplayMinutes > 0) ||
+                taskData.priority != null ||
+                !!taskData.scheduled_at ||
+                !!taskData.memo ||
+                !!(taskData.memo_images && taskData.memo_images.length > 0)
+            ) : false;
+            const newHeight = estimateTaskNodeHeight(label, hasInfo, newWidth);
+            return { ...n, width: newWidth, height: newHeight, data: { ...n.data, nodeWidth: newWidth } };
+        }));
+        if (commit) {
+            setNodeWidthOverrides(prev => {
+                const next = new Map(prev);
+                next.set(taskId, newWidth);
+                return next;
+            });
+        }
+    }, [taskDataMap]);
 
     // ===== STEP 2: Inject interactive data (cheap, runs on selection/edit/settings change) =====
     const layoutNodes = useMemo(() => {
@@ -2589,11 +2656,27 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             const taskData = taskDataMap.get(taskId);
             const triggerEdit = pendingEditNodeId === taskId;
 
+            // Apply user-resized width override if present
+            const overrideWidth = nodeWidthOverrides.get(taskId);
+            let baseNode = node;
+            if (overrideWidth !== undefined) {
+                const hasInfo = taskData ? (
+                    (taskData.estimatedDisplayMinutes > 0) ||
+                    taskData.priority != null ||
+                    !!taskData.scheduled_at ||
+                    !!taskData.memo ||
+                    !!(taskData.memo_images && taskData.memo_images.length > 0)
+                ) : false;
+                const newHeight = estimateTaskNodeHeight(taskData?.title || (node.data as TaskNodeData).label || '', hasInfo, overrideWidth);
+                baseNode = { ...node, width: overrideWidth, height: newHeight };
+            }
+            const effectiveWidth = overrideWidth ?? (typeof baseNode.width === 'number' ? baseNode.width : NODE_WIDTH);
+
             return {
-                ...node,
+                ...baseNode,
                 selected: selectedNodeIds.has(taskId),
                 data: {
-                    ...node.data,
+                    ...baseNode.data,
                     isSelected: selectedNodeIds.has(taskId),
                     triggerEdit,
                     initialValue: '',
@@ -2601,7 +2684,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     isDropTarget: dropTarget?.nodeId === taskId,
                     dropPosition: dropTarget?.nodeId === taskId ? dropTarget.position : null,
                     displaySettings: displaySettings,
-                    nodeWidth: typeof node.width === 'number' ? node.width : NODE_WIDTH,
+                    nodeWidth: effectiveWidth,
+                    onResize: (newWidth: number, commit: boolean) => handleResizeNode(taskId, newWidth, commit),
                     onSave: (t: string) => cbs.saveTaskTitle(taskId, t),
                     onUpdateDate: (d: string | null) => cbs.updateTaskScheduledAt(taskId, d),
                     onUpdateScheduledAt: (d: string) => cbs.updateTaskScheduledAt(taskId, d),
@@ -2632,7 +2716,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 },
             };
         });
-    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget]);
+    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget, nodeWidthOverrides, handleResizeNode]);
 
     // Sync computed static layout to controllable local state
     useEffect(() => {
