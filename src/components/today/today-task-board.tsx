@@ -20,6 +20,7 @@ import { AiTaskApprovalCard } from './ai-task-approval-card'
 import { AuthStatusBar } from './auth-status-bar'
 import { SetupGuideBanner } from './setup-guide-banner'
 import { YarukotoTaskRow } from './yarukoto-task-row'
+import { isTaskSyncing } from '@/lib/task-sync-state'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { useClickOutside } from '@/hooks/useClickOutside'
@@ -43,6 +44,7 @@ interface TodayTaskBoardProps {
     priority: number
   }) => Promise<void>
   onDeleteTask?: (taskId: string) => Promise<void>
+  syncFailedIds?: Set<string>
 }
 
 function formatScheduledTime(scheduledAt: string | null): string | null {
@@ -81,6 +83,7 @@ export function TodayTaskBoard({
   projects = [],
   onCreateQuickTask,
   onDeleteTask,
+  syncFailedIds,
 }: TodayTaskBoardProps) {
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [isAdding, setIsAdding] = useState(false)
@@ -515,6 +518,8 @@ export function TodayTaskBoard({
                   )
                 }
                 const task = item.data
+                const failed = !!syncFailedIds?.has(task.id) && !task.google_event_id
+                const isSyncing = isTaskSyncing(task) && !failed
                 return (
                   <YarukotoTaskRow
                     key={`task-${task.id}`}
@@ -523,8 +528,10 @@ export function TodayTaskBoard({
                     childTasksByParentId={logic.childTasksByParentId}
                     projectNameMap={projectNameMap}
                     onToggle={logic.toggleTask}
-                    onDelete={onDeleteTask}
+                    onDelete={logic.handleDeleteTask}
                     variant="desktop"
+                    isSyncing={isSyncing}
+                    isSyncFailed={failed}
                   />
                 )
               })}

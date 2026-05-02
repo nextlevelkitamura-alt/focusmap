@@ -611,6 +611,9 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                             selectedDate={logic.selectedDate}
                             onQuickCreateRangeSelect={setFabRangeSelect}
+                            onConvertEventAndStartTimer={logic.handleEventStartTimer}
+                            onConvertEventAndExpand={logic.handleEventToggleExpand}
+                            pendingExpandTaskId={logic.pendingExpandTaskId}
                         />
                     ) : (
                         <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -641,6 +644,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 onDeleteTask={logic.handleDeleteTask}
                 onDeleteEvent={logic.handleDeleteEvent}
                 availableCalendars={logic.writableCalendars}
+                onCreateSubTask={logic.onCreateSubTask}
+                childTasks={logic.childTasksMap?.get(logic.editTarget?.taskId ?? '') ?? []}
+                onToggleSubTask={logic.toggleTask}
+                onConvertEventToTask={logic.handleConvertEventToTask}
                 onScheduleReminder={async (targetType, targetId, scheduledAt, title, advanceMinutes) => {
                     await logic.cancelNotifications(targetType, targetId)
                     await logic.scheduleNotification({

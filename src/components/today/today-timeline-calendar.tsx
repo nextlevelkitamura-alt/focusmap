@@ -37,6 +37,9 @@ interface TodayTimelineCalendarProps {
     childTasksMap?: Map<string, Task[]>
     onCreateSubTask?: (parentTaskId: string, title: string) => void
     onDeleteSubTask?: (taskId: string) => void
+    onConvertEventAndStartTimer?: (event: CalendarEvent) => void
+    onConvertEventAndExpand?: (event: CalendarEvent) => void
+    pendingExpandTaskId?: string | null
     projectNameMap?: Map<string, string>
     initialScrollTop?: number
     onScrollPositionChange?: (scrollTop: number) => void
@@ -58,6 +61,7 @@ interface TodayTimelineCalendarProps {
     } | null
     onQuickCreateRangeSelect?: (payload: { scheduledAt: Date; estimatedTime: number }) => void
     selectedDate?: Date
+    syncFailedIds?: Set<string>
 }
 
 // --- Helpers ---
@@ -107,6 +111,10 @@ export function TodayTimelineCalendar({
     draftPreview,
     onQuickCreateRangeSelect,
     selectedDate,
+    onConvertEventAndStartTimer,
+    onConvertEventAndExpand,
+    pendingExpandTaskId,
+    syncFailedIds,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
@@ -118,6 +126,13 @@ export function TodayTimelineCalendar({
         () => setExpandedTaskId(null),
         expandedTaskId !== null
     )
+
+    // pendingExpandTaskId が来たら即展開
+    useEffect(() => {
+        if (pendingExpandTaskId) {
+            setExpandedTaskId(pendingExpandTaskId)
+        }
+    }, [pendingExpandTaskId])
     const [selectionState, setSelectionState] = useState<{
         pointerId: number
         anchorY: number
@@ -886,6 +901,8 @@ export function TodayTimelineCalendar({
                                             isCompleted={item.isCompleted}
                                             onToggle={onToggleEvent ? () => onToggleEvent(item.id) : undefined}
                                             onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && onItemTap ? () => onItemTap(item) : undefined}
+                                            onStartTimer={onConvertEventAndStartTimer && item.originalEvent ? () => onConvertEventAndStartTimer(item.originalEvent!) : undefined}
+                                            onToggleExpand={onConvertEventAndExpand && item.originalEvent ? () => onConvertEventAndExpand(item.originalEvent!) : undefined}
                                         />
                                     ) : (
                                         <>
@@ -905,6 +922,8 @@ export function TodayTimelineCalendar({
                                                 onToggleExpand={onCreateSubTask ? () => setExpandedTaskId(prev => prev === id ? null : id) : undefined}
                                                 projectName={item.projectId ? projectNameMap?.get(item.projectId) : undefined}
                                                 accentColor={item.googleEventId ? item.color : undefined}
+                                                isSyncing={!item.googleEventId && !!item.originalTask?.calendar_id && !syncFailedIds?.has(item.originalTask.id)}
+                                                isSyncFailed={!item.googleEventId && !!syncFailedIds?.has(item.originalTask?.id ?? '')}
                                             />
                                             {isExpanded && onCreateSubTask && (
                                                 <div className="relative z-40">
@@ -981,6 +1000,8 @@ function EventBlock({
     isCompleted,
     onToggle,
     onTap,
+    onStartTimer,
+    onToggleExpand,
 }: {
     event: CalendarEvent
     currentTime: Date
@@ -988,6 +1009,8 @@ function EventBlock({
     isCompleted?: boolean
     onToggle?: () => void
     onTap?: () => void
+    onStartTimer?: () => void
+    onToggleExpand?: () => void
 }) {
     const startTime = new Date(event.start_time)
     const endTime = new Date(event.end_time)
@@ -1032,11 +1055,31 @@ function EventBlock({
                         </button>
                     )}
                     <span className={cn(
-                        "text-[11px] font-medium truncate",
+                        "text-[11px] font-medium truncate flex-1",
                         isDone ? "line-through text-muted-foreground" : "text-foreground"
                     )}>
                         {event.title}
                     </span>
+                    <div className="ml-auto flex-shrink-0 flex items-center gap-1">
+                        {onStartTimer && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onStartTimer() }}
+                                aria-label={`${event.title}のタイマーを開始`}
+                                className="p-0.5 text-muted-foreground focus:outline-none rounded"
+                            >
+                                <Play className="w-3.5 h-3.5" />
+                            </button>
+                        )}
+                        {onToggleExpand && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onToggleExpand() }}
+                                aria-label="サブタスクを追加"
+                                className="p-0.5 text-muted-foreground/60 focus:outline-none rounded"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                            </button>
+                        )}
+                    </div>
                 </div>
             ) : (
                 <>
@@ -1056,7 +1099,7 @@ function EventBlock({
                         )}
                         <span
                             className={cn(
-                                "text-[11px] font-medium leading-tight break-words",
+                                "text-[11px] font-medium leading-tight break-words flex-1",
                                 isDone ? "line-through text-muted-foreground" : "text-foreground",
                                 eventTitleLines === 1
                                     ? "truncate"
@@ -1070,6 +1113,28 @@ function EventBlock({
                     {event.location && height > 55 && (
                         <div className="text-[9px] truncate mt-0.5 text-muted-foreground/70">
                             {event.location}
+                        </div>
+                    )}
+                    {(onStartTimer || onToggleExpand) && (
+                        <div className="mt-0.5 flex items-center justify-end gap-1">
+                            {onStartTimer && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onStartTimer() }}
+                                    aria-label={`${event.title}のタイマーを開始`}
+                                    className="p-1 rounded-full active:bg-muted text-muted-foreground focus:outline-none"
+                                >
+                                    <Play className="w-4 h-4" />
+                                </button>
+                            )}
+                            {onToggleExpand && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onToggleExpand() }}
+                                    aria-label="サブタスクを追加"
+                                    className="p-1 rounded-full active:bg-muted text-muted-foreground/60 focus:outline-none"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                            )}
                         </div>
                     )}
                 </>
@@ -1095,6 +1160,8 @@ function TaskBlock({
     onToggleExpand,
     projectName,
     accentColor,
+    isSyncing = false,
+    isSyncFailed = false,
 }: {
     task: Task
     currentTime: Date
@@ -1111,6 +1178,8 @@ function TaskBlock({
     onToggleExpand?: () => void
     projectName?: string
     accentColor?: string
+    isSyncing?: boolean
+    isSyncFailed?: boolean
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
     const isRunning = timer.runningTaskId === task.id
@@ -1125,25 +1194,34 @@ function TaskBlock({
     const TASK_RGB = hexToRgb(TASK_HEX) || fallbackRgb
     const taskBg = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.25)`
     const taskBgNow = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.35)`
+    const taskBgSyncing = `rgba(${TASK_RGB.r}, ${TASK_RGB.g}, ${TASK_RGB.b}, 0.10)`
+
+    const baseStyle = isRunning
+        ? { borderLeftColor: 'var(--color-primary)', backgroundColor: 'rgba(var(--color-primary-rgb, 59,130,246), 0.15)', boxShadow: '0 0 0 1px rgba(var(--color-primary-rgb, 59,130,246), 0.4)' }
+        : isDone
+            ? { borderLeftColor: 'var(--color-muted-foreground)', backgroundColor: 'var(--color-muted)' }
+            : isNow
+                ? { borderLeftColor: TASK_HEX, backgroundColor: taskBgNow, boxShadow: `0 0 0 1px ${TASK_HEX}60` }
+                : { borderLeftColor: TASK_HEX, backgroundColor: taskBg }
+
+    const finalStyle = isSyncing && !isRunning && !isDone
+        ? { ...baseStyle, borderLeftColor: `${TASK_HEX}60`, backgroundColor: taskBgSyncing, boxShadow: 'none' }
+        : baseStyle
 
     return (
         <div
             onClick={onTap}
+            data-syncing={isSyncing || undefined}
+            data-sync-failed={isSyncFailed || undefined}
             className={cn(
-                "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+                "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-all duration-300 ease-out",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isRunning && "ring-1",
                 isDone && !isRunning && "opacity-40",
-                isNow && !isRunning && "ring-1"
+                isNow && !isRunning && !isSyncing && "ring-1",
+                isSyncFailed && "ring-1 ring-amber-400/70"
             )}
-            style={isRunning
-                ? { borderLeftColor: 'var(--color-primary)', backgroundColor: 'rgba(var(--color-primary-rgb, 59,130,246), 0.15)', boxShadow: '0 0 0 1px rgba(var(--color-primary-rgb, 59,130,246), 0.4)' }
-                : isDone
-                    ? { borderLeftColor: 'var(--color-muted-foreground)', backgroundColor: 'var(--color-muted)' }
-                    : isNow
-                        ? { borderLeftColor: TASK_HEX, backgroundColor: taskBgNow, boxShadow: `0 0 0 1px ${TASK_HEX}60` }
-                        : { borderLeftColor: TASK_HEX, backgroundColor: taskBg }
-            }
+            style={finalStyle}
         >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">

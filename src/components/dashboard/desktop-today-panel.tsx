@@ -33,6 +33,7 @@ interface DesktopTodayPanelProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
+    syncFailedIds?: Set<string>
 }
 
 // --- Component ---
@@ -45,6 +46,7 @@ export function DesktopTodayPanel({
     onCreateSubTask,
     onDeleteTask,
     onOpenAiChat,
+    syncFailedIds,
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
     const calendarAreaRef = useRef<HTMLDivElement>(null)
@@ -625,6 +627,7 @@ export function DesktopTodayPanel({
                             setTaskFormPreset({ scheduledDate: scheduledAt, estimatedTime })
                             setIsTaskFormOpen(true)
                         }}
+                        syncFailedIds={syncFailedIds}
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">

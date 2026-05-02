@@ -913,7 +913,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 (selected || data?.isSelected) && (data?.is_habit || data?.parentIsHabit)
                     ? "ring-2 ring-blue-400 ring-offset-2 ring-offset-background"
                     : (selected || data?.isSelected) && "ring-2 ring-white ring-offset-2 ring-offset-background",
-                data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-emerald-400 ring-offset-1 ring-offset-background border-emerald-400 bg-emerald-500/10",
+                data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]",
             )}
             tabIndex={0}
             style={{ width: isEditing ? estimateTaskNodeWidth(editValue) : (typeof data?.nodeWidth === 'number' ? data.nodeWidth : NODE_WIDTH) }}
@@ -923,10 +923,10 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
         >
             {/* Drop position indicators */}
             {data?.isDropTarget && data?.dropPosition === 'above' && (
-                <div className="absolute -top-1 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
+                <div className="absolute -top-1.5 left-0 right-0 h-1 bg-sky-400 rounded-full shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
             )}
             {data?.isDropTarget && data?.dropPosition === 'below' && (
-                <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.6)]" />
+                <div className="absolute -bottom-1.5 left-0 right-0 h-1 bg-sky-400 rounded-full shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
             )}
             {/* Row 1: テキスト + メニュー */}
             <div className="flex items-center gap-1 w-full">
@@ -1136,10 +1136,16 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                                 <div className="flex-1">
                                                     <EstimatedTimePopover
                                                         valueMinutes={localDurationMinutes}
-                                                        onChangeMinutes={(minutes) => setLocalDurationMinutes(minutes)}
+                                                        onChangeMinutes={(minutes) => {
+                                                            setLocalDurationMinutes(minutes);
+                                                            data?.onUpdateEstimatedTime?.(minutes);
+                                                        }}
                                                         isOverridden={!!data?.estimatedIsOverride}
                                                         autoMinutes={data?.estimatedAutoMinutes}
-                                                        onResetAuto={data?.hasChildren ? () => setLocalDurationMinutes(0) : undefined}
+                                                        onResetAuto={data?.hasChildren ? () => {
+                                                            setLocalDurationMinutes(0);
+                                                            data?.onUpdateEstimatedTime?.(0);
+                                                        } : undefined}
                                                         trigger={
                                                             <Button variant="outline" size="sm" className={cn("w-full justify-start text-xs h-8 transition-colors", hasDuration && "border-primary/40 text-foreground")}>
                                                                 <Clock className="w-3 h-3 mr-2 shrink-0" />
@@ -1157,7 +1163,11 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                                 <div className="flex-1">
                                                     <DateTimePicker
                                                         date={localScheduledAt ?? undefined}
-                                                        setDate={(date) => setLocalScheduledAt(date ?? null)}
+                                                        setDate={(date) => {
+                                                            const next = date ?? null;
+                                                            setLocalScheduledAt(next);
+                                                            data?.onUpdateScheduledAt?.(next ? next.toISOString() : null);
+                                                        }}
                                                         trigger={
                                                             <Button variant="outline" size="sm" className={cn("w-full justify-start text-xs h-8 transition-colors", hasDate && "border-primary/40")}>
                                                                 <CalendarIcon className="w-3 h-3 mr-2 shrink-0" />
@@ -1175,7 +1185,10 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                                 <div className="flex-1">
                                                     <TaskCalendarSelect
                                                         value={localCalendarId}
-                                                        onChange={(calendarId) => setLocalCalendarId(calendarId)}
+                                                        onChange={(calendarId) => {
+                                                            setLocalCalendarId(calendarId);
+                                                            data?.onUpdateCalendar?.(calendarId);
+                                                        }}
                                                         className={cn("w-full h-8 justify-start transition-colors", hasCalendar && "border-primary/40")}
                                                     />
                                                 </div>
@@ -1194,6 +1207,12 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                                             estimatedMinutes: localDurationMinutes,
                                                             calendarId: localCalendarId,
                                                         });
+                                                        setShowScheduleMenu(false);
+                                                    } catch (err: any) {
+                                                        console.error('[MindMap] Failed to register schedule:', err);
+                                                        if (typeof window !== 'undefined') {
+                                                            window.alert(err?.message || 'スケジュール登録に失敗しました');
+                                                        }
                                                     } finally {
                                                         setIsRegistering(false);
                                                     }
@@ -1624,6 +1643,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [collapsedTaskIds, collapsedStorageKey]);
     const dropInfoRef = useRef<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
+    const [dropTarget, setDropTarget] = useState<{ nodeId: string; position: 'above' | 'below' | 'as-child' } | null>(null);
     const dragPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
     const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null);
     const NODE_DRAG_THRESHOLD = 30; // 30px minimum drag distance to trigger drop
@@ -2026,8 +2046,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             .filter(n => n.id !== dragged.id);
 
         // 純粋な距離ベース: 最も近いノードをドロップターゲットにする
-        // 150px: かなり近づけないと吸い付かないようにして精度を上げる
-        const MAX_DIST = 150;
+        // 180px: 兄弟間隔が詰まったレイアウトでも吸い付くように少し緩めに
+        const MAX_DIST = 180;
         let best: { node: Node; dist: number; position: 'above' | 'below' | 'as-child' } | null = null;
 
         for (const candidate of candidates) {
@@ -2048,19 +2068,18 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 const relativeY = draggedRect.centerY - rect.top;
                 const relativeX = draggedRect.centerX - rect.centerX;
 
-                // X軸でターゲットの右側 30% 以上にカーソルがある場合は「子要素（as-child）」として扱う
-                // それ以外（左側や重なっている場合）は「兄弟要素（above/below）」として扱う
-                if (relativeX > rect.width * 0.3) {
-                    // もしターゲットの下側により近い場合は 'below' になるのを防ぎ、右側なら常に child 優先気味にする
-                    if (relativeY < rect.height * 0.25) {
+                // ターゲットの中心〜やや左までカーソルがあれば「子要素（as-child）」を優先
+                // ノードの真上にドラッグしたら基本 as-child になるよう範囲を広く取る
+                if (relativeX > -rect.width * 0.1) {
+                    if (relativeY < rect.height * 0.15) {
                         position = 'above';
-                    } else if (relativeY > rect.height * 0.75) {
+                    } else if (relativeY > rect.height * 0.85) {
                         position = 'below';
                     } else {
                         position = 'as-child';
                     }
                 } else {
-                    // 同じX位置 or 左 → 兄弟のみ（above/below）
+                    // ターゲットの十分左 → 兄弟のみ（above/below）
                     position = relativeY < rect.height * 0.5 ? 'above' : 'below';
                 }
             }
@@ -2290,6 +2309,23 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 estimated_time: params.estimatedMinutes || null,
                 calendar_id: params.calendarId,
             });
+        }
+        if (!params.scheduledAt || !params.estimatedMinutes || !params.calendarId) {
+            throw new Error('スケジュール登録には所要時間・日時・カレンダーすべて必要です');
+        }
+        const res = await fetch('/api/calendar/sync-task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                taskId,
+                scheduled_at: params.scheduledAt,
+                estimated_time: params.estimatedMinutes,
+                calendar_id: params.calendarId,
+            }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'スケジュール登録に失敗しました');
         }
     }, [onUpdateTask]);
 
@@ -2536,8 +2572,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         label: project?.title ?? 'Project',
                         onAddChild: () => cbs.createRootTaskAndFocus("New Task"),
                         isSelected: selectedNodeIds.has('project-root'),
-                        isDropTarget: false,
-                        dropPosition: null,
+                        isDropTarget: dropTarget?.nodeId === node.id,
+                        dropPosition: dropTarget?.nodeId === node.id ? dropTarget.position : null,
                         onSave: async (newTitle: string) => {
                             if (cbs.onUpdateProject && project?.id) {
                                 await cbs.onUpdateProject(project.id, newTitle);
@@ -2562,8 +2598,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     triggerEdit,
                     initialValue: '',
                     collapsed: collapsedTaskIds.has(taskId),
-                    isDropTarget: false,
-                    dropPosition: null,
+                    isDropTarget: dropTarget?.nodeId === taskId,
+                    dropPosition: dropTarget?.nodeId === taskId ? dropTarget.position : null,
                     displaySettings: displaySettings,
                     nodeWidth: typeof node.width === 'number' ? node.width : NODE_WIDTH,
                     onSave: (t: string) => cbs.saveTaskTitle(taskId, t),
@@ -2596,7 +2632,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 },
             };
         });
-    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id]);
+    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget]);
 
     // Sync computed static layout to controllable local state
     useEffect(() => {
@@ -2617,6 +2653,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             if (el) DROP_CLASSES.forEach(c => el.classList.remove(c));
         }
         dropInfoRef.current = null;
+        setDropTarget(null);
     }, []);
 
     const applyDropTargetDOM = useCallback((nodeId: string, position: 'above' | 'below' | 'as-child') => {
@@ -2715,6 +2752,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             const dist = Math.sqrt(Math.pow(node.position.x - startPos.x, 2) + Math.pow(node.position.y - startPos.y, 2));
             if (dist < NODE_DRAG_THRESHOLD) {
                 clearDropTargetDOM();
+                setDropTarget(null);
                 dragPositionsRef.current[node.id] = node.position;
                 return;
             }
@@ -2731,17 +2769,24 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             return;
         }
 
-        // 前のターゲットのクラスを除去
-        clearDropTargetDOM();
+        // 前のターゲットのクラスを除去（DOM のみ・state は次行で上書き）
+        if (prev) {
+            const prevEl = document.querySelector(`.react-flow__node[data-id="${prev.nodeId}"]`);
+            if (prevEl) DROP_CLASSES.forEach(c => prevEl.classList.remove(c));
+        }
+        dropInfoRef.current = null;
 
-        // 新しいターゲットにクラスを付与
+        // 新しいターゲットにクラスを付与 + React state も更新（リング/ライン表示用）
         if (newNodeId && newPosition) {
             applyDropTargetDOM(newNodeId, newPosition);
             dropInfoRef.current = { nodeId: newNodeId, position: newPosition };
+            setDropTarget({ nodeId: newNodeId, position: newPosition });
+        } else {
+            setDropTarget(null);
         }
 
         dragPositionsRef.current[node.id] = node.position;
-    }, [getDropInfo, clearDropTargetDOM, applyDropTargetDOM]);
+    }, [getDropInfo, applyDropTargetDOM]);
 
     const handleNodeDragStop = useCallback((_evt: React.MouseEvent, node: Node) => {
         isDraggingRef.current = false;

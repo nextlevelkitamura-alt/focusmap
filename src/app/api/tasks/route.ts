@@ -111,6 +111,8 @@ export async function POST(request: NextRequest) {
       habit_icon,
       memo,
       memo_images,
+      google_event_id,
+      source,
     } = body;
     const titleValue = (typeof title === 'string' && title.trim()) || 'New Task';
 
@@ -152,6 +154,8 @@ export async function POST(request: NextRequest) {
       habit_icon: habit_icon ?? null,
       memo: memo ?? null,
       memo_images: memo_images ?? null,
+      google_event_id: google_event_id || null,
+      source: source || 'manual',
     };
 
     // クライアントが ID を指定した場合はそれを使用（楽観的UI用）

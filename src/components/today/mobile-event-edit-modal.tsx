@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell } from "lucide-react"
+import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
@@ -9,6 +9,8 @@ import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wh
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import type { TimeBlock } from "@/lib/time-block"
+import type { Task } from "@/types/database"
+import type { CalendarEvent } from "@/types/calendar"
 import { EventMemoPopup } from "@/components/calendar/event-memo-popup"
 
 // --- Types ---
@@ -25,6 +27,10 @@ interface MobileEventEditModalProps {
     onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
     availableCalendars: { id: string; name: string; background_color?: string }[]
     onScheduleReminder?: (targetType: 'task' | 'event', targetId: string, scheduledAt: Date, title: string, advanceMinutes: number) => void
+    onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
+    childTasks?: Task[]
+    onToggleSubTask?: (taskId: string) => Promise<void>
+    onConvertEventToTask?: (event: CalendarEvent) => Promise<Task | null>
 }
 
 // --- Time helpers ---
@@ -56,6 +62,10 @@ export function MobileEventEditModal({
     onDeleteEvent,
     availableCalendars,
     onScheduleReminder,
+    onCreateSubTask,
+    childTasks = [],
+    onToggleSubTask,
+    onConvertEventToTask,
 }: MobileEventEditModalProps) {
     const [title, setTitle] = useState('')
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
@@ -66,6 +76,10 @@ export function MobileEventEditModal({
     const [isEventMemoOpen, setIsEventMemoOpen] = useState(false)
     const [reminder, setReminder] = useState(-1)
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
+    const [subtaskInput, setSubtaskInput] = useState('')
+    const [isAddingSubTask, setIsAddingSubTask] = useState(false)
+    const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null)
+    const [localChildTasks, setLocalChildTasks] = useState<Task[]>(childTasks)
 
     const timer = useTimer()
     const sheetRef = useRef<HTMLDivElement>(null)
@@ -105,6 +119,9 @@ export function MobileEventEditModal({
         setCalendarId(target.calendarId || '')
         setMemo(target.originalTask?.memo || '')
         setEventDescription(target.originalEvent?.description || '')
+        setSubtaskInput('')
+        setLinkedTaskId(target.taskId || null)
+        setLocalChildTasks(childTasks)
         if (target.source === 'task') {
             setDuration(target.estimatedTime || 60)
         } else {
@@ -125,6 +142,55 @@ export function MobileEventEditModal({
         }
     }, [target])
     /* eslint-enable react-hooks/set-state-in-effect */
+
+    // childTasks prop が更新されたときにローカル状態を同期
+    // 親が `?? []` で毎レンダー新配列を渡すため、内容が同じなら setState を skip して
+    // 無限ループを防ぐ（React は setState で同一参照を返すと再レンダーをスキップする）
+    useEffect(() => {
+        setLocalChildTasks(prev => {
+            if (prev === childTasks) return prev
+            if (prev.length !== childTasks.length) return childTasks
+            for (let i = 0; i < prev.length; i++) {
+                if (prev[i].id !== childTasks[i].id || prev[i].status !== childTasks[i].status) {
+                    return childTasks
+                }
+            }
+            return prev
+        })
+    }, [childTasks])
+
+    const handleAddSubTask = useCallback(async () => {
+        const trimmed = subtaskInput.trim()
+        if (!trimmed || !onCreateSubTask) return
+
+        let parentId = linkedTaskId
+
+        if (!parentId && target?.source !== 'task' && target?.originalEvent && onConvertEventToTask) {
+            setIsAddingSubTask(true)
+            const task = await onConvertEventToTask(target.originalEvent)
+            if (!task) { setIsAddingSubTask(false); return }
+            parentId = task.id
+            setLinkedTaskId(task.id)
+        }
+
+        if (!parentId) { setIsAddingSubTask(false); return }
+
+        setIsAddingSubTask(true)
+        try {
+            await onCreateSubTask(parentId, trimmed)
+            setSubtaskInput('')
+        } finally {
+            setIsAddingSubTask(false)
+        }
+    }, [subtaskInput, linkedTaskId, target, onConvertEventToTask, onCreateSubTask])
+
+    const handleToggleSubTask = useCallback(async (taskId: string) => {
+        if (!onToggleSubTask) return
+        setLocalChildTasks(prev => prev.map(t =>
+            t.id === taskId ? { ...t, status: t.status === 'done' ? 'todo' : 'done' } : t
+        ))
+        await onToggleSubTask(taskId)
+    }, [onToggleSubTask])
 
     // Handle swipe down to close
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -450,6 +516,68 @@ export function MobileEventEditModal({
                             ))}
                         </select>
                     </div>
+
+                    {/* サブタスク セクション（タスク・イベント共通） */}
+                    {onCreateSubTask && (
+                        <div className="space-y-1.5">
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                <ListTodo className="w-3.5 h-3.5" />
+                                サブタスク
+                            </label>
+                            {localChildTasks.length > 0 && (
+                                <div className="space-y-0.5">
+                                    {localChildTasks.map(child => (
+                                        <div key={child.id} className="flex items-center gap-2 py-1.5 px-2 rounded-lg border border-border/40 bg-background">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleToggleSubTask(child.id)}
+                                                className="flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
+                                            >
+                                                {child.status === 'done' ? (
+                                                    <CheckSquare className="w-4 h-4 text-primary" />
+                                                ) : (
+                                                    <Square className="w-4 h-4 text-muted-foreground/40" />
+                                                )}
+                                            </button>
+                                            <span className={cn(
+                                                "text-sm flex-1",
+                                                child.status === 'done' && "line-through text-muted-foreground"
+                                            )}>
+                                                {child.title}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={subtaskInput}
+                                    onChange={(e) => setSubtaskInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            handleAddSubTask()
+                                        }
+                                    }}
+                                    placeholder="サブタスクを追加..."
+                                    className="flex-1 px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleAddSubTask}
+                                    disabled={!subtaskInput.trim() || isAddingSubTask}
+                                    className="p-2 rounded-lg bg-primary/10 text-primary disabled:opacity-40 active:bg-primary/20 transition-colors"
+                                >
+                                    {isAddingSubTask ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <Plus className="w-4 h-4" />
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Memo (Task only) */}
                     {isTask && (

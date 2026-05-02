@@ -66,6 +66,7 @@ export function useTodayViewLogic({
     const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([])
     const pendingDeleteRef = useRef<string[]>([])
     pendingDeleteRef.current = pendingDeleteTaskIds
+    const [pendingExpandTaskId, setPendingExpandTaskId] = useState<string | null>(null)
     const [calendarOpen, setCalendarOpen] = useState(false)
     const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
@@ -835,14 +836,112 @@ export function useTodayViewLogic({
         }
     }, [onDeleteTaskProp, localTasks, localCalendarEvents])
 
+    // Convert calendar event to Focusmap task (for timer/subtask support)
+    const handleConvertEventToTask = useCallback(async (event: CalendarEvent): Promise<Task | null> => {
+        if (!event.google_event_id) return null
+        const durationMinutes = Math.max(1, Math.round(
+            (new Date(event.end_time).getTime() - new Date(event.start_time).getTime()) / 60000
+        ))
+        const tempId = crypto.randomUUID()
+        const optimisticTask: Task = {
+            id: tempId,
+            user_id: '',
+            project_id: null,
+            parent_task_id: null,
+            is_group: false,
+            title: event.title,
+            status: 'todo',
+            stage: 'scheduled',
+            priority: null,
+            order_index: 0,
+            scheduled_at: event.start_time,
+            estimated_time: durationMinutes,
+            actual_time_minutes: 0,
+            google_event_id: event.google_event_id,
+            calendar_event_id: null,
+            calendar_id: event.calendar_id,
+            total_elapsed_seconds: 0,
+            last_started_at: null,
+            is_timer_running: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            source: 'google_event',
+            deleted_at: null,
+            google_event_fingerprint: null,
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
+            memo: null,
+            memo_images: null,
+        }
+        setLocalTasks(prev => [...prev, optimisticTask])
+
+        try {
+            const res = await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: tempId,
+                    title: event.title,
+                    scheduled_at: event.start_time,
+                    estimated_time: durationMinutes,
+                    google_event_id: event.google_event_id,
+                    calendar_id: event.calendar_id,
+                    source: 'google_event',
+                }),
+            })
+            if (!res.ok) {
+                setLocalTasks(prev => prev.filter(t => t.id !== tempId))
+                return null
+            }
+            const { task } = await res.json()
+            setLocalTasks(prev => prev.map(t => t.id === tempId ? task : t))
+            return task as Task
+        } catch (err) {
+            console.error('[useTodayViewLogic] handleConvertEventToTask failed:', err)
+            setLocalTasks(prev => prev.filter(t => t.id !== tempId))
+            return null
+        }
+    }, [])
+
+    const handleEventStartTimer = useCallback(async (event: CalendarEvent) => {
+        const task = await handleConvertEventToTask(event)
+        if (task) timer.startTimer(task)
+    }, [handleConvertEventToTask, timer])
+
+    const handleEventToggleExpand = useCallback(async (event: CalendarEvent) => {
+        const task = await handleConvertEventToTask(event)
+        if (task) setPendingExpandTaskId(task.id)
+    }, [handleConvertEventToTask])
+
     // Delete event
+    // 削除する Google Calendar event に紐づく Focusmap タスク（source 不問）も同時に削除する。
+    // ユーザー視点では「カレンダーの予定を消したらタスクも消える」のが自然。
+    // クイック追加で作ったタスク（source='manual', google_event_id=同期後にセット）は
+    // モーダルが「予定を編集」として開くケースがあり、これまでは event だけ消えてタスクが残る不具合があった。
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
         const previousEvents = localCalendarEvents
         const previousTasks = localTasks
 
+        // 同じ google_event_id を持つタスク（source 不問）の id を全て収集
+        const linkedTaskIds = localTasks
+            .filter(t => t.google_event_id === googleEventId)
+            .map(t => t.id)
+
         removeOptimisticEvent(eventId, googleEventId)
         setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== googleEventId && e.id !== eventId))
-        setLocalTasks(prev => prev.filter(t => !(t.google_event_id === googleEventId && t.source === 'google_event')))
+        // 紐づく全タスクをローカルから除外
+        setLocalTasks(prev => prev.filter(t => t.google_event_id !== googleEventId))
+        // pendingDeleteTaskIds にも積み、props 経由の再供給で復活しないようにする
+        if (linkedTaskIds.length > 0) {
+            setPendingDeleteTaskIds(prev => {
+                const next = new Set(prev)
+                for (const id of linkedTaskIds) next.add(id)
+                return Array.from(next)
+            })
+        }
 
         fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
             method: 'DELETE',
@@ -852,6 +951,18 @@ export function useTodayViewLogic({
                     const data = await res.json().catch(() => null)
                     throw new Error(data?.error?.message || 'Failed to delete event')
                 }
+                // 紐づくタスクもサーバー側から削除（DELETE は冪等な前提）
+                for (const taskId of linkedTaskIds) {
+                    if (onDeleteTaskProp) {
+                        await onDeleteTaskProp(taskId).catch(err => {
+                            console.warn('[useTodayViewLogic] linked task delete failed:', taskId, err)
+                        })
+                    } else {
+                        await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
+                            console.warn('[useTodayViewLogic] linked task delete failed:', taskId, err)
+                        })
+                    }
+                }
                 // refetchは呼ばず、楽観的削除済みのため不要（再フェッチするとサーバーからイベントが復元されてしまう）
                 invalidateCalendarCache()
             })
@@ -859,10 +970,11 @@ export function useTodayViewLogic({
                 console.error('[useTodayViewLogic] Failed to delete event:', err)
                 setLocalCalendarEvents(previousEvents)
                 setLocalTasks(previousTasks)
+                setPendingDeleteTaskIds(prev => prev.filter(id => !linkedTaskIds.includes(id)))
                 invalidateCalendarCache()
                 broadcastCalendarSync()
             })
-    }, [removeOptimisticEvent, localCalendarEvents, localTasks])
+    }, [removeOptimisticEvent, localCalendarEvents, localTasks, onDeleteTaskProp])
 
     // Writable calendars
     const writableCalendars = useMemo(() =>
@@ -1084,5 +1196,12 @@ export function useTodayViewLogic({
 
         // Props passthrough
         onCreateSubTask: onCreateSubTaskProp,
+
+        // Event → Task conversion
+        handleConvertEventToTask,
+        handleEventStartTimer,
+        handleEventToggleExpand,
+        pendingExpandTaskId,
+        setPendingExpandTaskId,
     }
 }

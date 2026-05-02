@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { CheckSquare, Square, ChevronDown, ChevronRight, Trash2 } from 'lucide-react'
+import { CheckSquare, Square, ChevronDown, ChevronRight, Trash2, AlertCircle } from 'lucide-react'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { Task } from '@/types/database'
@@ -19,6 +19,8 @@ interface YarukotoTaskRowProps {
   onToggle: (taskId: string) => void
   onDelete?: (taskId: string) => void
   variant: 'desktop' | 'mobile'
+  isSyncing?: boolean
+  isSyncFailed?: boolean
 }
 
 export function YarukotoTaskRow({
@@ -29,6 +31,8 @@ export function YarukotoTaskRow({
   onToggle,
   onDelete,
   variant,
+  isSyncing = false,
+  isSyncFailed = false,
 }: YarukotoTaskRowProps) {
   const [isExpanded, setIsExpanded] = useState(true)
   const children = childTasksByParentId.get(task.id) ?? []
@@ -58,7 +62,14 @@ export function YarukotoTaskRow({
     return (
       <>
         <div
-          className="group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-colors"
+          data-testid="yarukoto-row"
+          data-syncing={isSyncing || undefined}
+          data-sync-failed={isSyncFailed || undefined}
+          className={cn(
+            "group flex items-center rounded-lg border border-border/60 bg-background hover:bg-muted/30 transition-all duration-300 ease-out",
+            isSyncing && "opacity-50",
+            isSyncFailed && "border-amber-400/60 bg-amber-50/40 dark:bg-amber-950/20"
+          )}
           style={{ marginLeft: indentPx }}
         >
           {onDelete && (
@@ -107,6 +118,11 @@ export function YarukotoTaskRow({
               </span>
             )}
           </button>
+          {isSyncFailed && (
+            <span className="pr-2 pl-1 text-amber-600 dark:text-amber-400 shrink-0" title="Googleカレンダー同期に失敗しました">
+              <AlertCircle className="w-3.5 h-3.5" />
+            </span>
+          )}
         </div>
         {childRows}
       </>
@@ -116,7 +132,14 @@ export function YarukotoTaskRow({
   return (
     <>
       <div
-        className="flex items-stretch rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-colors"
+        data-testid="yarukoto-row"
+        data-syncing={isSyncing || undefined}
+        data-sync-failed={isSyncFailed || undefined}
+        className={cn(
+          "flex items-stretch rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-all duration-300 ease-out",
+          isSyncing && "opacity-50",
+          isSyncFailed && "border-amber-400/60 bg-amber-50/40 dark:bg-amber-950/20"
+        )}
         style={{ marginLeft: indentPx }}
       >
         <button

@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
 import { TodayView } from "@/components/today/today-view"
-import { TodayBoard } from "@/components/today/today-board"
 import { HabitsView } from "@/components/habits/habits-view"
 import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
@@ -277,6 +276,15 @@ export function DashboardClient({
     // --- Quick Task Creation (for TodayView FAB) ---
     const [quickTasks, setQuickTasks] = useState<Task[]>([])
     const [quickTaskToast, setQuickTaskToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
+    // Googleカレンダー同期に失敗した楽観タスク ID（うっすら表示を解除する）
+    const [syncFailedIds, setSyncFailedIds] = useState<Set<string>>(new Set())
+    const syncTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+    useEffect(() => {
+        return () => {
+            for (const t of syncTimeoutsRef.current.values()) clearTimeout(t)
+            syncTimeoutsRef.current.clear()
+        }
+    }, [])
     // タスク更新のローカルオーバーライド（タイマー等の変更を即座に反映）
     const [taskOverrides, setTaskOverrides] = useState<Record<string, Partial<Task>>>({})
 
@@ -318,6 +326,9 @@ export function DashboardClient({
         return () => { if (calendarRefreshTimerRef.current) clearTimeout(calendarRefreshTimerRef.current) }
     }, [])
 
+    // handleCreateSubTask は後で定義するため、ref 経由で呼び出す（TDZ 回避）
+    const handleCreateSubTaskRef = useRef<((parentTaskId: string, title: string) => Promise<void>) | null>(null)
+
     const handleCreateQuickTask = useCallback(async (taskData: {
         title: string
         project_id: string | null
@@ -327,6 +338,7 @@ export function DashboardClient({
         calendar_id: string | null
         priority: number
         memo?: string | null
+        subtask_titles?: string[]
     }) => {
         const optimisticId = crypto.randomUUID()
         const optimisticTask: Task = {
@@ -365,6 +377,7 @@ export function DashboardClient({
 
         // 時間指定がある予定は即時にタイムラインへ反映（カレンダー選択有無に依存しない）
         const showOnTimeline = !!taskData.scheduled_at
+        const expectsCalendarSync = !!(taskData.scheduled_at && taskData.calendar_id)
         if (showOnTimeline) {
             setQuickTasks(prev => [...prev, optimisticTask])
             // カレンダービューにも即時反映（楽観的更新）
@@ -377,6 +390,30 @@ export function DashboardClient({
                     calendar_id: taskData.calendar_id,
                 })
             }
+        }
+
+        // 同期タイムアウト（15s で google_event_id が来なければ「失敗」扱いにフェード解除）
+        const markSyncFailed = () => {
+            setSyncFailedIds(prev => {
+                const next = new Set(prev)
+                next.add(optimisticId)
+                return next
+            })
+            syncTimeoutsRef.current.delete(optimisticId)
+        }
+        const clearSyncFailed = () => {
+            const t = syncTimeoutsRef.current.get(optimisticId)
+            if (t) { clearTimeout(t); syncTimeoutsRef.current.delete(optimisticId) }
+            setSyncFailedIds(prev => {
+                if (!prev.has(optimisticId)) return prev
+                const next = new Set(prev)
+                next.delete(optimisticId)
+                return next
+            })
+        }
+        if (expectsCalendarSync) {
+            const handle = setTimeout(markSyncFailed, 15000)
+            syncTimeoutsRef.current.set(optimisticId, handle)
         }
 
         // バックグラウンドで API 保存 + カレンダー同期（await しない）
@@ -400,8 +437,19 @@ export function DashboardClient({
 
                 if (!res.ok) {
                     if (showOnTimeline) setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                    clearSyncFailed()
                     setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
                     return
+                }
+
+                // 親 POST 成功 → サブタスクを順次作成（順序依存の FK 制約のため並列化しない）
+                if (taskData.subtask_titles && taskData.subtask_titles.length > 0) {
+                    const createSubTask = handleCreateSubTaskRef.current
+                    if (createSubTask) {
+                        for (const subtaskTitle of taskData.subtask_titles) {
+                            await createSubTask(optimisticId, subtaskTitle)
+                        }
+                    }
                 }
 
                 // ブラウザ通知（task_start）を作成時に即登録
@@ -445,18 +493,24 @@ export function DashboardClient({
                                     ? { ...t, google_event_id: syncData.googleEventId }
                                     : t
                             ))
+                            clearSyncFailed()
                             handleCalendarEventCreated()
+                        } else {
+                            markSyncFailed()
                         }
                         setQuickTaskToast({ type: 'success', message: `Googleカレンダーに登録しました` })
                     } else {
+                        markSyncFailed()
                         setQuickTaskToast({ type: 'info', message: 'タスクは保存しましたが、カレンダー同期に失敗しました' })
                     }
                 } else {
+                    clearSyncFailed()
                     setQuickTaskToast({ type: 'success', message: `「${taskData.title}」を保存しました` })
                 }
             } catch (err) {
                 console.error('[QuickTask] Background save failed:', err)
                 if (showOnTimeline) setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                clearSyncFailed()
                 setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
             }
         })()
@@ -594,6 +648,11 @@ export function DashboardClient({
             setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
         }
     }, [allTasksMerged, userId])
+
+    // handleCreateQuickTask から参照できるようにrefを更新
+    useEffect(() => {
+        handleCreateSubTaskRef.current = handleCreateSubTask
+    }, [handleCreateSubTask])
 
     // タスク削除（今日のビュー用）— quickTasks + taskOverrides からも削除
     const handleDeleteTaskFromToday = useCallback(async (taskId: string) => {
@@ -780,12 +839,14 @@ export function DashboardClient({
                     <>
                         {/* Mobile */}
                         <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
-                            <TodayBoard
+                            <TodayView
                                 allTasks={allTasksMerged}
                                 onUpdateTask={handleUpdateTaskWithQuickSync}
                                 projects={projects}
                                 onCreateQuickTask={handleCreateQuickTask}
+                                onCreateSubTask={handleCreateSubTask}
                                 onDeleteTask={handleDeleteTaskFromToday}
+                                onOpenAiChat={() => setIsAiChatOpen(true)}
                             />
                         </div>
                     </>
@@ -934,6 +995,7 @@ export function DashboardClient({
                             projects={projects}
                             onCreateQuickTask={handleCreateQuickTask}
                             onDeleteTask={handleDeleteTaskFromToday}
+                            syncFailedIds={syncFailedIds}
                         />
                     ) : (
                         <CenterPane
@@ -980,6 +1042,7 @@ export function DashboardClient({
                         onCreateSubTask={handleCreateSubTask}
                         onDeleteTask={handleDeleteTaskFromToday}
                         onOpenAiChat={() => setIsAiChatOpen(true)}
+                        syncFailedIds={syncFailedIds}
                     />
                 </div>
             </div>

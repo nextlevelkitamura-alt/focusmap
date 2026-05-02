@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Plus, Clock, Timer, Calendar, Star, Bell, ChevronDown, CalendarPlus, Sparkles } from "lucide-react"
+import { Plus, Clock, Timer, Calendar, Star, Bell, ChevronDown, CalendarPlus, Sparkles, ListTodo, X } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -28,6 +28,7 @@ export interface QuickTaskData {
     calendar_id: string | null
     priority: number
     memo?: string | null
+    subtask_titles?: string[]
 }
 
 export interface CalendarOption {
@@ -84,6 +85,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
     const [priority, setPriority] = useState<Priority>(3)
     const [memo, setMemo] = useState("")
     const memoRef = useRef<HTMLTextAreaElement>(null)
+    const [subtasks, setSubtasks] = useState<string[]>([])
+    const [subtaskInput, setSubtaskInput] = useState("")
 
     const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -119,6 +122,19 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
         setPriority(3)
         setMemo("")
         if (memoRef.current) memoRef.current.style.height = "auto"
+        setSubtasks([])
+        setSubtaskInput("")
+    }, [])
+
+    const handleAddSubtask = useCallback(() => {
+        const trimmed = subtaskInput.trim()
+        if (!trimmed) return
+        setSubtasks(prev => [...prev, trimmed])
+        setSubtaskInput("")
+    }, [subtaskInput])
+
+    const handleRemoveSubtask = useCallback((idx: number) => {
+        setSubtasks(prev => prev.filter((_, i) => i !== idx))
     }, [])
 
     const handleScheduledDateChange = useCallback((nextDate: Date | undefined) => {
@@ -140,12 +156,13 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
             calendar_id: calendarId,
             priority,
             memo: memo.trim() || null,
+            subtask_titles: subtasks.length > 0 ? subtasks : undefined,
         })
 
         resetForm()
         closeSheet()
         setIsSubmitting(false)
-    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, isSubmitting, onCreateTask, resetForm, closeSheet])
+    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, memo, subtasks, isSubmitting, onCreateTask, resetForm, closeSheet])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey && title.trim()) {
@@ -361,6 +378,63 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, onOpenAiChat, 
                                 onOpenChange={setIsDurationPickerOpen}
                                 trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
                             />
+                        </div>
+
+                        {/* Subtasks */}
+                        <div>
+                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                                <ListTodo className="w-3 h-3" />
+                                サブタスク（任意）
+                            </label>
+                            {subtasks.length > 0 && (
+                                <div className="space-y-1 mb-2">
+                                    {subtasks.map((st, idx) => (
+                                        <div
+                                            key={idx}
+                                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/40 border border-border/60"
+                                        >
+                                            <span className="flex-1 text-sm truncate">{st}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveSubtask(idx)}
+                                                className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-destructive active:bg-destructive/10 transition-colors"
+                                                aria-label="サブタスクを削除"
+                                            >
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    value={subtaskInput}
+                                    onChange={(e) => setSubtaskInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter" && subtaskInput.trim()) {
+                                            e.preventDefault()
+                                            handleAddSubtask()
+                                        }
+                                    }}
+                                    placeholder="サブタスクを追加..."
+                                    className="h-9 text-sm flex-1"
+                                    autoComplete="off"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleAddSubtask}
+                                    disabled={!subtaskInput.trim()}
+                                    className={cn(
+                                        "flex-shrink-0 w-9 h-9 rounded-md border border-input flex items-center justify-center transition-colors",
+                                        subtaskInput.trim()
+                                            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
+                                            : "bg-muted text-muted-foreground/50 cursor-not-allowed"
+                                    )}
+                                    aria-label="サブタスクを追加"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
 
                         {/* Memo */}

@@ -27,10 +27,9 @@ import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { BranchEdge } from "@/components/mindmap/branch-edge"
 import { createPortal } from "react-dom"
+import { estimateTaskNodeWidth, estimateTaskNodeHeight } from "@/lib/mindmap-layout"
 
 // --- Dagre Layout ---
-const NODE_WIDTH = 200
-const NESTED_NODE_WIDTH = 160
 const NODE_HEIGHT = 40
 const PROJECT_NODE_WIDTH = 220
 const PROJECT_NODE_HEIGHT = 48
@@ -41,37 +40,6 @@ const fileToDataUrl = (file: File): Promise<string> =>
         reader.onerror = () => reject(new Error('Failed to read image file'))
         reader.readAsDataURL(file)
     })
-
-/** テキストの視覚的な幅をピクセル単位で推定（全角=13px, 半角=7px） */
-const estimateTextWidthPx = (text: string): number => {
-    let width = 0
-    for (const ch of text) {
-        const code = ch.codePointAt(0) ?? 0
-        const isWide =
-            (code >= 0x3000 && code <= 0x9FFF) ||
-            (code >= 0xF900 && code <= 0xFAFF) ||
-            (code >= 0xFF01 && code <= 0xFF60) ||
-            (code >= 0xFFE0 && code <= 0xFFE6) ||
-            (code >= 0x20000 && code <= 0x2FA1F)
-        width += isWide ? 13 : 7
-    }
-    return width
-}
-
-const estimateTaskNodeHeight = (title: string, hasInfoRow: boolean, nodeWidth: number = NODE_WIDTH) => {
-    const availableWidthPx = Math.max(48, nodeWidth - 48) // パディング・アイコン分を引く
-    const text = (title || '').trim()
-    const lines = Math.max(
-        1,
-        text.split('\n').reduce((acc, line) => {
-            const linePx = estimateTextWidthPx(line)
-            return acc + Math.max(1, Math.ceil(linePx / availableWidthPx))
-        }, 0)
-    )
-    const textHeight = lines * 16 + 8 // 16px/行 + パディング
-    const infoRowHeight = hasInfoRow ? 16 : 0
-    return Math.max(NODE_HEIGHT, textHeight + infoRowHeight)
-}
 
 function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edges: Edge[] } {
     const dagreGraph = new dagre.graphlib.Graph()
@@ -87,17 +55,17 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edg
 
     dagreGraph.setGraph({ rankdir: 'LR', nodesep: dynamicNodesep, ranksep: 96, align: undefined })
 
+    const widthFor = (node: Node): number => {
+        if (node.type === 'mobileProjectNode') return PROJECT_NODE_WIDTH
+        return (node.width as number | undefined) ?? estimateTaskNodeWidth((node.data?.label as string) ?? '')
+    }
+    const heightFor = (node: Node): number => {
+        if (node.type === 'mobileProjectNode') return PROJECT_NODE_HEIGHT
+        return (node.height as number | undefined) ?? NODE_HEIGHT
+    }
+
     nodes.forEach((node) => {
-        let width = NODE_WIDTH
-        let height = NODE_HEIGHT
-        if (node.type === 'mobileProjectNode') {
-            width = PROJECT_NODE_WIDTH
-            height = PROJECT_NODE_HEIGHT
-        } else if (node.type === 'mobileTaskNode' && node.height) {
-            width = node.width ?? NODE_WIDTH
-            height = node.height
-        }
-        dagreGraph.setNode(node.id, { width, height })
+        dagreGraph.setNode(node.id, { width: widthFor(node), height: heightFor(node) })
     })
 
     edges.forEach((edge) => dagreGraph.setEdge(edge.source, edge.target))
@@ -105,13 +73,8 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edg
 
     const layoutedNodes = nodes.map((node) => {
         const pos = dagreGraph.node(node.id)
-        let width = NODE_WIDTH
-        if (node.type === 'mobileProjectNode') width = PROJECT_NODE_WIDTH
-        else if (node.type === 'mobileTaskNode') width = node.width ?? NODE_WIDTH
-        let height = NODE_HEIGHT
-        if (node.type === 'mobileProjectNode') height = PROJECT_NODE_HEIGHT
-        else if (node.type === 'mobileTaskNode' && node.height) height = node.height
-
+        const width = widthFor(node)
+        const height = heightFor(node)
         return {
             ...node,
             position: { x: pos.x - width / 2, y: pos.y - height / 2 },
@@ -269,7 +232,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     return (
         <div
             className={cn(
-                "w-[220px] h-[48px] rounded-xl bg-primary text-primary-foreground px-3 flex items-center shadow-md transition-all",
+                "min-w-[180px] max-w-[260px] min-h-[48px] rounded-xl bg-primary text-primary-foreground px-3 py-2 flex items-center shadow-md transition-all",
                 isNodeSelected && "ring-2 ring-white ring-offset-2"
             )}
         >
@@ -289,7 +252,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
                     }}
                 />
             ) : (
-                <div className="text-sm font-semibold truncate">{data?.label ?? 'Project'}</div>
+                <div className="text-sm font-semibold whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-tight">{data?.label ?? 'Project'}</div>
             )}
         </div>
     )
@@ -453,8 +416,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     return (
         <div
             className={cn(
-                "relative px-2 py-1.5 rounded-lg bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all min-h-[36px]",
-                data?.compact ? "w-[160px]" : "w-[200px]",
+                "relative px-2 py-1.5 rounded-lg bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all min-h-[36px] min-w-[140px] max-w-[220px]",
                 isHabit && "border-blue-400 bg-blue-50 dark:bg-blue-950/30",
                 isNodeSelected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
                 isNodeSelected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
@@ -515,7 +477,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         />
                     )
                 ) : (
-                    <span className={cn("flex-1 text-xs truncate", isDone && "line-through text-muted-foreground")}>
+                    <span className={cn("flex-1 text-xs whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-tight min-w-0", isDone && "line-through text-muted-foreground")}>
                         {data?.label || ''}
                     </span>
                 )}
@@ -953,10 +915,9 @@ function MobileMindMapContent({
             const parentIsHabit = parent?.is_habit ?? false
 
             const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at || !!task.memo
-            const height = estimateTaskNodeHeight(task.title, hasInfoRow)
-
             const isNested = depth >= 1
-            const nodeWidth = isNested ? NESTED_NODE_WIDTH : NODE_WIDTH
+            const nodeWidth = estimateTaskNodeWidth(task.title)
+            const height = estimateTaskNodeHeight(task.title, hasInfoRow, nodeWidth)
 
             nodes.push({
                 id: task.id,
