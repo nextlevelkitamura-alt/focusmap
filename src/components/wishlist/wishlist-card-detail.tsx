@@ -1,15 +1,16 @@
 "use client"
 
-import { useState } from "react"
-import { IdealGoalWithItems } from "@/types/database"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useMemo, useState } from "react"
+import { Calendar, Check, ImagePlus, Loader2, Minus, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Calendar, Loader2, Plus, Check, Trash2 } from "lucide-react"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
 
-const CATEGORIES = ['学習', '調査', '目標', 'アイデア', '旅行', '健康', '趣味', 'その他']
+const CATEGORIES = ["学習", "調査", "目標", "アイデア", "旅行", "健康", "趣味", "その他"]
+const QUICK_MINUTES = [30, 45, 60, 90]
 
 interface WishlistCardDetailProps {
   item: IdealGoalWithItems | null
@@ -19,28 +20,62 @@ interface WishlistCardDetailProps {
   onCalendarAdd: (item: IdealGoalWithItems) => Promise<void>
 }
 
+function linkify(text: string) {
+  const parts = text.split(/(https?:\/\/[^\s)）]+)/g)
+  return parts.map((part, index) => {
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          key={`${part}-${index}`}
+          href={part}
+          target="_blank"
+          rel="noreferrer"
+          className="text-blue-400 underline underline-offset-2"
+        >
+          {part}
+        </a>
+      )
+    }
+    return <span key={`${part}-${index}`}>{part}</span>
+  })
+}
+
 export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalendarAdd }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
-  const [newSubItem, setNewSubItem] = useState('')
+  const [newSubItem, setNewSubItem] = useState("")
+  const [tagText, setTagText] = useState("")
 
+  const tags = useMemo(() => item?.tags ?? [], [item?.tags])
   if (!item) return null
 
-  const handleBlurField = async (field: string, value: string | null) => {
-    await onUpdate(item.id, { [field]: value })
+  const scheduledAtLocal = item.scheduled_at
+    ? new Date(item.scheduled_at).toISOString().slice(0, 16)
+    : ""
+
+  const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
+
+  const changeDuration = async (delta: number) => {
+    const current = item.duration_minutes ?? 60
+    await update({ duration_minutes: Math.max(15, current + delta) })
   }
 
   const handleDateChange = async (value: string) => {
-    await onUpdate(item.id, { scheduled_at: value ? new Date(value).toISOString() : null })
+    await update({
+      scheduled_at: value ? new Date(value).toISOString() : null,
+      memo_status: value ? "time_candidates" : item.memo_status,
+    })
   }
 
   const handleAddCalendar = async () => {
     if (!item.scheduled_at || !item.duration_minutes) {
-      alert('日時と所要時間を入力してからカレンダーに追加してください。')
+      alert("日時と所要時間を入力してからカレンダーに追加してください。")
       return
     }
+    if (!window.confirm("このメモをGoogleカレンダーに登録しますか？")) return
     setIsAddingCalendar(true)
     try {
       await onCalendarAdd(item)
+      await update({ memo_status: "scheduled" })
     } finally {
       setIsAddingCalendar(false)
     }
@@ -49,119 +84,163 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
   const handleAddSubItem = async () => {
     if (!newSubItem.trim()) return
     await fetch(`/api/wishlist/${item.id}/items`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: newSubItem.trim() }),
     })
-    setNewSubItem('')
-    await onUpdate(item.id, {})
+    setNewSubItem("")
+    await update({})
   }
 
-  const scheduledAtLocal = item.scheduled_at
-    ? new Date(item.scheduled_at).toISOString().slice(0, 16)
-    : ''
+  const handleAddTag = async () => {
+    const tag = tagText.trim()
+    if (!tag || tags.includes(tag)) return
+    setTagText("")
+    await update({ tags: [...tags, tag] })
+  }
+
+  const removeTag = async (tag: string) => {
+    await update({ tags: tags.filter(t => t !== tag) })
+  }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
-          <SheetTitle className="text-left">詳細</SheetTitle>
+          <SheetTitle className="text-left">メモを編集</SheetTitle>
         </SheetHeader>
 
-        <div className="mt-4 space-y-5">
-          {/* タイトル */}
+        <div className="space-y-5 px-4 pb-6">
           <div className="space-y-1">
-            <Label>タイトル</Label>
+            <Label>メモの見出し</Label>
             <Input
               defaultValue={item.title}
-              onBlur={e => handleBlurField('title', e.target.value)}
+              onBlur={e => update({ title: e.target.value.trim() || item.title })}
               className="text-base font-semibold"
             />
           </div>
 
-          {/* カテゴリ */}
-          <div className="space-y-1">
-            <Label>カテゴリ</Label>
+          <div className="space-y-2">
+            <Label>タグ</Label>
             <div className="flex flex-wrap gap-1.5">
               {CATEGORIES.map(cat => (
                 <button
                   key={cat}
-                  onClick={() => handleBlurField('category', item.category === cat ? null : cat)}
+                  onClick={() => update({ category: item.category === cat ? null : cat })}
                   className={cn(
-                    "px-3 py-1 rounded-full text-xs border transition-colors",
+                    "min-h-9 rounded-full border px-3 text-xs transition-colors",
                     item.category === cat
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-muted text-muted-foreground border-transparent hover:border-muted-foreground"
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-muted text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {cat}
                 </button>
               ))}
             </div>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map(tag => (
+                <button
+                  key={tag}
+                  onClick={() => removeTag(tag)}
+                  className="rounded-full border px-2 py-1 text-xs text-muted-foreground hover:text-destructive"
+                >
+                  {tag} ×
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={tagText}
+                onChange={e => setTagText(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleAddTag()}
+                placeholder="タグを追加"
+              />
+              <Button variant="outline" onClick={handleAddTag}>追加</Button>
+            </div>
           </div>
 
-          {/* メモ */}
+          <div className="space-y-2 hidden md:block">
+            <Label>画像</Label>
+            <div className="flex items-center gap-2">
+              <button className="flex h-20 w-24 items-center justify-center rounded-md border border-dashed text-muted-foreground">
+                <ImagePlus className="h-5 w-5" />
+              </button>
+              <div className="h-20 w-24 rounded-md border bg-muted/40" />
+              <div className="h-20 w-24 rounded-md border bg-muted/20" />
+            </div>
+          </div>
+
           <div className="space-y-1">
             <Label>メモ</Label>
             <textarea
-              defaultValue={item.description ?? ''}
-              onBlur={(e: React.FocusEvent<HTMLTextAreaElement>) => handleBlurField('description', e.target.value || null)}
-              rows={3}
-              placeholder="詳細・メモを入力..."
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+              defaultValue={item.description ?? ""}
+              onBlur={e => update({ description: e.target.value || null })}
+              rows={6}
+              placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
+              className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
+            {item.description && (
+              <div className="rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
+                {linkify(item.description)}
+              </div>
+            )}
           </div>
 
-          {/* 日時 */}
-          <div className="space-y-1">
-            <Label>予定日時</Label>
+          <div className="space-y-3">
+            <Label>時間</Label>
             <Input
               type="datetime-local"
               defaultValue={scheduledAtLocal}
               onChange={e => handleDateChange(e.target.value)}
             />
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon" onClick={() => changeDuration(-15)} className="min-h-[44px] min-w-[44px]">
+                <Minus className="h-4 w-4" />
+              </Button>
+              <div className="flex min-h-[44px] min-w-20 items-center justify-center rounded-md border text-sm font-medium">
+                {item.duration_minutes ?? 60}分
+              </div>
+              <Button variant="outline" size="icon" onClick={() => changeDuration(15)} className="min-h-[44px] min-w-[44px]">
+                <Plus className="h-4 w-4" />
+              </Button>
+              <div className="flex flex-wrap gap-1">
+                {QUICK_MINUTES.map(minutes => (
+                  <button
+                    key={minutes}
+                    onClick={() => update({ duration_minutes: minutes })}
+                    className="min-h-9 rounded-md border px-2 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {minutes}分
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {/* 所要時間 */}
-          <div className="space-y-1">
-            <Label>所要時間（分）</Label>
-            <Input
-              type="number"
-              defaultValue={item.duration_minutes ?? ''}
-              onBlur={e => onUpdate(item.id, { duration_minutes: e.target.value ? Number(e.target.value) : null })}
-              placeholder="例: 60"
-              min={1}
-            />
-          </div>
-
-          {/* カレンダー登録 */}
           <Button
             onClick={handleAddCalendar}
             disabled={isAddingCalendar || !item.scheduled_at || !item.duration_minutes}
             variant={item.google_event_id ? "outline" : "default"}
-            className="w-full"
+            className="w-full min-h-[44px]"
           >
-            {isAddingCalendar
-              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              : <Calendar className="w-4 h-4 mr-2" />}
-            {item.google_event_id ? '📅 カレンダー登録済み' : 'カレンダーに追加'}
+            {isAddingCalendar ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calendar className="mr-2 h-4 w-4" />}
+            {item.google_event_id ? "カレンダー登録済み" : "カレンダーに入れる"}
           </Button>
 
-          {/* サブアイテム（やりたいこと） */}
           <div className="space-y-2">
-            <Label>ミクロのやりたいこと</Label>
+            <Label>サブタスク候補</Label>
             <ul className="space-y-1">
               {(item.ideal_items ?? []).map(sub => (
-                <li key={sub.id} className="flex items-center gap-2 text-sm">
+                <li key={sub.id} className="flex items-center gap-2 rounded-md border px-2 py-2 text-sm">
                   <span className={cn(
-                    "w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center",
-                    sub.is_done ? "bg-primary border-primary" : "border-muted-foreground/40"
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                    sub.is_done ? "border-primary bg-primary" : "border-muted-foreground/40",
                   )}>
-                    {sub.is_done && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+                    {sub.is_done && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
                   </span>
-                  <span className={cn("flex-1", sub.is_done && "line-through text-muted-foreground")}>
-                    {sub.title}
-                  </span>
+                  <span className={cn("flex-1", sub.is_done && "line-through text-muted-foreground")}>{sub.title}</span>
+                  {sub.session_minutes > 0 && <span className="text-xs text-muted-foreground">{sub.session_minutes}分</span>}
                 </li>
               ))}
             </ul>
@@ -169,12 +248,11 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
               <Input
                 value={newSubItem}
                 onChange={e => setNewSubItem(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAddSubItem()}
-                placeholder="やりたいことを追加..."
-                className="flex-1"
+                onKeyDown={e => e.key === "Enter" && handleAddSubItem()}
+                placeholder="サブタスク候補を追加"
               />
               <Button size="icon" variant="outline" onClick={handleAddSubItem} className="min-w-[44px]">
-                <Plus className="w-4 h-4" />
+                <Plus className="h-4 w-4" />
               </Button>
             </div>
           </div>

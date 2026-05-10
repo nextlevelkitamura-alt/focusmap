@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 
 const mainNavItems: { id: DashboardView; icon: typeof CalendarDays; label: string }[] = [
     { id: "today",     icon: CalendarDays, label: "Today" },
-    { id: "long-term", icon: Sparkles,     label: "Wish" },
+    { id: "long-term", icon: Sparkles,     label: "メモ" },
     { id: "habits",    icon: Target,       label: "習慣" },
     { id: "ai",        icon: Bot,          label: "AI" },
 ]

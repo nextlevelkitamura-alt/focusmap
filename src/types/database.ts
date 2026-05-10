@@ -702,6 +702,9 @@ export interface Database {
                     duration_minutes: number | null
                     google_event_id: string | null
                     is_completed: boolean
+                    tags: string[] | null
+                    memo_status: string | null
+                    ai_source_payload: Json | null
                     created_at: string
                     updated_at: string
                 }
@@ -727,6 +730,9 @@ export interface Database {
                     duration_minutes?: number | null
                     google_event_id?: string | null
                     is_completed?: boolean
+                    tags?: string[] | null
+                    memo_status?: string | null
+                    ai_source_payload?: Json | null
                     created_at?: string
                     updated_at?: string
                 }
@@ -752,6 +758,9 @@ export interface Database {
                     duration_minutes?: number | null
                     google_event_id?: string | null
                     is_completed?: boolean
+                    tags?: string[] | null
+                    memo_status?: string | null
+                    ai_source_payload?: Json | null
                     updated_at?: string
                 }
             }

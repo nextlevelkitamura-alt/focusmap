@@ -11,9 +11,14 @@ export async function PATCH(
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
+  const updates = {
+    ...body,
+    tags: Array.isArray(body.tags) ? body.tags : body.tags,
+    updated_at: new Date().toISOString(),
+  }
   const { data, error } = await supabase
     .from('ideal_goals')
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update(updates)
     .eq('id', id)
     .eq('user_id', user.id)
     .select('*, ideal_items(*)')

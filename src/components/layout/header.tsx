@@ -104,7 +104,7 @@ export function Header({
 
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Today', icon: <CalendarDays className="h-3.5 w-3.5" /> },
-        { id: 'long-term', label: 'Wish',  icon: <Sparkles className="h-3.5 w-3.5" /> },
+        { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
         { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
         { id: 'habits',    label: '習慣',   icon: <Target className="h-3.5 w-3.5" /> },
         { id: 'ideal',     label: '理想',   icon: <Star className="h-3.5 w-3.5" /> },

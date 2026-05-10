@@ -1,44 +1,58 @@
 "use client"
 
 import { useState } from "react"
+import { Calendar, Check, Clock, GripVertical, Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { Calendar, Check, Trash2, Clock } from "lucide-react"
-import { Button } from "@/components/ui/button"
 
-const CATEGORY_LABELS: Record<string, string> = {
-  学習: '学習',
-  調査: '調査',
-  目標: '目標',
-  アイデア: 'アイデア',
-  travel: '旅行',
-  learning: '学習',
-  health: '健康',
-  creativity: '創作',
-  career: 'キャリア',
-  hobby: '趣味',
-  other: 'その他',
-}
+type MemoItem = IdealGoalWithItems
 
 interface WishlistCardProps {
-  item: IdealGoalWithItems
-  onUpdate: (id: string, updates: Partial<IdealGoalWithItems>) => Promise<void>
+  item: MemoItem
+  onUpdate: (id: string, updates: Partial<MemoItem>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onClick: () => void
+  draggable?: boolean
+  onDragStart?: () => void
 }
 
-export function WishlistCard({ item, onUpdate, onDelete, onClick }: WishlistCardProps) {
+function formatDateTime(value: string | null): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const day = ["日", "月", "火", "水", "木", "金", "土"][date.getDay()]
+  const time = date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })
+  return `${date.getMonth() + 1}/${date.getDate()}(${day}) ${time}`
+}
+
+function extractFirstUrl(text: string | null): string | null {
+  if (!text) return null
+  return text.match(/https?:\/\/[^\s)）]+/)?.[0] ?? null
+}
+
+export function WishlistCard({
+  item,
+  onUpdate,
+  onDelete,
+  onClick,
+  draggable,
+  onDragStart,
+}: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
-
-  const isScheduled = !!item.google_event_id
-  const isCompleted = item.is_completed
-
-  const subItems = (item.ideal_items ?? []).slice(0, 3)
-  const hiddenCount = (item.ideal_items ?? []).length - 3
+  const isScheduled = !!item.google_event_id || item.memo_status === "scheduled"
+  const isCompleted = item.is_completed || item.memo_status === "completed"
+  const tags = item.tags ?? []
+  const subCount = item.ideal_items?.length ?? 0
+  const formattedDate = formatDateTime(item.scheduled_at)
+  const firstUrl = extractFirstUrl(item.description)
 
   const handleCheck = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    await onUpdate(item.id, { is_completed: !item.is_completed } as Partial<IdealGoalWithItems>)
+    await onUpdate(item.id, {
+      is_completed: !item.is_completed,
+      memo_status: !item.is_completed ? "completed" : "organized",
+    } as Partial<MemoItem>)
   }
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -48,114 +62,98 @@ export function WishlistCard({ item, onUpdate, onDelete, onClick }: WishlistCard
     await onDelete(item.id)
   }
 
-  const formattedDate = item.scheduled_at
-    ? new Date(item.scheduled_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : null
-
   return (
     <div
+      draggable={draggable}
+      onDragStart={onDragStart}
       onClick={onClick}
       className={cn(
-        "relative flex flex-col rounded-xl border bg-card cursor-pointer transition-all hover:shadow-md",
+        "group relative flex cursor-pointer flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
+        item.memo_status === "time_candidates" && "border-l-4 border-l-teal-500",
         isScheduled && "border-l-4 border-l-blue-500",
-        isCompleted && "opacity-50",
+        isCompleted && "opacity-55",
       )}
     >
-      {/* カバー画像 */}
-      {item.cover_image_url && (
-        <div className="relative h-32 overflow-hidden rounded-t-xl">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.cover_image_url} alt="" className="w-full h-full object-cover" />
-          {isScheduled && (
-            <span className="absolute top-2 right-2 bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
-              <Calendar className="w-3 h-3" /> 予定済み
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-2 p-3">
-        {/* カレンダーバッジ（画像なし時） */}
-        {!item.cover_image_url && isScheduled && (
-          <span className="self-start bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
-            <Calendar className="w-3 h-3" /> 予定済み
-          </span>
+      <div className="flex items-start gap-2">
+        {draggable && (
+          <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground opacity-70" />
         )}
-
-        {/* カテゴリタグ */}
-        {item.category && (
-          <span className="self-start text-xs bg-muted px-2 py-0.5 rounded-full text-muted-foreground">
-            {CATEGORY_LABELS[item.category] ?? item.category}
-          </span>
-        )}
-
-        {/* タイトル */}
-        <p className={cn("font-semibold text-sm leading-snug", isCompleted && "line-through text-muted-foreground")}>
-          {item.title}
-        </p>
-
-        {/* メモ */}
-        {item.description && (
-          <p className="text-xs text-muted-foreground line-clamp-2">{item.description}</p>
-        )}
-
-        {/* 日時・所要時間 */}
-        {(formattedDate || item.duration_minutes) && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {formattedDate && (
-              <span className="flex items-center gap-1">
-                <Calendar className="w-3 h-3" />{formattedDate}
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex flex-wrap gap-1">
+            {isScheduled && (
+              <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[11px] text-blue-300">
+                <Calendar className="h-3 w-3" /> 予定済み
               </span>
             )}
-            {item.duration_minutes && (
-              <span className="flex items-center gap-1">
-                <Clock className="w-3 h-3" />{item.duration_minutes}分
+            {item.memo_status === "time_candidates" && !isScheduled && (
+              <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[11px] text-teal-300">時間候補あり</span>
+            )}
+            {(item.category || tags[0]) && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                {item.category || tags[0]}
               </span>
             )}
           </div>
-        )}
-
-        {/* サブアイテム */}
-        {subItems.length > 0 && (
-          <ul className="space-y-1">
-            {subItems.map(sub => (
-              <li key={sub.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className={cn("w-3 h-3 rounded border border-muted-foreground/40 flex-shrink-0", sub.is_done && "bg-primary border-primary")} />
-                <span className={cn(sub.is_done && "line-through")}>{sub.title}</span>
-              </li>
-            ))}
-            {hiddenCount > 0 && (
-              <li className="text-xs text-muted-foreground pl-4">+{hiddenCount} 件</li>
-            )}
-          </ul>
-        )}
-
-        {/* アクションボタン */}
-        <div className="flex items-center justify-between pt-1" onClick={e => e.stopPropagation()}>
-          <button
-            onClick={handleCheck}
-            className={cn(
-              "min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg transition-colors",
-              isCompleted ? "text-green-600" : "text-muted-foreground hover:text-foreground"
-            )}
-            title={isCompleted ? "完了済み" : "完了にする"}
-          >
-            {isCompleted ? <Check className="w-5 h-5" /> : (
-              <span className="w-5 h-5 rounded border-2 border-current" />
-            )}
-          </button>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
-            onClick={handleDelete}
-            disabled={isDeleting}
-            title="削除"
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
+          <p className={cn("line-clamp-2 text-sm font-semibold leading-snug", isCompleted && "line-through text-muted-foreground")}>
+            {item.title}
+          </p>
         </div>
+      </div>
+
+      {item.description && (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+          {item.description}
+        </p>
+      )}
+
+      {firstUrl && (
+        <p className="mt-1 truncate text-xs text-blue-400 underline underline-offset-2">{firstUrl}</p>
+      )}
+
+      {tags.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {tags.slice(0, 4).map(tag => (
+            <span key={tag} className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        {formattedDate && (
+          <span className="inline-flex items-center gap-1">
+            <Calendar className="h-3.5 w-3.5" /> {formattedDate}
+          </span>
+        )}
+        {item.duration_minutes && (
+          <span className="inline-flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5" /> {item.duration_minutes}分
+          </span>
+        )}
+        {subCount > 0 && <span>候補 {subCount}</span>}
+      </div>
+
+      <div className="mt-2 flex items-center justify-between" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={handleCheck}
+          className={cn(
+            "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground",
+            isCompleted && "text-green-500",
+          )}
+          title={isCompleted ? "完了済み" : "完了にする"}
+        >
+          {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}
+        </button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
+          onClick={handleDelete}
+          disabled={isDeleting}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
       </div>
     </div>
   )

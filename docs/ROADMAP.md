@@ -164,7 +164,7 @@
   - Phase 3: アカウント機能実装 ✅
   - Phase 4: PC統合 ✅
 - 🔧 **習慣機能改善**（日次完了リセット・TODOビュー統合・週間達成率UI） → [仕様](specs/habit-daily-reset.md) | [計画](plans/features/habit-daily-reset.md)
-- 🔧 **長期プランナー**（自然文→メモ・タスク案・時間候補。実行はせず提案保存のみ） → [仕様](specs/long-term-planner.md)
+- 🔧 **メモビュー + AI自然言語インテーク**（自然文→タイトル案・メモ/リンク・所要時間・時間候補。サブタスク候補は必要時のみ、初期は提案保存のみ） → [仕様](specs/long-term-planner.md) | [計画](plans/features/memo-view-ai-intake.md)
 - ○ マインドマップのエクスポート/インポート
 - ○ タスクのタグ付け機能
 - ○ 統計・レポート機能
