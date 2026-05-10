@@ -13,15 +13,16 @@ function chatCompletionsUrl() {
 
 export async function chatCompletion(
   messages: Message[],
-  opts?: { temperature?: number; max_tokens?: number }
+  opts?: { temperature?: number; max_tokens?: number; model?: string }
 ): Promise<string> {
   if (!AI_API_KEY) throw new Error('EXTERNAL_AI_API_KEY が設定されていません')
 
-  const normalizedModel = AI_MODEL.toLowerCase()
+  const model = opts?.model || AI_MODEL
+  const normalizedModel = model.toLowerCase()
   const isKimiK26 = normalizedModel === 'kimi-k2.6' || normalizedModel.startsWith('kimi-k2.6-')
   const isOpenCodeGo = AI_BASE_URL.includes('opencode.ai/zen/go')
   const body: Record<string, unknown> = {
-    model: AI_MODEL,
+    model,
     messages,
     max_tokens: opts?.max_tokens ?? 1200,
   }
@@ -48,8 +49,22 @@ export async function chatCompletion(
     throw new Error((err as { error?: { message?: string } }).error?.message ?? `AI API error: ${res.status}`)
   }
 
-  const data = await res.json() as { choices?: { message?: { content?: string } }[] }
-  const content = data.choices?.[0]?.message?.content
-  if (!content) throw new Error('AI API response is empty')
+  const data = await res.json() as {
+    choices?: {
+      finish_reason?: string
+      message?: { content?: string | Array<{ text?: string; type?: string }> }
+      text?: string
+    }[]
+  }
+  const choice = data.choices?.[0]
+  const rawContent = choice?.message?.content
+  const content = typeof rawContent === 'string'
+    ? rawContent
+    : Array.isArray(rawContent)
+      ? rawContent.map(part => part.text ?? '').join('')
+      : choice?.text
+  if (!content?.trim()) {
+    throw new Error(`AI_EMPTY_RESPONSE:${model}:${choice?.finish_reason ?? 'unknown'}`)
+  }
   return content
 }

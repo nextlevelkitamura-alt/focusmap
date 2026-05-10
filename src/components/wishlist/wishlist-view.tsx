@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Calendar, Check, Filter, GripVertical, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles, X } from "lucide-react"
+import { Calendar, Check, Clock, Filter, GripVertical, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -19,13 +19,39 @@ interface MemoSuggestion {
   title: string
   category: string
   tags: string[]
+  tag_suggestions?: string[]
   memo_status: MemoStatus
   description: string
   scheduled_at: string | null
   duration_minutes: number | null
+  duration_input?: string
+  date_input?: string
+  time_input?: string
   time_candidates: Array<{ label: string; scheduled_at: string; duration_minutes: number; reason: string }>
   subtask_suggestions: Array<{ title: string; estimated_minutes: number; reason: string }>
 }
+
+const ANALYZE_STATUS_MESSAGES = [
+  "AIで整理しています...",
+  "モデルに送信しました。結果を待っています...",
+  "内容を構造化しています...",
+  "もう少しで生成結果を表示します...",
+]
+
+const DURATION_OPTIONS = [
+  { label: "未設定", minutes: null },
+  { label: "5分", minutes: 5 },
+  { label: "15分", minutes: 15 },
+  { label: "30分", minutes: 30 },
+  { label: "60分", minutes: 60 },
+]
+
+const DEFAULT_MEMO_TAGS = ["仕事", "生活", "学習", "健康", "人間関係"]
+
+const QUICK_MODEL_OPTIONS = [
+  { id: "glm-5.1", label: "GLM", note: "契約内" },
+  { id: "gemini-2.5-flash", label: "Gemini", note: "高速" },
+]
 
 const DEFAULT_COLUMNS: Array<{ key: MemoStatus; label: string; color: string }> = [
   { key: "unsorted", label: "未整理", color: "bg-zinc-500/10" },
@@ -60,6 +86,45 @@ function formatCandidate(candidate: MemoSuggestion["time_candidates"][number]) {
   return `${date.getMonth() + 1}/${date.getDate()}(${day}) ${time}`
 }
 
+function formatDateInput(value: string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}/${month}/${day}`
+}
+
+function formatTimeInput(value: string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+}
+
+function parseDateInput(value: string) {
+  const normalized = value.trim().replaceAll("-", "/")
+  const match = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null
+  return { year, month, day }
+}
+
+function parseTimeInput(value: string) {
+  const normalized = value.trim()
+  const match = normalized.match(/^(\d{1,2})(?::?(\d{2}))?$/)
+  if (!match) return null
+  const hour = Number(match[1])
+  const minute = Number(match[2] ?? 0)
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
+  return { hour, minute }
+}
+
 export function WishlistView() {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -67,6 +132,11 @@ export function WishlistView() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [intakeText, setIntakeText] = useState("")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null)
+  const [analyzeElapsedSeconds, setAnalyzeElapsedSeconds] = useState(0)
+  const [intakeError, setIntakeError] = useState<string | null>(null)
+  const [lastUsedModel, setLastUsedModel] = useState<string | null>(null)
+  const [selectedAiModel, setSelectedAiModel] = useState("glm-5.1")
   const [suggestion, setSuggestion] = useState<MemoSuggestion | null>(null)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
@@ -92,6 +162,17 @@ export function WishlistView() {
     stopRecording,
   } = useVoiceRecorder(handleTranscribed)
 
+  useEffect(() => {
+    if (!isAnalyzing || !analyzeStartedAt) {
+      setAnalyzeElapsedSeconds(0)
+      return
+    }
+    const interval = window.setInterval(() => {
+      setAnalyzeElapsedSeconds(Math.floor((Date.now() - analyzeStartedAt) / 1000))
+    }, 1000)
+    return () => window.clearInterval(interval)
+  }, [analyzeStartedAt, isAnalyzing])
+
   const fetchItems = useCallback(async () => {
     const res = await fetch("/api/wishlist")
     const { items } = await res.json()
@@ -102,8 +183,24 @@ export function WishlistView() {
     fetchItems().finally(() => setIsLoading(false))
   }, [fetchItems])
 
+  useEffect(() => {
+    async function loadAiModel() {
+      try {
+        const res = await fetch("/api/ai/context")
+        const data = await res.json()
+        const savedModel = typeof data.preferences?.ai_ingest_model === "string"
+          ? data.preferences.ai_ingest_model
+          : "glm-5.1"
+        setSelectedAiModel(savedModel === "gemini-3.0-flash" ? "gemini-2.5-flash" : savedModel)
+      } catch {
+        setSelectedAiModel("glm-5.1")
+      }
+    }
+    loadAiModel()
+  }, [])
+
   const allTags = useMemo(() => {
-    const set = new Set<string>()
+    const set = new Set<string>(DEFAULT_MEMO_TAGS)
     for (const item of items) {
       if (item.category) set.add(item.category)
       for (const tag of item.tags ?? []) set.add(tag)
@@ -166,23 +263,46 @@ export function WishlistView() {
 
   const handleAnalyze = async () => {
     if (!intakeText.trim() || isAnalyzing) return
+    setIntakeError(null)
+    setLastUsedModel(null)
     setIsAnalyzing(true)
+    setAnalyzeStartedAt(Date.now())
     try {
       const res = await fetch("/api/ai-ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: intakeText }),
+        body: JSON.stringify({ text: intakeText, model: selectedAiModel }),
       })
       const data = await res.json()
       if (!res.ok || data.error) {
-        alert(data.error || "整理に失敗しました")
+        setIntakeError(data.error || "整理に失敗しました")
         return
       }
-      setSuggestion(data.suggestion)
+      if (typeof data.model === "string") setLastUsedModel(data.model)
+      const suggestedCategory = typeof data.suggestion?.category === "string" && allTags.includes(data.suggestion.category)
+        ? data.suggestion.category
+        : ""
+      setSuggestion({
+        ...data.suggestion,
+        category: suggestedCategory,
+        tags: [],
+        tag_suggestions: allTags,
+      })
       setSuggestionOpen(true)
     } finally {
       setIsAnalyzing(false)
+      setAnalyzeStartedAt(null)
     }
+  }
+
+  const handleQuickModelChange = async (modelId: string) => {
+    setSelectedAiModel(modelId)
+    setLastUsedModel(null)
+    await fetch("/api/ai/context", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferences: { ai_ingest_model: modelId } }),
+    }).catch(() => null)
   }
 
   const handleVoiceToggle = async () => {
@@ -206,7 +326,12 @@ export function WishlistView() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...suggestion,
+        title: suggestion.title,
+        category: suggestion.category,
+        tags: suggestion.tags,
+        description: suggestion.description,
+        time_candidates: suggestion.time_candidates,
+        subtask_suggestions: suggestion.subtask_suggestions,
         scheduled_at: scheduledAt,
         duration_minutes: durationMinutes,
         memo_status: scheduledAt ? "time_candidates" : suggestion.memo_status,
@@ -310,10 +435,63 @@ export function WishlistView() {
           </Button>
           <Button onClick={handleAnalyze} disabled={isAnalyzing || !intakeText.trim()} className="min-h-[44px] gap-1">
             {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            <span className="hidden sm:inline">整理</span>
+            <span className="hidden sm:inline">{isAnalyzing ? "整理中" : "整理"}</span>
             <span className="sm:hidden">生成</span>
           </Button>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">AI</span>
+          <div className="flex rounded-full border bg-muted/20 p-1">
+            {QUICK_MODEL_OPTIONS.map(option => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => handleQuickModelChange(option.id)}
+                disabled={isAnalyzing}
+                className={cn(
+                  "min-h-8 rounded-full px-3 text-xs font-medium transition-colors",
+                  selectedAiModel === option.id
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {option.label}
+                <span className={cn(
+                  "ml-1 text-[10px]",
+                  selectedAiModel === option.id ? "text-primary-foreground/80" : "text-muted-foreground",
+                )}>
+                  {option.note}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {isAnalyzing && (
+          <div className="flex min-h-10 flex-wrap items-center gap-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="font-medium text-foreground">
+              {ANALYZE_STATUS_MESSAGES[Math.min(Math.floor(analyzeElapsedSeconds / 4), ANALYZE_STATUS_MESSAGES.length - 1)]}
+            </span>
+            <span>{analyzeElapsedSeconds}秒経過</span>
+          </div>
+        )}
+        {lastUsedModel && !isAnalyzing && (
+          <div className="text-xs text-muted-foreground">
+            使用モデル: <code className="rounded bg-muted px-1 py-0.5">{lastUsedModel}</code>
+          </div>
+        )}
+        {intakeError && !isAnalyzing && (
+          <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <span>{intakeError}</span>
+            <button
+              type="button"
+              onClick={() => setIntakeError(null)}
+              className="shrink-0 rounded px-2 py-1 hover:bg-destructive/10"
+            >
+              閉じる
+            </button>
+          </div>
+        )}
         {(isRecording || isTranscribing || voiceError) && (
           <div className="flex min-h-9 flex-wrap items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             {isRecording && (
@@ -357,7 +535,6 @@ export function WishlistView() {
             )}
           </div>
         )}
-
         <FilterBar
           statusFilter={statusFilter}
           tagFilter={tagFilter}
@@ -435,6 +612,7 @@ export function WishlistView() {
         onOpenChange={setSuggestionOpen}
         onChange={setSuggestion}
         onSave={saveSuggestion}
+        registeredTags={allTags}
       />
 
       <WishlistCardDetail
@@ -512,93 +690,256 @@ function SuggestionSheet({
   onOpenChange,
   onChange,
   onSave,
+  registeredTags,
 }: {
   suggestion: MemoSuggestion | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onChange: (suggestion: MemoSuggestion | null) => void
   onSave: (candidate?: MemoSuggestion["time_candidates"][number], addToCalendar?: boolean) => Promise<void>
+  registeredTags: string[]
 }) {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null)
+  const [newTagText, setNewTagText] = useState("")
+  const [isAddingTag, setIsAddingTag] = useState(false)
+
   if (!suggestion) return null
 
   const update = (updates: Partial<MemoSuggestion>) => onChange({ ...suggestion, ...updates })
   const selectedCandidate = selectedCandidateIndex === null ? undefined : suggestion.time_candidates[selectedCandidateIndex]
   const canCalendar = !!(selectedCandidate?.scheduled_at || suggestion.scheduled_at) && !!suggestion.duration_minutes
+  const selectedTags = Array.from(new Set([suggestion.category, ...suggestion.tags].filter(Boolean)))
+  const registeredTagOptions = registeredTags.filter(tag => !selectedTags.includes(tag)).slice(0, 5)
+  const durationText = suggestion.duration_input ?? (suggestion.duration_minutes ? String(suggestion.duration_minutes) : "")
+  const dateText = suggestion.date_input ?? formatDateInput(suggestion.scheduled_at)
+  const timeText = suggestion.time_input ?? formatTimeInput(suggestion.scheduled_at)
+
+  const setTags = (tags: string[]) => {
+    const nextTags = Array.from(new Set(tags.map(tag => tag.trim()).filter(Boolean))).slice(0, 6)
+    update({
+      category: nextTags[0] ?? "",
+      tags: nextTags.slice(1),
+    })
+  }
+
+  const addTag = (tag: string) => {
+    const trimmed = tag.trim()
+    if (!trimmed || selectedTags.includes(trimmed)) return
+    setTags([...selectedTags, trimmed])
+  }
+
+  const removeTag = (tag: string) => {
+    setTags(selectedTags.filter(selectedTag => selectedTag !== tag))
+  }
+
+  const handleAddNewTag = () => {
+    addTag(newTagText)
+    setNewTagText("")
+    setIsAddingTag(false)
+  }
+
+  const handleDurationTextChange = (value: string) => {
+    const normalized = value.replace(/[^\d]/g, "")
+    if (!normalized) {
+      update({ duration_input: "", duration_minutes: null })
+      return
+    }
+    const minutes = Number(normalized)
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      update({ duration_input: normalized, duration_minutes: null })
+      return
+    }
+    update({ duration_input: normalized, duration_minutes: Math.min(minutes, 720) })
+  }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="max-h-[88vh] overflow-y-auto rounded-t-xl md:left-1/2 md:max-w-2xl md:-translate-x-1/2">
+      <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-2xl border-border/70 bg-background/95 shadow-2xl backdrop-blur md:left-1/2 md:max-w-2xl md:-translate-x-1/2">
         <SheetHeader>
           <SheetTitle className="text-left">生成結果</SheetTitle>
         </SheetHeader>
         <div className="space-y-4 px-4 pb-6">
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <label className="text-xs text-muted-foreground">メモの見出し</label>
             <Input
               value={suggestion.title}
               onChange={e => update({ title: e.target.value })}
               placeholder="見出し"
-              className="min-h-[44px] text-base font-semibold"
+              className="min-h-[50px] rounded-xl border-border/80 bg-muted/20 px-4 text-base font-semibold shadow-none"
             />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <label className="text-xs text-muted-foreground">メモ</label>
             <textarea
               value={suggestion.description}
               onChange={e => update({ description: e.target.value })}
               rows={4}
-              className="w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full resize-none rounded-xl border border-border/80 bg-muted/20 px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
             />
           </div>
-          <div className="flex flex-wrap gap-1">
-            {[suggestion.category, ...suggestion.tags].filter(Boolean).map(tag => (
-              <span key={tag} className="rounded-full border px-2 py-1 text-xs text-muted-foreground">{tag}</span>
-            ))}
-          </div>
           <div className="space-y-2">
-            <label className="text-xs text-muted-foreground">所要時間</label>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                className="min-h-[44px] min-w-[44px]"
-                onClick={() => update({ duration_minutes: Math.max(15, (suggestion.duration_minutes ?? 60) - 15) })}
+            <label className="text-xs text-muted-foreground">タグ</label>
+            <div className="flex flex-wrap gap-1.5">
+              {selectedTags.map(tag => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => removeTag(tag)}
+                  className="min-h-9 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs text-primary transition-colors hover:bg-primary/15"
+                >
+                  {tag} ×
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <select
+                value=""
+                onChange={e => {
+                  addTag(e.target.value)
+                  e.target.value = ""
+                }}
+                className="min-h-[48px] rounded-xl border border-border/80 bg-muted/20 px-4 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
+                aria-label="登録タグを選択"
               >
-                <X className="h-4 w-4 rotate-45" />
-              </Button>
-              <div className="flex min-h-[44px] min-w-20 items-center justify-center rounded-md border text-sm font-medium">
-                {suggestion.duration_minutes ?? 60}分
-              </div>
+                <option value="">登録タグから選択</option>
+                {registeredTagOptions.map(tag => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
               <Button
+                type="button"
                 variant="outline"
                 size="icon"
-                className="min-h-[44px] min-w-[44px]"
-                onClick={() => update({ duration_minutes: (suggestion.duration_minutes ?? 60) + 15 })}
+                onClick={() => setIsAddingTag(prev => !prev)}
+                className="min-h-[48px] min-w-[48px] rounded-xl"
+                aria-label="新しいタグを作成"
               >
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
+            {registeredTagOptions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {registeredTagOptions.map(tag => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => addTag(tag)}
+                    className="min-h-9 rounded-full border px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+            {isAddingTag && (
+              <div className="flex gap-2">
+                <Input
+                  value={newTagText}
+                  onChange={e => setNewTagText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") handleAddNewTag()
+                  }}
+                  placeholder="新しいタグ"
+                  className="min-h-[48px] rounded-xl bg-muted/20"
+                />
+                <Button type="button" variant="outline" onClick={handleAddNewTag} className="min-h-[48px] rounded-xl">
+                  追加
+                </Button>
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Input
-              type="date"
-              className="min-h-[44px]"
-              onChange={e => {
-                if (!e.target.value) return
-                const time = suggestion.scheduled_at ? new Date(suggestion.scheduled_at).toISOString().slice(11, 16) : "09:00"
-                update({ scheduled_at: new Date(`${e.target.value}T${time}:00`).toISOString() })
-              }}
-            />
-            <Input
-              type="time"
-              className="min-h-[44px]"
-              onChange={e => {
-                const base = suggestion.scheduled_at ? new Date(suggestion.scheduled_at) : new Date()
-                const date = base.toISOString().slice(0, 10)
-                update({ scheduled_at: new Date(`${date}T${e.target.value}:00`).toISOString() })
-              }}
-            />
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">所要時間</label>
+            <div className="flex flex-wrap gap-1.5">
+              {DURATION_OPTIONS.map(option => (
+                <button
+                  key={option.label}
+                  type="button"
+                  onClick={() => {
+                    update({
+                      duration_input: option.minutes ? String(option.minutes) : "",
+                      duration_minutes: option.minutes,
+                    })
+                  }}
+                  className={cn(
+                    "min-h-9 rounded-full border px-3 text-xs transition-colors",
+                    suggestion.duration_minutes === option.minutes || (!suggestion.duration_minutes && option.minutes === null)
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={durationText}
+                  onChange={e => handleDurationTextChange(e.target.value)}
+                  placeholder="未設定"
+                  className="h-12 border-0 bg-transparent px-4 text-center text-base font-semibold shadow-none focus-visible:ring-0"
+                  aria-label="所要時間"
+                />
+                <span className="pr-3 text-sm text-muted-foreground">分</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="space-y-2">
+              <span className="text-xs text-muted-foreground">日付</span>
+              <div className="flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={dateText}
+                  onChange={e => {
+                    const value = e.target.value
+                    const updates: Partial<MemoSuggestion> = { date_input: value }
+                    const dateParts = parseDateInput(value)
+                    if (!value.trim() && !timeText.trim()) {
+                      updates.scheduled_at = null
+                    } else if (dateParts) {
+                      const timeParts = parseTimeInput(timeText) ?? { hour: 9, minute: 0 }
+                      updates.scheduled_at = new Date(dateParts.year, dateParts.month - 1, dateParts.day, timeParts.hour, timeParts.minute).toISOString()
+                    }
+                    update(updates)
+                  }}
+                  placeholder="YYYY/MM/DD"
+                  className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                  aria-label="日付"
+                />
+                <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </div>
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs text-muted-foreground">時刻</span>
+              <div className="flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={timeText}
+                  onChange={e => {
+                    const value = e.target.value
+                    const updates: Partial<MemoSuggestion> = { time_input: value }
+                    const dateParts = parseDateInput(dateText)
+                    if (!dateText.trim() && !value.trim()) {
+                      updates.scheduled_at = null
+                    } else if (dateParts) {
+                      const timeParts = parseTimeInput(value) ?? { hour: 9, minute: 0 }
+                      updates.scheduled_at = new Date(dateParts.year, dateParts.month - 1, dateParts.day, timeParts.hour, timeParts.minute).toISOString()
+                    }
+                    update(updates)
+                  }}
+                  placeholder="09:00"
+                  className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                  aria-label="時刻"
+                />
+                <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </div>
+            </label>
           </div>
           {suggestion.time_candidates.length > 0 && (
             <div className="space-y-2">
