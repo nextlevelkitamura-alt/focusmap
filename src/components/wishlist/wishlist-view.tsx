@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Calendar, Check, Filter, GripVertical, Loader2, Mic, Plus, Sparkles, X } from "lucide-react"
+import { Calendar, Check, Filter, GripVertical, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -194,6 +194,10 @@ export function WishlistView() {
     await startRecording()
   }
 
+  const handleOpenMicrophoneSettings = async () => {
+    await fetch("/api/system/microphone-settings", { method: "POST" }).catch(() => null)
+  }
+
   const saveSuggestion = async (calendarCandidate?: MemoSuggestion["time_candidates"][number], addToCalendar = false) => {
     if (!suggestion?.title.trim()) return
     const scheduledAt = calendarCandidate?.scheduled_at ?? suggestion.scheduled_at
@@ -311,7 +315,7 @@ export function WishlistView() {
           </Button>
         </div>
         {(isRecording || isTranscribing || voiceError) && (
-          <div className="flex min-h-9 items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <div className="flex min-h-9 flex-wrap items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             {isRecording && (
               <>
                 <span className="font-medium text-destructive">録音中</span>
@@ -325,9 +329,31 @@ export function WishlistView() {
                 <span>文字起こし中...</span>
               </>
             )}
-            {voiceError && <span className="text-destructive">{voiceError}</span>}
+            {voiceError && <span className="min-w-0 flex-1 text-destructive">{voiceError}</span>}
             {permissionState === "prompt" && !voiceError && (
               <span>許可ダイアログが出たらマイクを許可してください</span>
+            )}
+            {permissionState === "denied" && (
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpenMicrophoneSettings}
+                  className="h-8 gap-1 text-xs"
+                >
+                  <Settings className="h-3.5 w-3.5" /> 設定を開く
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.location.reload()}
+                  className="h-8 gap-1 text-xs"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> 再読み込み
+                </Button>
+              </div>
             )}
           </div>
         )}

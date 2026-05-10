@@ -148,7 +148,7 @@ export function useVoiceRecorder(
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
           setPermissionState("denied")
-          setError('マイクの使用が拒否されています。macOSの「システム設定 > プライバシーとセキュリティ > マイク」で、このブラウザまたはCodexを許可してからページを再読み込みしてください。')
+          setError('マイクの使用が拒否されています。「設定を開く」から、このブラウザまたはCodexを許可してからページを再読み込みしてください。')
           return
         }
         if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
