@@ -54,10 +54,17 @@
 
 ```env
 GROQ_API_KEY=
+OPENCODE_GO_API_KEY=
 EXTERNAL_AI_API_KEY=
-EXTERNAL_AI_API_BASE_URL=https://api.moonshot.ai/v1
+EXTERNAL_AI_API_BASE_URL=https://opencode.ai/zen/go/v1/chat/completions
 EXTERNAL_AI_MODEL=kimi-k2.6
-EXTERNAL_AI_DISABLE_THINKING=true
+EXTERNAL_AI_DISABLE_THINKING=false
+```
+
+OpenCode Go のキーを受け取ったら、次のコマンドで `.env.local` を自動更新できる。
+
+```bash
+npm run setup:opencode-go -- --key=<OpenCode Go API key>
 ```
 
 返却形式:

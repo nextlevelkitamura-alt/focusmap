@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
   if (!body.text?.trim()) return NextResponse.json({ error: 'text は必須です' }, { status: 400 })
 
   try {
-    if (!process.env.EXTERNAL_AI_API_KEY) {
+    if (!process.env.EXTERNAL_AI_API_KEY && !process.env.OPENCODE_GO_API_KEY && !process.env.MOONSHOT_API_KEY) {
       return NextResponse.json({ suggestion: fallbackSuggestion(body.text) })
     }
 

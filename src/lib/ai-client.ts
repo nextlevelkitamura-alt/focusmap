@@ -1,9 +1,15 @@
 const AI_BASE_URL = (process.env.EXTERNAL_AI_API_BASE_URL ?? 'https://api.moonshot.ai/v1').replace(/\/$/, '')
-const AI_API_KEY  = process.env.EXTERNAL_AI_API_KEY ?? process.env.MOONSHOT_API_KEY ?? ''
+const AI_API_KEY  = process.env.EXTERNAL_AI_API_KEY ?? process.env.OPENCODE_GO_API_KEY ?? process.env.MOONSHOT_API_KEY ?? ''
 const AI_MODEL    = process.env.EXTERNAL_AI_MODEL ?? 'kimi-k2.6'
 const DISABLE_KIMI_THINKING = process.env.EXTERNAL_AI_DISABLE_THINKING !== 'false'
 
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
+
+function chatCompletionsUrl() {
+  return AI_BASE_URL.endsWith('/chat/completions')
+    ? AI_BASE_URL
+    : `${AI_BASE_URL}/chat/completions`
+}
 
 export async function chatCompletion(
   messages: Message[],
@@ -13,6 +19,7 @@ export async function chatCompletion(
 
   const normalizedModel = AI_MODEL.toLowerCase()
   const isKimiK26 = normalizedModel === 'kimi-k2.6' || normalizedModel.startsWith('kimi-k2.6-')
+  const isOpenCodeGo = AI_BASE_URL.includes('opencode.ai/zen/go')
   const body: Record<string, unknown> = {
     model: AI_MODEL,
     messages,
@@ -22,12 +29,12 @@ export async function chatCompletion(
   // Kimi K2.6 は temperature/top_p などが固定値扱いなので送らない。
   // 構造化JSON用途では思考出力を混ぜないため、デフォルトでthinkingを無効化する。
   if (isKimiK26) {
-    if (DISABLE_KIMI_THINKING) body.thinking = { type: 'disabled' }
+    if (DISABLE_KIMI_THINKING && !isOpenCodeGo) body.thinking = { type: 'disabled' }
   } else {
     body.temperature = opts?.temperature ?? 0.5
   }
 
-  const res = await fetch(`${AI_BASE_URL}/chat/completions`, {
+  const res = await fetch(chatCompletionsUrl(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
