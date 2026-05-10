@@ -64,6 +64,11 @@ jobs:
             --set-env-vars NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} \
             --set-env-vars GOOGLE_GENERATIVE_AI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
             --set-env-vars GROQ_API_KEY=${{ secrets.GROQ_API_KEY }} \
+            --set-env-vars OPENCODE_GO_API_KEY=${{ secrets.OPENCODE_GO_API_KEY }} \
+            --set-env-vars EXTERNAL_AI_API_KEY=${{ secrets.OPENCODE_GO_API_KEY }} \
+            --set-env-vars EXTERNAL_AI_API_BASE_URL=https://opencode.ai/zen/go/v1/chat/completions \
+            --set-env-vars EXTERNAL_AI_MODEL=kimi-k2.6 \
+            --set-env-vars EXTERNAL_AI_DISABLE_THINKING=false \
             --set-env-vars GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}
 
       - name: Show service URL
