@@ -26,6 +26,17 @@ JSON のみで返答してください（マークダウン・説明文は不要
 
 現在の日時: ${new Date().toISOString()}`
 
+function extractJson(raw: string) {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  const source = fenced?.[1] ?? raw
+  const start = source.indexOf('{')
+  const end = source.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('AIの返答からJSONを抽出できませんでした')
+  }
+  return JSON.parse(source.slice(start, end + 1))
+}
+
 function fallbackSuggestion(text: string) {
   const title = text.split(/[。.\n]/)[0]?.trim().slice(0, 30) || '新しい思考メモ'
   const tomorrow = new Date()
@@ -72,9 +83,9 @@ export async function POST(request: NextRequest) {
     const raw = await chatCompletion([
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user',   content: body.text },
-    ])
+    ], { max_tokens: 1600 })
 
-    const suggestion = JSON.parse(raw) as {
+    const suggestion = extractJson(raw) as {
       title: string
       category: string
       tags?: string[]

@@ -5,6 +5,8 @@ import { Calendar, Check, Filter, GripVertical, Loader2, Mic, Plus, Sparkles, X 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { VoiceWaveform } from "@/components/ui/voice-waveform"
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { WishlistCard } from "./wishlist-card"
@@ -77,6 +79,17 @@ export function WishlistView() {
     scheduled: "予定済み",
     completed: "完了",
   })
+  const handleTranscribed = useCallback((text: string) => {
+    setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
+  }, [])
+  const {
+    isRecording,
+    isTranscribing,
+    error: voiceError,
+    analyserRef,
+    startRecording,
+    stopRecording,
+  } = useVoiceRecorder(handleTranscribed)
 
   const fetchItems = useCallback(async () => {
     const res = await fetch("/api/wishlist")
@@ -169,6 +182,15 @@ export function WishlistView() {
     } finally {
       setIsAnalyzing(false)
     }
+  }
+
+  const handleVoiceToggle = async () => {
+    if (isTranscribing) return
+    if (isRecording) {
+      stopRecording()
+      return
+    }
+    await startRecording()
   }
 
   const saveSuggestion = async (calendarCandidate?: MemoSuggestion["time_candidates"][number], addToCalendar = false) => {
@@ -266,19 +288,45 @@ export function WishlistView() {
             value={intakeText}
             onChange={e => setIntakeText(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAnalyze() }}
-            placeholder="AIの税制を調べたい。確定申告前に確認したい..."
+            placeholder="マイクまたはテキストで入力。AIの税制を調べたい、確定申告前に確認したい..."
             rows={1}
             className="min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
           />
+          <Button
+            type="button"
+            variant={isRecording ? "destructive" : "outline"}
+            size="icon"
+            onClick={handleVoiceToggle}
+            disabled={isTranscribing}
+            aria-label={isRecording ? "録音を停止" : "音声入力を開始"}
+            className="min-h-[44px] min-w-[44px]"
+          >
+            {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+          </Button>
           <Button onClick={handleAnalyze} disabled={isAnalyzing || !intakeText.trim()} className="min-h-[44px] gap-1">
             {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             <span className="hidden sm:inline">整理</span>
             <span className="sm:hidden">生成</span>
           </Button>
-          <Button variant="outline" size="icon" className="hidden min-h-[44px] min-w-[44px] sm:inline-flex">
-            <Mic className="h-4 w-4" />
-          </Button>
         </div>
+        {(isRecording || isTranscribing || voiceError) && (
+          <div className="flex min-h-9 items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {isRecording && (
+              <>
+                <span className="font-medium text-destructive">録音中</span>
+                <VoiceWaveform analyserRef={analyserRef} height={24} barCount={28} />
+                <span>もう一度マイクを押すと文字起こしします</span>
+              </>
+            )}
+            {isTranscribing && (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>文字起こし中...</span>
+              </>
+            )}
+            {voiceError && <span className="text-destructive">{voiceError}</span>}
+          </div>
+        )}
 
         <FilterBar
           statusFilter={statusFilter}

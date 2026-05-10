@@ -2,7 +2,7 @@
 
 ## 目的
 
-スマホ音声入力やCodex/Claude Codeスキルから投げられる自然文を、すぐ実行せずに「タイトル案・メモ・リンク・所要時間・時間候補」に整理する。
+スマホのアプリ内マイク入力、またはCodex/Claude Codeスキルから投げられる自然文を、すぐ実行せずに「見出し・メモ・リンク・所要時間・時間候補」に整理する。
 
 例:
 
@@ -22,6 +22,8 @@
 - 時間候補は「最初の一歩」を少数だけ出す
 - 承認や実行は別フェーズに分ける
 - APIキーは環境変数で管理し、UI・コード・ログに保存しない
+- 音声入力は `/api/transcribe` で文字起こししてから、通常のテキスト入力と同じAI整理フローに流す
+- メモ整理AIはKimi K2.6を標準にし、OpenAI互換APIとして差し替え可能にする
 
 ## 現在の実装
 
@@ -39,6 +41,24 @@
 - 認証済みユーザーのみ
 - Googleカレンダー連携がある場合は空き時間コンテキストを参照して時間候補を作る
 - AIキー未設定時は簡易フォールバックでプランを返す
+
+現行メモビュー実装では `POST /api/ai-ingest` を使う。実行ロジックは次の通り。
+
+1. マイク入力の場合は `useVoiceRecorder` が録音し、`/api/transcribe` で文字起こしする
+2. 文字起こしテキストまたは手入力テキストを `/api/ai-ingest` に送る
+3. `/api/ai-ingest` が `src/lib/ai-client.ts` 経由でKimi K2.6へ送る
+4. KimiのJSON提案を下シートで編集可能に表示する
+5. 保存時に `ideal_goals` と `ideal_items` へ書き込む
+
+必要な環境変数:
+
+```env
+GROQ_API_KEY=
+EXTERNAL_AI_API_KEY=
+EXTERNAL_AI_API_BASE_URL=https://api.moonshot.ai/v1
+EXTERNAL_AI_MODEL=kimi-k2.6
+EXTERNAL_AI_DISABLE_THINKING=true
+```
 
 返却形式:
 
