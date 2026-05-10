@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Calendar, Check, Clock, Filter, GripVertical, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Filter, GripVertical, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -46,7 +46,7 @@ const DURATION_OPTIONS = [
   { label: "60分", minutes: 60 },
 ]
 
-const DEFAULT_MEMO_TAGS = ["仕事", "生活", "学習", "健康", "人間関係"]
+const DEFAULT_MEMO_TAGS = ["仕事", "生活", "学習", "健康", "人間関係", "お金"]
 
 const QUICK_MODEL_OPTIONS = [
   { id: "glm-5.1", label: "GLM", note: "契約内" },
@@ -86,16 +86,6 @@ function formatCandidate(candidate: MemoSuggestion["time_candidates"][number]) {
   return `${date.getMonth() + 1}/${date.getDate()}(${day}) ${time}`
 }
 
-function formatDateInput(value: string | null) {
-  if (!value) return ""
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}/${month}/${day}`
-}
-
 function formatTimeInput(value: string | null) {
   if (!value) return ""
   const date = new Date(value)
@@ -103,26 +93,70 @@ function formatTimeInput(value: string | null) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
 }
 
-function parseDateInput(value: string) {
-  const normalized = value.trim().replaceAll("-", "/")
-  const match = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
-  if (!match) return null
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const date = new Date(year, month - 1, day)
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null
-  return { year, month, day }
+function formatDateValue(value: string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-")
 }
 
-function parseTimeInput(value: string) {
-  const normalized = value.trim()
-  const match = normalized.match(/^(\d{1,2})(?::?(\d{2}))?$/)
-  if (!match) return null
-  const hour = Number(match[1])
-  const minute = Number(match[2] ?? 0)
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
-  return { hour, minute }
+function buildDateOptions(selectedValue: string) {
+  const formatter = new Intl.DateTimeFormat("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    weekday: "short",
+  })
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const options = Array.from({ length: 21 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() + index)
+    const value = [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-")
+    const prefix = index === 0 ? "今日" : index === 1 ? "明日" : index === 2 ? "明後日" : ""
+    return {
+      value,
+      label: prefix ? `${prefix} ${formatter.format(date)}` : formatter.format(date),
+    }
+  })
+  if (selectedValue && !options.some(option => option.value === selectedValue)) {
+    const date = new Date(`${selectedValue}T00:00:00`)
+    options.unshift({
+      value: selectedValue,
+      label: Number.isNaN(date.getTime()) ? selectedValue : formatter.format(date),
+    })
+  }
+  return options
+}
+
+function buildTimeOptions(selectedValue: string) {
+  const options = Array.from({ length: 96 }, (_, index) => {
+    const minutes = index * 15
+    const hour = Math.floor(minutes / 60)
+    const minute = minutes % 60
+    const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+    return { value, label: value }
+  })
+  if (selectedValue && !options.some(option => option.value === selectedValue)) {
+    options.unshift({ value: selectedValue, label: selectedValue })
+  }
+  return options
+}
+
+function combineDateTime(dateValue: string, timeValue: string) {
+  if (!dateValue) return null
+  const [year, month, day] = dateValue.split("-").map(Number)
+  const [hour = 9, minute = 0] = (timeValue || "09:00").split(":").map(Number)
+  const date = new Date(year, month - 1, day, hour, minute)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
 }
 
 export function WishlistView() {
@@ -219,16 +253,27 @@ export function WishlistView() {
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
-      setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } as MemoItem : item))
-      const res = await fetch(`/api/wishlist/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      })
-      const { item } = await res.json()
-      if (item) {
+      setIntakeError(null)
+      try {
+        const res = await fetch(`/api/wishlist/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        })
+        const data = await res.json()
+        if (!res.ok || data.error) {
+          throw new Error(data.error || "メモの更新に失敗しました")
+        }
+        if (!data.item) {
+          throw new Error("更新結果を取得できませんでした")
+        }
+        const item = data.item as MemoItem
         setItems(prev => prev.map(existing => existing.id === id ? item : existing))
         setSelectedItem(prev => prev?.id === id ? item : prev)
+      } catch (err) {
+        setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
+        await fetchItems()
+        throw err
       }
       return
     }
@@ -242,22 +287,34 @@ export function WishlistView() {
   }, [selectedItem])
 
   const handleCreate = async () => {
-    const res = await fetch("/api/wishlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: "新しいメモ",
-        description: "",
-        category: "アイデア",
-        tags: ["アイデア"],
-        memo_status: "unsorted",
-      }),
-    })
-    const { item } = await res.json()
-    if (item) {
+    setIntakeError(null)
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "新しいメモ",
+          description: "",
+          category: "アイデア",
+          tags: ["アイデア"],
+          memo_status: "unsorted",
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "メモの作成に失敗しました")
+      }
+      if (!data.item) {
+        throw new Error("作成結果を取得できませんでした")
+      }
+      const item = data.item as MemoItem
       setItems(prev => [item, ...prev])
       setSelectedItem(item)
+      setStatusFilter("all")
+      setTagFilter("all")
       setDetailOpen(true)
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
     }
   }
 
@@ -320,34 +377,46 @@ export function WishlistView() {
 
   const saveSuggestion = async (calendarCandidate?: MemoSuggestion["time_candidates"][number], addToCalendar = false) => {
     if (!suggestion?.title.trim()) return
+    setIntakeError(null)
     const scheduledAt = calendarCandidate?.scheduled_at ?? suggestion.scheduled_at
     const durationMinutes = calendarCandidate?.duration_minutes ?? suggestion.duration_minutes
-    const res = await fetch("/api/wishlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: suggestion.title,
-        category: suggestion.category,
-        tags: suggestion.tags,
-        description: suggestion.description,
-        time_candidates: suggestion.time_candidates,
-        subtask_suggestions: suggestion.subtask_suggestions,
-        scheduled_at: scheduledAt,
-        duration_minutes: durationMinutes,
-        memo_status: scheduledAt ? "time_candidates" : suggestion.memo_status,
-        ai_source_payload: { suggestion, intakeText },
-      }),
-    })
-    const { item } = await res.json()
-    if (item) {
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: suggestion.title,
+          category: suggestion.category,
+          tags: suggestion.tags,
+          description: suggestion.description,
+          time_candidates: suggestion.time_candidates,
+          subtask_suggestions: suggestion.subtask_suggestions,
+          scheduled_at: scheduledAt,
+          duration_minutes: durationMinutes,
+          memo_status: scheduledAt ? "time_candidates" : "unsorted",
+          ai_source_payload: { suggestion, intakeText },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "メモの保存に失敗しました")
+      }
+      if (!data.item) {
+        throw new Error("保存結果を取得できませんでした")
+      }
+      const item = data.item as MemoItem
       setItems(prev => [item, ...prev])
+      setStatusFilter("all")
+      setTagFilter("all")
       if (addToCalendar && item.scheduled_at && item.duration_minutes) {
         await handleCalendarAdd(item)
       }
+      setSuggestion(null)
+      setSuggestionOpen(false)
+      setIntakeText("")
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "メモの保存に失敗しました")
     }
-    setSuggestion(null)
-    setSuggestionOpen(false)
-    setIntakeText("")
   }
 
   const handleCalendarAdd = async (item: MemoItem) => {
@@ -701,7 +770,6 @@ function SuggestionSheet({
 }) {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null)
   const [newTagText, setNewTagText] = useState("")
-  const [isAddingTag, setIsAddingTag] = useState(false)
 
   if (!suggestion) return null
 
@@ -709,10 +777,12 @@ function SuggestionSheet({
   const selectedCandidate = selectedCandidateIndex === null ? undefined : suggestion.time_candidates[selectedCandidateIndex]
   const canCalendar = !!(selectedCandidate?.scheduled_at || suggestion.scheduled_at) && !!suggestion.duration_minutes
   const selectedTags = Array.from(new Set([suggestion.category, ...suggestion.tags].filter(Boolean)))
-  const registeredTagOptions = registeredTags.filter(tag => !selectedTags.includes(tag)).slice(0, 5)
+  const registeredTagOptions = registeredTags.filter(tag => !selectedTags.includes(tag)).slice(0, 8)
   const durationText = suggestion.duration_input ?? (suggestion.duration_minutes ? String(suggestion.duration_minutes) : "")
-  const dateText = suggestion.date_input ?? formatDateInput(suggestion.scheduled_at)
-  const timeText = suggestion.time_input ?? formatTimeInput(suggestion.scheduled_at)
+  const dateValue = suggestion.date_input ?? formatDateValue(suggestion.scheduled_at)
+  const timeValue = suggestion.time_input ?? formatTimeInput(suggestion.scheduled_at)
+  const dateOptions = buildDateOptions(dateValue)
+  const timeOptions = buildTimeOptions(timeValue)
 
   const setTags = (tags: string[]) => {
     const nextTags = Array.from(new Set(tags.map(tag => tag.trim()).filter(Boolean))).slice(0, 6)
@@ -735,7 +805,15 @@ function SuggestionSheet({
   const handleAddNewTag = () => {
     addTag(newTagText)
     setNewTagText("")
-    setIsAddingTag(false)
+  }
+
+  const handleScheduleChange = (nextDateValue: string, nextTimeValue: string) => {
+    update({
+      date_input: nextDateValue,
+      time_input: nextTimeValue,
+      scheduled_at: combineDateTime(nextDateValue, nextTimeValue),
+      memo_status: nextDateValue ? "time_candidates" : suggestion.memo_status,
+    })
   }
 
   const handleDurationTextChange = (value: string) => {
@@ -791,32 +869,38 @@ function SuggestionSheet({
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-[1fr_auto] gap-2">
-              <select
-                value=""
-                onChange={e => {
-                  addTag(e.target.value)
-                  e.target.value = ""
+            <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+              <div className="relative">
+                <select
+                  value=""
+                  onChange={e => {
+                    addTag(e.target.value)
+                    e.target.value = ""
+                  }}
+                  className="min-h-[48px] w-full appearance-none rounded-xl border border-border/80 bg-muted/20 px-4 pr-10 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
+                  aria-label="登録タグを選択"
+                >
+                  <option value="">登録タグから選択</option>
+                  {registeredTagOptions.map(tag => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+              <Input
+                value={newTagText}
+                onChange={e => setNewTagText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") handleAddNewTag()
                 }}
-                className="min-h-[48px] rounded-xl border border-border/80 bg-muted/20 px-4 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
-                aria-label="登録タグを選択"
-              >
-                <option value="">登録タグから選択</option>
-                {registeredTagOptions.map(tag => (
-                  <option key={tag} value={tag}>
-                    {tag}
-                  </option>
-                ))}
-              </select>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => setIsAddingTag(prev => !prev)}
-                className="min-h-[48px] min-w-[48px] rounded-xl"
-                aria-label="新しいタグを作成"
-              >
-                <Plus className="h-4 w-4" />
+                placeholder="新しいタグ"
+                className="min-h-[48px] rounded-xl bg-muted/20"
+              />
+              <Button type="button" variant="outline" onClick={handleAddNewTag} className="min-h-[48px] rounded-xl px-4">
+                <Plus className="mr-1 h-4 w-4" />
+                追加
               </Button>
             </div>
             {registeredTagOptions.length > 0 && (
@@ -831,22 +915,6 @@ function SuggestionSheet({
                     {tag}
                   </button>
                 ))}
-              </div>
-            )}
-            {isAddingTag && (
-              <div className="flex gap-2">
-                <Input
-                  value={newTagText}
-                  onChange={e => setNewTagText(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") handleAddNewTag()
-                  }}
-                  placeholder="新しいタグ"
-                  className="min-h-[48px] rounded-xl bg-muted/20"
-                />
-                <Button type="button" variant="outline" onClick={handleAddNewTag} className="min-h-[48px] rounded-xl">
-                  追加
-                </Button>
               </div>
             )}
           </div>
@@ -890,54 +958,39 @@ function SuggestionSheet({
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-2">
               <span className="text-xs text-muted-foreground">日付</span>
-              <div className="flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={dateText}
-                  onChange={e => {
-                    const value = e.target.value
-                    const updates: Partial<MemoSuggestion> = { date_input: value }
-                    const dateParts = parseDateInput(value)
-                    if (!value.trim() && !timeText.trim()) {
-                      updates.scheduled_at = null
-                    } else if (dateParts) {
-                      const timeParts = parseTimeInput(timeText) ?? { hour: 9, minute: 0 }
-                      updates.scheduled_at = new Date(dateParts.year, dateParts.month - 1, dateParts.day, timeParts.hour, timeParts.minute).toISOString()
-                    }
-                    update(updates)
-                  }}
-                  placeholder="YYYY/MM/DD"
-                  className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              <div className="relative flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                <Calendar className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                <select
+                  value={dateValue}
+                  onChange={e => handleScheduleChange(e.target.value, timeValue || "09:00")}
+                  className="h-12 min-w-0 flex-1 appearance-none bg-transparent pr-7 text-sm font-medium outline-none"
                   aria-label="日付"
-                />
-                <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
+                >
+                  <option value="">未設定</option>
+                  {dateOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
               </div>
             </label>
             <label className="space-y-2">
               <span className="text-xs text-muted-foreground">時刻</span>
-              <div className="flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={timeText}
-                  onChange={e => {
-                    const value = e.target.value
-                    const updates: Partial<MemoSuggestion> = { time_input: value }
-                    const dateParts = parseDateInput(dateText)
-                    if (!dateText.trim() && !value.trim()) {
-                      updates.scheduled_at = null
-                    } else if (dateParts) {
-                      const timeParts = parseTimeInput(value) ?? { hour: 9, minute: 0 }
-                      updates.scheduled_at = new Date(dateParts.year, dateParts.month - 1, dateParts.day, timeParts.hour, timeParts.minute).toISOString()
-                    }
-                    update(updates)
-                  }}
-                  placeholder="09:00"
-                  className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              <div className="relative flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                <select
+                  value={timeValue}
+                  onChange={e => handleScheduleChange(dateValue, e.target.value)}
+                  disabled={!dateValue}
+                  className="h-12 min-w-0 flex-1 appearance-none bg-transparent pr-7 text-sm font-medium outline-none disabled:text-muted-foreground"
                   aria-label="時刻"
-                />
-                <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                >
+                  <option value="">未設定</option>
+                  {timeOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
               </div>
             </label>
           </div>
@@ -952,6 +1005,8 @@ function SuggestionSheet({
                       setSelectedCandidateIndex(index)
                       update({
                         scheduled_at: candidate.scheduled_at,
+                        date_input: formatDateValue(candidate.scheduled_at),
+                        time_input: formatTimeInput(candidate.scheduled_at),
                         duration_minutes: candidate.duration_minutes,
                         memo_status: "time_candidates",
                       })

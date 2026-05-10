@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { Calendar, Check, ImagePlus, Loader2, Minus, Plus } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { Calendar, Check, ChevronDown, Clock, ImagePlus, Loader2, Minus, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
 
-const CATEGORIES = ["学習", "調査", "目標", "アイデア", "旅行", "健康", "趣味", "その他"]
+const CATEGORIES = ["学習", "調査", "目標", "アイデア", "旅行", "健康", "趣味", "お金", "その他"]
 const QUICK_MINUTES = [30, 45, 60, 90]
 
 interface WishlistCardDetailProps {
@@ -40,17 +40,103 @@ function linkify(text: string) {
   })
 }
 
+function formatDateValue(value: string | null | undefined) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-")
+}
+
+function formatTimeValue(value: string | null | undefined) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+}
+
+function buildDateOptions(selectedValue: string) {
+  const formatter = new Intl.DateTimeFormat("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    weekday: "short",
+  })
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const options = Array.from({ length: 21 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() + index)
+    const value = [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-")
+    const prefix = index === 0 ? "今日" : index === 1 ? "明日" : index === 2 ? "明後日" : ""
+    return {
+      value,
+      label: prefix ? `${prefix} ${formatter.format(date)}` : formatter.format(date),
+    }
+  })
+  if (selectedValue && !options.some(option => option.value === selectedValue)) {
+    const date = new Date(`${selectedValue}T00:00:00`)
+    options.unshift({
+      value: selectedValue,
+      label: Number.isNaN(date.getTime()) ? selectedValue : formatter.format(date),
+    })
+  }
+  return options
+}
+
+function buildTimeOptions(selectedValue: string) {
+  const options = Array.from({ length: 96 }, (_, index) => {
+    const minutes = index * 15
+    const hour = Math.floor(minutes / 60)
+    const minute = minutes % 60
+    const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+    return { value, label: value }
+  })
+  if (selectedValue && !options.some(option => option.value === selectedValue)) {
+    options.unshift({ value: selectedValue, label: selectedValue })
+  }
+  return options
+}
+
+function combineDateTime(dateValue: string, timeValue: string) {
+  if (!dateValue) return null
+  const [year, month, day] = dateValue.split("-").map(Number)
+  const [hour = 9, minute = 0] = (timeValue || "09:00").split(":").map(Number)
+  const date = new Date(year, month - 1, day, hour, minute)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
+}
+
 export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalendarAdd }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
+  const [isSavingMemo, setIsSavingMemo] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [draftTitle, setDraftTitle] = useState("")
+  const [draftDescription, setDraftDescription] = useState("")
   const [newSubItem, setNewSubItem] = useState("")
   const [tagText, setTagText] = useState("")
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
+
+  useEffect(() => {
+    if (!item || !open) return
+    setDraftTitle(item.title)
+    setDraftDescription(item.description ?? "")
+    setSaveError(null)
+  }, [item, open])
+
   if (!item) return null
 
-  const scheduledAtLocal = item.scheduled_at
-    ? new Date(item.scheduled_at).toISOString().slice(0, 16)
-    : ""
+  const dateValue = formatDateValue(item.scheduled_at)
+  const timeValue = formatTimeValue(item.scheduled_at)
+  const dateOptions = buildDateOptions(dateValue)
+  const timeOptions = buildTimeOptions(timeValue)
 
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
 
@@ -59,10 +145,11 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
     await update({ duration_minutes: Math.max(15, current + delta) })
   }
 
-  const handleDateChange = async (value: string) => {
+  const handleScheduleChange = async (nextDateValue: string, nextTimeValue: string) => {
+    const scheduledAt = combineDateTime(nextDateValue, nextTimeValue)
     await update({
-      scheduled_at: value ? new Date(value).toISOString() : null,
-      memo_status: value ? "time_candidates" : item.memo_status,
+      scheduled_at: scheduledAt,
+      memo_status: scheduledAt ? "time_candidates" : item.memo_status,
     })
   }
 
@@ -78,6 +165,28 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
       await update({ memo_status: "scheduled" })
     } finally {
       setIsAddingCalendar(false)
+    }
+  }
+
+  const handleSaveMemo = async () => {
+    const title = draftTitle.trim()
+    if (!title) {
+      setSaveError("見出しを入力してください")
+      return
+    }
+
+    setIsSavingMemo(true)
+    setSaveError(null)
+    try {
+      await update({
+        title,
+        description: draftDescription.trim() || null,
+        memo_status: item.memo_status ?? "unsorted",
+      })
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "メモの保存に失敗しました")
+    } finally {
+      setIsSavingMemo(false)
     }
   }
 
@@ -114,8 +223,8 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
           <div className="space-y-1">
             <Label>メモの見出し</Label>
             <Input
-              defaultValue={item.title}
-              onBlur={e => update({ title: e.target.value.trim() || item.title })}
+              value={draftTitle}
+              onChange={e => setDraftTitle(e.target.value)}
               className="text-base font-semibold"
             />
           </div>
@@ -174,26 +283,81 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
           <div className="space-y-1">
             <Label>メモ</Label>
             <textarea
-              defaultValue={item.description ?? ""}
-              onBlur={e => update({ description: e.target.value || null })}
+              value={draftDescription}
+              onChange={e => setDraftDescription(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  handleSaveMemo()
+                }
+              }}
               rows={6}
               placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
               className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
-            {item.description && (
+            {draftDescription && (
               <div className="rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
-                {linkify(item.description)}
+                {linkify(draftDescription)}
               </div>
             )}
           </div>
 
+          {saveError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {saveError}
+            </div>
+          )}
+
+          <Button
+            onClick={handleSaveMemo}
+            disabled={isSavingMemo || !draftTitle.trim()}
+            className="w-full min-h-[44px]"
+          >
+            {isSavingMemo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+            メモを保存
+          </Button>
+
           <div className="space-y-3">
             <Label>時間</Label>
-            <Input
-              type="datetime-local"
-              defaultValue={scheduledAtLocal}
-              onChange={e => handleDateChange(e.target.value)}
-            />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">日付</span>
+                <div className="relative flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                  <Calendar className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <select
+                    value={dateValue}
+                    onChange={e => handleScheduleChange(e.target.value, timeValue || "09:00")}
+                    className="h-12 min-w-0 flex-1 appearance-none bg-transparent pr-7 text-sm font-medium outline-none"
+                    aria-label="日付"
+                  >
+                    <option value="">未設定</option>
+                    {dateOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
+                </div>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs text-muted-foreground">時刻</span>
+                <div className="relative flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
+                  <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <select
+                    value={timeValue}
+                    onChange={e => handleScheduleChange(dateValue, e.target.value)}
+                    disabled={!dateValue}
+                    className="h-12 min-w-0 flex-1 appearance-none bg-transparent pr-7 text-sm font-medium outline-none disabled:text-muted-foreground"
+                    aria-label="時刻"
+                  >
+                    <option value="">未設定</option>
+                    {timeOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
+                </div>
+              </label>
+            </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" onClick={() => changeDuration(-15)} className="min-h-[44px] min-w-[44px]">
                 <Minus className="h-4 w-4" />

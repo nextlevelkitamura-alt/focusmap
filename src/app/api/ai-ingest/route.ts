@@ -4,11 +4,11 @@ import { chatCompletion } from '@/lib/ai-client'
 import { generateText } from 'ai'
 import { google } from '@ai-sdk/google'
 
-const MEMO_TAGS = ['仕事', '生活', '学習', '健康', '人間関係'] as const
+const MEMO_TAGS = ['仕事', '生活', '学習', '健康', '人間関係', 'お金'] as const
 
 const SYSTEM_PROMPT = `Focusmapのメモ整理。JSONのみ返す。
 schema={"title":string,"category":string,"tags":string[],"description":string,"scheduled_at":string|null,"duration_minutes":number}
-制約: titleは30字以内。descriptionはURLを消さず原文ベースで最大120字。categoryは必ず 仕事/生活/学習/健康/人間関係 のどれか1つ。tagsは必ず空配列[]。ミクロな固有タグ（料理名、買い物品、作業名など）は作らない。duration_minutesは5/15/30/60/90/120の近い値。日時が明確な時だけscheduled_atをISO文字列にする。
+制約: titleは30字以内。descriptionはURLを消さず原文ベースで最大120字。categoryは必ず 仕事/生活/学習/健康/人間関係/お金 のどれか1つ。tagsは必ず空配列[]。ミクロな固有タグ（料理名、買い物品、作業名など）は作らない。duration_minutesは5/15/30/60/90/120の近い値。日時が明確な時だけscheduled_atをISO文字列にする。
 現在日時: ${new Date().toISOString()}`
 
 function normalizeMemoModel(model: string) {
@@ -21,6 +21,7 @@ function normalizeMemoCategory(value: unknown, fallbackText = '') {
     return value
   }
   const text = `${typeof value === 'string' ? value : ''} ${fallbackText}`
+  if (/お金|税|税制|確定申告|会計|経理|請求|入金|支払|支払い|購入|投資|貯金|家計|費用|予算|料金|価格|収入|売上/.test(text)) return 'お金'
   if (/仕事|業務|会議|資料|連絡|事務|営業|顧客|AI|自動化|開発|実装|コード|調査/.test(text)) return '仕事'
   if (/学習|勉強|読書|講座|本|スキル|技術検証/.test(text)) return '学習'
   if (/健康|運動|睡眠|病院|通院|休息|メンタル|食事改善/.test(text)) return '健康'
@@ -98,7 +99,7 @@ function normalizeSuggestion(parsed: unknown, fallbackText: string): Required<Om
       title: titles.slice(0, 2).join(' / ').slice(0, 30) || fallbackText.slice(0, 30) || '新しいメモ',
       category: normalizeMemoCategory(items.find(item => item.category)?.category, fallbackText),
       tags: [],
-      memo_status: 'organized',
+      memo_status: 'unsorted',
       description: descriptions.join('。').slice(0, 120) || fallbackText,
       scheduled_at: items.find(item => item.scheduled_at)?.scheduled_at ?? null,
       duration_minutes: items.reduce((sum, item) => sum + (Number(item.duration_minutes) || 0), 0) || 60,
@@ -113,7 +114,7 @@ function normalizeSuggestion(parsed: unknown, fallbackText: string): Required<Om
     title: (item.title || fallbackText.slice(0, 30) || '新しいメモ').slice(0, 30),
     category: normalizeMemoCategory(item.category, fallbackText),
     tags: [],
-    memo_status: item.memo_status || 'organized',
+    memo_status: item.memo_status || 'unsorted',
     description: item.description || fallbackText,
     scheduled_at: item.scheduled_at ?? null,
     duration_minutes: Number(item.duration_minutes) || 60,
@@ -206,7 +207,7 @@ export async function POST(request: NextRequest) {
         title: suggestion.title,
         category: normalizeMemoCategory(suggestion.category, body.text),
         tags: [],
-        memo_status: suggestion.time_candidates?.length ? 'time_candidates' : (suggestion.memo_status || 'organized'),
+        memo_status: suggestion.time_candidates?.length ? 'time_candidates' : (suggestion.memo_status || 'unsorted'),
         description: suggestion.description || body.text,
         scheduled_at: suggestion.scheduled_at ?? null,
         duration_minutes: suggestion.duration_minutes ?? 60,
