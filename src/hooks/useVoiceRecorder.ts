@@ -6,6 +6,7 @@ interface UseVoiceRecorderReturn {
   isRecording: boolean
   isTranscribing: boolean
   error: string | null
+  permissionState: PermissionState | "unsupported" | null
   analyserRef: React.RefObject<AnalyserNode | null>
   startRecording: () => Promise<void>
   stopRecording: () => void
@@ -17,16 +18,41 @@ export function useVoiceRecorder(
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [permissionState, setPermissionState] = useState<PermissionState | "unsupported" | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
 
+  const refreshPermissionState = useCallback(async () => {
+    if (!navigator.permissions?.query) return
+    try {
+      const status = await navigator.permissions.query({ name: "microphone" as PermissionName })
+      setPermissionState(status.state)
+      status.onchange = () => setPermissionState(status.state)
+    } catch {
+      setPermissionState(null)
+    }
+  }, [])
+
   const startRecording = useCallback(async () => {
     setError(null)
 
     try {
+      await refreshPermissionState()
+      if (!window.isSecureContext) {
+        setPermissionState("unsupported")
+        setError("マイクはHTTPSまたはlocalhostでのみ使えます。localhostで開き直してください。")
+        return
+      }
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        setPermissionState("unsupported")
+        setError("このブラウザでは音声録音に対応していません。Arc/Chrome/Safariで開いてください。")
+        return
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      setPermissionState("granted")
 
       // iPhone Safari は WebM 非対応 → MP4/AAC にフォールバック
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -119,13 +145,24 @@ export function useVoiceRecorder(
       setIsRecording(true)
     } catch (err) {
       console.error('Recording start error:', err)
-      if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。')
-      } else {
-        setError('マイクにアクセスできません')
+      if (err instanceof DOMException) {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setPermissionState("denied")
+          setError('マイクの使用が拒否されています。macOSの「システム設定 > プライバシーとセキュリティ > マイク」で、このブラウザまたはCodexを許可してからページを再読み込みしてください。')
+          return
+        }
+        if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          setError('利用できるマイクが見つかりません。入力デバイスの接続を確認してください。')
+          return
+        }
+        if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+          setError('マイクを開始できません。他のアプリがマイクを使用している可能性があります。')
+          return
+        }
       }
+      setError('マイクにアクセスできません')
     }
-  }, [onTranscribed])
+  }, [onTranscribed, refreshPermissionState])
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -144,6 +181,7 @@ export function useVoiceRecorder(
     isRecording,
     isTranscribing,
     error,
+    permissionState,
     analyserRef,
     startRecording,
     stopRecording,

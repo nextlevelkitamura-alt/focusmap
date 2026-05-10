@@ -86,6 +86,7 @@ export function WishlistView() {
     isRecording,
     isTranscribing,
     error: voiceError,
+    permissionState,
     analyserRef,
     startRecording,
     stopRecording,
@@ -325,6 +326,9 @@ export function WishlistView() {
               </>
             )}
             {voiceError && <span className="text-destructive">{voiceError}</span>}
+            {permissionState === "prompt" && !voiceError && (
+              <span>許可ダイアログが出たらマイクを許可してください</span>
+            )}
           </div>
         )}
 
