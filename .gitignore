@@ -61,3 +61,4 @@ docs/env.md
 tmp/
 .playwright-mcp/
 supabase/.temp/
+scripts/task-runner.paused

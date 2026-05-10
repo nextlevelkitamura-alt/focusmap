@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/utils/supabase/client"
+import type { User } from "@supabase/supabase-js"
 import { useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -13,7 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target, ListTodo, Star, CalendarDays } from "lucide-react"
+import { ChevronDown, LogOut, Settings, User, Layers, Plus, Pencil, Trash2, Check, Network, Target, ListTodo, Star, CalendarDays, Route } from "lucide-react"
 import { Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -43,7 +44,7 @@ export function Header({
     onToggleTaskList,
 }: HeaderProps) {
     const router = useRouter()
-    const [user, setUser] = useState<any>(null)
+    const [user, setUser] = useState<User | null>(null)
     const [supabase] = useState(() => createClient())
 
     // Space create/rename state
@@ -106,6 +107,7 @@ export function Header({
         { id: 'map', label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
         { id: 'habits', label: '習慣', icon: <Target className="h-3.5 w-3.5" /> },
         { id: 'ideal', label: '理想', icon: <Star className="h-3.5 w-3.5" /> },
+        { id: 'long-term', label: '長期', icon: <Route className="h-3.5 w-3.5" /> },
     ]
 
     return (

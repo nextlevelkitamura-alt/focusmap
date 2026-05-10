@@ -1,0 +1,7 @@
+[mcp_servers.playwright]
+args = [
+    "@playwright/mcp@latest",
+    "--config",
+    "/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/playwright-mcp-config.json",
+]
+command = "npx"

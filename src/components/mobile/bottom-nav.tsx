@@ -2,7 +2,7 @@
 
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { usePathname, useRouter } from "next/navigation"
-import { CalendarDays, Bot, Target, MoreHorizontal, Network, Star } from "lucide-react"
+import { CalendarDays, Bot, Target, MoreHorizontal, Network, Star, Route } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useState } from "react"
 
@@ -15,6 +15,7 @@ const mainNavItems: { id: DashboardView; icon: typeof CalendarDays; label: strin
 const moreNavItems: { id: DashboardView; icon: typeof CalendarDays; label: string }[] = [
     { id: "map", icon: Network, label: "マップ" },
     { id: "ideal", icon: Star, label: "理想" },
+    { id: "long-term", icon: Route, label: "長期" },
 ]
 
 export function BottomNav() {

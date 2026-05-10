@@ -3,9 +3,6 @@
 import React from "react";
 import { BaseEdge, EdgeProps } from "reactflow";
 
-const BRANCH_OFFSET = 24;
-const MIN_TARGET_GAP = 24;
-
 export function BranchEdge({
   id,
   sourceX,
@@ -14,7 +11,12 @@ export function BranchEdge({
   targetY,
   style,
   markerEnd,
+  data,
 }: EdgeProps) {
+  const isMobile = (data as { isMobile?: boolean } | undefined)?.isMobile ?? false;
+  const BRANCH_OFFSET = isMobile ? 10 : 16;
+  const MIN_TARGET_GAP = isMobile ? 8 : 14;
+
   const preferredBranchX = sourceX + BRANCH_OFFSET;
   const maxBranchX = targetX - MIN_TARGET_GAP;
   const branchX =

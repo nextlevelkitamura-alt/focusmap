@@ -22,6 +22,7 @@ import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 import { AiView } from "@/components/ai/ai-view"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 import { IdealView } from "@/components/ideal/ideal-view"
+import { LongTermPlannerView } from "@/components/long-term/long-term-planner-view"
 import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
 import { TodayTaskBoard } from "@/components/today/today-task-board"
 import { TodayDateProvider } from "@/contexts/TodayDateContext"
@@ -53,11 +54,13 @@ export function DashboardClient({
     // Restore from localStorage after mount (client-only)
     const selectionRestoredRef = useRef(false)
     useEffect(() => {
-        const savedProject = localStorage.getItem('focusmap:lastProjectId')
-        if (savedProject && initialProjects.some(p => p.id === savedProject)) {
-            setSelectedProjectId(savedProject)
-        }
-        selectionRestoredRef.current = true
+        queueMicrotask(() => {
+            const savedProject = localStorage.getItem('focusmap:lastProjectId')
+            if (savedProject && initialProjects.some(p => p.id === savedProject)) {
+                setSelectedProjectId(savedProject)
+            }
+            selectionRestoredRef.current = true
+        })
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Persist selection to localStorage (only after restore to avoid overwriting saved values)
@@ -77,14 +80,16 @@ export function DashboardClient({
 
     // Auto-select first project when space changes (NOTE: deps are primitives only)
     useEffect(() => {
-        const projectsInSpace = selectedSpaceId === null
-            ? projects
-            : projects.filter(p => p.space_id === selectedSpaceId)
-        if (projectsInSpace.length > 0 && !projectsInSpace.find(p => p.id === selectedProjectId)) {
-            setSelectedProjectId(projectsInSpace[0].id)
-        } else if (projectsInSpace.length === 0) {
-            setSelectedProjectId(null)
-        }
+        queueMicrotask(() => {
+            const projectsInSpace = selectedSpaceId === null
+                ? projects
+                : projects.filter(p => p.space_id === selectedSpaceId)
+            if (projectsInSpace.length > 0 && !projectsInSpace.find(p => p.id === selectedProjectId)) {
+                setSelectedProjectId(projectsInSpace[0].id)
+            } else if (projectsInSpace.length === 0) {
+                setSelectedProjectId(null)
+            }
+        })
     }, [selectedSpaceId]) // ONLY depends on selectedSpaceId, not objects
 
     const selectedProject = useMemo(() =>
@@ -102,6 +107,8 @@ export function DashboardClient({
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
     // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
     const [isTaskListVisible, setIsTaskListVisible] = useState(false)
+    // --- Sync Error Toast ---
+    const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
 
     // BottomNav の AI タブは setActiveView('ai') を使うので、イベントリスナーは不要
 
@@ -670,9 +677,6 @@ export function DashboardClient({
         }
     }, [])
 
-    // --- Sync Error Toast ---
-    const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
-
     // --- Undo/Redo Keyboard Listener ---
     const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
 
@@ -703,7 +707,9 @@ export function DashboardClient({
     // today / map ビューでは左サイドバーを自動折りたたみ
     useEffect(() => {
         if (!isViewReady) return
-        setIsLeftSidebarCollapsed(activeView === 'today' || activeView === 'map')
+        queueMicrotask(() => {
+            setIsLeftSidebarCollapsed(activeView === 'today' || activeView === 'map')
+        })
     }, [activeView, isViewReady])
     const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -903,6 +909,16 @@ export function DashboardClient({
                     </div>
                 )}
 
+                {isViewReady && activeView === 'long-term' && (
+                    <div className="flex-1 flex overflow-hidden">
+                        <LongTermPlannerView
+                            projects={filteredProjects}
+                            selectedProjectId={selectedProjectId}
+                            onSelectProject={setSelectedProjectId}
+                        />
+                    </div>
+                )}
+
                 {/* === Desktop: AI View === */}
                 {activeView === 'ai' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
@@ -943,7 +959,7 @@ export function DashboardClient({
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
-                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'ai-todos') ? "!hidden" : ""
+                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'long-term' || activeView === 'ai-todos') ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(

@@ -8,6 +8,11 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
+const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
+const FALLBACK_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA'
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY
+
 function LoginContent() {
     const supabase = createClient()
     const searchParams = useSearchParams()
@@ -16,6 +21,31 @@ function LoginContent() {
     const [password, setPassword] = useState("")
     const [loading, setLoading] = useState(false)
     const [message, setMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null)
+
+    const formatAuthError = (error: unknown) => {
+        const text = error instanceof Error ? error.message : String(error)
+        if (text.includes('exceed_cached_egress_quota') || text.includes('Service for this project is restricted')) {
+            return 'Supabase の転送量上限によりプロジェクトが制限されています。課金設定または Supabase サポートで制限解除が必要です。'
+        }
+        return text
+    }
+
+    const checkSupabaseAuthAvailable = async () => {
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+        })
+
+        if (!response.ok) {
+            const body = await response.json().catch(() => null)
+            const message = typeof body?.message === 'string'
+                ? body.message
+                : `Supabase Auth is unavailable (${response.status})`
+            throw new Error(message)
+        }
+    }
 
     useEffect(() => {
         const errorQuery = searchParams.get('error')
@@ -39,6 +69,7 @@ function LoginContent() {
         setLoading(true)
         setMessage(null)
         try {
+            await checkSupabaseAuthAvailable()
             const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: {
@@ -46,8 +77,8 @@ function LoginContent() {
                 },
             })
             if (error) throw error
-        } catch (error: any) {
-            setMessage({ type: 'error', text: error.message })
+        } catch (error: unknown) {
+            setMessage({ type: 'error', text: formatAuthError(error) })
             setLoading(false)
         }
     }
@@ -57,14 +88,15 @@ function LoginContent() {
         setLoading(true)
         setMessage(null)
         try {
+            await checkSupabaseAuthAvailable()
             const { error } = await supabase.auth.signInWithPassword({
                 email,
                 password,
             })
             if (error) throw error
             router.push('/dashboard')
-        } catch (error: any) {
-            setMessage({ type: 'error', text: error.message })
+        } catch (error: unknown) {
+            setMessage({ type: 'error', text: formatAuthError(error) })
         } finally {
             setLoading(false)
         }
@@ -75,6 +107,7 @@ function LoginContent() {
         setLoading(true)
         setMessage(null)
         try {
+            await checkSupabaseAuthAvailable()
             const { error } = await supabase.auth.signUp({
                 email,
                 password,
@@ -84,8 +117,8 @@ function LoginContent() {
             })
             if (error) throw error
             setMessage({ type: 'success', text: '確認メールを送信しました。メール内のリンクをクリックしてください。' })
-        } catch (error: any) {
-            setMessage({ type: 'error', text: error.message })
+        } catch (error: unknown) {
+            setMessage({ type: 'error', text: formatAuthError(error) })
         } finally {
             setLoading(false)
         }
@@ -96,7 +129,7 @@ function LoginContent() {
             <div className="w-full max-w-md p-8 space-y-6 border rounded-xl shadow-sm bg-card">
                 <div className="space-y-2 text-center">
                     <h1 className="text-3xl font-bold tracking-tighter">Focusmap</h1>
-                    <p className="text-muted-foreground">Focus on "Now Here"</p>
+                    <p className="text-muted-foreground">Focus on &quot;Now Here&quot;</p>
                 </div>
 
                 {message && (
@@ -173,8 +206,7 @@ function LoginContent() {
                     </Tabs>
 
                     <p className="text-xs text-center text-muted-foreground">
-                        ※ Google Login requires setup in Supabase Dashboard.<br />
-                        {"(Authentication > Providers > Google > Enable)"}
+                        Googleログインは Supabase Auth の Google Provider を使用します。
                     </p>
                 </div>
             </div>

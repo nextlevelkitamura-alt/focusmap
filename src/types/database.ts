@@ -119,6 +119,8 @@ export interface Database {
                     // Memo
                     memo: string | null
                     memo_images: string[] | null
+                    // Mindmap layout
+                    node_width: number | null
                 }
                 Insert: {
                     id?: string
@@ -156,6 +158,8 @@ export interface Database {
                     // Memo
                     memo?: string | null
                     memo_images?: string[] | null
+                    // Mindmap layout
+                    node_width?: number | null
                 }
                 Update: {
                     id?: string
@@ -193,6 +197,8 @@ export interface Database {
                     // Memo
                     memo?: string | null
                     memo_images?: string[] | null
+                    // Mindmap layout
+                    node_width?: number | null
                 }
             }
             habit_completions: {

@@ -47,6 +47,8 @@ loadEnvFile(envPath)
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10分
+const PAUSE_FILE = path.resolve(__dirname, 'task-runner.paused')
+const SUPABASE_RESTRICTED_PATTERN = /exceed_cached_egress_quota|Service for this project is restricted/i
 
 // ─────────────────────────────────────────────────────────────────────────
 // macOS 通知
@@ -186,6 +188,11 @@ function runClaude(opts: {
 // メイン処理
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
+  if (fs.existsSync(PAUSE_FILE)) {
+    console.log(`[task-runner] Paused by ${PAUSE_FILE}`)
+    process.exit(0)
+  }
+
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     console.error(
       '[task-runner] Error: NEXT_PUBLIC_SUPABASE_URL または SUPABASE_SERVICE_ROLE_KEY が未設定です。' +
@@ -208,6 +215,19 @@ async function main() {
 
   if (error) {
     console.error('[task-runner] DB error:', error.message)
+    if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
+      fs.writeFileSync(
+        PAUSE_FILE,
+        [
+          `Paused at ${new Date().toISOString()}`,
+          `Reason: ${error.message}`,
+          'Remove this file after the Supabase project restriction is lifted.',
+          '',
+        ].join('\n'),
+        'utf-8',
+      )
+      console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
+    }
     process.exit(1)
   }
 

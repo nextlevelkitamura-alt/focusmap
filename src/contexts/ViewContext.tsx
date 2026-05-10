@@ -2,9 +2,10 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 
-export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'ideal' | 'ai-todos'
+export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'ideal' | 'long-term' | 'ai-todos'
 
 const STORAGE_KEY = 'focusmap:activeView'
+const VALID_VIEWS: DashboardView[] = ['today', 'map', 'habits', 'ai', 'ideal', 'long-term', 'ai-todos']
 
 interface ViewContextType {
     activeView: DashboardView
@@ -27,11 +28,13 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
 
     // Read localStorage after mount (client-only)
     useEffect(() => {
-        const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
-        if (saved && ['today', 'map', 'habits', 'ai', 'ideal', 'ai-todos'].includes(saved)) {
-            setActiveViewState(saved)
-        }
-        setIsViewReady(true)
+        queueMicrotask(() => {
+            const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
+            if (saved && VALID_VIEWS.includes(saved)) {
+                setActiveViewState(saved)
+            }
+            setIsViewReady(true)
+        })
     }, [])
 
     const setActiveView = useCallback((view: DashboardView) => {
