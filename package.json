@@ -11,6 +11,7 @@
     "build:render": "NODE_OPTIONS='--max-old-space-size=512' next build",
     "start": "next start",
     "lint": "eslint",
+    "setup:opencode-go": "node scripts/setup-opencode-go-env.mjs",
     "deploy:cloudrun": "./deploy-cloudrun.sh",
     "test": "vitest",
     "test:run": "vitest run"

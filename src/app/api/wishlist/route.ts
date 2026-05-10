@@ -1,0 +1,96 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
+
+export async function GET(_request: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { data, error } = await supabase
+    .from('ideal_goals')
+    .select('*, ideal_items(*)')
+    .eq('user_id', user.id)
+    .in('status', ['wishlist', 'memo'])
+    .order('display_order', { ascending: true })
+    .order('created_at', { referencedTable: 'ideal_items', ascending: true })
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ items: data })
+}
+
+export async function POST(request: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await request.json()
+  const {
+    title,
+    description,
+    category,
+    scheduled_at,
+    duration_minutes,
+    tags,
+    memo_status,
+    ai_source_payload,
+    subtask_suggestions,
+  } = body
+
+  if (!title?.trim()) return NextResponse.json({ error: 'タイトルは必須です' }, { status: 400 })
+
+  const { count } = await supabase
+    .from('ideal_goals')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .in('status', ['wishlist', 'memo'])
+
+  const { data, error } = await supabase
+    .from('ideal_goals')
+    .insert({
+      user_id: user.id,
+      title: title.trim(),
+      description: description ?? null,
+      category: category ?? null,
+      scheduled_at: scheduled_at ?? null,
+      duration_minutes: duration_minutes ?? null,
+      tags: Array.isArray(tags) ? tags : [],
+      memo_status: memo_status ?? (scheduled_at ? 'time_candidates' : 'organized'),
+      ai_source_payload: ai_source_payload ?? null,
+      status: 'memo',
+      color: '#6366f1',
+      display_order: (count ?? 0) + 1,
+    })
+    .select('*, ideal_items(*)')
+    .single()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  if (data?.id && Array.isArray(subtask_suggestions) && subtask_suggestions.length > 0) {
+    const rows = subtask_suggestions
+      .filter((sub: { title?: string }) => sub?.title?.trim())
+      .slice(0, 8)
+      .map((sub: { title: string; estimated_minutes?: number; reason?: string }, index: number) => ({
+        ideal_id: data.id,
+        user_id: user.id,
+        title: sub.title.trim(),
+        item_type: 'task',
+        frequency_type: 'once',
+        frequency_value: 1,
+        session_minutes: sub.estimated_minutes ?? 0,
+        daily_minutes: 0,
+        description: sub.reason ?? null,
+        display_order: index,
+      }))
+    if (rows.length > 0) {
+      await supabase.from('ideal_items').insert(rows)
+    }
+  }
+
+  const { data: item } = await supabase
+    .from('ideal_goals')
+    .select('*, ideal_items(*)')
+    .eq('id', data.id)
+    .single()
+
+  return NextResponse.json({ item: item ?? data }, { status: 201 })
+}
