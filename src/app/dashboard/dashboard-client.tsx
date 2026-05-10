@@ -22,7 +22,7 @@ import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 import { AiView } from "@/components/ai/ai-view"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 import { IdealView } from "@/components/ideal/ideal-view"
-import { LongTermPlannerView } from "@/components/long-term/long-term-planner-view"
+import { WishlistView } from "@/components/wishlist/wishlist-view"
 import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
 import { TodayTaskBoard } from "@/components/today/today-task-board"
 import { TodayDateProvider } from "@/contexts/TodayDateContext"
@@ -911,11 +911,7 @@ export function DashboardClient({
 
                 {isViewReady && activeView === 'long-term' && (
                     <div className="flex-1 flex overflow-hidden">
-                        <LongTermPlannerView
-                            projects={filteredProjects}
-                            selectedProjectId={selectedProjectId}
-                            onSelectProject={setSelectedProjectId}
-                        />
+                        <WishlistView />
                     </div>
                 )}
 

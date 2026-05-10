@@ -698,6 +698,10 @@ export interface Database {
                     cost_total: number | null
                     cost_monthly: number | null
                     ai_summary: string | null
+                    scheduled_at: string | null
+                    duration_minutes: number | null
+                    google_event_id: string | null
+                    is_completed: boolean
                     created_at: string
                     updated_at: string
                 }
@@ -719,6 +723,10 @@ export interface Database {
                     cost_total?: number | null
                     cost_monthly?: number | null
                     ai_summary?: string | null
+                    scheduled_at?: string | null
+                    duration_minutes?: number | null
+                    google_event_id?: string | null
+                    is_completed?: boolean
                     created_at?: string
                     updated_at?: string
                 }
@@ -740,6 +748,10 @@ export interface Database {
                     cost_total?: number | null
                     cost_monthly?: number | null
                     ai_summary?: string | null
+                    scheduled_at?: string | null
+                    duration_minutes?: number | null
+                    google_event_id?: string | null
+                    is_completed?: boolean
                     updated_at?: string
                 }
             }
