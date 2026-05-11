@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { deleteTaskFromCalendar } from '@/lib/google-calendar';
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 /**
  * タスクを取得
  * GET /api/tasks/[id]
@@ -52,14 +56,14 @@ export async function GET(
       task
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[tasks/[id]] Error:', error);
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to fetch task'
+          message: getErrorMessage(error, 'Failed to fetch task')
         }
       },
       { status: 500 }
@@ -123,7 +127,7 @@ export async function DELETE(
           task.calendar_id || undefined
         );
         console.log('[tasks/[id] DELETE] Google Calendar event deleted');
-      } catch (calendarError: any) {
+      } catch (calendarError: unknown) {
         console.error('[tasks/[id] DELETE] Failed to delete Google Calendar event:', calendarError);
         // カレンダー削除が失敗してもタスク削除は続行
       }
@@ -156,14 +160,14 @@ export async function DELETE(
       success: true,
       message: 'Task deleted successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[tasks/[id] DELETE] Error:', error);
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to delete task'
+          message: getErrorMessage(error, 'Failed to delete task')
         }
       },
       { status: 500 }
@@ -266,9 +270,40 @@ export async function PATCH(
 
           console.log('[tasks/[id] PATCH] Google Calendar event updated');
         }
-      } catch (calendarError: any) {
+      } catch (calendarError: unknown) {
         console.error('[tasks/[id] PATCH] Failed to update Google Calendar event:', calendarError);
         // カレンダー更新が失敗してもタスク更新は成功とする
+      }
+
+      const shouldUpdateLinkedMemo =
+        body.title !== undefined ||
+        body.scheduled_at !== undefined ||
+        body.estimated_time !== undefined;
+
+      if (shouldUpdateLinkedMemo) {
+        const memoUpdates: Record<string, unknown> = {
+          scheduled_at: updatedTask.scheduled_at,
+          duration_minutes: updatedTask.estimated_time || 60,
+          memo_status: 'scheduled',
+          updated_at: new Date().toISOString(),
+        };
+        if (body.title !== undefined) {
+          memoUpdates.title = updatedTask.title;
+        }
+
+        try {
+          const { error: memoUpdateError } = await supabase
+            .from('ideal_goals')
+            .update(memoUpdates)
+            .eq('user_id', user.id)
+            .eq('google_event_id', task.google_event_id);
+
+          if (memoUpdateError) {
+            console.error('[tasks/[id] PATCH] Failed to update linked memo:', memoUpdateError);
+          }
+        } catch (memoUpdateError) {
+          console.error('[tasks/[id] PATCH] Failed to update linked memo:', memoUpdateError);
+        }
       }
     }
 
@@ -280,14 +315,14 @@ export async function PATCH(
       message: 'Task updated successfully'
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[tasks/[id] PATCH] Error:', error);
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to update task'
+          message: getErrorMessage(error, 'Failed to update task')
         }
       },
       { status: 500 }

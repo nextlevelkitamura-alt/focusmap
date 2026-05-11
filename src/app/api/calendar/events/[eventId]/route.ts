@@ -442,6 +442,36 @@ export async function PATCH(
       }
     }
 
+    // メモ（WishlistView）は ideal_goals に保存されているため、同じ Google Event ID で予定情報を同期する
+    const computedDurationMinutes = Math.max(
+      1,
+      Math.round((new Date(end_time).getTime() - new Date(start_time).getTime()) / 60000)
+    );
+    const memoUpdates: Record<string, unknown> = {
+      title,
+      scheduled_at: start_time,
+      duration_minutes: estimated_time ?? computedDurationMinutes,
+      memo_status: 'scheduled',
+      updated_at: new Date().toISOString(),
+    };
+    if (description !== undefined) {
+      memoUpdates.description = description || null;
+    }
+
+    try {
+      const { error: memoUpdateError } = await supabase
+        .from('ideal_goals')
+        .update(memoUpdates)
+        .eq('user_id', user.id)
+        .eq('google_event_id', googleEventId);
+
+      if (memoUpdateError) {
+        console.error('[events/update] Failed to update linked memo:', memoUpdateError);
+      }
+    } catch (memoUpdateError) {
+      console.error('[events/update] Failed to update linked memo:', memoUpdateError);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Event updated successfully',

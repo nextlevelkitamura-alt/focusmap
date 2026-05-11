@@ -705,10 +705,31 @@ export function useTodayViewLogic({
         title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[]
     }) => {
         const { reminders, ...taskUpdates } = updates
+        const task = localTasks.find(t => t.id === taskId)
         const previousTasks = localTasks
         setLocalTasks(prev => prev.map(t =>
             t.id === taskId ? { ...t, ...taskUpdates } : t
         ))
+        setEditTarget(prev => {
+            if (!prev || prev.taskId !== taskId) return prev
+            const nextStart = taskUpdates.scheduled_at ? new Date(taskUpdates.scheduled_at) : prev.startTime
+            const nextDuration = taskUpdates.estimated_time ?? prev.estimatedTime ?? 30
+            return {
+                ...prev,
+                title: taskUpdates.title ?? prev.title,
+                startTime: nextStart,
+                endTime: new Date(nextStart.getTime() + nextDuration * 60 * 1000),
+                estimatedTime: nextDuration,
+                calendarId: taskUpdates.calendar_id ?? prev.calendarId,
+                originalTask: prev.originalTask ? { ...prev.originalTask, ...taskUpdates } : prev.originalTask,
+            }
+        })
+        if (task?.google_event_id && taskUpdates.scheduled_at) {
+            const nextDuration = taskUpdates.estimated_time ?? task.estimated_time ?? 30
+            const start = new Date(taskUpdates.scheduled_at)
+            const end = new Date(start.getTime() + nextDuration * 60 * 1000)
+            broadcastCalendarEventTimeUpdate(task.google_event_id, start.toISOString(), end.toISOString())
+        }
         try {
             await onUpdateTask(taskId, taskUpdates)
         } catch (err) {
@@ -717,7 +738,6 @@ export function useTodayViewLogic({
         }
 
         if (reminders !== undefined) {
-            const task = localTasks.find(t => t.id === taskId)
             if (task?.google_event_id && task?.calendar_id) {
                 fetch('/api/calendar/sync-task', {
                     method: 'PATCH',
@@ -994,9 +1014,36 @@ export function useTodayViewLogic({
         const previousEvents = localCalendarEvents
 
         if (item.type === 'task') {
+            const task = localTasks.find(t => t.id === item.id)
             setLocalTasks(prev => prev.map(t =>
-                t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString() } : t
+                t.id === item.id
+                    ? {
+                        ...t,
+                        scheduled_at: newStartTime.toISOString(),
+                        estimated_time: Math.round((newEndTime.getTime() - newStartTime.getTime()) / 60000),
+                    }
+                    : t
             ))
+            setEditTarget(prev => {
+                if (!prev || prev.taskId !== item.id) return prev
+                const durationMinutes = Math.round((newEndTime.getTime() - newStartTime.getTime()) / 60000)
+                return {
+                    ...prev,
+                    startTime: newStartTime,
+                    endTime: newEndTime,
+                    estimatedTime: durationMinutes,
+                    originalTask: prev.originalTask
+                        ? {
+                            ...prev.originalTask,
+                            scheduled_at: newStartTime.toISOString(),
+                            estimated_time: durationMinutes,
+                        }
+                        : prev.originalTask,
+                }
+            })
+            if (task?.google_event_id) {
+                broadcastCalendarEventTimeUpdate(task.google_event_id, newStartTime.toISOString(), newEndTime.toISOString())
+            }
         } else {
             // 全パネルに即時ブロードキャスト（楽観UI）
             broadcastCalendarEventTimeUpdate(item.id, newStartTime.toISOString(), newEndTime.toISOString())
@@ -1006,7 +1053,10 @@ export function useTodayViewLogic({
 
         try {
             if (item.type === 'task') {
-                await onUpdateTask(item.id, { scheduled_at: newStartTime.toISOString() })
+                await onUpdateTask(item.id, {
+                    scheduled_at: newStartTime.toISOString(),
+                    estimated_time: Math.round((newEndTime.getTime() - newStartTime.getTime()) / 60000),
+                })
             } else {
                 const event = calendarEvents.find(e => e.id === item.id)
                 if (!event) return

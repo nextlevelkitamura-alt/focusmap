@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
-import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+import { broadcastCalendarSync, CALENDAR_EVENT_TIME_UPDATE_EVENT, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { WishlistCard } from "./wishlist-card"
@@ -207,6 +207,40 @@ export function WishlistView() {
   useEffect(() => {
     fetchItems().finally(() => setIsLoading(false))
   }, [fetchItems])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    const handler = (event: Event) => {
+      const { eventId, startTime, endTime } = (event as CustomEvent<{
+        eventId: string
+        startTime: string
+        endTime: string
+      }>).detail
+      if (!eventId || !startTime || !endTime) return
+
+      const durationMinutes = Math.max(
+        1,
+        Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000),
+      )
+      const applyCalendarTime = (item: MemoItem): MemoItem =>
+        item.google_event_id === eventId
+          ? {
+              ...item,
+              scheduled_at: startTime,
+              duration_minutes: durationMinutes,
+              memo_status: "scheduled",
+              updated_at: new Date().toISOString(),
+            }
+          : item
+
+      setItems(prev => prev.map(applyCalendarTime))
+      setSelectedItem(prev => prev ? applyCalendarTime(prev) : prev)
+    }
+
+    window.addEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, handler)
+    return () => window.removeEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, handler)
+  }, [])
 
   useEffect(() => {
     async function loadAiModel() {
