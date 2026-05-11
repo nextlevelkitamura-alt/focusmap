@@ -9,8 +9,8 @@ import { Input } from "@/components/ui/input"
 const DEFAULT_MODEL = "glm-5.1"
 
 const MODEL_OPTIONS = [
-  { id: "glm-5.1", label: "GLM-5.1", note: "OpenCode Go契約内の標準", badge: "推奨" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "高速。少額の従量課金あり", badge: "高速" },
+  { id: "glm-5.1", label: "GLM-5.1", note: "標準モデル", badge: "推奨" },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "高速。無料枠あり", badge: "高速" },
   { id: "kimi-k2.6", label: "Kimi K2.6", note: "品質優先。時間はかかりやすい", badge: "品質" },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", note: "品質と速度のバランス", badge: "バランス" },
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", note: "短い整理を速く返す", badge: "高速" },
@@ -88,7 +88,7 @@ export function AiModelSettings() {
           AIモデル
         </CardTitle>
         <CardDescription>
-          思考メモの整理に使うモデルを選びます。通常はOpenCode GoのGLM、急ぎの時だけGeminiを使います。
+          思考メモの整理に使うモデルを選びます。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

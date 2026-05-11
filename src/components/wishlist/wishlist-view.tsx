@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
 import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { WishlistCard } from "./wishlist-card"
@@ -46,17 +47,14 @@ const DURATION_OPTIONS = [
   { label: "60分", minutes: 60 },
 ]
 
-const DEFAULT_MEMO_TAGS = ["仕事", "生活", "学習", "健康", "人間関係", "お金"]
-
 const QUICK_MODEL_OPTIONS = [
-  { id: "glm-5.1", label: "GLM", note: "契約内" },
-  { id: "gemini-2.5-flash", label: "Gemini", note: "高速" },
+  { id: "glm-5.1", label: "GLM", note: "" },
+  { id: "gemini-2.5-flash", label: "Gemini", note: "無料枠あり" },
 ]
 
 const DEFAULT_COLUMNS: Array<{ key: MemoStatus; label: string; color: string }> = [
   { key: "unsorted", label: "未整理", color: "bg-zinc-500/10" },
   { key: "organized", label: "整理済み", color: "bg-sky-500/10" },
-  { key: "time_candidates", label: "時間候補あり", color: "bg-teal-500/10" },
   { key: "scheduled", label: "予定済み", color: "bg-blue-500/10" },
   { key: "completed", label: "完了", color: "bg-zinc-500/10" },
 ]
@@ -72,9 +70,8 @@ const STATUS_LABEL: Record<MemoStatus | "all", string> = {
 
 function getStatus(item: MemoItem): MemoStatus {
   if (item.is_completed || item.memo_status === "completed") return "completed"
-  if (item.google_event_id || item.memo_status === "scheduled") return "scheduled"
-  if (item.memo_status === "time_candidates" || item.scheduled_at) return "time_candidates"
-  if (item.memo_status === "organized") return "organized"
+  if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
+  if (item.memo_status === "organized" || item.memo_status === "time_candidates") return "organized"
   return "unsorted"
 }
 
@@ -169,20 +166,14 @@ export function WishlistView() {
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null)
   const [analyzeElapsedSeconds, setAnalyzeElapsedSeconds] = useState(0)
   const [intakeError, setIntakeError] = useState<string | null>(null)
-  const [lastUsedModel, setLastUsedModel] = useState<string | null>(null)
   const [selectedAiModel, setSelectedAiModel] = useState("glm-5.1")
   const [suggestion, setSuggestion] = useState<MemoSuggestion | null>(null)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
+  const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
   const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
+  const [filterOpen, setFilterOpen] = useState(false)
   const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [columnLabels, setColumnLabels] = useState<Record<MemoStatus, string>>({
-    unsorted: "未整理",
-    organized: "整理済み",
-    time_candidates: "時間候補あり",
-    scheduled: "予定済み",
-    completed: "完了",
-  })
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -234,7 +225,7 @@ export function WishlistView() {
   }, [])
 
   const allTags = useMemo(() => {
-    const set = new Set<string>(DEFAULT_MEMO_TAGS)
+    const set = new Set<string>()
     for (const item of items) {
       if (item.category) set.add(item.category)
       for (const tag of item.tags ?? []) set.add(tag)
@@ -253,6 +244,15 @@ export function WishlistView() {
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
+      const previousItems = items
+      const previousSelectedItem = selectedItem
+      const optimisticUpdate = (item: MemoItem): MemoItem => ({
+        ...item,
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      setItems(prev => prev.map(existing => existing.id === id ? optimisticUpdate(existing) : existing))
+      setSelectedItem(prev => prev?.id === id ? optimisticUpdate(prev) : prev)
       setIntakeError(null)
       try {
         const res = await fetch(`/api/wishlist/${id}`, {
@@ -271,14 +271,15 @@ export function WishlistView() {
         setItems(prev => prev.map(existing => existing.id === id ? item : existing))
         setSelectedItem(prev => prev?.id === id ? item : prev)
       } catch (err) {
+        setItems(previousItems)
+        setSelectedItem(previousSelectedItem)
         setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
-        await fetchItems()
         throw err
       }
       return
     }
     await fetchItems()
-  }, [fetchItems])
+  }, [fetchItems, items, selectedItem])
 
   const handleDelete = useCallback(async (id: string) => {
     setItems(prev => prev.filter(item => item.id !== id))
@@ -321,7 +322,6 @@ export function WishlistView() {
   const handleAnalyze = async () => {
     if (!intakeText.trim() || isAnalyzing) return
     setIntakeError(null)
-    setLastUsedModel(null)
     setIsAnalyzing(true)
     setAnalyzeStartedAt(Date.now())
     try {
@@ -335,7 +335,6 @@ export function WishlistView() {
         setIntakeError(data.error || "整理に失敗しました")
         return
       }
-      if (typeof data.model === "string") setLastUsedModel(data.model)
       const suggestedCategory = typeof data.suggestion?.category === "string" && allTags.includes(data.suggestion.category)
         ? data.suggestion.category
         : ""
@@ -354,7 +353,6 @@ export function WishlistView() {
 
   const handleQuickModelChange = async (modelId: string) => {
     setSelectedAiModel(modelId)
-    setLastUsedModel(null)
     await fetch("/api/ai/context", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -376,8 +374,9 @@ export function WishlistView() {
   }
 
   const saveSuggestion = async (calendarCandidate?: MemoSuggestion["time_candidates"][number], addToCalendar = false) => {
-    if (!suggestion?.title.trim()) return
+    if (!suggestion?.title.trim() || isSavingSuggestion) return
     setIntakeError(null)
+    setIsSavingSuggestion(true)
     const scheduledAt = calendarCandidate?.scheduled_at ?? suggestion.scheduled_at
     const durationMinutes = calendarCandidate?.duration_minutes ?? suggestion.duration_minutes
     try {
@@ -416,6 +415,8 @@ export function WishlistView() {
       setIntakeText("")
     } catch (err) {
       setIntakeError(err instanceof Error ? err.message : "メモの保存に失敗しました")
+    } finally {
+      setIsSavingSuggestion(false)
     }
   }
 
@@ -435,8 +436,15 @@ export function WishlistView() {
       alert(`カレンダー登録に失敗しました: ${error}`)
       return
     }
-    const { google_event_id } = await res.json()
-    await handleUpdate(item.id, { google_event_id, memo_status: "scheduled" })
+    const { google_event_id, item: updatedItem } = await res.json()
+    if (updatedItem) {
+      setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
+      setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
+    } else {
+      await handleUpdate(item.id, { google_event_id, memo_status: "scheduled" })
+    }
+    invalidateCalendarCache()
+    broadcastCalendarSync()
   }
 
   const handleDropToColumn = async (status: MemoStatus) => {
@@ -508,32 +516,46 @@ export function WishlistView() {
             <span className="sm:hidden">生成</span>
           </Button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">AI</span>
-          <div className="flex rounded-full border bg-muted/20 p-1">
-            {QUICK_MODEL_OPTIONS.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => handleQuickModelChange(option.id)}
-                disabled={isAnalyzing}
-                className={cn(
-                  "min-h-8 rounded-full px-3 text-xs font-medium transition-colors",
-                  selectedAiModel === option.id
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {option.label}
-                <span className={cn(
-                  "ml-1 text-[10px]",
-                  selectedAiModel === option.id ? "text-primary-foreground/80" : "text-muted-foreground",
-                )}>
-                  {option.note}
-                </span>
-              </button>
-            ))}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xs text-muted-foreground">AI</span>
+            <div className="flex rounded-full border bg-muted/20 p-1">
+              {QUICK_MODEL_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => handleQuickModelChange(option.id)}
+                  disabled={isAnalyzing}
+                  className={cn(
+                    "min-h-8 rounded-full px-3 text-xs font-medium transition-colors",
+                    selectedAiModel === option.id
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                  {option.note && (
+                    <span className={cn(
+                      "ml-1 text-[10px]",
+                      selectedAiModel === option.id ? "text-primary-foreground/80" : "text-muted-foreground",
+                    )}>
+                      {option.note}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
+          <Button
+            type="button"
+            variant={filterOpen ? "default" : "outline"}
+            size="icon"
+            onClick={() => setFilterOpen(open => !open)}
+            aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
+            className="min-h-[40px] min-w-[40px] md:hidden"
+          >
+            <Filter className="h-4 w-4" />
+          </Button>
         </div>
         {isAnalyzing && (
           <div className="flex min-h-10 flex-wrap items-center gap-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
@@ -542,11 +564,6 @@ export function WishlistView() {
               {ANALYZE_STATUS_MESSAGES[Math.min(Math.floor(analyzeElapsedSeconds / 4), ANALYZE_STATUS_MESSAGES.length - 1)]}
             </span>
             <span>{analyzeElapsedSeconds}秒経過</span>
-          </div>
-        )}
-        {lastUsedModel && !isAnalyzing && (
-          <div className="text-xs text-muted-foreground">
-            使用モデル: <code className="rounded bg-muted px-1 py-0.5">{lastUsedModel}</code>
           </div>
         )}
         {intakeError && !isAnalyzing && (
@@ -604,13 +621,15 @@ export function WishlistView() {
             )}
           </div>
         )}
-        <FilterBar
-          statusFilter={statusFilter}
-          tagFilter={tagFilter}
-          tags={allTags}
-          onStatusChange={setStatusFilter}
-          onTagChange={setTagFilter}
-        />
+        <div className={cn(!filterOpen && "hidden md:block")}>
+          <FilterBar
+            statusFilter={statusFilter}
+            tagFilter={tagFilter}
+            tags={allTags}
+            onStatusChange={setStatusFilter}
+            onTagChange={setTagFilter}
+          />
+        </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -626,11 +645,7 @@ export function WishlistView() {
               >
                 <div className="flex items-center gap-2 border-b p-2">
                   <GripVertical className="h-4 w-4 text-muted-foreground" />
-                  <Input
-                    value={columnLabels[column.key]}
-                    onChange={e => setColumnLabels(prev => ({ ...prev, [column.key]: e.target.value }))}
-                    className="h-8 border-0 bg-transparent px-1 text-sm font-medium shadow-none focus-visible:ring-0"
-                  />
+                  <h2 className="flex-1 px-1 text-sm font-medium">{column.label}</h2>
                   <span className="rounded bg-background/70 px-1.5 py-0.5 text-xs text-muted-foreground">{columnItems.length}</span>
                 </div>
                 <div className="flex-1 space-y-2 overflow-y-auto p-2">
@@ -682,6 +697,7 @@ export function WishlistView() {
         onChange={setSuggestion}
         onSave={saveSuggestion}
         registeredTags={allTags}
+        isSaving={isSavingSuggestion}
       />
 
       <WishlistCardDetail
@@ -690,6 +706,8 @@ export function WishlistView() {
         onOpenChange={setDetailOpen}
         onUpdate={handleUpdate}
         onCalendarAdd={handleCalendarAdd}
+        onSaved={() => setDetailOpen(false)}
+        tagOptions={allTags}
       />
     </div>
   )
@@ -708,7 +726,7 @@ function FilterBar({
   onStatusChange: (status: MemoStatus | "all") => void
   onTagChange: (tag: string | "all") => void
 }) {
-  const statusOptions: Array<MemoStatus | "all"> = ["all", "unsorted", "organized", "time_candidates", "scheduled", "completed"]
+  const statusOptions: Array<MemoStatus | "all"> = ["all", "unsorted", "organized", "scheduled", "completed"]
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1 overflow-x-auto">
@@ -760,6 +778,7 @@ function SuggestionSheet({
   onChange,
   onSave,
   registeredTags,
+  isSaving,
 }: {
   suggestion: MemoSuggestion | null
   open: boolean
@@ -767,6 +786,7 @@ function SuggestionSheet({
   onChange: (suggestion: MemoSuggestion | null) => void
   onSave: (candidate?: MemoSuggestion["time_candidates"][number], addToCalendar?: boolean) => Promise<void>
   registeredTags: string[]
+  isSaving: boolean
 }) {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null)
   const [newTagText, setNewTagText] = useState("")
@@ -1036,12 +1056,13 @@ function SuggestionSheet({
             </details>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <Button disabled={!suggestion.title.trim()} onClick={() => onSave(selectedCandidate, false)} className="min-h-[44px]">
-              <Check className="mr-1 h-4 w-4" /> メモに保存
+            <Button disabled={isSaving || !suggestion.title.trim()} onClick={() => onSave(selectedCandidate, false)} className="min-h-[44px]">
+              {isSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Check className="mr-1 h-4 w-4" />}
+              {isSaving ? "保存中..." : "メモに保存"}
             </Button>
             <Button
               variant="outline"
-              disabled={!suggestion.title.trim() || !canCalendar}
+              disabled={isSaving || !suggestion.title.trim() || !canCalendar}
               onClick={() => onSave(selectedCandidate, true)}
               className="min-h-[44px]"
             >

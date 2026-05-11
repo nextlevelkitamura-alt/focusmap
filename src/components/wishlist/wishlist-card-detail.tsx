@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, ImagePlus, Loader2, Minus, Plus } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -9,8 +9,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { IdealGoalWithItems } from "@/types/database"
 import { cn } from "@/lib/utils"
 
-const CATEGORIES = ["学習", "調査", "目標", "アイデア", "旅行", "健康", "趣味", "お金", "その他"]
 const QUICK_MINUTES = [30, 45, 60, 90]
+
+interface MemoImage {
+  id: string
+  file_name: string
+  file_url: string
+  file_type: string
+  file_size: number
+}
 
 interface WishlistCardDetailProps {
   item: IdealGoalWithItems | null
@@ -18,6 +25,8 @@ interface WishlistCardDetailProps {
   onOpenChange: (open: boolean) => void
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
   onCalendarAdd: (item: IdealGoalWithItems) => Promise<void>
+  onSaved?: () => void
+  tagOptions: string[]
 }
 
 function linkify(text: string) {
@@ -113,16 +122,40 @@ function combineDateTime(dateValue: string, timeValue: string) {
   return date.toISOString()
 }
 
-export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalendarAdd }: WishlistCardDetailProps) {
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalendarAdd, onSaved, tagOptions }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
   const [isSavingMemo, setIsSavingMemo] = useState(false)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
   const [draftDescription, setDraftDescription] = useState("")
   const [newSubItem, setNewSubItem] = useState("")
   const [tagText, setTagText] = useState("")
+  const [images, setImages] = useState<MemoImage[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>(tagOptions)
+    if (item?.category) set.add(item.category)
+    for (const tag of item?.tags ?? []) set.add(tag)
+    return [...set].slice(0, 12)
+  }, [item?.category, item?.tags, tagOptions])
+
+  const loadImages = useCallback(async () => {
+    if (!item?.id || !open) return
+    const res = await fetch(`/api/wishlist/${item.id}/attachments`)
+    if (!res.ok) return
+    const { attachments } = await res.json()
+    setImages((attachments ?? []).filter((attachment: MemoImage) => attachment.file_type?.startsWith("image/")))
+  }, [item?.id, open])
 
   useEffect(() => {
     if (!item || !open) return
@@ -130,6 +163,10 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
     setDraftDescription(item.description ?? "")
     setSaveError(null)
   }, [item, open])
+
+  useEffect(() => {
+    loadImages()
+  }, [loadImages])
 
   if (!item) return null
 
@@ -183,6 +220,7 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
         description: draftDescription.trim() || null,
         memo_status: item.memo_status ?? "unsorted",
       })
+      onSaved?.()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "メモの保存に失敗しました")
     } finally {
@@ -212,6 +250,46 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
     await update({ tags: tags.filter(t => t !== tag) })
   }
 
+  const uploadImage = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setSaveError("画像ファイルを選択してください")
+      return
+    }
+    setIsUploadingImage(true)
+    setSaveError(null)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch(`/api/wishlist/${item.id}/attachments`, {
+        method: "POST",
+        body: formData,
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "画像の保存に失敗しました")
+      }
+      setImages(prev => [...prev, data.attachment])
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "画像の保存に失敗しました")
+    } finally {
+      setIsUploadingImage(false)
+    }
+  }
+
+  const handleImageDelete = async (imageId: string) => {
+    setDeletingImageId(imageId)
+    try {
+      const res = await fetch(`/api/wishlist/${item.id}/attachments/${imageId}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("画像の削除に失敗しました")
+      setImages(prev => prev.filter(image => image.id !== imageId))
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "画像の削除に失敗しました")
+    } finally {
+      setDeletingImageId(null)
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
@@ -232,7 +310,7 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
           <div className="space-y-2">
             <Label>タグ</Label>
             <div className="flex flex-wrap gap-1.5">
-              {CATEGORIES.map(cat => (
+              {categoryOptions.map(cat => (
                 <button
                   key={cat}
                   onClick={() => update({ category: item.category === cat ? null : cat })}
@@ -269,14 +347,64 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
             </div>
           </div>
 
-          <div className="space-y-2 hidden md:block">
+          <div className="space-y-2">
             <Label>画像</Label>
-            <div className="flex items-center gap-2">
-              <button className="flex h-20 w-24 items-center justify-center rounded-md border border-dashed text-muted-foreground">
-                <ImagePlus className="h-5 w-5" />
+            <div className="flex flex-wrap items-start gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploadingImage}
+                className="flex h-24 w-28 items-center justify-center rounded-md border border-dashed text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+              >
+                {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
               </button>
-              <div className="h-20 w-24 rounded-md border bg-muted/40" />
-              <div className="h-20 w-24 rounded-md border bg-muted/20" />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0]
+                  if (file) uploadImage(file)
+                }}
+              />
+              {images.map(image => (
+                <div key={image.id} className="w-28 overflow-hidden rounded-md border bg-muted/20">
+                  <a
+                    href={image.file_url}
+                    download={image.file_name}
+                    target="_blank"
+                    rel="noreferrer"
+                    onDoubleClick={e => e.currentTarget.click()}
+                    title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image.file_url} alt={image.file_name} className="h-24 w-28 object-cover" />
+                  </a>
+                  <div className="flex items-center justify-between gap-1 px-1.5 py-1">
+                    <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{formatFileSize(image.file_size)}</span>
+                    <a
+                      href={image.file_url}
+                      download={image.file_name}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded p-1 text-muted-foreground hover:text-foreground"
+                      title="保存"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => handleImageDelete(image.id)}
+                      disabled={deletingImageId === image.id}
+                      className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-60"
+                      title="削除"
+                    >
+                      {deletingImageId === image.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

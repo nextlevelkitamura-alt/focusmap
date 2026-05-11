@@ -40,7 +40,7 @@ export function WishlistCard({
   onDragStart,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
-  const isScheduled = !!item.google_event_id || item.memo_status === "scheduled"
+  const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
   const isCompleted = item.is_completed || item.memo_status === "completed"
   const tags = item.tags ?? []
   const subCount = item.ideal_items?.length ?? 0
@@ -69,7 +69,6 @@ export function WishlistCard({
       onClick={onClick}
       className={cn(
         "group relative flex cursor-pointer flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
-        item.memo_status === "time_candidates" && "border-l-4 border-l-teal-500",
         isScheduled && "border-l-4 border-l-blue-500",
         isCompleted && "opacity-55",
       )}
@@ -84,9 +83,6 @@ export function WishlistCard({
               <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[11px] text-blue-300">
                 <Calendar className="h-3 w-3" /> 予定済み
               </span>
-            )}
-            {item.memo_status === "time_candidates" && !isScheduled && (
-              <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[11px] text-teal-300">時間候補あり</span>
             )}
             {(item.category || tags[0]) && (
               <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">

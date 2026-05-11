@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { google } from 'googleapis'
 import { getCalendarClient } from '@/lib/google-calendar'
 
 export async function POST(
@@ -35,8 +34,7 @@ export async function POST(
   const calendarId = settings.default_calendar_id ?? 'primary'
 
   try {
-    const auth = await getCalendarClient(user.id)
-    const calendar = google.calendar({ version: 'v3', auth })
+    const { calendar } = await getCalendarClient(user.id)
     const gcalRes = await calendar.events.insert({
       calendarId,
       requestBody: {
@@ -47,13 +45,19 @@ export async function POST(
       },
     })
 
-    await supabase
+    const { data: item, error: updateError } = await supabase
       .from('ideal_goals')
       .update({ google_event_id: gcalRes.data.id, scheduled_at, duration_minutes, memo_status: 'scheduled' })
       .eq('id', id)
       .eq('user_id', user.id)
+      .select('*, ideal_items(*)')
+      .single()
 
-    return NextResponse.json({ google_event_id: gcalRes.data.id })
+    if (updateError) {
+      return NextResponse.json({ error: updateError.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ google_event_id: gcalRes.data.id, item })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Googleカレンダーへの登録に失敗しました'
     return NextResponse.json({ error: message }, { status: 500 })
