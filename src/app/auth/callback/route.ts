@@ -2,6 +2,18 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
+function getRedirectOrigin(request: Request) {
+    if (process.env.NEXTAUTH_URL?.startsWith('https://')) {
+        return process.env.NEXTAUTH_URL.replace(/\/$/, '')
+    }
+
+    const forwardedHost = request.headers.get('x-forwarded-host')
+    const forwardedProto = request.headers.get('x-forwarded-proto') || 'https'
+    return forwardedHost
+        ? `${forwardedProto}://${forwardedHost}`
+        : new URL(request.url).origin
+}
+
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const code = searchParams.get('code')
@@ -9,11 +21,7 @@ export async function GET(request: Request) {
     const errorDescription = searchParams.get('error_description')
     const next = searchParams.get('next') ?? '/dashboard'
 
-    const forwardedHost = request.headers.get('x-forwarded-host')
-    const forwardedProto = request.headers.get('x-forwarded-proto') || 'https'
-    const origin = forwardedHost
-        ? `${forwardedProto}://${forwardedHost}`
-        : new URL(request.url).origin
+    const origin = getRedirectOrigin(request)
 
     console.log('[auth/callback] start', {
         hasCode: Boolean(code),

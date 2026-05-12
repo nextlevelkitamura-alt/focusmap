@@ -12,6 +12,12 @@ const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
 const FALLBACK_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA'
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '')
+
+function getAuthCallbackUrl() {
+    const origin = SITE_URL || location.origin
+    return `${origin}/auth/callback`
+}
 
 function LoginContent() {
     const supabase = createClient()
@@ -73,7 +79,7 @@ function LoginContent() {
             const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: {
-                    redirectTo: `${location.origin}/auth/callback`,
+                    redirectTo: getAuthCallbackUrl(),
                 },
             })
             if (error) throw error
@@ -112,7 +118,7 @@ function LoginContent() {
                 email,
                 password,
                 options: {
-                    emailRedirectTo: `${location.origin}/auth/callback`,
+                    emailRedirectTo: getAuthCallbackUrl(),
                 },
             })
             if (error) throw error

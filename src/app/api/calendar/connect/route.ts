@@ -47,7 +47,8 @@ export async function GET(request: NextRequest) {
     access_type: 'offline', // refresh_tokenを取得
     prompt: 'consent', // 強制的に同意画面を表示してrefresh_tokenを再取得
     scope: [
-      'https://www.googleapis.com/auth/calendar', // カレンダーリスト取得とイベント操作
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
     ],
     state: encodeCalendarOAuthState(user.id, nextPath),
   });

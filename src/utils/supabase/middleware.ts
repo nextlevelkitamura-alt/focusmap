@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 // Timeout for auth operations in middleware (5 seconds max)
 const AUTH_TIMEOUT = 5000
+const PUBLIC_PATHS = new Set(['/', '/login', '/privacy', '/terms'])
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
     const timeout = new Promise<null>((_, reject) =>
@@ -57,10 +58,10 @@ export async function updateSession(request: NextRequest) {
 
     const user = result?.data?.user ?? null
 
-    // Redirect unauthenticated users to login (except auth routes)
+    // Redirect unauthenticated users to login, while keeping public OAuth review pages accessible.
     if (
         !user &&
-        !request.nextUrl.pathname.startsWith('/login') &&
+        !PUBLIC_PATHS.has(request.nextUrl.pathname) &&
         !request.nextUrl.pathname.startsWith('/auth')
     ) {
         const url = request.nextUrl.clone()
