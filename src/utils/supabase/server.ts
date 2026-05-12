@@ -1,4 +1,4 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
 const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
@@ -15,21 +15,16 @@ export async function createClient() {
         supabaseAnonKey,
         {
             cookies: {
-                get(name: string) {
-                    return cookieStore.get(name)?.value
+                getAll() {
+                    return cookieStore.getAll()
                 },
-                set(name: string, value: string, options: CookieOptions) {
+                setAll(cookiesToSet) {
                     try {
-                        cookieStore.set({ name, value, ...options })
-                    } catch (error) {
-                        // The `set` method was called from a Server Component.
-                    }
-                },
-                remove(name: string, options: CookieOptions) {
-                    try {
-                        cookieStore.set({ name, value: '', ...options })
-                    } catch (error) {
-                        // The `delete` method was called from a Server Component.
+                        cookiesToSet.forEach(({ name, value, options }) => {
+                            cookieStore.set(name, value, options)
+                        })
+                    } catch {
+                        // Called from a Server Component — middleware will refresh the session.
                     }
                 },
             },

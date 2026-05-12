@@ -2,9 +2,10 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { updateSession } from '@/utils/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
-    // Skip middleware for API routes and static assets to avoid timeout
+    // Skip middleware for API routes, auth callback (must not touch PKCE cookies), and static assets
     if (
         request.nextUrl.pathname.startsWith('/api') ||
+        request.nextUrl.pathname.startsWith('/auth') ||
         request.nextUrl.pathname.startsWith('/_next') ||
         request.nextUrl.pathname.startsWith('/static') ||
         request.nextUrl.pathname.includes('.')
