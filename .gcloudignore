@@ -1,0 +1,29 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+
+# Local and secret files
+.env
+.env.*
+!.env.example
+
+# VCS and local tooling
+.git/
+.claude/
+.codex/
+.DS_Store
+*.log
+*.err
+
+# Tests and docs are not needed in the Cloud Build context
+docs/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Adjacent experiments/tools in this workspace, not part of the Focusmap web app
+realtiome voice/
+slack-codex-bot/
+claude-code.tar.gz
