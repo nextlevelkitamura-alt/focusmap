@@ -291,6 +291,8 @@ export function WishlistView() {
     return filteredItems.filter(item => getStatus(item) !== "completed")
   }, [filteredItems])
 
+  const selectedModelOption = QUICK_MODEL_OPTIONS.find(option => option.id === selectedAiModel) || QUICK_MODEL_OPTIONS[0]
+
   const scheduledItems = useMemo(() => {
     return activeItems.filter(item => getStatus(item) === "scheduled")
   }, [activeItems])
@@ -515,28 +517,12 @@ export function WishlistView() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
-      <div className="shrink-0 border-b px-4 py-3 md:px-6">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-base font-semibold">メモ</h1>
-            <p className="text-xs text-muted-foreground">雑な入力を、メモと時間候補に整理</p>
-          </div>
-          <Button onClick={handleCreate} size="sm" className="min-h-[44px] gap-1">
-            <Plus className="h-4 w-4" /> 追加
-          </Button>
-        </div>
-      </div>
-
       <div className="shrink-0 space-y-2 border-b px-4 py-3 md:px-6">
-        <div className="flex gap-2">
-          <textarea
-            value={intakeText}
-            onChange={e => setIntakeText(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAnalyze() }}
-            placeholder="マイクまたはテキストで入力。AIの税制を調べたい、確定申告前に確認したい..."
-            rows={1}
-            className="min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-          />
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base font-semibold leading-tight">メモ</h1>
+            <p className="truncate text-xs text-muted-foreground">雑な入力を整理</p>
+          </div>
           <Button
             type="button"
             variant={isRecording ? "destructive" : "outline"}
@@ -544,53 +530,50 @@ export function WishlistView() {
             onClick={handleVoiceToggle}
             disabled={isTranscribing}
             aria-label={isRecording ? "録音を停止" : "音声入力を開始"}
-            className="min-h-[44px] min-w-[44px]"
+            className="min-h-[44px] min-w-[44px] shrink-0"
           >
             {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
           </Button>
-          <Button onClick={handleAnalyze} disabled={isAnalyzing || !intakeText.trim()} className="min-h-[44px] gap-1">
-            {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            <span className="hidden sm:inline">{isAnalyzing ? "整理中" : "整理"}</span>
-            <span className="sm:hidden">生成</span>
+          <label className="relative min-h-[44px] w-[112px] shrink-0 rounded-md border bg-muted/20">
+            <span className="sr-only">AIモデル</span>
+            <select
+              value={selectedAiModel}
+              onChange={e => handleQuickModelChange(e.target.value)}
+              disabled={isAnalyzing}
+              className="h-[44px] w-full appearance-none rounded-md bg-transparent pl-8 pr-7 text-sm font-medium outline-none disabled:opacity-50"
+            >
+              {QUICK_MODEL_OPTIONS.map(option => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+            <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          </label>
+          <Button onClick={handleCreate} size="sm" className="min-h-[44px] shrink-0 gap-1 px-3">
+            <Plus className="h-4 w-4" /> 追加
           </Button>
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-xs text-muted-foreground">AI</span>
-            <div className="flex rounded-full border bg-muted/20 p-1">
-              {QUICK_MODEL_OPTIONS.map(option => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => handleQuickModelChange(option.id)}
-                  disabled={isAnalyzing}
-                  className={cn(
-                    "min-h-8 rounded-full px-3 text-xs font-medium transition-colors",
-                    selectedAiModel === option.id
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {option.label}
-                  {option.note && (
-                    <span className={cn(
-                      "ml-1 text-[10px]",
-                      selectedAiModel === option.id ? "text-primary-foreground/80" : "text-muted-foreground",
-                    )}>
-                      {option.note}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
+
+        <div className="flex gap-2">
+          <textarea
+            value={intakeText}
+            onChange={e => setIntakeText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAnalyze() }}
+            placeholder={`マイクまたはテキストで入力。${selectedModelOption.label}で整理`}
+            rows={1}
+            className="min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <Button onClick={handleAnalyze} disabled={isAnalyzing || !intakeText.trim()} className="min-h-[44px] shrink-0 gap-1 px-3">
+            {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            <span>{isAnalyzing ? "整理中" : "生成"}</span>
+          </Button>
           <Button
             type="button"
             variant={filterOpen ? "default" : "outline"}
             size="icon"
             onClick={() => setFilterOpen(open => !open)}
             aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-            className="min-h-[40px] min-w-[40px]"
+            className="min-h-[44px] min-w-[44px] shrink-0"
           >
             <Filter className="h-4 w-4" />
           </Button>

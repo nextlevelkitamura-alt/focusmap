@@ -1061,11 +1061,11 @@ export function DashboardClient({
             </TodayDateProvider>
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
             {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
-                <AiChatPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
+                <AiChatPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
             {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
-                <SchedulingPanel hideFab={activeView === 'today'} onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
+                <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             </TimerProvider>
         </DragProvider>
