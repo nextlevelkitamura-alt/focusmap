@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
         scopes: scopes || [
           'tasks:read', 'tasks:write',
           'projects:read', 'projects:write',
+          'notes:read', 'notes:write',
           'spaces:read', 'habits:read',
           'ai:scheduling', 'ai:chat',
           'calendar:read',

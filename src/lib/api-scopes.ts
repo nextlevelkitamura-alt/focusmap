@@ -10,6 +10,8 @@ export const API_SCOPES: ApiScope[] = [
   { id: 'tasks:write', label: 'タスク書き込み', description: 'タスクの作成・更新・削除', category: 'タスク' },
   { id: 'projects:read', label: 'プロジェクト読み取り', description: 'プロジェクトの一覧・詳細を取得', category: 'プロジェクト' },
   { id: 'projects:write', label: 'プロジェクト書き込み', description: 'プロジェクトの作成・更新', category: 'プロジェクト' },
+  { id: 'notes:read', label: 'メモ読み取り', description: 'メモの一覧・検索・プロジェクト別取得', category: 'メモ' },
+  { id: 'notes:write', label: 'メモ書き込み', description: 'メモの作成・更新・利用済み化', category: 'メモ' },
   { id: 'spaces:read', label: 'スペース読み取り', description: 'スペースの一覧を取得', category: 'スペース' },
   { id: 'habits:read', label: '習慣読み取り', description: '習慣タスクの一覧を取得', category: '習慣' },
   { id: 'habits:write', label: '習慣書き込み', description: '習慣の作成・更新・完了記録', category: '習慣' },
