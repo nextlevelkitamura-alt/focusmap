@@ -34,6 +34,8 @@ interface InlineProposal {
   calendarTime?: string      // HH:MM
   calendarDuration?: number  // 分
   calendarId?: string        // Google Calendar ID
+  // 展開フォーム内のプロジェクト紐付け（任意）
+  formProjectId?: string | null
 }
 
 interface MemoViewProps {
@@ -244,17 +246,21 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
 
       if (!res.ok) throw new Error("Failed to create task")
 
-      const projName = getProjectName(projectId || proposal.analysis.suggested_project_id || null) || "マップ"
+      const finalProjectId = projectId || proposal.analysis.suggested_project_id || null
+      const projName = getProjectName(finalProjectId) || "マップ"
       setProposal(prev => prev ? {
         ...prev,
         step: 'done',
         result: `✅ 「${projName}」に追加しました`,
       } : null)
 
-      // メモを処理済みに
+      // メモを処理済みに + プロジェクト紐付け
       setNotes(prev => prev.map(n =>
-        n.id === proposal.noteId ? { ...n, status: 'archived' as const } : n
+        n.id === proposal.noteId ? { ...n, status: 'archived' as const, project_id: finalProjectId } : n
       ))
+      if (finalProjectId) {
+        handleUpdateProject(proposal.noteId, finalProjectId)
+      }
 
       // 3秒後に提案を閉じる
       setTimeout(() => setProposal(null), 3000)
@@ -266,6 +272,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
         result: '❌ 追加に失敗しました',
       } : null)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposal, notes, getProjectName])
 
   // カレンダーフォームを開く
@@ -282,10 +289,11 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
       ...prev,
       step: 'calendar_form',
       calendarTitle: title,
-      calendarDate: dates[0] || new Date().toISOString().slice(0, 10),
-      calendarTime: times[0] || '09:00',
+      calendarDate: '',
+      calendarTime: '',
       calendarDuration: 60,
       calendarId: primaryCal?.google_calendar_id || undefined,
+      formProjectId: proposal.analysis.suggested_project_id || null,
     } : null)
   }, [proposal, notes, calendars])
 
@@ -326,6 +334,9 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
         setNotes(prev => prev.map(n =>
           n.id === proposal.noteId ? { ...n, status: 'archived' as const } : n
         ))
+        if (proposal.formProjectId !== undefined) {
+          handleUpdateProject(proposal.noteId, proposal.formProjectId)
+        }
         setTimeout(() => setProposal(null), 3000)
       }
     } catch (error) {
@@ -336,6 +347,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
         result: '❌ カレンダー追加に失敗しました',
       } : null)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposal])
 
   // メモのプロジェクト更新
@@ -793,6 +805,66 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                   placeholder="予定のタイトル"
                 />
 
+                {/* AI抽出の候補チップ */}
+                {(() => {
+                  const dateCandidates = (proposal.analysis.extracted_entities?.dates || []).slice(0, 3)
+                  const timeCandidates = (proposal.analysis.extracted_entities?.times || []).slice(0, 3)
+                  if (dateCandidates.length === 0 && timeCandidates.length === 0) return null
+                  return (
+                    <div className="space-y-1">
+                      {dateCandidates.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground shrink-0">📅 候補</span>
+                          {dateCandidates.map(c => {
+                            const dt = new Date(c + 'T00:00:00')
+                            const valid = !isNaN(dt.getTime())
+                            const label = valid
+                              ? `${dt.getMonth() + 1}/${dt.getDate()}(${['日','月','火','水','木','金','土'][dt.getDay()]})`
+                              : c
+                            const active = proposal.calendarDate === c
+                            return (
+                              <button
+                                key={c}
+                                onClick={() => setProposal(prev => prev ? { ...prev, calendarDate: active ? '' : c } : null)}
+                                className={cn(
+                                  "text-xs px-2 py-0.5 rounded-full border transition-colors",
+                                  active
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "border-border text-muted-foreground hover:bg-muted"
+                                )}
+                              >
+                                {label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {timeCandidates.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground shrink-0">⏰ 候補</span>
+                          {timeCandidates.map(c => {
+                            const active = proposal.calendarTime === c
+                            return (
+                              <button
+                                key={c}
+                                onClick={() => setProposal(prev => prev ? { ...prev, calendarTime: active ? '' : c } : null)}
+                                className={cn(
+                                  "text-xs px-2 py-0.5 rounded-full border transition-colors",
+                                  active
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "border-border text-muted-foreground hover:bg-muted"
+                                )}
+                              >
+                                {c}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
                 {/* 日付・時刻・所要時間 (3列) */}
                 <div className="grid grid-cols-3 gap-1.5">
                   <input
@@ -837,6 +909,18 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                     ))}
                   </select>
                 )}
+
+                {/* プロジェクト紐付け（任意） */}
+                <select
+                  value={proposal.formProjectId || ''}
+                  onChange={(e) => setProposal(prev => prev ? { ...prev, formProjectId: e.target.value || null } : null)}
+                  className="w-full h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">プロジェクト未設定</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.title}</option>
+                  ))}
+                </select>
 
                 {/* アクションボタン */}
                 <div className="flex gap-2">
