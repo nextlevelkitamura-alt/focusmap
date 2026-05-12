@@ -1,0 +1,483 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Focusmap SNS Notes API",
+    "version": "1.0.0",
+    "summary": "Read and manage Focusmap notes used as SNS post source material.",
+    "description": "Use this API to fetch unused notes from the Focusmap project named SNS投稿, generate SNS post drafts or spreadsheet/posting workflow inputs, and mark notes as used. In this workflow, used=true maps to status=archived and means the note has been used as source material; it does not mean the note was deleted."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current Focusmap host"
+    }
+  ],
+  "security": [
+    {
+      "bearerApiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "SNS Notes",
+      "description": "Notes captured in Focusmap and used for SNS content workflows."
+    }
+  ],
+  "paths": {
+    "/api/v1/notes": {
+      "get": {
+        "operationId": "listNotes",
+        "tags": ["SNS Notes"],
+        "summary": "List Focusmap notes",
+        "description": "Fetch notes. For SNS source material, use project_title=SNS投稿 and status=pending. If status is omitted, archived notes are excluded unless include_archived=true.",
+        "security": [
+          {
+            "bearerApiKey": ["notes:read"]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_title",
+            "in": "query",
+            "description": "Project title to filter by. Use SNS投稿 for SNS source notes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "examples": ["SNS投稿"]
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Project ID to filter by. Use __unassigned__ to fetch notes without a project.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Note status. In the SNS workflow, pending means unused and archived means used.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["pending", "processed", "archived"],
+              "examples": ["pending"]
+            }
+          },
+          {
+            "name": "input_type",
+            "in": "query",
+            "description": "Filter by input source.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["text", "voice"]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive partial text search against note content.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "description": "When true and status is omitted, include used notes.",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum notes to return. Clamped to 1-200.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notes returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createNote",
+        "tags": ["SNS Notes"],
+        "summary": "Create a Focusmap note",
+        "description": "Create a note. To create an SNS source note without knowing the project ID, set project_title to SNS投稿.",
+        "security": [
+          {
+            "bearerApiKey": ["notes:write"]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNoteRequest"
+              },
+              "examples": {
+                "snsNote": {
+                  "summary": "Create an SNS source note",
+                  "value": {
+                    "project_title": "SNS投稿",
+                    "content": "AIで仕事を自動化するほど、人間側には判断軸が必要になる",
+                    "input_type": "text"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Note created successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateNote",
+        "tags": ["SNS Notes"],
+        "summary": "Update a Focusmap note",
+        "description": "Update content, project, status, or usage state. For SNS workflows, call with used=true after the note is actually used in a post draft, spreadsheet row, or posting ledger input.",
+        "security": [
+          {
+            "bearerApiKey": ["notes:write"]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNoteRequest"
+              },
+              "examples": {
+                "markUsed": {
+                  "summary": "Mark a note as used",
+                  "value": {
+                    "id": "note-id",
+                    "used": true
+                  }
+                },
+                "restoreUnused": {
+                  "summary": "Restore a note to unused",
+                  "value": {
+                    "id": "note-id",
+                    "used": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Note updated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Focusmap API key",
+        "description": "Use a Focusmap API key. notes:read is required for GET. notes:write is required for POST/PATCH."
+      }
+    },
+    "schemas": {
+      "ApiSuccess": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {}
+        }
+      },
+      "ApiError": {
+        "type": "object",
+        "required": ["success", "error"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Note": {
+        "type": "object",
+        "required": ["id", "user_id", "project_id", "task_id", "content", "raw_input", "input_type", "status", "ai_analysis", "deleted_at", "created_at", "updated_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "project_id": {
+            "type": ["string", "null"],
+            "format": "uuid"
+          },
+          "task_id": {
+            "type": ["string", "null"],
+            "format": "uuid"
+          },
+          "content": {
+            "type": "string"
+          },
+          "raw_input": {
+            "type": ["string", "null"]
+          },
+          "input_type": {
+            "type": "string",
+            "enum": ["text", "voice"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "processed", "archived"],
+            "description": "For SNS workflows, pending means unused and archived means used."
+          },
+          "ai_analysis": {
+            "type": ["object", "null"],
+            "additionalProperties": true
+          },
+          "deleted_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NotesResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "NoteResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Note"
+              }
+            }
+          }
+        ]
+      },
+      "CreateNoteRequest": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "raw_input": {
+            "type": ["string", "null"]
+          },
+          "input_type": {
+            "type": "string",
+            "enum": ["text", "voice"],
+            "default": "text"
+          },
+          "project_id": {
+            "type": ["string", "null"],
+            "format": "uuid"
+          },
+          "project_title": {
+            "type": ["string", "null"],
+            "description": "Use SNS投稿 to link the note to the SNS source project."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "processed", "archived"],
+            "default": "pending"
+          },
+          "ai_analysis": {
+            "type": ["object", "null"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "UpdateNoteRequest": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "content": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": ["string", "null"],
+            "format": "uuid"
+          },
+          "project_title": {
+            "type": ["string", "null"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "processed", "archived"]
+          },
+          "used": {
+            "type": "boolean",
+            "description": "SNS workflow convenience field. true sets status=archived; false sets status=pending."
+          },
+          "ai_analysis": {
+            "type": ["object", "null"],
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid API key.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "API key is missing the required scope.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Invalid request.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}
