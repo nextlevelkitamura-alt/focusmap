@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Filter, GripVertical, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -52,18 +52,11 @@ const QUICK_MODEL_OPTIONS = [
   { id: "gemini-2.5-flash", label: "Gemini", note: "無料枠あり" },
 ]
 
-const DEFAULT_COLUMNS: Array<{ key: MemoStatus; label: string; color: string }> = [
-  { key: "unsorted", label: "未整理", color: "bg-zinc-500/10" },
-  { key: "organized", label: "整理済み", color: "bg-sky-500/10" },
-  { key: "scheduled", label: "予定済み", color: "bg-blue-500/10" },
-  { key: "completed", label: "完了", color: "bg-zinc-500/10" },
-]
-
 const STATUS_LABEL: Record<MemoStatus | "all", string> = {
   all: "すべて",
   unsorted: "未整理",
-  organized: "整理済み",
-  time_candidates: "時間候補あり",
+  organized: "未予定",
+  time_candidates: "未予定",
   scheduled: "予定済み",
   completed: "完了",
 }
@@ -71,8 +64,27 @@ const STATUS_LABEL: Record<MemoStatus | "all", string> = {
 function getStatus(item: MemoItem): MemoStatus {
   if (item.is_completed || item.memo_status === "completed") return "completed"
   if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
-  if (item.memo_status === "organized" || item.memo_status === "time_candidates") return "organized"
   return "unsorted"
+}
+
+function getTimestamp(value: string | null | undefined) {
+  if (!value) return 0
+  const time = new Date(value).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+function sortMemoItems(items: MemoItem[]) {
+  return [...items].sort((a, b) => {
+    const statusA = getStatus(a)
+    const statusB = getStatus(b)
+    if (statusA !== statusB) {
+      if (statusA === "scheduled") return -1
+      if (statusB === "scheduled") return 1
+    }
+
+    return getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
+      || getTimestamp(b.created_at) - getTimestamp(a.created_at)
+  })
 }
 
 function formatCandidate(candidate: MemoSuggestion["time_candidates"][number]) {
@@ -173,7 +185,6 @@ export function WishlistView() {
   const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [filterOpen, setFilterOpen] = useState(false)
-  const [draggingId, setDraggingId] = useState<string | null>(null)
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -268,13 +279,25 @@ export function WishlistView() {
   }, [items])
 
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    return sortMemoItems(items.filter(item => {
       const status = getStatus(item)
       if (statusFilter !== "all" && status !== statusFilter) return false
       if (tagFilter !== "all" && item.category !== tagFilter && !(item.tags ?? []).includes(tagFilter)) return false
       return true
-    })
+    }))
   }, [items, statusFilter, tagFilter])
+
+  const activeItems = useMemo(() => {
+    return filteredItems.filter(item => getStatus(item) !== "completed")
+  }, [filteredItems])
+
+  const scheduledItems = useMemo(() => {
+    return activeItems.filter(item => getStatus(item) === "scheduled")
+  }, [activeItems])
+
+  const unscheduledItems = useMemo(() => {
+    return activeItems.filter(item => getStatus(item) !== "scheduled")
+  }, [activeItems])
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
@@ -481,25 +504,6 @@ export function WishlistView() {
     broadcastCalendarSync()
   }
 
-  const handleDropToColumn = async (status: MemoStatus) => {
-    if (!draggingId) return
-    const item = items.find(i => i.id === draggingId)
-    setDraggingId(null)
-    if (!item) return
-    if (status === "scheduled" && !item.google_event_id) {
-      const ok = window.confirm("予定済みへ移動するにはカレンダー登録が必要です。詳細で登録しますか？")
-      if (ok) {
-        setSelectedItem(item)
-        setDetailOpen(true)
-      }
-      return
-    }
-    await handleUpdate(item.id, {
-      memo_status: status,
-      is_completed: status === "completed",
-    })
-  }
-
   const openDetail = (item: MemoItem) => {
     setSelectedItem(item)
     setDetailOpen(true)
@@ -514,7 +518,7 @@ export function WishlistView() {
       <div className="shrink-0 border-b px-4 py-3 md:px-6">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-base font-semibold">思考メモ</h1>
+            <h1 className="text-base font-semibold">メモ</h1>
             <p className="text-xs text-muted-foreground">雑な入力を、メモと時間候補に整理</p>
           </div>
           <Button onClick={handleCreate} size="sm" className="min-h-[44px] gap-1">
@@ -586,7 +590,7 @@ export function WishlistView() {
             size="icon"
             onClick={() => setFilterOpen(open => !open)}
             aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-            className="min-h-[40px] min-w-[40px] md:hidden"
+            className="min-h-[40px] min-w-[40px]"
           >
             <Filter className="h-4 w-4" />
           </Button>
@@ -655,7 +659,7 @@ export function WishlistView() {
             )}
           </div>
         )}
-        <div className={cn(!filterOpen && "hidden md:block")}>
+        <div className={cn(!filterOpen && "hidden")}>
           <FilterBar
             statusFilter={statusFilter}
             tagFilter={tagFilter}
@@ -667,41 +671,8 @@ export function WishlistView() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        <div className="hidden h-full gap-3 overflow-x-auto p-4 md:flex">
-          {DEFAULT_COLUMNS.map(column => {
-            const columnItems = filteredItems.filter(item => getStatus(item) === column.key)
-            return (
-              <section
-                key={column.key}
-                onDragOver={e => e.preventDefault()}
-                onDrop={() => handleDropToColumn(column.key)}
-                className={cn("flex w-72 shrink-0 flex-col rounded-lg border", column.color)}
-              >
-                <div className="flex items-center gap-2 border-b p-2">
-                  <GripVertical className="h-4 w-4 text-muted-foreground" />
-                  <h2 className="flex-1 px-1 text-sm font-medium">{column.label}</h2>
-                  <span className="rounded bg-background/70 px-1.5 py-0.5 text-xs text-muted-foreground">{columnItems.length}</span>
-                </div>
-                <div className="flex-1 space-y-2 overflow-y-auto p-2">
-                  {columnItems.map(item => (
-                    <WishlistCard
-                      key={item.id}
-                      item={item}
-                      onUpdate={handleUpdate}
-                      onDelete={handleDelete}
-                      onClick={() => openDetail(item)}
-                      draggable
-                      onDragStart={() => setDraggingId(item.id)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-        </div>
-
-        <div className="h-full overflow-y-auto p-4 pb-24 md:hidden">
-          {filteredItems.length === 0 ? (
+        <div className="h-full overflow-y-auto px-4 py-4 pb-24 md:px-6">
+          {activeItems.length === 0 ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <p>メモはまだありません</p>
               <Button variant="outline" onClick={handleCreate} className="min-h-[44px]">
@@ -709,16 +680,25 @@ export function WishlistView() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-3">
-              {filteredItems.map(item => (
-                <WishlistCard
-                  key={item.id}
-                  item={item}
-                  onUpdate={handleUpdate}
-                  onDelete={handleDelete}
-                  onClick={() => openDetail(item)}
-                />
-              ))}
+            <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <MemoSection
+                title="予定済み"
+                count={scheduledItems.length}
+                items={scheduledItems}
+                emptyText="予定済みのメモはありません"
+                onUpdate={handleUpdate}
+                onDelete={handleDelete}
+                onOpen={openDetail}
+              />
+              <MemoSection
+                title="未予定"
+                count={unscheduledItems.length}
+                items={unscheduledItems}
+                emptyText="未予定のメモはありません"
+                onUpdate={handleUpdate}
+                onDelete={handleDelete}
+                onOpen={openDetail}
+              />
             </div>
           )}
         </div>
@@ -747,6 +727,50 @@ export function WishlistView() {
   )
 }
 
+function MemoSection({
+  title,
+  count,
+  items,
+  emptyText,
+  onUpdate,
+  onDelete,
+  onOpen,
+}: {
+  title: string
+  count: number
+  items: MemoItem[]
+  emptyText: string
+  onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+  onOpen: (item: MemoItem) => void
+}) {
+  return (
+    <section className="min-w-0">
+      <div className="mb-2 flex items-center gap-2">
+        <h2 className="text-sm font-medium">{title}</h2>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
+      </div>
+      {items.length === 0 ? (
+        <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+          {emptyText}
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+          {items.map(item => (
+            <WishlistCard
+              key={item.id}
+              item={item}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onClick={() => onOpen(item)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function FilterBar({
   statusFilter,
   tagFilter,
@@ -760,17 +784,17 @@ function FilterBar({
   onStatusChange: (status: MemoStatus | "all") => void
   onTagChange: (tag: string | "all") => void
 }) {
-  const statusOptions: Array<MemoStatus | "all"> = ["all", "unsorted", "organized", "scheduled", "completed"]
+  const statusOptions: Array<MemoStatus | "all"> = ["all", "scheduled", "unsorted"]
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-1 overflow-x-auto">
-        <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+      <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="flex shrink-0 items-center gap-1 border-r pr-2">
         {statusOptions.map(status => (
           <button
             key={status}
             onClick={() => onStatusChange(status)}
             className={cn(
-              "min-h-9 shrink-0 rounded-full border px-3 text-xs",
+              "min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]",
               statusFilter === status ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground",
             )}
           >
@@ -778,11 +802,11 @@ function FilterBar({
           </button>
         ))}
       </div>
-      <div className="flex gap-1 overflow-x-auto">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           onClick={() => onTagChange("all")}
           className={cn(
-            "min-h-9 shrink-0 rounded-full border px-3 text-xs",
+            "min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]",
             tagFilter === "all" ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground",
           )}
         >
@@ -793,7 +817,7 @@ function FilterBar({
             key={tag}
             onClick={() => onTagChange(tag)}
             className={cn(
-              "min-h-9 shrink-0 rounded-full border px-3 text-xs",
+              "min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]",
               tagFilter === tag ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground",
             )}
           >

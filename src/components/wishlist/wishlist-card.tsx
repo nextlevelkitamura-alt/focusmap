@@ -51,7 +51,7 @@ export function WishlistCard({
     e.stopPropagation()
     await onUpdate(item.id, {
       is_completed: !item.is_completed,
-      memo_status: !item.is_completed ? "completed" : "organized",
+      memo_status: !item.is_completed ? "completed" : "unsorted",
     } as Partial<MemoItem>)
   }
 
