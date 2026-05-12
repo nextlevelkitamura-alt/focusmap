@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "利用規約 | Shikumika",
+  title: "利用規約 | Focusmap",
 };
 
 export default function TermsPage() {
@@ -12,7 +12,7 @@ export default function TermsPage() {
         <section>
           <h2 className="text-xl font-semibold mb-3">1. サービスの概要</h2>
           <p>
-            Shikumika（以下「本サービス」）は、タスク管理・習慣トラッキング・カレンダー連携・AIスケジューリングを提供する
+            Focusmap（以下「本サービス」）は、タスク管理・習慣トラッキング・カレンダー連携・AIスケジューリングを提供する
             Webアプリケーションです。
           </p>
         </section>

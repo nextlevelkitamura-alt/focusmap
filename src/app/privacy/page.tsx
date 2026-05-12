@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "プライバシーポリシー | Shikumika",
+  title: "プライバシーポリシー | Focusmap",
 };
 
 export default function PrivacyPage() {
@@ -12,7 +12,7 @@ export default function PrivacyPage() {
         <section>
           <h2 className="text-xl font-semibold mb-3">1. はじめに</h2>
           <p>
-            Shikumika（以下「本アプリ」）は、ユーザーのプライバシーを尊重し、個人情報の保護に努めます。
+            Focusmap（以下「本アプリ」）は、ユーザーのプライバシーを尊重し、個人情報の保護に努めます。
             本プライバシーポリシーは、本アプリがどのような情報を収集し、どのように利用するかを説明します。
           </p>
         </section>
@@ -31,11 +31,11 @@ export default function PrivacyPage() {
 
           <h3 className="text-lg font-medium mb-2 mt-4">2.2 Googleカレンダーデータ</h3>
           <p className="mb-3">
-            ユーザーが明示的に許可した場合に限り、Googleカレンダーの予定データ（タイトル、日時、説明）にアクセスします。
+            ユーザーが明示的に許可した場合に限り、Googleカレンダーの予定データ（タイトル、日時、説明）にアクセスし、予定の作成・更新・削除を行います。
             このデータは以下の目的でのみ使用されます：
           </p>
           <ul className="list-disc pl-6 space-y-1">
-            <li>タスクとカレンダー予定の同期・表示</li>
+            <li>タスクとカレンダー予定の同期・表示・作成・更新・削除</li>
             <li>AIによるスケジューリング提案</li>
           </ul>
 

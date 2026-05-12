@@ -1,6 +1,7 @@
 "use client"
 
 import { BottomNav } from "@/components/mobile/bottom-nav"
+import { DashboardBrandBar } from "@/components/layout/dashboard-brand-bar"
 import { NotificationPermissionBanner } from "@/components/notifications"
 import { ViewProvider } from "@/contexts/ViewContext"
 
@@ -12,7 +13,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {/* Notification Permission Banner */}
                 <NotificationPermissionBanner />
 
-                {/* Header is rendered inside DashboardClient for space data access */}
+                {/* DashboardClient renders the full header on /dashboard. Sub pages still need a persistent home link. */}
+                <DashboardBrandBar />
 
                 <div className="flex-1 min-h-0 flex overflow-hidden relative">
                     {/* Main Content Area */}
