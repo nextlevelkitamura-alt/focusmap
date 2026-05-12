@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect } from "react"
 import {
   StickyNote, Send, Loader2,
   Sparkles, Mic, Square, Calendar, Map, Trash2,
   FolderOpen, ChevronRight, ChevronDown, Check, X,
+  CheckCircle2, Circle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -62,6 +63,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null)
   const [editingProjectNoteId, setEditingProjectNoteId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [showArchivedNotes, setShowArchivedNotes] = useState(false)
 
   // インライン提案
   const [proposal, setProposal] = useState<InlineProposal | null>(null)
@@ -112,6 +114,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
 
   // フィルタリング
   const filteredNotes = notes.filter(note => {
+    if (!showArchivedNotes && note.status === 'archived') return false
     if (!selectedProjectId) return true
     if (selectedProjectId === "__unassigned__") return !note.project_id
     return note.project_id === selectedProjectId
@@ -357,6 +360,28 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
     setEditingProjectNoteId(null)
   }, [])
 
+  // メモの利用済み切り替え（SNS投稿などで使った素材は archived にする）
+  const handleToggleUsed = useCallback(async (noteId: string, nextUsed: boolean) => {
+    const previousNotes = notes
+    setNotes(prev => prev.map(n =>
+      n.id === noteId ? { ...n, status: nextUsed ? 'archived' as const : 'pending' as const } : n
+    ))
+
+    try {
+      const res = await fetch("/api/notes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: noteId, used: nextUsed }),
+      })
+      if (!res.ok) throw new Error("Failed to update note status")
+      showToast("success", nextUsed ? "利用済みにしました" : "未使用に戻しました")
+    } catch (err) {
+      console.error("Toggle used error:", err)
+      setNotes(previousNotes)
+      showToast("error", "状態更新に失敗しました")
+    }
+  }, [notes])
+
   // メモ削除（確認後に実行）
   const handleDelete = useCallback(async (noteId: string) => {
     try {
@@ -518,6 +543,16 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
               </div>
             </PopoverContent>
           </Popover>
+
+          <Button
+            variant={showArchivedNotes ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setShowArchivedNotes(prev => !prev)}
+            className="h-8 gap-1.5 text-xs shrink-0"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            使用済み
+          </Button>
         </div>
       </div>
 
@@ -887,19 +922,40 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
           <div className="text-center text-muted-foreground py-8">
             <StickyNote className="w-12 h-12 mx-auto mb-2 opacity-30" />
             <p className="text-sm">
-              {notes.length === 0 ? "まだメモがありません" : "該当するメモがありません"}
+              {notes.length === 0 ? "まだメモがありません" : "該当する未使用メモがありません"}
             </p>
             <p className="text-xs mt-1">
-              {notes.length === 0 ? "テキストまたは音声でメモを入力してみましょう" : "プロジェクトフィルタを変更してみてください"}
+              {notes.length === 0 ? "テキストまたは音声でメモを入力してみましょう" : "フィルタまたは使用済み表示を変更してみてください"}
             </p>
           </div>
         ) : (
           <div className="space-y-2">
             {filteredNotes.map((note) => (
-              <Card key={note.id} className="p-3 hover:bg-muted/50 transition-colors group">
+              <Card key={note.id} className={cn(
+                "p-3 hover:bg-muted/50 transition-colors group",
+                note.status === 'archived' && "opacity-70"
+              )}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                    <div className="flex items-start gap-2">
+                      <button
+                        onClick={() => handleToggleUsed(note.id, note.status !== 'archived')}
+                        className="mt-0.5 text-muted-foreground hover:text-primary transition-colors"
+                        title={note.status === 'archived' ? "未使用に戻す" : "利用済みにする"}
+                      >
+                        {note.status === 'archived' ? (
+                          <CheckCircle2 className="w-4 h-4 text-primary" />
+                        ) : (
+                          <Circle className="w-4 h-4" />
+                        )}
+                      </button>
+                      <p className={cn(
+                        "text-sm whitespace-pre-wrap",
+                        note.status === 'archived' && "line-through decoration-muted-foreground/60"
+                      )}>
+                        {note.content}
+                      </p>
+                    </div>
 
                     <div className="flex flex-wrap items-center gap-2 mt-2">
                       <p className="text-xs text-muted-foreground">
@@ -913,6 +969,11 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                       {note.ai_analysis && (
                         <span className="text-xs px-1.5 py-0.5 bg-primary/10 text-primary rounded">
                           <Sparkles className="w-3 h-3 inline mr-0.5" />分析済
+                        </span>
+                      )}
+                      {note.status === 'archived' && (
+                        <span className="text-xs px-1.5 py-0.5 bg-muted text-muted-foreground rounded">
+                          利用済み
                         </span>
                       )}
 

@@ -1,0 +1,187 @@
+# Focusmap SNS Notes API
+
+This document is for AI agents that create SNS post drafts, analyze spreadsheet/source material, or prepare posting workflow inputs from Focusmap notes.
+
+## What This API Is For
+
+Focusmap is the capture point for thoughts, identity notes, experiences, and SNS post ideas. Notes that should become social content are linked to the Focusmap project named `SNS投稿`.
+
+The agent should read unused notes from the `SNS投稿` project, use them as source material, and mark only the notes that were actually used.
+
+## Files to Read
+
+- `/llms.txt`: short AI-readable index.
+- `/llms-full.txt`: this operational guide.
+- `/openapi.json`: formal API contract.
+
+## Authentication
+
+Use an API key in the `Authorization` header.
+
+```http
+Authorization: Bearer sk_shikumika_xxx
+```
+
+Required scopes:
+
+- `notes:read`: read notes.
+- `notes:write`: create notes, update notes, or mark notes as used.
+
+## State Model
+
+- `status=pending`: unused note. This is the default source pool for SNS work.
+- `status=processed`: AI-analyzed note. It may still be unused.
+- `status=archived`: used note. In this workflow, archived means "already used as SNS source material".
+- `used=true`: convenience update that sets `status=archived`.
+- `used=false`: convenience update that sets `status=pending`.
+
+Do not treat `archived` as deleted. It is a completion checkbox for the SNS source workflow.
+
+## Main Workflow
+
+### Step 1: Fetch Unused SNS Notes
+
+```http
+GET /api/v1/notes?project_title=SNS投稿&status=pending&limit=50
+Authorization: Bearer sk_shikumika_xxx
+```
+
+Use this before:
+
+- creating SNS post drafts,
+- deciding what to add to a spreadsheet idea bank,
+- preparing posting ledger rows,
+- selecting personal/identity material to combine with external research.
+
+Expected response shape:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "note-id",
+      "project_id": "project-id",
+      "content": "AIで仕事を自動化するほど、人間側には判断軸が必要になる",
+      "raw_input": null,
+      "input_type": "text",
+      "status": "pending",
+      "ai_analysis": null,
+      "created_at": "2026-05-12T13:00:00.000Z",
+      "updated_at": "2026-05-12T13:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Step 2: Use the Notes
+
+Use `content` as the primary source.
+
+Recommended behavior:
+
+- Treat one note as one idea, belief, observation, episode, or question.
+- Keep the personal point of view visible.
+- When adding external research, use it to support the note rather than replacing the note.
+- If filling a spreadsheet or posting ledger, preserve the note ID if there is a column or metadata field for source tracking.
+
+### Step 3: Mark Used Notes
+
+Only mark a note used after it has actually been used in a post draft, spreadsheet row, or posting ledger input.
+
+```http
+PATCH /api/v1/notes
+Authorization: Bearer sk_shikumika_xxx
+Content-Type: application/json
+
+{
+  "id": "note-id",
+  "used": true
+}
+```
+
+This sets `status=archived`.
+
+### Step 4: Restore a Note if Needed
+
+```http
+PATCH /api/v1/notes
+Authorization: Bearer sk_shikumika_xxx
+Content-Type: application/json
+
+{
+  "id": "note-id",
+  "used": false
+}
+```
+
+This sets `status=pending`.
+
+## Create a New SNS Note
+
+```http
+POST /api/v1/notes
+Authorization: Bearer sk_shikumika_xxx
+Content-Type: application/json
+
+{
+  "project_title": "SNS投稿",
+  "content": "AIで仕事を自動化するほど、人間側には判断軸が必要になる",
+  "input_type": "text"
+}
+```
+
+Use `project_title` when the caller does not know the project ID.
+
+## Useful Filters
+
+Voice notes only:
+
+```http
+GET /api/v1/notes?project_title=SNS投稿&status=pending&input_type=voice
+Authorization: Bearer sk_shikumika_xxx
+```
+
+Keyword search:
+
+```http
+GET /api/v1/notes?project_title=SNS投稿&status=pending&q=AI
+Authorization: Bearer sk_shikumika_xxx
+```
+
+Include used notes:
+
+```http
+GET /api/v1/notes?project_title=SNS投稿&include_archived=true
+Authorization: Bearer sk_shikumika_xxx
+```
+
+## MCP Tools
+
+If Focusmap MCP tools are available, agents may use them instead of REST.
+
+- `shikumika_note_list`
+  - Use `{ "project_title": "SNS投稿", "status": "pending", "limit": 50 }`.
+- `shikumika_note_create`
+  - Create a note and optionally link it with `project_title: "SNS投稿"`.
+- `shikumika_note_mark_used`
+  - Mark a used note with `{ "id": "note-id", "used": true }`.
+
+## Agent Instruction Template
+
+```text
+Use Focusmap's SNS Notes API.
+
+Read:
+1. /llms.txt
+2. /llms-full.txt
+3. /openapi.json
+
+Workflow:
+- Fetch source notes from /api/v1/notes?project_title=SNS投稿&status=pending
+- Use note.content as the user's personal source material
+- Keep the user's point of view in generated posts
+- After a note is used in a draft, spreadsheet row, or posting ledger input, call PATCH /api/v1/notes with used=true
+- used=true is a completion checkbox, not deletion
+- API key needs notes:read and notes:write
+```
