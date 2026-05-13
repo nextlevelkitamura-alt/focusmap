@@ -52,6 +52,23 @@ export default function Home() {
             </Link>
           </div>
 
+          <div className="rounded-lg border border-border p-5 text-sm leading-7 text-muted-foreground space-y-2">
+            <p className="font-medium text-foreground">Google Calendar integration</p>
+            <p>
+              After logging in, users can connect their Google account from the calendar settings screen. Focusmap then
+              uses the Google Calendar API to read upcoming events, create new events when the user schedules a task,
+              and update or delete events the user manages inside Focusmap.
+            </p>
+            <p>
+              Requested OAuth scopes:
+              {' '}
+              <code className="text-foreground">calendar.events</code>
+              {' · '}
+              <code className="text-foreground">calendar.calendarlist.readonly</code>
+              . Connection can be revoked at any time from the calendar settings.
+            </p>
+          </div>
+
           <p className="text-sm text-muted-foreground">
             お問い合わせ: nextlevel.kitamura@gmail.com
           </p>
