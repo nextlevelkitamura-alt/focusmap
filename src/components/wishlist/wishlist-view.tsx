@@ -663,7 +663,7 @@ export function WishlistView() {
               </Button>
             </div>
           ) : (
-            <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-3">
+            <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-4">
               <MemoSection
                 title="未予定"
                 count={unscheduledItems.length}
@@ -672,6 +672,8 @@ export function WishlistView() {
                 onUpdate={handleUpdate}
                 onDelete={handleDelete}
                 onOpen={openDetail}
+                className="lg:col-span-2"
+                listClassName="sm:grid-cols-2"
               />
               <MemoSection
                 title="予定済み"
@@ -727,6 +729,8 @@ function MemoSection({
   onUpdate,
   onDelete,
   onOpen,
+  className,
+  listClassName,
 }: {
   title: string
   count: number
@@ -735,9 +739,11 @@ function MemoSection({
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onOpen: (item: MemoItem) => void
+  className?: string
+  listClassName?: string
 }) {
   return (
-    <section className="min-w-0">
+    <section className={cn("min-w-0", className)}>
       <div className="mb-2 flex items-center gap-2">
         <h2 className="text-sm font-medium">{title}</h2>
         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
@@ -747,7 +753,7 @@ function MemoSection({
           {emptyText}
         </div>
       ) : (
-        <div className="grid gap-3">
+        <div className={cn("grid gap-3", listClassName)}>
           {items.map(item => (
             <WishlistCard
               key={item.id}
