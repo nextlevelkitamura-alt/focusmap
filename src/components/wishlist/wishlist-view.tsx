@@ -54,7 +54,7 @@ const QUICK_MODEL_OPTIONS = [
 
 const STATUS_LABEL: Record<MemoStatus | "all", string> = {
   all: "すべて",
-  unsorted: "未整理",
+  unsorted: "未予定",
   organized: "未予定",
   time_candidates: "未予定",
   scheduled: "予定済み",
@@ -287,19 +287,19 @@ export function WishlistView() {
     }))
   }, [items, statusFilter, tagFilter])
 
-  const activeItems = useMemo(() => {
-    return filteredItems.filter(item => getStatus(item) !== "completed")
-  }, [filteredItems])
-
   const selectedModelOption = QUICK_MODEL_OPTIONS.find(option => option.id === selectedAiModel) || QUICK_MODEL_OPTIONS[0]
 
   const scheduledItems = useMemo(() => {
-    return activeItems.filter(item => getStatus(item) === "scheduled")
-  }, [activeItems])
+    return filteredItems.filter(item => getStatus(item) === "scheduled")
+  }, [filteredItems])
 
   const unscheduledItems = useMemo(() => {
-    return activeItems.filter(item => getStatus(item) !== "scheduled")
-  }, [activeItems])
+    return filteredItems.filter(item => getStatus(item) === "unsorted")
+  }, [filteredItems])
+
+  const completedItems = useMemo(() => {
+    return filteredItems.filter(item => getStatus(item) === "completed")
+  }, [filteredItems])
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
@@ -655,7 +655,7 @@ export function WishlistView() {
 
       <div className="flex-1 overflow-hidden">
         <div className="h-full overflow-y-auto px-4 py-4 pb-24 md:px-6">
-          {activeItems.length === 0 ? (
+          {filteredItems.length === 0 ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <p>メモはまだありません</p>
               <Button variant="outline" onClick={handleCreate} className="min-h-[44px]">
@@ -663,7 +663,16 @@ export function WishlistView() {
               </Button>
             </div>
           ) : (
-            <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-3">
+              <MemoSection
+                title="未予定"
+                count={unscheduledItems.length}
+                items={unscheduledItems}
+                emptyText="未予定のメモはありません"
+                onUpdate={handleUpdate}
+                onDelete={handleDelete}
+                onOpen={openDetail}
+              />
               <MemoSection
                 title="予定済み"
                 count={scheduledItems.length}
@@ -674,10 +683,10 @@ export function WishlistView() {
                 onOpen={openDetail}
               />
               <MemoSection
-                title="未予定"
-                count={unscheduledItems.length}
-                items={unscheduledItems}
-                emptyText="未予定のメモはありません"
+                title="完了"
+                count={completedItems.length}
+                items={completedItems}
+                emptyText="完了したメモはありません"
                 onUpdate={handleUpdate}
                 onDelete={handleDelete}
                 onOpen={openDetail}
@@ -738,7 +747,7 @@ function MemoSection({
           {emptyText}
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+        <div className="grid gap-3">
           {items.map(item => (
             <WishlistCard
               key={item.id}
@@ -767,7 +776,7 @@ function FilterBar({
   onStatusChange: (status: MemoStatus | "all") => void
   onTagChange: (tag: string | "all") => void
 }) {
-  const statusOptions: Array<MemoStatus | "all"> = ["all", "scheduled", "unsorted"]
+  const statusOptions: Array<MemoStatus | "all"> = ["all", "unsorted", "scheduled", "completed"]
   return (
     <div className="flex items-center gap-2 overflow-x-auto pb-1">
       <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
