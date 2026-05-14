@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { upsertMemoTags } from '@/lib/memo-tags-server'
 
 export async function PATCH(
   request: NextRequest,
@@ -11,6 +12,18 @@ export async function PATCH(
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
+  if (body.project_id) {
+    const { error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('id', body.project_id)
+      .eq('user_id', user.id)
+      .single()
+
+    if (projectError) {
+      return NextResponse.json({ error: 'プロジェクトを確認できませんでした' }, { status: 400 })
+    }
+  }
   const updates = {
     ...body,
     tags: Array.isArray(body.tags) ? body.tags : body.tags,
@@ -25,6 +38,7 @@ export async function PATCH(
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await upsertMemoTags(supabase, user.id, data.category, data.tags)
   return NextResponse.json({ item: data })
 }
 

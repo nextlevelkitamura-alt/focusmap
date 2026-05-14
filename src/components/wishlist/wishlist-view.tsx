@@ -1,15 +1,17 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { useTagColors } from "@/hooks/useTagColors"
 import { broadcastCalendarSync, CALENDAR_EVENT_TIME_UPDATE_EVENT, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
-import { IdealGoalWithItems } from "@/types/database"
+import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
+import { getTagColor } from "@/lib/color-utils"
 import { WishlistCard } from "./wishlist-card"
 import { WishlistCardDetail } from "./wishlist-card-detail"
 
@@ -18,6 +20,7 @@ type MemoItem = IdealGoalWithItems
 
 interface MemoSuggestion {
   title: string
+  project_id?: string | null
   category: string
   tags: string[]
   tag_suggestions?: string[]
@@ -73,17 +76,18 @@ function getTimestamp(value: string | null | undefined) {
   return Number.isNaN(time) ? 0 : time
 }
 
-function sortMemoItems(items: MemoItem[]) {
+function sortMemoItemsForSection(items: MemoItem[], section: MemoStatus) {
   return [...items].sort((a, b) => {
-    const statusA = getStatus(a)
-    const statusB = getStatus(b)
-    if (statusA !== statusB) {
-      if (statusA === "scheduled") return -1
-      if (statusB === "scheduled") return 1
+    if (section === "scheduled") {
+      return getTimestamp(a.scheduled_at) - getTimestamp(b.scheduled_at)
+        || getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
     }
-
-    return getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
-      || getTimestamp(b.created_at) - getTimestamp(a.created_at)
+    if (section === "completed") {
+      return getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
+        || getTimestamp(b.created_at) - getTimestamp(a.created_at)
+    }
+    return getTimestamp(b.created_at) - getTimestamp(a.created_at)
+      || getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
   })
 }
 
@@ -168,7 +172,13 @@ function combineDateTime(dateValue: string, timeValue: string) {
   return date.toISOString()
 }
 
-export function WishlistView() {
+export function WishlistView({
+  projects = [],
+  selectedProjectId = null,
+}: {
+  projects?: Project[]
+  selectedProjectId?: string | null
+}) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedItem, setSelectedItem] = useState<MemoItem | null>(null)
@@ -185,6 +195,9 @@ export function WishlistView() {
   const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [filterOpen, setFilterOpen] = useState(false)
+  const itemSaveQueues = useRef(new Map<string, Promise<void>>())
+  const itemUpdateVersions = useRef(new Map<string, number>())
+  const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -270,39 +283,56 @@ export function WishlistView() {
   }, [])
 
   const allTags = useMemo(() => {
-    const set = new Set<string>()
+    const set = new Set<string>(managedTags.map(tag => tag.name))
     for (const item of items) {
       if (item.category) set.add(item.category)
       for (const tag of item.tags ?? []) set.add(tag)
     }
     return [...set].slice(0, 12)
-  }, [items])
+  }, [items, managedTags])
+
+  const projectById = useMemo(() => new Map(projects.map(project => [project.id, project])), [projects])
 
   const filteredItems = useMemo(() => {
-    return sortMemoItems(items.filter(item => {
+    return items.filter(item => {
       const status = getStatus(item)
       if (statusFilter !== "all" && status !== statusFilter) return false
       if (tagFilter !== "all" && item.category !== tagFilter && !(item.tags ?? []).includes(tagFilter)) return false
       return true
-    }))
+    })
   }, [items, statusFilter, tagFilter])
 
   const selectedModelOption = QUICK_MODEL_OPTIONS.find(option => option.id === selectedAiModel) || QUICK_MODEL_OPTIONS[0]
 
   const scheduledItems = useMemo(() => {
-    return filteredItems.filter(item => getStatus(item) === "scheduled")
+    return sortMemoItemsForSection(filteredItems.filter(item => getStatus(item) === "scheduled"), "scheduled")
   }, [filteredItems])
 
   const unscheduledItems = useMemo(() => {
-    return filteredItems.filter(item => getStatus(item) === "unsorted")
+    return sortMemoItemsForSection(filteredItems.filter(item => getStatus(item) === "unsorted"), "unsorted")
   }, [filteredItems])
 
   const completedItems = useMemo(() => {
-    return filteredItems.filter(item => getStatus(item) === "completed")
+    return sortMemoItemsForSection(filteredItems.filter(item => getStatus(item) === "completed"), "completed")
   }, [filteredItems])
+
+  const enqueueItemSave = useCallback((id: string, operation: () => Promise<void>) => {
+    const previous = itemSaveQueues.current.get(id) ?? Promise.resolve()
+    const save = previous.catch(() => undefined).then(operation)
+    const tracked = save.finally(() => {
+      if (itemSaveQueues.current.get(id) === tracked) {
+        itemSaveQueues.current.delete(id)
+      }
+    })
+    itemSaveQueues.current.set(id, tracked)
+    return tracked
+  }, [])
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
+      const updateVersion = (itemUpdateVersions.current.get(id) ?? 0) + 1
+      itemUpdateVersions.current.set(id, updateVersion)
+      const isLatestUpdate = () => itemUpdateVersions.current.get(id) === updateVersion
       const previousItems = items
       const previousSelectedItem = selectedItem
       const optimisticUpdate = (item: MemoItem): MemoItem => ({
@@ -313,32 +343,40 @@ export function WishlistView() {
       setItems(prev => prev.map(existing => existing.id === id ? optimisticUpdate(existing) : existing))
       setSelectedItem(prev => prev?.id === id ? optimisticUpdate(prev) : prev)
       setIntakeError(null)
-      try {
-        const res = await fetch(`/api/wishlist/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updates),
-        })
-        const data = await res.json()
-        if (!res.ok || data.error) {
-          throw new Error(data.error || "メモの更新に失敗しました")
+      await enqueueItemSave(id, async () => {
+        try {
+          const res = await fetch(`/api/wishlist/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updates),
+          })
+          const data = await res.json()
+          if (!res.ok || data.error) {
+            throw new Error(data.error || "メモの更新に失敗しました")
+          }
+          if (!data.item) {
+            throw new Error("更新結果を取得できませんでした")
+          }
+          if (!isLatestUpdate()) return
+          const item = data.item as MemoItem
+          setItems(prev => prev.map(existing => existing.id === id ? item : existing))
+          setSelectedItem(prev => prev?.id === id ? item : prev)
+          if ("category" in updates || "tags" in updates) {
+            await refreshTags()
+          }
+        } catch (err) {
+          if (isLatestUpdate()) {
+            setItems(previousItems)
+            setSelectedItem(previousSelectedItem)
+            setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
+          }
+          throw err
         }
-        if (!data.item) {
-          throw new Error("更新結果を取得できませんでした")
-        }
-        const item = data.item as MemoItem
-        setItems(prev => prev.map(existing => existing.id === id ? item : existing))
-        setSelectedItem(prev => prev?.id === id ? item : prev)
-      } catch (err) {
-        setItems(previousItems)
-        setSelectedItem(previousSelectedItem)
-        setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
-        throw err
-      }
+      })
       return
     }
     await fetchItems()
-  }, [fetchItems, items, selectedItem])
+  }, [enqueueItemSave, fetchItems, items, refreshTags, selectedItem])
 
   const handleDelete = useCallback(async (id: string) => {
     setItems(prev => prev.filter(item => item.id !== id))
@@ -354,6 +392,7 @@ export function WishlistView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: "新しいメモ",
+          project_id: selectedProjectId,
           description: "",
           category: "アイデア",
           tags: ["アイデア"],
@@ -372,6 +411,7 @@ export function WishlistView() {
       setSelectedItem(item)
       setStatusFilter("all")
       setTagFilter("all")
+      await refreshTags()
       setDetailOpen(true)
     } catch (err) {
       setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
@@ -399,6 +439,7 @@ export function WishlistView() {
         : ""
       setSuggestion({
         ...data.suggestion,
+        project_id: selectedProjectId,
         category: suggestedCategory,
         tags: [],
         tag_suggestions: allTags,
@@ -444,6 +485,7 @@ export function WishlistView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: suggestion.title,
+          project_id: suggestion.project_id ?? selectedProjectId,
           category: suggestion.category,
           tags: suggestion.tags,
           description: suggestion.description,
@@ -466,6 +508,7 @@ export function WishlistView() {
       setItems(prev => [item, ...prev])
       setStatusFilter("all")
       setTagFilter("all")
+      await refreshTags()
       if (addToCalendar && item.scheduled_at && item.duration_minutes) {
         await handleCalendarAdd(item)
       }
@@ -647,6 +690,7 @@ export function WishlistView() {
             statusFilter={statusFilter}
             tagFilter={tagFilter}
             tags={allTags}
+            tagColors={tagColors}
             onStatusChange={setStatusFilter}
             onTagChange={setTagFilter}
           />
@@ -672,6 +716,8 @@ export function WishlistView() {
                 onUpdate={handleUpdate}
                 onDelete={handleDelete}
                 onOpen={openDetail}
+                projectById={projectById}
+                tagColors={tagColors}
                 className="lg:col-span-2"
                 listClassName="sm:grid-cols-2"
               />
@@ -683,6 +729,8 @@ export function WishlistView() {
                 onUpdate={handleUpdate}
                 onDelete={handleDelete}
                 onOpen={openDetail}
+                projectById={projectById}
+                tagColors={tagColors}
               />
               <MemoSection
                 title="完了"
@@ -692,6 +740,8 @@ export function WishlistView() {
                 onUpdate={handleUpdate}
                 onDelete={handleDelete}
                 onOpen={openDetail}
+                projectById={projectById}
+                tagColors={tagColors}
               />
             </div>
           )}
@@ -705,6 +755,8 @@ export function WishlistView() {
         onChange={setSuggestion}
         onSave={saveSuggestion}
         registeredTags={allTags}
+        tagColors={tagColors}
+        projects={projects}
         isSaving={isSavingSuggestion}
       />
 
@@ -716,6 +768,8 @@ export function WishlistView() {
         onCalendarAdd={handleCalendarAdd}
         onSaved={() => setDetailOpen(false)}
         tagOptions={allTags}
+        projects={projects}
+        tagColors={tagColors}
       />
     </div>
   )
@@ -729,6 +783,8 @@ function MemoSection({
   onUpdate,
   onDelete,
   onOpen,
+  projectById,
+  tagColors,
   className,
   listClassName,
 }: {
@@ -739,6 +795,8 @@ function MemoSection({
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onOpen: (item: MemoItem) => void
+  projectById: Map<string, Project>
+  tagColors: Record<string, string>
   className?: string
   listClassName?: string
 }) {
@@ -761,6 +819,8 @@ function MemoSection({
               onUpdate={onUpdate}
               onDelete={onDelete}
               onClick={() => onOpen(item)}
+              project={item.project_id ? projectById.get(item.project_id) ?? null : null}
+              tagColors={tagColors}
             />
           ))}
         </div>
@@ -773,12 +833,14 @@ function FilterBar({
   statusFilter,
   tagFilter,
   tags,
+  tagColors,
   onStatusChange,
   onTagChange,
 }: {
   statusFilter: MemoStatus | "all"
   tagFilter: string | "all"
   tags: string[]
+  tagColors: Record<string, string>
   onStatusChange: (status: MemoStatus | "all") => void
   onTagChange: (tag: string | "all") => void
 }) {
@@ -810,18 +872,23 @@ function FilterBar({
         >
           タグすべて
         </button>
-        {tags.map(tag => (
-          <button
-            key={tag}
-            onClick={() => onTagChange(tag)}
-            className={cn(
-              "min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]",
-              tagFilter === tag ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground",
-            )}
-          >
-            {tag}
-          </button>
-        ))}
+        {tags.map(tag => {
+          const color = getTagColor(tag, tagColors)
+          return (
+            <button
+              key={tag}
+              onClick={() => onTagChange(tag)}
+              className="min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]"
+              style={{
+                borderColor: color,
+                backgroundColor: tagFilter === tag ? color : `${color}22`,
+                color: tagFilter === tag ? "#fff" : color,
+              }}
+            >
+              {tag}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -834,6 +901,8 @@ function SuggestionSheet({
   onChange,
   onSave,
   registeredTags,
+  tagColors,
+  projects,
   isSaving,
 }: {
   suggestion: MemoSuggestion | null
@@ -842,6 +911,8 @@ function SuggestionSheet({
   onChange: (suggestion: MemoSuggestion | null) => void
   onSave: (candidate?: MemoSuggestion["time_candidates"][number], addToCalendar?: boolean) => Promise<void>
   registeredTags: string[]
+  tagColors: Record<string, string>
+  projects: Project[]
   isSaving: boolean
 }) {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(null)
@@ -923,6 +994,23 @@ function SuggestionSheet({
             />
           </div>
           <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">プロジェクト</label>
+            <div className="relative">
+              <select
+                value={suggestion.project_id ?? ""}
+                onChange={e => update({ project_id: e.target.value || null })}
+                className="min-h-[48px] w-full appearance-none rounded-xl border border-border/80 bg-muted/20 px-4 pr-10 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-primary/20"
+                aria-label="プロジェクト"
+              >
+                <option value="">プロジェクト未設定</option>
+                {projects.map(project => (
+                  <option key={project.id} value={project.id}>{project.title}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
             <label className="text-xs text-muted-foreground">メモ</label>
             <textarea
               value={suggestion.description}
@@ -939,7 +1027,12 @@ function SuggestionSheet({
                   key={tag}
                   type="button"
                   onClick={() => removeTag(tag)}
-                  className="min-h-9 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs text-primary transition-colors hover:bg-primary/15"
+                  className="min-h-9 rounded-full border px-3 text-xs transition-colors"
+                  style={{
+                    borderColor: getTagColor(tag, tagColors),
+                    backgroundColor: `${getTagColor(tag, tagColors)}22`,
+                    color: getTagColor(tag, tagColors),
+                  }}
                 >
                   {tag} ×
                 </button>
@@ -986,7 +1079,12 @@ function SuggestionSheet({
                     key={tag}
                     type="button"
                     onClick={() => addTag(tag)}
-                    className="min-h-9 rounded-full border px-3 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    className="min-h-9 rounded-full border px-3 text-xs transition-colors"
+                    style={{
+                      borderColor: `${getTagColor(tag, tagColors)}88`,
+                      backgroundColor: `${getTagColor(tag, tagColors)}14`,
+                      color: getTagColor(tag, tagColors),
+                    }}
                   >
                     {tag}
                   </button>

@@ -4,8 +4,20 @@ import { useMindMapSync } from './useMindMapSync'
 import type { Task } from '@/types/database'
 
 // --- Supabase mock ---
+type MockFn = ReturnType<typeof vi.fn>
+type MockSupabaseChain = Record<string, unknown> & {
+  from: MockFn
+  select: MockFn
+  insert: MockFn
+  update: MockFn
+  upsert: MockFn
+  delete: MockFn
+  eq: MockFn
+  single: MockFn
+}
+
 const mockSupabaseChain = () => {
-  const chain: Record<string, any> = {}
+  const chain = {} as MockSupabaseChain
   chain.from = vi.fn().mockReturnValue(chain)
   chain.select = vi.fn().mockReturnValue(chain)
   chain.insert = vi.fn().mockResolvedValue({ data: null, error: null })
@@ -17,7 +29,7 @@ const mockSupabaseChain = () => {
       ...chain,
       eq: chain.eq,
       select: vi.fn().mockResolvedValue({ data: [{ id: 'test' }], error: null }),
-      then: (resolve: any) => resolve({ data: null, error: null }),
+      then: (resolve: (value: { data: null; error: null }) => void) => resolve({ data: null, error: null }),
     }
   })
   chain.single = vi.fn().mockResolvedValue({ data: { id: 'test' }, error: null })
@@ -102,6 +114,9 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     habit_icon: null,
     habit_start_date: null,
     habit_end_date: null,
+    memo: null,
+    memo_images: null,
+    node_width: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
@@ -128,6 +143,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   uuidCounter = 0
   mockChain = mockSupabaseChain()
+  mockFetch.mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve({ success: true }),
+    text: () => Promise.resolve(''),
+  })
 })
 
 describe('useMindMapSync', () => {
@@ -403,6 +423,97 @@ describe('useMindMapSync', () => {
           JSON.parse(String((init as RequestInit).body)).status === 'todo'
         )
       ).toBe(true)
+    })
+
+    test('同じタスクの連続status更新は保存順を保証し最後の状態を残す', async () => {
+      const group = createMockRootTask({ id: 'g1' })
+      const task = createMockTask({ id: 't1', parent_task_id: 'g1', status: 'todo' })
+      const initialRootTasks = [group]
+      const initialTasks = [task]
+      const requests: Array<{ body: Record<string, unknown>; resolve: (value: unknown) => void }> = []
+
+      mockFetch.mockImplementation((_url, init) => new Promise(resolve => {
+        requests.push({
+          body: JSON.parse(String((init as RequestInit).body)),
+          resolve,
+        })
+      }))
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks,
+          initialTasks,
+        })
+      )
+
+      let firstUpdate!: Promise<void>
+      let secondUpdate!: Promise<void>
+      await act(async () => {
+        firstUpdate = result.current.updateTask('t1', { status: 'done' })
+        secondUpdate = result.current.updateTask('t1', { status: 'todo' })
+        await Promise.resolve()
+      })
+
+      expect(result.current.tasks.find(t => t.id === 't1')?.status).toBe('todo')
+      expect(requests).toHaveLength(1)
+      expect(requests[0].body.status).toBe('done')
+
+      await act(async () => {
+        requests[0].resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        })
+        await firstUpdate
+        await Promise.resolve()
+      })
+
+      expect(requests).toHaveLength(2)
+      expect(requests[1].body.status).toBe('todo')
+
+      await act(async () => {
+        requests[1].resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        })
+        await secondUpdate
+      })
+
+      expect(result.current.tasks.find(t => t.id === 't1')?.status).toBe('todo')
+    })
+
+    test('習慣親タスクは子が全てdoneでも自動完了しない', async () => {
+      const group = createMockRootTask({ id: 'g1', is_habit: true, status: 'todo' })
+      const task = createMockTask({ id: 't1', parent_task_id: 'g1', status: 'todo' })
+      const initialRootTasks = [group]
+      const initialTasks = [task]
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks,
+          initialTasks,
+        })
+      )
+
+      await act(async () => {
+        await result.current.updateTask('t1', { status: 'done' })
+      })
+
+      expect(result.current.groups.find(g => g.id === 'g1')?.status).toBe('todo')
+      expect(
+        mockFetch.mock.calls.some(([url, init]) =>
+          url === '/api/tasks/g1' &&
+          typeof init === 'object' &&
+          init &&
+          'body' in init &&
+          JSON.parse(String((init as RequestInit).body)).status === 'done'
+        )
+      ).toBe(false)
     })
   })
 

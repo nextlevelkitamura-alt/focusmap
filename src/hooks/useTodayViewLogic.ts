@@ -895,6 +895,7 @@ export function useTodayViewLogic({
             habit_end_date: null,
             memo: null,
             memo_images: null,
+            node_width: null,
         }
         setLocalTasks(prev => [...prev, optimisticTask])
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { upsertMemoTags } from '@/lib/memo-tags-server'
 
 export async function GET() {
   const supabase = await createClient()
@@ -26,6 +27,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const {
     title,
+    project_id,
     description,
     category,
     scheduled_at,
@@ -38,6 +40,19 @@ export async function POST(request: NextRequest) {
 
   if (!title?.trim()) return NextResponse.json({ error: 'タイトルは必須です' }, { status: 400 })
 
+  if (project_id) {
+    const { error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('id', project_id)
+      .eq('user_id', user.id)
+      .single()
+
+    if (projectError) {
+      return NextResponse.json({ error: 'プロジェクトを確認できませんでした' }, { status: 400 })
+    }
+  }
+
   const { count } = await supabase
     .from('ideal_goals')
     .select('id', { count: 'exact', head: true })
@@ -47,6 +62,7 @@ export async function POST(request: NextRequest) {
   const insertPayload = {
     user_id: user.id,
     title: title.trim(),
+    project_id: project_id || null,
     description: description ?? null,
     category: category ?? null,
     scheduled_at: scheduled_at ?? null,
@@ -78,6 +94,7 @@ export async function POST(request: NextRequest) {
     const fallbackPayload: Omit<typeof insertPayload, 'ai_source_payload'> = {
       user_id: insertPayload.user_id,
       title: insertPayload.title,
+      project_id: insertPayload.project_id,
       description: insertPayload.description,
       category: insertPayload.category,
       scheduled_at: insertPayload.scheduled_at,
@@ -118,6 +135,8 @@ export async function POST(request: NextRequest) {
       await supabase.from('ideal_items').insert(rows)
     }
   }
+
+  await upsertMemoTags(supabase, user.id, category, tags)
 
   const { data: item } = await supabase
     .from('ideal_goals')

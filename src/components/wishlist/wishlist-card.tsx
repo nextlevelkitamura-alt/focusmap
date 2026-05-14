@@ -3,8 +3,9 @@
 import { useState } from "react"
 import { Calendar, Check, Clock, GripVertical, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { IdealGoalWithItems } from "@/types/database"
+import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
+import { colorToRgba, DEFAULT_PROJECT_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
 
 type MemoItem = IdealGoalWithItems
 
@@ -13,6 +14,8 @@ interface WishlistCardProps {
   onUpdate: (id: string, updates: Partial<MemoItem>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onClick: () => void
+  project?: Project | null
+  tagColors?: Record<string, string>
   draggable?: boolean
   onDragStart?: () => void
 }
@@ -36,6 +39,8 @@ export function WishlistCard({
   onUpdate,
   onDelete,
   onClick,
+  project,
+  tagColors = {},
   draggable,
   onDragStart,
 }: WishlistCardProps) {
@@ -46,12 +51,15 @@ export function WishlistCard({
   const subCount = item.ideal_items?.length ?? 0
   const formattedDate = formatDateTime(item.scheduled_at)
   const firstUrl = extractFirstUrl(item.description)
+  const projectColor = project ? normalizeColor(project.color_theme, DEFAULT_PROJECT_COLOR) : null
+  const accentColor = projectColor ?? (isScheduled ? "#3b82f6" : undefined)
+  const primaryTag = item.category || tags[0] || null
 
   const handleCheck = async (e: React.MouseEvent) => {
     e.stopPropagation()
     await onUpdate(item.id, {
-      is_completed: !item.is_completed,
-      memo_status: !item.is_completed ? "completed" : "unsorted",
+      is_completed: !isCompleted,
+      memo_status: !isCompleted ? "completed" : "unsorted",
     } as Partial<MemoItem>)
   }
 
@@ -69,9 +77,14 @@ export function WishlistCard({
       onClick={onClick}
       className={cn(
         "group relative flex cursor-pointer flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
-        isScheduled && "border-l-4 border-l-blue-500",
+        accentColor && "border-l-4",
         isCompleted && "opacity-55",
       )}
+      style={accentColor ? {
+        borderColor: colorToRgba(accentColor, 0.58),
+        borderLeftColor: accentColor,
+        boxShadow: `inset 0 0 0 9999px ${colorToRgba(accentColor, 0.035)}`,
+      } : undefined}
     >
       <div className="flex items-start gap-2">
         {draggable && (
@@ -80,13 +93,36 @@ export function WishlistCard({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap gap-1">
             {isScheduled && (
-              <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-[11px] text-blue-300">
+              <span
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px]"
+                style={{
+                  backgroundColor: colorToRgba(accentColor ?? "#3b82f6", 0.14),
+                  color: accentColor ?? "#60a5fa",
+                }}
+              >
                 <Calendar className="h-3 w-3" /> 予定済み
               </span>
             )}
-            {(item.category || tags[0]) && (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                {item.category || tags[0]}
+            {primaryTag && (
+              <span
+                className="rounded px-1.5 py-0.5 text-[11px]"
+                style={{
+                  backgroundColor: colorToRgba(getTagColor(primaryTag, tagColors), 0.14),
+                  color: getTagColor(primaryTag, tagColors),
+                }}
+              >
+                {primaryTag}
+              </span>
+            )}
+            {project && (
+              <span
+                className="rounded px-1.5 py-0.5 text-[11px]"
+                style={{
+                  backgroundColor: colorToRgba(projectColor ?? DEFAULT_PROJECT_COLOR, 0.14),
+                  color: projectColor ?? DEFAULT_PROJECT_COLOR,
+                }}
+              >
+                {project.title}
               </span>
             )}
           </div>
@@ -109,7 +145,15 @@ export function WishlistCard({
       {tags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {tags.slice(0, 4).map(tag => (
-            <span key={tag} className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            <span
+              key={tag}
+              className="rounded border px-1.5 py-0.5 text-[11px]"
+              style={{
+                borderColor: colorToRgba(getTagColor(tag, tagColors), 0.55),
+                backgroundColor: colorToRgba(getTagColor(tag, tagColors), 0.08),
+                color: getTagColor(tag, tagColors),
+              }}
+            >
               {tag}
             </span>
           ))}
@@ -132,11 +176,15 @@ export function WishlistCard({
 
       <div className="mt-2 flex items-center justify-between" onClick={e => e.stopPropagation()}>
         <button
+          type="button"
+          onPointerDown={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
           onClick={handleCheck}
           className={cn(
             "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground",
-            isCompleted && "text-green-500",
+            isCompleted && "text-foreground",
           )}
+          style={accentColor ? { color: accentColor } : undefined}
           title={isCompleted ? "完了済み" : "完了にする"}
         >
           {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}

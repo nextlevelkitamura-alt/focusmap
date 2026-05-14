@@ -47,11 +47,22 @@ create table tasks (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+create table if not exists memo_tags (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  name text not null,
+  color text default '#8b5cf6' not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique (user_id, name)
+);
+
 -- Enable RLS
 alter table spaces enable row level security;
 alter table projects enable row level security;
 alter table task_groups enable row level security;
 alter table tasks enable row level security;
+alter table memo_tags enable row level security;
 
 -- Create Policies
 create policy "Users can CRUD their own spaces" on spaces
@@ -65,3 +76,9 @@ create policy "Users can CRUD their own task_groups" on task_groups
 
 create policy "Users can CRUD their own tasks" on tasks
   for all using (auth.uid() = user_id);
+
+create policy "Users can CRUD their own memo_tags" on memo_tags
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+alter table ideal_goals
+  add column if not exists project_id uuid references projects(id) on delete set null;

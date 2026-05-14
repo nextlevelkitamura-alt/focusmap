@@ -1,7 +1,7 @@
 import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
 import type { ReactNode } from "react"
-import { Bell, Bot, Brain, Calendar, Key, Palette, User } from "lucide-react"
+import { Bell, Bot, Brain, Calendar, FolderKanban, Key, Palette, User } from "lucide-react"
 import { CalendarSettings } from "@/components/dashboard/calendar-settings"
 import { NotificationSettings } from "@/components/notifications"
 import { AiContextSettings } from "@/components/settings/ai-context-settings"
@@ -9,6 +9,7 @@ import { ThemeSettings } from "@/components/settings/theme-settings"
 import { AccountSettings } from "@/components/settings/account-settings"
 import { ApiKeySettings } from "@/components/settings/api-key-settings"
 import { AiModelSettings } from "@/components/settings/ai-model-settings"
+import { ProjectSettings } from "@/components/settings/project-settings"
 
 const SETTING_GROUPS = [
     {
@@ -27,6 +28,14 @@ const SETTING_GROUPS = [
         items: [
             { id: "calendar", label: "カレンダー", icon: Calendar },
             { id: "notifications", label: "通知", icon: Bell },
+        ],
+    },
+    {
+        id: "project",
+        label: "プロジェクト",
+        description: "色とタグ",
+        items: [
+            { id: "project-colors", label: "色設定", icon: FolderKanban },
         ],
     },
     {
@@ -57,6 +66,19 @@ export default async function SettingsPage() {
     if (!user) {
         redirect('/login')
     }
+
+    const [projectsResult, spacesResult] = await Promise.all([
+        supabase
+            .from("projects")
+            .select("*")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
+        supabase
+            .from("spaces")
+            .select("*")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
+    ])
 
     return (
         <div className="flex-1 overflow-y-auto bg-background">
@@ -117,6 +139,13 @@ export default async function SettingsPage() {
                             <div id="notifications" className="scroll-mt-4">
                                 <NotificationSettings />
                             </div>
+                        </SettingsGroup>
+
+                        <SettingsGroup id="project" label="プロジェクト" description="プロジェクトとタグの色を調整します。">
+                            <ProjectSettings
+                                initialProjects={projectsResult.data ?? []}
+                                initialSpaces={spacesResult.data ?? []}
+                            />
                         </SettingsGroup>
 
                         <SettingsGroup id="access" label="アクセス" description="外部アプリから使うキーとアカウント情報を管理します。">

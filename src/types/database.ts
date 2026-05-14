@@ -82,6 +82,32 @@ export interface Database {
                     created_at?: string
                 }
             }
+            memo_tags: {
+                Row: {
+                    id: string
+                    user_id: string
+                    name: string
+                    color: string
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    name: string
+                    color?: string
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    name?: string
+                    color?: string
+                    created_at?: string
+                    updated_at?: string
+                }
+            }
             tasks: {
                 Row: {
                     id: string
@@ -684,6 +710,7 @@ export interface Database {
                     id: string
                     user_id: string
                     title: string
+                    project_id: string | null
                     description: string | null
                     cover_image_url: string | null
                     cover_image_path: string | null
@@ -712,6 +739,7 @@ export interface Database {
                     id?: string
                     user_id: string
                     title: string
+                    project_id?: string | null
                     description?: string | null
                     cover_image_url?: string | null
                     cover_image_path?: string | null
@@ -740,6 +768,7 @@ export interface Database {
                     id?: string
                     user_id?: string
                     title?: string
+                    project_id?: string | null
                     description?: string | null
                     cover_image_url?: string | null
                     cover_image_path?: string | null
@@ -1140,6 +1169,10 @@ export type ProjectUpdate = Database['public']['Tables']['projects']['Update']
 export type Space = Database['public']['Tables']['spaces']['Row']
 export type SpaceInsert = Database['public']['Tables']['spaces']['Insert']
 export type SpaceUpdate = Database['public']['Tables']['spaces']['Update']
+
+export type MemoTag = Database['public']['Tables']['memo_tags']['Row']
+export type MemoTagInsert = Database['public']['Tables']['memo_tags']['Insert']
+export type MemoTagUpdate = Database['public']['Tables']['memo_tags']['Update']
 
 export type HabitCompletion = Database['public']['Tables']['habit_completions']['Row']
 export type HabitCompletionInsert = Database['public']['Tables']['habit_completions']['Insert']

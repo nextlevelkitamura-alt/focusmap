@@ -107,6 +107,12 @@ export function DashboardClient({
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
     // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
     const [isTaskListVisible, setIsTaskListVisible] = useState(false)
+    const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
+    const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
+    const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
+    const toggleCalendarSplit = useCallback(() => {
+        setIsCalendarSplitOpen(prev => !prev)
+    }, [])
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
 
@@ -212,14 +218,14 @@ export function DashboardClient({
     }, [deleteTask])
 
     // --- Project CRUD ---
-    const handleCreateProject = useCallback(async (title: string, status: string = 'active', targetSpaceId?: string) => {
+    const handleCreateProject = useCallback(async (title: string, status: string = 'active', targetSpaceId?: string, colorTheme?: string) => {
         const spaceId = targetSpaceId || selectedSpaceId || (spaces.length > 0 ? spaces[0].id : null)
         if (!spaceId) return null
 
         const res = await fetch('/api/projects', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ space_id: spaceId, title, status }),
+            body: JSON.stringify({ space_id: spaceId, title, status, ...(colorTheme ? { color_theme: colorTheme } : {}) }),
         })
         if (!res.ok) return null
         const newProject: Project = await res.json()
@@ -249,11 +255,11 @@ export function DashboardClient({
     }, [selectedProjectId, projects])
 
     // --- Space CRUD ---
-    const handleCreateSpace = useCallback(async (title: string) => {
+    const handleCreateSpace = useCallback(async (title: string, color?: string) => {
         const res = await fetch('/api/spaces', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title }),
+            body: JSON.stringify({ title, ...(color ? { color } : {}) }),
         })
         if (!res.ok) return null
         const newSpace: Space = await res.json()
@@ -380,6 +386,7 @@ export function DashboardClient({
             habit_end_date: null,
             memo: null,
             memo_images: null,
+            node_width: null,
         }
 
         // 時間指定がある予定は即時にタイムラインへ反映（カレンダー選択有無に依存しない）
@@ -630,6 +637,7 @@ export function DashboardClient({
             habit_end_date: null,
             memo: null,
             memo_images: null,
+            node_width: null,
         }
 
         // quickTasks に追加 → allTasksMerged に反映 → TodayView の allTasks prop に伝播
@@ -704,11 +712,11 @@ export function DashboardClient({
     // Sidebar State
     const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
 
-    // today / map ビューでは左サイドバーを自動折りたたみ
+    // today / map / memo ビューでは左サイドバーを自動折りたたみ
     useEffect(() => {
         if (!isViewReady) return
         queueMicrotask(() => {
-            setIsLeftSidebarCollapsed(activeView === 'today' || activeView === 'map')
+            setIsLeftSidebarCollapsed(activeView === 'today' || activeView === 'map' || activeView === 'long-term')
         })
     }, [activeView, isViewReady])
     const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
@@ -811,6 +819,9 @@ export function DashboardClient({
                     showTaskListToggle={activeView !== 'today'}
                     isTaskListVisible={isTaskListVisible}
                     onToggleTaskList={() => setIsTaskListVisible(prev => !prev)}
+                    showCalendarSplitToggle={isOptionalCalendarView}
+                    isCalendarSplitVisible={isCalendarPanelVisible}
+                    onToggleCalendarSplit={toggleCalendarSplit}
                 />
 
                 {/* Undo/Redo Toast */}
@@ -910,8 +921,11 @@ export function DashboardClient({
                 )}
 
                 {isViewReady && activeView === 'long-term' && (
-                    <div className="flex-1 flex overflow-hidden">
-                        <WishlistView />
+                    <div className={cn("flex-1 flex overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
+                        <WishlistView
+                            projects={projects}
+                            selectedProjectId={selectedProjectId}
+                        />
                     </div>
                 )}
 
@@ -946,7 +960,7 @@ export function DashboardClient({
                 {/* === Desktop: AI Todos View === */}
                 {activeView === 'ai-todos' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
-                        <AiTodosView initialTasks={[]} initialSnapshot={null} />
+                        <AiTodosView initialTasks={[]} initialSnapshot={null} sessionDate={getTodayDateString()} />
                     </div>
                 )}
 
@@ -955,7 +969,7 @@ export function DashboardClient({
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
-                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'long-term' || activeView === 'ai-todos') ? "!hidden" : ""
+                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'ai-todos' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Always visible on left top) */}
                 <div className={cn(
@@ -1009,6 +1023,11 @@ export function DashboardClient({
                             onDeleteTask={handleDeleteTaskFromToday}
                             syncFailedIds={syncFailedIds}
                         />
+                    ) : activeView === 'long-term' ? (
+                        <WishlistView
+                            projects={projects}
+                            selectedProjectId={selectedProjectId}
+                        />
                     ) : (
                         <CenterPane
                             project={selectedProject}
@@ -1032,31 +1051,35 @@ export function DashboardClient({
                 </div>
 
                 {/* Right Resize Handle */}
-                <div
-                    className="w-1 h-full bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-none flex items-center justify-center group"
-                    onMouseDown={handleRightMouseDown}
-                    onTouchStart={handleRightTouchStart}
-                >
-                    <div className="w-0.5 h-8 bg-muted-foreground/20 group-hover:bg-primary rounded-full" />
-                </div>
+                {isCalendarPanelVisible && (
+                    <div
+                        className="w-1 h-full bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-none flex items-center justify-center group"
+                        onMouseDown={handleRightMouseDown}
+                        onTouchStart={handleRightTouchStart}
+                    >
+                        <div className="w-0.5 h-8 bg-muted-foreground/20 group-hover:bg-primary rounded-full" />
+                    </div>
+                )}
 
                 {/* Pane 3: Right Sidebar (Calendar) */}
-                <div
-                    className="flex-none overflow-hidden h-full"
-                    style={{ width: rightSidebarWidth }}
-                >
-                    <RightSidebar
-                        ref={rightSidebarRef}
-                        onUpdateTask={handleUpdateTaskWithQuickSync}
-                        tasks={allTasksMerged}
-                        projects={projects}
-                        onCreateQuickTask={handleCreateQuickTask}
-                        onCreateSubTask={handleCreateSubTask}
-                        onDeleteTask={handleDeleteTaskFromToday}
-                        onOpenAiChat={() => setIsAiChatOpen(true)}
-                        syncFailedIds={syncFailedIds}
-                    />
-                </div>
+                {isCalendarPanelVisible && (
+                    <div
+                        className="flex-none overflow-hidden h-full"
+                        style={{ width: rightSidebarWidth }}
+                    >
+                        <RightSidebar
+                            ref={rightSidebarRef}
+                            onUpdateTask={handleUpdateTaskWithQuickSync}
+                            tasks={allTasksMerged}
+                            projects={projects}
+                            onCreateQuickTask={handleCreateQuickTask}
+                            onCreateSubTask={handleCreateSubTask}
+                            onDeleteTask={handleDeleteTaskFromToday}
+                            onOpenAiChat={() => setIsAiChatOpen(true)}
+                            syncFailedIds={syncFailedIds}
+                        />
+                    </div>
+                )}
             </div>
             </TodayDateProvider>
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}

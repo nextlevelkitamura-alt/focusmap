@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { Project, Space } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Plus, ChevronRight, ChevronDown, Pencil, Trash2, ArrowRightLeft } from "lucide-react"
+import { MoreHorizontal, Plus, ChevronRight, ChevronDown, Pencil, Trash2, ArrowRightLeft, Palette } from "lucide-react"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -17,6 +17,7 @@ import {
     DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
+import { DEFAULT_PROJECT_COLOR, normalizeColor } from "@/lib/color-utils"
 
 // --- Status label map ---
 const statusMap: Record<string, string> = {
@@ -76,21 +77,16 @@ interface ProjectCardProps {
     onRenameCancel: () => void
     onStartRename: () => void
     onUpdateStatus: (status: string) => void
+    onUpdateColor: (color: string) => void
     onDelete: () => void
 }
 
 function ProjectCard({
     project, isSelected, isRenaming, renameTitle, renameInputRef,
     spaceName, onSelect, onRenameChange, onRenameSubmit, onRenameCancel,
-    onStartRename, onUpdateStatus, onDelete,
+    onStartRename, onUpdateStatus, onUpdateColor, onDelete,
 }: ProjectCardProps) {
-    let statusColor = "bg-green-500"
-    if (project.status === 'concept' || project.status === 'on_hold') statusColor = "bg-blue-500"
-    if (project.status === 'completed' || project.status === 'archived') statusColor = "bg-gray-500"
-    if (project.status === 'active') {
-        if (project.priority >= 4) statusColor = "bg-red-500"
-        else if (project.priority === 3) statusColor = "bg-green-500"
-    }
+    const projectColor = normalizeColor(project.color_theme, DEFAULT_PROJECT_COLOR)
 
     if (isRenaming) {
         return (
@@ -127,12 +123,13 @@ function ProjectCard({
             }}
             className={cn(
                 "group relative py-2 px-3 rounded-md transition-all cursor-pointer hover:bg-muted/50",
-                isSelected ? "bg-muted/60 border-l-2 border-l-primary" : "hover:bg-muted/30"
+                isSelected ? "bg-muted/60 border-l-2" : "hover:bg-muted/30"
             )}
+            style={isSelected ? { borderLeftColor: projectColor } : undefined}
         >
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
-                    <div className={cn("w-2 h-2 rounded-full flex-shrink-0", statusColor)} />
+                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: projectColor }} />
                     <span className="text-sm font-medium leading-none truncate">
                         {project.title}
                     </span>
@@ -175,6 +172,18 @@ function ProjectCard({
                                 ))}
                             </DropdownMenuSubContent>
                         </DropdownMenuSub>
+                        <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                            <Palette className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="flex-1 text-muted-foreground">色</span>
+                            <input
+                                type="color"
+                                value={projectColor}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => onUpdateColor(e.target.value)}
+                                className="h-7 w-8 cursor-pointer rounded border bg-transparent p-0.5"
+                                aria-label={`${project.title}の色`}
+                            />
+                        </div>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
@@ -230,6 +239,7 @@ interface SectionProps {
     onRenameCancel: () => void
     onStartRename: (projectId: string, currentTitle: string) => void
     onUpdateStatus: (projectId: string, status: string) => void
+    onUpdateColor: (projectId: string, color: string) => void
     onDeleteProject: (projectId: string) => void
     onDropProject: (projectId: string, newStatus: string) => void
 }
@@ -243,7 +253,7 @@ function Section({
     selectedProjectId, renamingProjectId, renameTitle, renameInputRef,
     selectedSpaceId, allSpaces, onSelectProject,
     onRenameChange, onRenameSubmit, onRenameCancel,
-    onStartRename, onUpdateStatus, onDeleteProject, onDropProject,
+    onStartRename, onUpdateStatus, onUpdateColor, onDeleteProject, onDropProject,
 }: SectionProps) {
     const [isDragOver, setIsDragOver] = useState(false)
 
@@ -362,6 +372,7 @@ function Section({
                             onRenameCancel={onRenameCancel}
                             onStartRename={() => onStartRename(p.id, p.title)}
                             onUpdateStatus={(s) => onUpdateStatus(p.id, s)}
+                            onUpdateColor={(color) => onUpdateColor(p.id, color)}
                             onDelete={() => {
                                 if (window.confirm(`「${p.title}」を削除しますか？\nグループとタスクも全て削除されます。`)) {
                                     onDeleteProject(p.id)
@@ -396,7 +407,7 @@ interface LeftSidebarProps {
     projects: Project[]
     selectedProjectId: string | null
     onSelectProject: (id: string) => void
-    onCreateProject?: (title: string, status?: string, spaceId?: string) => Promise<Project | null>
+    onCreateProject?: (title: string, status?: string, spaceId?: string, colorTheme?: string) => Promise<Project | null>
     onUpdateProject?: (projectId: string, updates: Partial<Project>) => Promise<void>
     onDeleteProject?: (projectId: string) => Promise<void>
 }
@@ -518,6 +529,9 @@ export function LeftSidebar({
         },
         onUpdateStatus: (projectId: string, status: string) => {
             onUpdateProject?.(projectId, { status })
+        },
+        onUpdateColor: (projectId: string, color: string) => {
+            onUpdateProject?.(projectId, { color_theme: normalizeColor(color, DEFAULT_PROJECT_COLOR) })
         },
         onDeleteProject: (projectId: string) => {
             onDeleteProject?.(projectId)

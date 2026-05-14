@@ -65,6 +65,11 @@ export function useMindMapSync({
     // 楽観的に作成されたタスクを保護（INSERT 完了まで state からの削除を防止）
     const pendingOptimisticTasks = useRef(new Map<string, Task>())
 
+    // タスクごとの保存順序を保証する。
+    // UIは先に楽観更新し、DB保存だけをキュー化することで連打時も最後の操作が残る。
+    const taskSaveQueues = useRef(new Map<string, Promise<void>>())
+    const taskUpdateVersions = useRef(new Map<string, number>())
+
     // 最新の allTasks を参照するための ref（callback の依存配列から除外するため）
     const allTasksRef = useRef(allTasks)
     allTasksRef.current = allTasks
@@ -127,7 +132,21 @@ export function useMindMapSync({
         clear()
         pendingOptimisticTasks.current.clear()
         pendingInserts.current.clear()
+        taskSaveQueues.current.clear()
+        taskUpdateVersions.current.clear()
     }, [projectId, clear])
+
+    const enqueueTaskSave = useCallback((taskId: string, operation: () => Promise<void>) => {
+        const previous = taskSaveQueues.current.get(taskId) ?? Promise.resolve()
+        const save = previous.catch(() => undefined).then(operation)
+        const tracked = save.finally(() => {
+            if (taskSaveQueues.current.get(taskId) === tracked) {
+                taskSaveQueues.current.delete(taskId)
+            }
+        })
+        taskSaveQueues.current.set(taskId, tracked)
+        return tracked
+    }, [])
 
     // --- ルートタスク操作（旧Group操作 - 後方互換ラッパー） ---
 
@@ -171,6 +190,7 @@ export function useMindMapSync({
             source: 'manual',
             deleted_at: null,
             google_event_fingerprint: null,
+            node_width: null,
         }
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask)
@@ -321,10 +341,11 @@ export function useMindMapSync({
     // updateGroup → APIルート経由で更新
     const updateGroup = useCallback(async (groupId: string, updates: Partial<Task>) => {
         const beforeTask = allTasksRef.current.find(t => t.id === groupId)
-        const beforeValues: Partial<Task> = {}
-        for (const key of Object.keys(updates) as (keyof Task)[]) {
-            if (beforeTask) (beforeValues as any)[key] = beforeTask[key]
-        }
+        const beforeValues = beforeTask
+            ? Object.fromEntries(
+                (Object.keys(updates) as (keyof Task)[]).map(key => [key, beforeTask[key]])
+            ) as Partial<Task>
+            : {}
 
         setAllTasks(prev => prev.map(t => t.id === groupId ? { ...t, ...updates } : t))
 
@@ -498,6 +519,7 @@ export function useMindMapSync({
             source: 'manual',
             deleted_at: null,
             google_event_fingerprint: null,
+            node_width: null,
         };
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask);
@@ -602,6 +624,9 @@ export function useMindMapSync({
     const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
         const currentAll = allTasksRef.current;
         const beforeTask = currentAll.find(t => t.id === taskId)
+        const updateVersion = (taskUpdateVersions.current.get(taskId) ?? 0) + 1
+        taskUpdateVersions.current.set(taskId, updateVersion)
+        const isLatestUpdate = () => taskUpdateVersions.current.get(taskId) === updateVersion
 
         // Stage 自動遷移: updates に stage 影響フィールドが含まれていれば stage も更新
         const stageUpdate = beforeTask ? deriveStageUpdate(updates, beforeTask) : {}
@@ -609,6 +634,41 @@ export function useMindMapSync({
 
         if (!beforeTask) {
             // Task not in current project state (e.g. habit child from another project)
+            await enqueueTaskSave(taskId, async () => {
+                const pendingInsert = pendingInserts.current.get(taskId)
+                if (pendingInsert) {
+                    try {
+                        await pendingInsert
+                    } catch (e) {
+                        console.error('[Sync] updateTask: pending insert failed, continuing with PATCH anyway', e)
+                    }
+                }
+
+                // Still perform DB update via API route
+                try {
+                    const response = await fetch(`/api/tasks/${taskId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(updatesWithStage),
+                    })
+                    if (!response.ok) console.error('[Sync] updateTask direct API error:', await response.text())
+                } catch (e) {
+                    console.error('[Sync] updateTask direct API failed:', e)
+                }
+            })
+            return
+        }
+        const beforeValues = Object.fromEntries(
+            (Object.keys(updatesWithStage) as (keyof Task)[]).map(key => [key, beforeTask[key]])
+        ) as Partial<Task>
+
+        let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
+
+        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
+
+        let didSave = false
+
+        await enqueueTaskSave(taskId, async () => {
             // CRITICAL FIX: Ensure any pending POST request for this task finishes before we PATCH
             const pendingInsert = pendingInserts.current.get(taskId)
             if (pendingInsert) {
@@ -619,140 +679,114 @@ export function useMindMapSync({
                 }
             }
 
-            // Still perform DB update via API route
             try {
                 const response = await fetch(`/api/tasks/${taskId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(updatesWithStage),
                 })
-                if (!response.ok) console.error('[Sync] updateTask direct API error:', await response.text())
-            } catch (e) {
-                console.error('[Sync] updateTask direct API failed:', e)
-            }
-            return
-        }
-        const beforeValues: Partial<Task> = {}
-        for (const key of Object.keys(updatesWithStage) as (keyof Task)[]) {
-            (beforeValues as any)[key] = beforeTask[key]
-        }
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                    console.error('[Sync] updateTask API error:', errorData)
+                    if (isLatestUpdate()) {
+                        onSyncError?.(`保存に失敗しました: ${errorData.message || response.statusText}`)
+                        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+                    }
+                    return
+                }
+                await response.json().catch(() => null)
+                didSave = true
 
-        let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
+                if (!isLatestUpdate()) return
 
-        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
+                // AUTO-COMPLETE PARENT
+                if (updates.status === 'done') {
+                    const latestAll = allTasksRef.current.map(t =>
+                        t.id === taskId ? { ...t, ...updatesWithStage } : t
+                    )
+                    const task = latestAll.find(t => t.id === taskId);
+                    if (task?.parent_task_id) {
+                        const siblings = latestAll.filter(t => t.parent_task_id === task.parent_task_id)
+                        const allSiblingsDone = siblings.length > 0 && siblings.every(s => s.status === 'done');
 
-        // CRITICAL FIX: Ensure any pending POST request for this task finishes before we PATCH
-        const pendingInsert = pendingInserts.current.get(taskId)
-        if (pendingInsert) {
-            try {
-                await pendingInsert
-            } catch (e) {
-                console.error('[Sync] updateTask: pending insert failed, continuing with PATCH anyway', e)
-            }
-        }
+                        if (allSiblingsDone) {
+                            const parent = latestAll.find(t => t.id === task.parent_task_id)
+                            // 習慣タスクは AUTO-COMPLETE しない（日次完了で親が完了扱いになるのを防止）
+                            if (parent && parent.status !== 'done' && !parent.is_habit) {
+                                parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
+                                setAllTasks(prev => prev.map(t =>
+                                    t.id === task.parent_task_id ? { ...t, status: 'done' } : t
+                                ));
+                                try {
+                                    const parentRes = await enqueueTaskSave(task.parent_task_id, async () => {
+                                        const res = await fetch(`/api/tasks/${task.parent_task_id}`, {
+                                            method: 'PATCH',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ status: 'done', stage: 'done' }),
+                                        })
+                                        if (!res.ok) throw new Error('auto-complete parent API error')
+                                    })
+                                    await parentRes
+                                } catch (parentErr) {
+                                    console.error('[Sync] auto-complete parent failed:', parentErr)
+                                    setAllTasks(prev => prev.map(t =>
+                                        t.id === task.parent_task_id ? { ...t, status: parent.status } : t
+                                    ))
+                                    parentAutoCompleteUndo = null
+                                }
+                            }
+                        }
+                    }
+                }
 
-        try {
-            const response = await fetch(`/api/tasks/${taskId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updatesWithStage),
-            })
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ message: response.statusText }))
-                console.error('[Sync] updateTask API error:', errorData)
-                onSyncError?.(`保存に失敗しました: ${errorData.message || response.statusText}`)
-                // Rollback optimistic update
-                setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
-                return
-            }
-            const result = await response.json()
-
-            // AUTO-COMPLETE PARENT
-            if (updates.status === 'done') {
-                const task = currentAll.find(t => t.id === taskId);
-                if (task?.parent_task_id) {
-                    const siblings = currentAll
-                        .filter(t => t.parent_task_id === task.parent_task_id)
-                        .map(t => t.id === taskId ? { ...t, status: 'done' } : t);
-
-                    const allSiblingsDone = siblings.every(s => s.status === 'done');
-
-                    if (allSiblingsDone) {
-                        const parent = currentAll.find(t => t.id === task.parent_task_id)
-                        // 習慣タスクは AUTO-COMPLETE しない（日次完了で親が完了扱いになるのを防止）
-                        if (parent && parent.status !== 'done' && !parent.is_habit) {
+                // AUTO-UNCOMPLETE PARENT
+                if (updates.status && updates.status !== 'done') {
+                    const latestAll = allTasksRef.current.map(t =>
+                        t.id === taskId ? { ...t, ...updatesWithStage } : t
+                    )
+                    const task = latestAll.find(t => t.id === taskId);
+                    if (task?.parent_task_id) {
+                        const parent = latestAll.find(t => t.id === task.parent_task_id);
+                        // 習慣タスクは AUTO-UNCOMPLETE しない
+                        if (parent?.status === 'done' && !parent.is_habit) {
                             parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
-                        }
-                        setAllTasks(prev => prev.map(t =>
-                            t.id === task.parent_task_id ? { ...t, status: 'done' } : t
-                        ));
-                        try {
-                            const parentRes = await fetch(`/api/tasks/${task.parent_task_id}`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ status: 'done' }),
-                            })
-                            if (!parentRes.ok) {
-                                console.error('[Sync] auto-complete parent API error')
+                            const parentStage = deriveStageUpdate({ status: 'todo' } as Partial<Task>, parent).stage
+                            const parentUpdates = parentStage ? { status: 'todo', stage: parentStage } : { status: 'todo' }
+                            setAllTasks(prev => prev.map(t =>
+                                t.id === task.parent_task_id ? { ...t, ...parentUpdates } : t
+                            ));
+                            try {
+                                const parentRes = await enqueueTaskSave(task.parent_task_id, async () => {
+                                    const res = await fetch(`/api/tasks/${task.parent_task_id}`, {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(parentUpdates),
+                                    })
+                                    if (!res.ok) throw new Error('auto-uncomplete parent API error')
+                                })
+                                await parentRes
+                            } catch (parentErr) {
+                                console.error('[Sync] auto-uncomplete parent failed:', parentErr)
                                 setAllTasks(prev => prev.map(t =>
-                                    t.id === task.parent_task_id ? { ...t, status: parent?.status ?? t.status } : t
+                                    t.id === task.parent_task_id ? { ...t, status: parent.status, stage: parent.stage } : t
                                 ))
                                 parentAutoCompleteUndo = null
                             }
-                        } catch (parentErr) {
-                            console.error('[Sync] auto-complete parent failed:', parentErr)
-                            setAllTasks(prev => prev.map(t =>
-                                t.id === task.parent_task_id ? { ...t, status: parent?.status ?? t.status } : t
-                            ))
-                            parentAutoCompleteUndo = null
                         }
                     }
                 }
-            }
-
-            // AUTO-UNCOMPLETE PARENT
-            if (updates.status && updates.status !== 'done') {
-                const task = currentAll.find(t => t.id === taskId);
-                if (task?.parent_task_id) {
-                    const parent = currentAll.find(t => t.id === task.parent_task_id);
-                    // 習慣タスクは AUTO-UNCOMPLETE しない
-                    if (parent?.status === 'done' && !parent.is_habit) {
-                        parentAutoCompleteUndo = { parentId: task.parent_task_id, beforeStatus: parent.status }
-                        setAllTasks(prev => prev.map(t =>
-                            t.id === task.parent_task_id ? { ...t, status: 'todo' } : t
-                        ));
-                        try {
-                            const parentRes = await fetch(`/api/tasks/${task.parent_task_id}`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ status: 'todo' }),
-                            })
-                            if (!parentRes.ok) {
-                                console.error('[Sync] auto-uncomplete parent API error')
-                                setAllTasks(prev => prev.map(t =>
-                                    t.id === task.parent_task_id ? { ...t, status: parent.status } : t
-                                ))
-                                parentAutoCompleteUndo = null
-                            }
-                        } catch (parentErr) {
-                            console.error('[Sync] auto-uncomplete parent failed:', parentErr)
-                            setAllTasks(prev => prev.map(t =>
-                                t.id === task.parent_task_id ? { ...t, status: parent.status } : t
-                            ))
-                            parentAutoCompleteUndo = null
-                        }
-                    }
+            } catch (e) {
+                console.error('[Sync] updateTask failed:', e)
+                if (isLatestUpdate()) {
+                    onSyncError?.('タスクの更新に失敗しました: ネットワークエラー')
+                    setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
                 }
             }
-        } catch (e) {
-            console.error('[Sync] updateTask failed:', e)
-            onSyncError?.('タスクの更新に失敗しました: ネットワークエラー')
-            // Rollback optimistic update
-            setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
-            return
-        }
+        })
 
-        const capturedParentUndo = parentAutoCompleteUndo
+        if (!didSave) return
+
+        const capturedParentUndo = parentAutoCompleteUndo as { parentId: string; beforeStatus: string } | null
         pushAction({
             description: `「${beforeTask?.title || 'タスク'}」を変更`,
             undo: async () => {
@@ -809,7 +843,7 @@ export function useMindMapSync({
                 }
             },
         })
-    }, [pushAction, onSyncError])
+    }, [pushAction, onSyncError, enqueueTaskSave])
 
     const deleteTask = useCallback(async (taskId: string) => {
         const currentAll = allTasksRef.current;

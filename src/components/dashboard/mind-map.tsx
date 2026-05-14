@@ -943,15 +943,23 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         role="checkbox"
                         aria-checked={isTaskDone}
                         aria-label={isTaskDone ? '完了を取消' : '完了にする'}
-                        className="nodrag nopan shrink-0 p-1 -m-1 flex items-center justify-center"
+                        className="nodrag nopan shrink-0 h-5 w-5 -m-1 flex items-center justify-center rounded active:bg-muted"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
+                            e.stopPropagation();
+                            data?.onUpdateStatus?.(isTaskDone ? 'todo' : 'done');
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key !== ' ' && e.key !== 'Enter') return;
+                            e.preventDefault();
                             e.stopPropagation();
                             data?.onUpdateStatus?.(isTaskDone ? 'todo' : 'done');
                         }}
                         title={isTaskDone ? '完了を取消' : '完了にする'}
                     >
                         <span className={cn(
-                            "w-3 h-3 rounded-[3px] border flex items-center justify-center transition-colors",
+                            "w-3.5 h-3.5 rounded-[3px] border flex items-center justify-center transition-colors",
                             isTaskDone
                                 ? "bg-primary border-primary text-primary-foreground"
                                 : "border-muted-foreground/50 hover:border-foreground bg-background"
@@ -1212,10 +1220,10 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                                                             calendarId: localCalendarId,
                                                         });
                                                         setShowScheduleMenu(false);
-                                                    } catch (err: any) {
+                                                    } catch (err: unknown) {
                                                         console.error('[MindMap] Failed to register schedule:', err);
                                                         if (typeof window !== 'undefined') {
-                                                            window.alert(err?.message || 'スケジュール登録に失敗しました');
+                                                            window.alert(err instanceof Error ? err.message : 'スケジュール登録に失敗しました');
                                                         }
                                                     } finally {
                                                         setIsRegistering(false);
@@ -2347,15 +2355,15 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     }, [onUpdateTask]);
 
     const registerSchedule = useCallback(async (taskId: string, params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => {
+        if (!params.scheduledAt || !params.estimatedMinutes || !params.calendarId) {
+            throw new Error('スケジュール登録には所要時間・日時・カレンダーすべて必要です');
+        }
         if (onUpdateTask) {
             await onUpdateTask(taskId, {
                 scheduled_at: params.scheduledAt,
-                estimated_time: params.estimatedMinutes || null,
+                estimated_time: params.estimatedMinutes,
                 calendar_id: params.calendarId,
             });
-        }
-        if (!params.scheduledAt || !params.estimatedMinutes || !params.calendarId) {
-            throw new Error('スケジュール登録には所要時間・日時・カレンダーすべて必要です');
         }
         const res = await fetch('/api/calendar/sync-task', {
             method: 'POST',
@@ -2682,7 +2690,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onUpdatePriority: (p: number) => cbs.updateTaskPriority(taskId, p),
                     onUpdateEstimatedTime: (m: number) => cbs.updateTaskEstimatedTime(taskId, m),
                     onUpdateCalendar: (calendarId: string | null) => cbs.onUpdateTask?.(taskId, { calendar_id: calendarId }),
-                    onRegisterSchedule: (params) => cbs.registerSchedule(taskId, params),
+                    onRegisterSchedule: (params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => cbs.registerSchedule(taskId, params),
                     is_habit: taskData?.is_habit ?? false,
                     parentIsHabit: taskData?.parent_task_id ? (taskDataMap.get(taskData.parent_task_id)?.is_habit ?? false) : false,
                     habit_frequency: taskData?.habit_frequency ?? null,

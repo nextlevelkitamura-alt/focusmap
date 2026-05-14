@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { IdealGoalWithItems } from "@/types/database"
+import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
+import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from "@/lib/color-utils"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
 
@@ -27,6 +28,8 @@ interface WishlistCardDetailProps {
   onCalendarAdd: (item: IdealGoalWithItems) => Promise<void>
   onSaved?: () => void
   tagOptions: string[]
+  projects?: Project[]
+  tagColors?: Record<string, string>
 }
 
 function linkify(text: string) {
@@ -128,7 +131,17 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalendarAdd, onSaved, tagOptions }: WishlistCardDetailProps) {
+export function WishlistCardDetail({
+  item,
+  open,
+  onOpenChange,
+  onUpdate,
+  onCalendarAdd,
+  onSaved,
+  tagOptions,
+  projects = [],
+  tagColors = {},
+}: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
   const [isSavingMemo, setIsSavingMemo] = useState(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -176,6 +189,8 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
   const timeOptions = buildTimeOptions(timeValue)
 
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
+  const selectedProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
+  const selectedProjectColor = selectedProject ? normalizeColor(selectedProject.color_theme, DEFAULT_PROJECT_COLOR) : DEFAULT_PROJECT_COLOR
 
   const changeDuration = async (delta: number) => {
     const current = item.duration_minutes ?? 60
@@ -308,18 +323,41 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
           </div>
 
           <div className="space-y-2">
+            <Label>プロジェクト</Label>
+            <div className="relative">
+              <select
+                value={item.project_id ?? ""}
+                onChange={e => update({ project_id: e.target.value || null })}
+                className="min-h-[44px] w-full appearance-none rounded-md border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                style={selectedProject ? {
+                  borderColor: colorToRgba(selectedProjectColor, 0.55),
+                  boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
+                } : undefined}
+              >
+                <option value="">プロジェクト未設定</option>
+                {projects.map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.title}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
+
+          <div className="space-y-2">
             <Label>タグ</Label>
             <div className="flex flex-wrap gap-1.5">
               {categoryOptions.map(cat => (
                 <button
                   key={cat}
                   onClick={() => update({ category: item.category === cat ? null : cat })}
-                  className={cn(
-                    "min-h-9 rounded-full border px-3 text-xs transition-colors",
-                    item.category === cat
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-muted text-muted-foreground hover:text-foreground",
-                  )}
+                  className="min-h-9 rounded-full border px-3 text-xs transition-colors"
+                  style={{
+                    borderColor: getTagColor(cat, tagColors),
+                    backgroundColor: item.category === cat ? getTagColor(cat, tagColors) : colorToRgba(getTagColor(cat, tagColors), 0.12),
+                    color: item.category === cat ? "#fff" : getTagColor(cat, tagColors),
+                  }}
                 >
                   {cat}
                 </button>
@@ -330,7 +368,12 @@ export function WishlistCardDetail({ item, open, onOpenChange, onUpdate, onCalen
                 <button
                   key={tag}
                   onClick={() => removeTag(tag)}
-                  className="rounded-full border px-2 py-1 text-xs text-muted-foreground hover:text-destructive"
+                  className="rounded-full border px-2 py-1 text-xs hover:opacity-80"
+                  style={{
+                    borderColor: colorToRgba(getTagColor(tag, tagColors), 0.55),
+                    backgroundColor: colorToRgba(getTagColor(tag, tagColors), 0.08),
+                    color: getTagColor(tag, tagColors),
+                  }}
                 >
                   {tag} ×
                 </button>
