@@ -62,3 +62,8 @@ tmp/
 .playwright-mcp/
 supabase/.temp/
 scripts/task-runner.paused
+
+# task-runner output
+scripts/task-runner.log
+scripts/task-runner.err
+scripts/task-runner.paused

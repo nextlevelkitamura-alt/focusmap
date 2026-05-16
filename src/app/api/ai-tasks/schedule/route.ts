@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id } = body as {
+  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id } = body as {
     prompt?: string
     skill_id?: string
     scheduled_at?: string
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
     approval_type?: string
     cwd?: string
     source_note_id?: string
+    source_ideal_goal_id?: string
   }
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -58,12 +59,14 @@ export async function POST(req: NextRequest) {
     ? approval_type
     : 'auto'
 
-  // 同一メモから pending/running のタスクが既にある場合は重複として拒否
-  if (source_note_id) {
+  // 同一メモ（notes / ideal_goals）から pending/running のタスクが既にある場合は重複として拒否
+  const dupeColumn = source_ideal_goal_id ? 'source_ideal_goal_id' : source_note_id ? 'source_note_id' : null
+  const dupeValue = source_ideal_goal_id || source_note_id || null
+  if (dupeColumn && dupeValue) {
     const { data: existing } = await supabase
       .from('ai_tasks')
       .select('id, status')
-      .eq('source_note_id', source_note_id)
+      .eq(dupeColumn, dupeValue)
       .eq('user_id', user.id)
       .in('status', ['pending', 'running'])
       .limit(1)
@@ -88,6 +91,7 @@ export async function POST(req: NextRequest) {
       recurrence_cron: recurrence_cron || null,
       cwd: cwd || null,
       source_note_id: source_note_id || null,
+      source_ideal_goal_id: source_ideal_goal_id || null,
     })
     .select()
     .single()

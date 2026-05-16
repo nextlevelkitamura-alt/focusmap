@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { colorToRgba, DEFAULT_PROJECT_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
+import type { AiTask } from "@/types/ai-task"
+import { NoteClaudeRunnerButton, NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 
 type MemoItem = IdealGoalWithItems
 
@@ -18,6 +20,8 @@ interface WishlistCardProps {
   tagColors?: Record<string, string>
   draggable?: boolean
   onDragStart?: () => void
+  aiTask?: AiTask | null
+  onLaunchClaude?: () => Promise<void>
 }
 
 function formatDateTime(value: string | null): string | null {
@@ -43,6 +47,8 @@ export function WishlistCard({
   tagColors = {},
   draggable,
   onDragStart,
+  aiTask = null,
+  onLaunchClaude,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
@@ -189,16 +195,40 @@ export function WishlistCard({
         >
           {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}
         </button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
-          onClick={handleDelete}
-          disabled={isDeleting}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {onLaunchClaude && (
+            <div className="flex items-center" onClick={e => e.stopPropagation()}>
+              <NoteClaudeRunnerButton
+                noteId={item.id}
+                noteContent={item.description ?? item.title}
+                projectId={item.project_id}
+                repoPath={project?.repo_path ?? null}
+                latestTask={aiTask}
+                onStart={onLaunchClaude}
+              />
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
+            onClick={handleDelete}
+            disabled={isDeleting}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
+
+      {onLaunchClaude && aiTask && (
+        <div onClick={e => e.stopPropagation()}>
+          <NoteClaudeRunnerPanel
+            latestTask={aiTask}
+            isProjectAssigned={!!item.project_id}
+            isRepoConfigured={!!project?.repo_path}
+          />
+        </div>
+      )}
     </div>
   )
 }

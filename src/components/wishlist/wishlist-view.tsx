@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils"
 import { getTagColor } from "@/lib/color-utils"
 import { WishlistCard } from "./wishlist-card"
 import { WishlistCardDetail } from "./wishlist-card-detail"
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type MemoItem = IdealGoalWithItems
@@ -198,6 +199,35 @@ export function WishlistView({
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
+  const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
+
+  // メモから Claude Code を起動
+  const launchClaudeForMemo = useCallback(async (item: MemoItem) => {
+    const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
+    const repoPath = project?.repo_path
+    if (!repoPath) {
+      throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
+    }
+    // プロンプトはタイトル + 本文を組み合わせ
+    const prompt = item.description?.trim()
+      ? `${item.title}\n\n${item.description}`
+      : item.title
+    const res = await fetch("/api/ai-tasks/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        cwd: repoPath,
+        approval_type: "auto",
+        source_ideal_goal_id: item.id,
+        scheduled_at: new Date().toISOString(),
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err?.error || `起動失敗 (${res.status})`)
+    }
+  }, [projects])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -718,6 +748,8 @@ export function WishlistView({
                 onOpen={openDetail}
                 projectById={projectById}
                 tagColors={tagColors}
+                getAiTask={getMemoAiTask}
+                onLaunchClaude={launchClaudeForMemo}
                 className="lg:col-span-2"
                 listClassName="sm:grid-cols-2"
               />
@@ -731,6 +763,8 @@ export function WishlistView({
                 onOpen={openDetail}
                 projectById={projectById}
                 tagColors={tagColors}
+                getAiTask={getMemoAiTask}
+                onLaunchClaude={launchClaudeForMemo}
               />
               <MemoSection
                 title="完了"
@@ -742,6 +776,8 @@ export function WishlistView({
                 onOpen={openDetail}
                 projectById={projectById}
                 tagColors={tagColors}
+                getAiTask={getMemoAiTask}
+                onLaunchClaude={launchClaudeForMemo}
               />
             </div>
           )}
@@ -770,6 +806,7 @@ export function WishlistView({
         tagOptions={allTags}
         projects={projects}
         tagColors={tagColors}
+        onLaunchClaude={launchClaudeForMemo}
       />
     </div>
   )
@@ -787,6 +824,8 @@ function MemoSection({
   tagColors,
   className,
   listClassName,
+  getAiTask,
+  onLaunchClaude,
 }: {
   title: string
   count: number
@@ -799,6 +838,8 @@ function MemoSection({
   tagColors: Record<string, string>
   className?: string
   listClassName?: string
+  getAiTask: (sourceId: string) => import("@/types/ai-task").AiTask | null
+  onLaunchClaude: (item: MemoItem) => Promise<void>
 }) {
   return (
     <section className={cn("min-w-0", className)}>
@@ -821,6 +862,8 @@ function MemoSection({
               onClick={() => onOpen(item)}
               project={item.project_id ? projectById.get(item.project_id) ?? null : null}
               tagColors={tagColors}
+              aiTask={getAiTask(item.id)}
+              onLaunchClaude={() => onLaunchClaude(item)}
             />
           ))}
         </div>

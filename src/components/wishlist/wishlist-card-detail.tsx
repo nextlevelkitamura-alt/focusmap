@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Trash2 } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -9,6 +9,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from "@/lib/color-utils"
+import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
 
@@ -30,6 +32,7 @@ interface WishlistCardDetailProps {
   tagOptions: string[]
   projects?: Project[]
   tagColors?: Record<string, string>
+  onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
 }
 
 function linkify(text: string) {
@@ -141,9 +144,13 @@ export function WishlistCardDetail({
   tagOptions,
   projects = [],
   tagColors = {},
+  onLaunchClaude,
 }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
   const [isSavingMemo, setIsSavingMemo] = useState(false)
+  const [isLaunchingClaude, setIsLaunchingClaude] = useState(false)
+  const [launchError, setLaunchError] = useState<string | null>(null)
+  const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -487,6 +494,60 @@ export function WishlistCardDetail({
             {isSavingMemo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
             メモを保存
           </Button>
+
+          {onLaunchClaude && (() => {
+            const aiTask = getMemoAiTask(item.id)
+            const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
+            const repoConfigured = !!project?.repo_path
+            const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
+            const disabled = !item.project_id || !repoConfigured || !!active || isLaunchingClaude
+            const helperText = !item.project_id
+              ? "プロジェクト未設定のため使えません"
+              : !repoConfigured
+                ? "このプロジェクトにリポジトリパスが未設定です（設定 → プロジェクトから登録）"
+                : active
+                  ? "すでに実行中のタスクがあります（下に表示）"
+                  : "メモ内容をプロンプトとして Claude Code に渡し、スマホから接続できる状態で起動します"
+            return (
+              <div className="space-y-2 rounded-lg border bg-background/40 p-3">
+                <Label className="flex items-center gap-1.5">
+                  <Terminal className="h-4 w-4" />
+                  Claude Code で実行
+                </Label>
+                <p className="text-xs text-muted-foreground leading-5">{helperText}</p>
+                <Button
+                  type="button"
+                  variant={active ? "outline" : "default"}
+                  disabled={disabled}
+                  onClick={async () => {
+                    setLaunchError(null)
+                    setIsLaunchingClaude(true)
+                    try {
+                      await onLaunchClaude(item)
+                    } catch (e) {
+                      setLaunchError(e instanceof Error ? e.message : "起動に失敗しました")
+                    } finally {
+                      setIsLaunchingClaude(false)
+                    }
+                  }}
+                  className="w-full min-h-[44px]"
+                >
+                  {isLaunchingClaude ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Terminal className="mr-2 h-4 w-4" />}
+                  {active ? "実行中（下のパネルから接続）" : "Claude Code を起動"}
+                </Button>
+                {launchError && (
+                  <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
+                    {launchError}
+                  </div>
+                )}
+                <NoteClaudeRunnerPanel
+                  latestTask={aiTask}
+                  isProjectAssigned={!!item.project_id}
+                  isRepoConfigured={repoConfigured}
+                />
+              </div>
+            )
+          })()}
 
           <div className="space-y-3">
             <Label>時間</Label>
