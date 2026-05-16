@@ -55,6 +55,7 @@ export interface Database {
                     priority: number
                     status: string
                     color_theme: string
+                    repo_path: string | null
                     created_at: string
                 }
                 Insert: {
@@ -67,6 +68,7 @@ export interface Database {
                     priority?: number
                     status?: string
                     color_theme?: string
+                    repo_path?: string | null
                     created_at?: string
                 }
                 Update: {
@@ -79,6 +81,7 @@ export interface Database {
                     priority?: number
                     status?: string
                     color_theme?: string
+                    repo_path?: string | null
                     created_at?: string
                 }
             }
