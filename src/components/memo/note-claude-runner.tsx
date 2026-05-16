@@ -286,7 +286,7 @@ export function NoteClaudeRunnerPanel({
           {latestTask.prompt && (
             <details className="text-[11px]">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                {latestTask.executor === "codex" ? "Codex" : "Claude"} に送られたプロンプト（GLM 整理済 / {latestTask.prompt.length} 字）
+                {latestTask.executor === "codex" ? "Codex" : "Claude"} に送られたプロンプト（{latestTask.prompt.length} 字）
               </summary>
               <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4">
                 {latestTask.prompt}

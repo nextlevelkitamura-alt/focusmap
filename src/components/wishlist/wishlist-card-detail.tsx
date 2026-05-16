@@ -563,7 +563,7 @@ export function WishlistCardDetail({
                 <p className="text-xs text-muted-foreground leading-5">
                   {active
                     ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
-                    : "Claude = スマホで監視 / Codex = Codex.app にプロンプト送って自分で実行"}
+                    : "Claude / Codex どちらもスマホで進捗確認可（Codex はペアリング済 Codex.app 経由で mobile に自動表示）"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -602,18 +602,20 @@ export function WishlistCardDetail({
                       <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
                     </Button>
                   )}
-                  {onLaunchCodexApp && (
+                  {onLaunchCodex && (
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={!draftTitle.trim() || isLaunchingCodex}
+                      disabled={claudeDisabled || isLaunchingCodex}
                       onClick={async () => {
                         setLaunchError(null)
                         setIsLaunchingCodex(true)
                         try {
-                          // codex_app: スマホからでも動く Mac proxy。task-runner が
-                          // open codex://new?... を Mac で実行する
-                          await onLaunchCodexApp(item)
+                          // A2: codex exec headless（完全自動）
+                          // - tmux 内で codex exec 実行 → state_5.sqlite に thread 作成
+                          // - mobile ChatGPT app の laptop-icon device に自動表示（ペアリング経由）
+                          // - Focusmap も result.live_log で1分おきに進捗追跡
+                          await onLaunchCodex(item)
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動失敗")
                         } finally {
@@ -623,27 +625,27 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">Mac で Codex.app 起動</span>
+                      <span className="text-[10px] text-muted-foreground">スマホで監視・無人実行</span>
                     </Button>
                   )}
                 </div>
 
-                {/* サブオプション: ヘッドレス実行（A2、AI読取可・ログ可視・無人実行）*/}
-                {onLaunchCodex && (
+                {/* サブオプション: codex:// で Codex.app を開いて手動 Enter（A1）*/}
+                {onLaunchCodexApp && (
                   <button
                     type="button"
-                    disabled={claudeDisabled}
+                    disabled={!draftTitle.trim()}
                     onClick={async () => {
                       setLaunchError(null)
                       try {
-                        await onLaunchCodex(item)
+                        await onLaunchCodexApp(item)
                       } catch (e) {
                         setLaunchError(e instanceof Error ? e.message : "起動失敗")
                       }
                     }}
                     className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
                   >
-                    ◎ Codex バックグラウンド実行（ログ可視・AI読取可、リポ設定必要）
+                    ◎ Codex.app を開いて手動送信（Enter 必要、リポ任意）
                   </button>
                 )}
 
