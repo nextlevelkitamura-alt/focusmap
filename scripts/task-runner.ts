@@ -263,7 +263,9 @@ async function launchRemoteControl(opts: {
   // pipe-pane で別途出力を捕捉する。
   // ANTHROPIC_API_KEY と CLAUDECODE は Remote Control が動かないので除外。
   // --dangerously-skip-permissions: 許可ダイアログを全部スキップ（無人実行のため必須）
-  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)} --dangerously-skip-permissions`
+  // プロンプトは positional 引数で渡す → 起動時の最初の1メッセージとして送信される
+  // （以前は paste-buffer 経由で送っていたが改行が個別の Enter として送信されてしまうため廃止）
+  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)} --dangerously-skip-permissions ${JSON.stringify(opts.prompt)}`
   const bashWrapped = `bash -c ${JSON.stringify(inner)}`
 
   try {
@@ -304,19 +306,7 @@ async function launchRemoteControl(opts: {
     }
   }
 
-  // プロンプトを paste-buffer 経由で安全に注入（改行を含んでも一括送信される）
-  try {
-    // バッファに読み込み
-    execSync(`tmux load-buffer -t "${sessionName}" "${promptPath}"`, { stdio: 'ignore' })
-    // ペースト
-    execSync(`tmux paste-buffer -t "${sessionName}"`, { stdio: 'ignore' })
-    // 改行を送信して送信確定
-    execSync(`tmux send-keys -t "${sessionName}" Enter`, { stdio: 'ignore' })
-  } catch (err) {
-    return { success: false, error: `プロンプト注入失敗: ${err instanceof Error ? err.message : String(err)}` }
-  }
-
-  // プロンプトファイル削除（ログは残す：デバッグ用）
+  // プロンプトファイル削除（positional arg で渡しているので使わないが念のため）
   try { fs.unlinkSync(promptPath) } catch { /* ignore */ }
 
   return { success: true, url, sessionName }

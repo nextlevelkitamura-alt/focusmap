@@ -202,16 +202,42 @@ export function WishlistView({
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
 
   // メモから Claude Code を起動
+  // フロー: ①GLM/Kimiでメモを実行可能な指示文に整理 → ②ai_tasksへINSERT → ③task-runnerがclaude起動
   const launchClaudeForMemo = useCallback(async (item: MemoItem) => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
     if (!repoPath) {
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
-    // プロンプトはタイトル + 本文を組み合わせ
-    const prompt = item.description?.trim()
+
+    // ① GLM/Kimi（OpenCode Go経由）でメモを整理
+    const fallbackPrompt = item.description?.trim()
       ? `${item.title}\n\n${item.description}`
       : item.title
+    let prompt = fallbackPrompt
+    try {
+      const refineRes = await fetch("/api/ai/refine-claude-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item.title,
+          description: item.description ?? "",
+          repo_path: repoPath,
+          model: selectedAiModel,
+        }),
+      })
+      if (refineRes.ok) {
+        const data = await refineRes.json() as { refined_prompt?: string }
+        if (data.refined_prompt && data.refined_prompt.length > 0) {
+          prompt = data.refined_prompt
+        }
+      }
+      // refine 失敗時は fallback（素のメモ）でそのまま起動。ブロックしない
+    } catch {
+      // ネットワークエラー等もスルー
+    }
+
+    // ② ai_tasks に INSERT
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -227,7 +253,7 @@ export function WishlistView({
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.error || `起動失敗 (${res.status})`)
     }
-  }, [projects])
+  }, [projects, selectedAiModel])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])

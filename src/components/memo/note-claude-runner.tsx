@@ -238,6 +238,18 @@ export function NoteClaudeRunnerPanel({
             </div>
           )}
 
+          {/* 実際に Claude に送られたプロンプト（GLM で整理済） */}
+          {latestTask.prompt && (
+            <details className="text-[11px]">
+              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                Claude に送られたプロンプト（GLM 整理済 / {latestTask.prompt.length} 字）
+              </summary>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4">
+                {latestTask.prompt}
+              </pre>
+            </details>
+          )}
+
           {/* 結果メッセージ */}
           {latestTask.status === "completed" && resultMessage && (
             <details className="text-[11px]">
