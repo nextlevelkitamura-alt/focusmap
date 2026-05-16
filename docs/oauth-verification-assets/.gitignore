@@ -1,0 +1,6 @@
+raw/*.mp4
+raw/*.mov
+out/*.mp4
+out/*.mov
+logo/*.png
+!.gitkeep

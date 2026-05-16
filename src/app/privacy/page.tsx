@@ -82,23 +82,66 @@ export default function PrivacyPage() {
         </section>
 
         <section>
-          <h2 className="text-xl font-semibold mb-3">7. Googleユーザーデータの取り扱い</h2>
-          <p>
-            本アプリのGoogleユーザーデータの使用は、
+          <h2 className="text-xl font-semibold mb-3">7. Googleユーザーデータの取り扱い（Limited Use準拠）</h2>
+          <p className="mb-3">
+            本アプリによるGoogleカレンダーAPIから取得した情報の使用と転送は、
             <a
               href="https://developers.google.com/terms/api-services-user-data-policy"
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary underline"
             >
-              Google API サービスのユーザーデータに関するポリシー
+              Google API Services User Data Policy
             </a>
-            （制限付き使用の要件を含む）に準拠しています。
+            （Limited Use requirementsを含む）に準拠します。具体的には以下を遵守します。
+          </p>
+          <ul className="list-disc pl-6 space-y-1">
+            <li>取得したGoogleカレンダーデータは、ユーザーが本アプリ内でタスクと予定を管理するための機能提供にのみ使用します。</li>
+            <li>広告（リターゲティング広告・パーソナライズ広告を含む）目的でGoogleユーザーデータを使用または転送しません。</li>
+            <li>人間が読む形でGoogleユーザーデータを閲覧することは、ユーザーの明示的な同意がある場合、セキュリティ上必要な場合、適用法令に従う場合、または匿名化・集約された運用目的に限定されます。</li>
+            <li>Googleユーザーデータを第三者に販売しません。</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-xl font-semibold mb-3">8. English Summary (for Google OAuth Verification)</h2>
+          <p className="mb-3">
+            Focusmap&apos;s use and transfer of information received from Google APIs to any other app will adhere to the
+            {' '}
+            <a
+              href="https://developers.google.com/terms/api-services-user-data-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline"
+            >
+              Google API Services User Data Policy
+            </a>
+            , including the Limited Use requirements.
+          </p>
+          <p className="mb-3">
+            Focusmap requests the following Google OAuth scopes:
+          </p>
+          <ul className="list-disc pl-6 space-y-1 mb-3">
+            <li>
+              <code>https://www.googleapis.com/auth/calendar.events</code> — to read upcoming events and to create,
+              update, or delete events on behalf of the user when the user explicitly schedules a task inside Focusmap.
+            </li>
+            <li>
+              <code>https://www.googleapis.com/auth/calendar.calendarlist.readonly</code> — to list the user&apos;s
+              calendars so they can choose which calendars to display and which calendar to write new events into.
+            </li>
+          </ul>
+          <p>
+            Focusmap does not use Google user data for advertising. Focusmap does not sell Google user data. Focusmap does
+            not allow humans to read Google user data unless we obtain explicit consent from the user, it is necessary for
+            security purposes, it is required by applicable law, or the data is aggregated and anonymized for internal
+            operations. Users can disconnect Google Calendar at any time from the calendar settings inside the app, which
+            deletes the stored OAuth tokens.
           </p>
         </section>
 
         <section>
-          <h2 className="text-xl font-semibold mb-3">8. お問い合わせ</h2>
+          <h2 className="text-xl font-semibold mb-3">9. お問い合わせ</h2>
           <p>
             プライバシーに関するご質問やお問い合わせは、以下までご連絡ください：
           </p>

@@ -1,0 +1,21 @@
+{
+  "name": "focusmap-oauth-demo-editor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion project that assembles the OAuth verification demo video from raw stage clips and a subtitle track.",
+  "scripts": {
+    "preview": "remotion preview src/index.ts",
+    "build": "remotion render src/index.ts FocusmapOAuthDemo ../out/focusmap-oauth-demo.mp4",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "typescript": "^5.4.0"
+  }
+}
