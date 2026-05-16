@@ -9,11 +9,11 @@
 | 項目 | 値 |
 |------|----|
 | アプリ名（同意画面と一致必須） | **Focusmap** |
-| Homepage URL | `https://shikumika-app-364jgme3ja-an.a.run.app/` |
-| Privacy Policy URL | `https://shikumika-app-364jgme3ja-an.a.run.app/privacy` |
-| Terms URL | `https://shikumika-app-364jgme3ja-an.a.run.app/terms` |
-| Authorized domain | `shikumika-app-364jgme3ja-an.a.run.app` |
-| Redirect URI | `https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback` |
+| Homepage URL | `https://focusmap-official.com/` |
+| Privacy Policy URL | `https://focusmap-official.com/privacy` |
+| Terms URL | `https://focusmap-official.com/terms` |
+| Authorized domain | `focusmap-official.com` |
+| Redirect URI | `https://focusmap-official.com/api/calendar/callback` |
 | サポートメール | nextlevel.kitamura@gmail.com |
 | 申請するScope | `calendar.events`（sensitive）<br>`calendar.calendarlist.readonly`（sensitive） |
 
@@ -284,22 +284,22 @@ nextlevel.kitamura@gmail.com
 
 ### Application home page
 ```
-https://shikumika-app-364jgme3ja-an.a.run.app/
+https://focusmap-official.com/
 ```
 
 ### Application privacy policy link
 ```
-https://shikumika-app-364jgme3ja-an.a.run.app/privacy
+https://focusmap-official.com/privacy
 ```
 
 ### Application terms of service link
 ```
-https://shikumika-app-364jgme3ja-an.a.run.app/terms
+https://focusmap-official.com/terms
 ```
 
 ### Authorized domains
 ```
-shikumika-app-364jgme3ja-an.a.run.app
+focusmap-official.com
 ```
 ※ §8 を参照。`*.run.app` は所有権検証できない可能性が高いので、本番審査前にカスタムドメインへ。
 
