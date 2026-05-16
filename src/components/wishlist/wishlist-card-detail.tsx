@@ -539,7 +539,7 @@ export function WishlistCardDetail({
                 <p className="text-xs text-muted-foreground leading-5">
                   {active
                     ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
-                    : "プロジェクトのリポジトリで AI が作業します。ログは下のパネルでリアルタイム可視化されます"}
+                    : "Claude = スマホで監視 / Codex = Codex.app にプロンプト送って自分で実行"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -579,48 +579,56 @@ export function WishlistCardDetail({
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={claudeDisabled || isLaunchingCodex}
-                      onClick={async () => {
+                      disabled={!draftTitle.trim() || isLaunchingCodex}
+                      onClick={() => {
                         setLaunchError(null)
                         setIsLaunchingCodex(true)
                         try {
-                          // headless `codex exec` をMacで起動。ライブログがDBに同期され
-                          // 完了後は結果テキストがパネルに表示される（AI読取可）
-                          await onLaunchCodex(item)
+                          // A1: codex:// URL スキームで Codex.app に直接プロンプト注入
+                          // - prompt: URL エンコード必須
+                          // - path: 絶対パス（省略時は Codex.app 側でユーザーが選ぶ）
+                          // - 自動実行はされない。ユーザーが Enter で送信
+                          const prompt = [
+                            `# ${draftTitle.trim()}`,
+                            draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
+                          ].filter(Boolean).join('\n')
+                          const params = new URLSearchParams()
+                          params.set('prompt', prompt)
+                          if (project?.repo_path) params.set('path', project.repo_path)
+                          window.location.href = `codex://new?${params.toString()}`
                         } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "起動に失敗")
+                          setLaunchError(e instanceof Error ? e.message : "起動失敗")
                         } finally {
-                          setIsLaunchingCodex(false)
+                          // open は同期完了、すぐスピナー消す
+                          setTimeout(() => setIsLaunchingCodex(false), 800)
                         }
                       }}
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">バックグラウンド実行・ログ可視</span>
+                      <span className="text-[10px] text-muted-foreground">Codex.app で開く</span>
                     </Button>
                   )}
                 </div>
 
-                {/* サブオプション: ChatGPT アプリで手動継続したい人向け */}
-                <button
-                  type="button"
-                  disabled={!draftTitle.trim()}
-                  onClick={async () => {
-                    try {
-                      const text = [
-                        `# ${draftTitle.trim()}`,
-                        draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
-                      ].filter(Boolean).join('\n')
-                      await navigator.clipboard.writeText(text)
-                      window.location.href = 'https://chatgpt.com/codex'
-                    } catch {
-                      // ignore
-                    }
-                  }}
-                  className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
-                >
-                  ChatGPT アプリで開く（コピー + Codex タブ起動）
-                </button>
+                {/* サブオプション: ヘッドレス実行（A2、AI読取可・ログ可視・無人実行）*/}
+                {onLaunchCodex && (
+                  <button
+                    type="button"
+                    disabled={claudeDisabled}
+                    onClick={async () => {
+                      setLaunchError(null)
+                      try {
+                        await onLaunchCodex(item)
+                      } catch (e) {
+                        setLaunchError(e instanceof Error ? e.message : "起動失敗")
+                      }
+                    }}
+                    className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
+                  >
+                    ◎ Codex バックグラウンド実行（ログ可視・AI読取可、リポ設定必要）
+                  </button>
+                )}
 
                 {launchError && (
                   <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">

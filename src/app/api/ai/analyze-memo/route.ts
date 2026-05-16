@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
+import type { ImagePart } from 'ai'
 import { getModelForSkill } from '@/lib/ai/providers'
 
 // POST /api/ai/analyze-memo - メモをAIで分析・分類
@@ -20,11 +21,22 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { content, noteId } = body
+    const { content, noteId, imageUrls } = body
 
     if (!content || typeof content !== 'string' || content.trim().length === 0) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 })
     }
+
+    const imageParts: ImagePart[] = (Array.isArray(imageUrls) ? imageUrls : [])
+      .filter((url: unknown): url is string => typeof url === 'string' && url.length > 0)
+      .map((url: string): ImagePart => {
+        if (url.startsWith('data:')) {
+          const [header, base64] = url.split(',')
+          const mimeType = header.replace('data:', '').replace(';base64', '')
+          return { type: 'image', image: base64, mimeType }
+        }
+        return { type: 'image', image: new URL(url) }
+      })
 
     // ユーザーのプロジェクトとルートタスクを取得（コンテキスト用）
     const { data: projects } = await supabase
@@ -106,10 +118,16 @@ ${projectContext || '(プロジェクトなし)'}
 - 日時情報を含めず、予定の本質的な名前だけを抽出すること
 - map 分類の場合は null`
 
-    // Vercel AI SDK で生成
+    // Vercel AI SDK で生成（画像があればマルチモーダル）
     const aiResult = await generateText({
       model: getModelForSkill(),
-      prompt,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          ...imageParts,
+        ],
+      }],
       maxOutputTokens: 800,
       temperature: 0.3,
     })

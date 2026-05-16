@@ -75,7 +75,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json()
-    const { id, project_id, status } = body
+    const { id, project_id, status, image_urls } = body
 
     if (!id) {
       return NextResponse.json({ error: 'Note ID is required' }, { status: 400 })
@@ -84,6 +84,7 @@ export async function PATCH(request: Request) {
     const updateData: Record<string, unknown> = {}
     if (project_id !== undefined) updateData.project_id = project_id
     if (status !== undefined) updateData.status = status
+    if (image_urls !== undefined) updateData.image_urls = image_urls
 
     const { data, error } = await supabase
       .from('notes')
@@ -116,7 +117,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { content, raw_input, input_type, project_id } = body
+    const { content, raw_input, input_type, project_id, image_urls } = body
 
     if (!content || typeof content !== 'string' || content.trim().length === 0) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 })
@@ -129,6 +130,7 @@ export async function POST(request: Request) {
       input_type: input_type || 'text',
       project_id: project_id || null,
       status: 'pending',
+      image_urls: Array.isArray(image_urls) && image_urls.length > 0 ? image_urls : null,
     }
 
     const { data, error } = await supabase

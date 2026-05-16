@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import {
   StickyNote, Send, Loader2,
   Sparkles, Mic, Square, Calendar, Map, Trash2,
-  FolderOpen, ChevronRight, ChevronDown, Check, X,
+  FolderOpen, ChevronRight, ChevronDown, Check, X, ImagePlus,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -58,6 +58,8 @@ const statusColorMap: Record<string, string> = {
 
 export function MemoView({ className, projects = [], spaces = [], selectedSpaceId = null, onSelectSpace }: MemoViewProps) {
   const [content, setContent] = useState("")
+  const [selectedImages, setSelectedImages] = useState<string[]>([])
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [isFilterOpen, setIsFilterOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -110,6 +112,27 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
     showToast("success", "Claude Code を起動中（最大1分）")
   }, [getNoteRepoPath])
 
+  // 画像選択
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    Promise.all(
+      files.map(file => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result ?? ''))
+        reader.onerror = () => reject(new Error('Failed to read image'))
+        reader.readAsDataURL(file)
+      }))
+    ).then(urls => {
+      setSelectedImages(prev => [...prev, ...urls])
+    }).catch(() => showToast("error", "画像の読み込みに失敗しました"))
+    e.target.value = ''
+  }, [])
+
+  const removeImage = useCallback((index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
   // 音声入力
   const handleTranscribed = useCallback((text: string) => {
     setContent(prev => prev ? `${prev}\n${text}` : text)
@@ -160,14 +183,14 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
   const saveProjectId = selectedProjectId && selectedProjectId !== "__unassigned__" ? selectedProjectId : null
 
   // AI分析 → インライン提案生成
-  const analyzeAndPropose = useCallback(async (noteId: string, noteContent: string) => {
+  const analyzeAndPropose = useCallback(async (noteId: string, noteContent: string, imageUrls?: string[]) => {
     setIsAnalyzing(true)
     setProposal(null)
     try {
       const res = await fetch("/api/ai/analyze-memo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: noteContent, noteId }),
+        body: JSON.stringify({ content: noteContent, noteId, imageUrls: imageUrls ?? [] }),
       })
 
       if (!res.ok) {
@@ -201,6 +224,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
     if (!content.trim()) return
 
     setIsLoading(true)
+    const images = [...selectedImages]
     try {
       const res = await fetch("/api/notes", {
         method: "POST",
@@ -209,6 +233,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
           content: content.trim(),
           input_type: isRecording ? "voice" : "text",
           project_id: saveProjectId,
+          image_urls: images.length > 0 ? images : null,
         }),
       })
 
@@ -217,17 +242,18 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
       const { note } = await res.json()
       setNotes(prev => [note, ...prev])
       setContent("")
+      setSelectedImages([])
       showToast("success", "メモを保存しました")
 
-      // 自動AI分析
-      analyzeAndPropose(note.id, note.content)
+      // 自動AI分析（画像も渡す）
+      analyzeAndPropose(note.id, note.content, images)
     } catch (error) {
       console.error("Save error:", error)
       showToast("error", "保存に失敗しました")
     } finally {
       setIsLoading(false)
     }
-  }, [content, isRecording, saveProjectId, analyzeAndPropose])
+  }, [content, selectedImages, isRecording, saveProjectId, analyzeAndPropose])
 
   // プロジェクトのタスク一覧を取得
   const fetchProjectTasks = useCallback(async (projectId: string) => {
@@ -606,6 +632,28 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
             )}
           </div>
 
+          {/* 画像プレビュー */}
+          {selectedImages.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {selectedImages.map((url, i) => (
+                <div key={i} className="relative group w-16 h-16 shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt={`添付画像 ${i + 1}`}
+                    className="w-full h-full object-cover rounded-md border"
+                  />
+                  <button
+                    onClick={() => removeImage(i)}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="mt-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Button
@@ -624,6 +672,25 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
               {isRecording && (
                 <VoiceWaveform analyserRef={analyserRef} barCount={16} height={24} />
               )}
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleImageSelect}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => imageInputRef.current?.click()}
+                disabled={isLoading || isTranscribing}
+                className="gap-1"
+                title="画像を追加"
+              >
+                <ImagePlus className="w-4 h-4" />
+                {selectedImages.length > 0 ? `${selectedImages.length}枚` : "画像"}
+              </Button>
             </div>
 
             <Button
@@ -1023,6 +1090,21 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                   <div className="flex-1 min-w-0">
                     <p className="text-sm whitespace-pre-wrap">{note.content}</p>
 
+                    {/* 添付画像サムネイル */}
+                    {note.image_urls && note.image_urls.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {note.image_urls.map((url, i) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            key={i}
+                            src={url}
+                            alt={`画像 ${i + 1}`}
+                            className="w-12 h-12 object-cover rounded border"
+                          />
+                        ))}
+                      </div>
+                    )}
+
                     <div className="flex flex-wrap items-center gap-2 mt-2">
                       <p className="text-xs text-muted-foreground">
                         {new Date(note.created_at).toLocaleString("ja-JP")}
@@ -1067,7 +1149,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => analyzeAndPropose(note.id, note.content)}
+                      onClick={() => analyzeAndPropose(note.id, note.content, note.image_urls ?? [])}
                       disabled={isAnalyzing}
                       className="h-7 w-7 p-0"
                       title="AIで分析"

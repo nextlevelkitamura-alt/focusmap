@@ -29,6 +29,7 @@ export interface Note {
   input_type: NoteInputType
   status: NoteStatus
   ai_analysis: NoteAiAnalysis | null
+  image_urls: string[] | null
   created_at: string
   updated_at: string
 }
@@ -43,6 +44,7 @@ export interface NoteInsert {
   input_type?: NoteInputType
   status?: NoteStatus
   ai_analysis?: NoteAiAnalysis | null
+  image_urls?: string[] | null
   created_at?: string
   updated_at?: string
 }
@@ -57,6 +59,7 @@ export interface NoteUpdate {
   input_type?: NoteInputType
   status?: NoteStatus
   ai_analysis?: NoteAiAnalysis | null
+  image_urls?: string[] | null
   created_at?: string
   updated_at?: string
 }
