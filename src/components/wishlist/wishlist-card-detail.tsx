@@ -9,6 +9,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from "@/lib/color-utils"
+import Link from "next/link"
+import { Settings as SettingsIcon } from "lucide-react"
 import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 
@@ -508,6 +510,7 @@ export function WishlistCardDetail({
                 : active
                   ? "すでに実行中のタスクがあります（下に表示）"
                   : "メモ内容をプロンプトとして Claude Code に渡し、スマホから接続できる状態で起動します"
+            const needsConfig = !item.project_id || !repoConfigured
             return (
               <div className="space-y-2 rounded-lg border bg-background/40 p-3">
                 <Label className="flex items-center gap-1.5">
@@ -515,6 +518,15 @@ export function WishlistCardDetail({
                   Claude Code で実行
                 </Label>
                 <p className="text-xs text-muted-foreground leading-5">{helperText}</p>
+                {needsConfig && (
+                  <Link
+                    href="/dashboard/settings#project-repos"
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
+                  >
+                    <SettingsIcon className="h-3.5 w-3.5" />
+                    {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
+                  </Link>
+                )}
                 <Button
                   type="button"
                   variant={active ? "outline" : "default"}

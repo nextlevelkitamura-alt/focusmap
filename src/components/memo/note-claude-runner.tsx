@@ -134,7 +134,7 @@ export function NoteClaudeRunnerPanel({
       <div className="mt-2 flex items-center gap-1.5 rounded-md border border-dashed bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
         <AlertCircle className="w-3 h-3 shrink-0" />
         <span>このプロジェクトにリポジトリパス未設定。</span>
-        <Link href="/settings#project-repos" className="underline hover:text-foreground inline-flex items-center gap-0.5">
+        <Link href="/dashboard/settings#project-repos" className="underline hover:text-foreground inline-flex items-center gap-0.5">
           <Settings className="w-3 h-3" />
           設定
         </Link>
