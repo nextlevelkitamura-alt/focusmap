@@ -185,8 +185,16 @@ export function NoteClaudeRunnerPanel({
           )}>
             {STATUS_LABEL[latestTask.status] ?? latestTask.status}
           </span>
+          <span className={cn(
+            "text-[11px] px-1.5 py-0.5 rounded font-medium",
+            latestTask.executor === "codex"
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+          )}>
+            {latestTask.executor === "codex" ? "◎ Codex" : "▲ Claude"}
+          </span>
           <span className="text-[11px] text-muted-foreground truncate">
-            Claude Code セッション
+            セッション
           </span>
         </div>
         {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
@@ -194,16 +202,24 @@ export function NoteClaudeRunnerPanel({
 
       {expanded && (
         <div className="border-t px-2.5 py-2 space-y-2">
-          {/* セッションURLが取れるまでの待機表示 */}
-          {isActive && !url && (
+          {/* セッションURLが取れるまでの待機表示（Claude のみ）*/}
+          {latestTask.executor !== "codex" && isActive && !url && (
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Loader2 className="w-3 h-3 animate-spin" />
               セッションを起動中...（最大 1 分）
             </div>
           )}
 
-          {/* リモートセッションURL */}
-          {url && (
+          {/* Codex 実行中: モバイル接続ではなく、結果待ちの表示 */}
+          {latestTask.executor === "codex" && isActive && (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Codex が実行中... 完了次第、結果が下に表示されます
+            </div>
+          )}
+
+          {/* リモートセッションURL（Claude のみ） */}
+          {latestTask.executor !== "codex" && url && (
             <div className="space-y-2">
               <div className="flex flex-col sm:flex-row gap-2">
                 {/* QRコード（PCで見るときに有用） */}

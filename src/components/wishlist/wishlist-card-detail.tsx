@@ -37,6 +37,7 @@ interface WishlistCardDetailProps {
   projects?: Project[]
   tagColors?: Record<string, string>
   onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
+  onLaunchCodex?: (item: IdealGoalWithItems) => Promise<void>
   /** GLM対話のツールがメモを更新/新規作成したとき呼ばれる（一覧リフレッシュ用）*/
   onMemoChanged?: () => void
 }
@@ -151,11 +152,13 @@ export function WishlistCardDetail({
   projects = [],
   tagColors = {},
   onLaunchClaude,
+  onLaunchCodex,
   onMemoChanged,
 }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
   const [isSavingMemo, setIsSavingMemo] = useState(false)
   const [isLaunchingClaude, setIsLaunchingClaude] = useState(false)
+  const [isLaunchingCodex, setIsLaunchingCodex] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
@@ -518,27 +521,29 @@ export function WishlistCardDetail({
           {/* 過去の対話履歴（このメモの分） */}
           <MemoChatHistory memoId={item.id} />
 
-          {onLaunchClaude && (() => {
+          {(onLaunchClaude || onLaunchCodex) && (() => {
             const aiTask = getMemoAiTask(item.id)
             const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
             const repoConfigured = !!project?.repo_path
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
-            const disabled = !item.project_id || !repoConfigured || !!active || isLaunchingClaude
-            const helperText = !item.project_id
-              ? "プロジェクト未設定のため使えません"
-              : !repoConfigured
-                ? "このプロジェクトにリポジトリパスが未設定です（設定 → プロジェクトから登録）"
-                : active
-                  ? "すでに実行中のタスクがあります（下に表示）"
-                  : "メモ内容をプロンプトとして Claude Code に渡し、スマホから接続できる状態で起動します"
+            const disabled = !item.project_id || !repoConfigured || !!active
             const needsConfig = !item.project_id || !repoConfigured
+            const taskExecutor = aiTask?.executor ?? null
             return (
-              <div className="space-y-2 rounded-lg border bg-background/40 p-3">
+              <div className="space-y-3 rounded-lg border bg-background/40 p-3">
                 <Label className="flex items-center gap-1.5">
                   <Terminal className="h-4 w-4" />
-                  Claude Code で実行
+                  AI エージェントで実行
                 </Label>
-                <p className="text-xs text-muted-foreground leading-5">{helperText}</p>
+                <p className="text-xs text-muted-foreground leading-5">
+                  {!item.project_id
+                    ? "プロジェクト未設定のため使えません"
+                    : !repoConfigured
+                      ? "このプロジェクトにリポジトリパスが未設定です"
+                      : active
+                        ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に状況）`
+                        : "プロジェクトのリポジトリで、選んだ AI を起動します"}
+                </p>
                 {needsConfig && (
                   <Link
                     href="/dashboard/settings/projects#project-repos"
@@ -548,26 +553,55 @@ export function WishlistCardDetail({
                     {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
                   </Link>
                 )}
-                <Button
-                  type="button"
-                  variant={active ? "outline" : "default"}
-                  disabled={disabled}
-                  onClick={async () => {
-                    setLaunchError(null)
-                    setIsLaunchingClaude(true)
-                    try {
-                      await onLaunchClaude(item)
-                    } catch (e) {
-                      setLaunchError(e instanceof Error ? e.message : "起動に失敗しました")
-                    } finally {
-                      setIsLaunchingClaude(false)
-                    }
-                  }}
-                  className="w-full min-h-[44px]"
-                >
-                  {isLaunchingClaude ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Terminal className="mr-2 h-4 w-4" />}
-                  {active ? "実行中（下のパネルから接続）" : "Claude Code を起動"}
-                </Button>
+
+                {/* 2ボタン並列: Claude (橙) / Codex (緑) */}
+                <div className="grid grid-cols-2 gap-2">
+                  {onLaunchClaude && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={disabled || isLaunchingClaude}
+                      onClick={async () => {
+                        setLaunchError(null)
+                        setIsLaunchingClaude(true)
+                        try {
+                          await onLaunchClaude(item)
+                        } catch (e) {
+                          setLaunchError(e instanceof Error ? e.message : "起動に失敗")
+                        } finally {
+                          setIsLaunchingClaude(false)
+                        }
+                      }}
+                      className="min-h-[60px] flex-col gap-0.5 border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                    >
+                      {isLaunchingClaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">▲ Claude</span>}
+                      <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
+                    </Button>
+                  )}
+                  {onLaunchCodex && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={disabled || isLaunchingCodex}
+                      onClick={async () => {
+                        setLaunchError(null)
+                        setIsLaunchingCodex(true)
+                        try {
+                          await onLaunchCodex(item)
+                        } catch (e) {
+                          setLaunchError(e instanceof Error ? e.message : "起動に失敗")
+                        } finally {
+                          setIsLaunchingCodex(false)
+                        }
+                      }}
+                      className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
+                    >
+                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
+                      <span className="text-[10px] text-muted-foreground">速い・サンドボックス強</span>
+                    </Button>
+                  )}
+                </div>
+
                 {launchError && (
                   <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
                     {launchError}

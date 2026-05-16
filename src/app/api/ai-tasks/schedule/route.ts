@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id } = body as {
+  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, executor } = body as {
     prompt?: string
     skill_id?: string
     scheduled_at?: string
@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     cwd?: string
     source_note_id?: string
     source_ideal_goal_id?: string
+    executor?: 'claude' | 'codex'
   }
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -79,6 +80,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const resolvedExecutor = executor === 'codex' ? 'codex' : 'claude'
+
   const { data, error } = await supabase
     .from('ai_tasks')
     .insert({
@@ -92,6 +95,7 @@ export async function POST(req: NextRequest) {
       cwd: cwd || null,
       source_note_id: source_note_id || null,
       source_ideal_goal_id: source_ideal_goal_id || null,
+      executor: resolvedExecutor,
     })
     .select()
     .single()

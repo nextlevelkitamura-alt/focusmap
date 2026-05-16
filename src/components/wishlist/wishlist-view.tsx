@@ -201,9 +201,9 @@ export function WishlistView({
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
 
-  // メモから Claude Code を起動
-  // フロー: ①GLM/Kimiでメモを実行可能な指示文に整理 → ②ai_tasksへINSERT → ③task-runnerがclaude起動
-  const launchClaudeForMemo = useCallback(async (item: MemoItem) => {
+  // メモから AI エージェント（Claude / Codex）を起動
+  // フロー: ①GLM/Kimiでメモを実行可能な指示文に整理 → ②ai_tasksへINSERT → ③task-runnerがエージェント起動
+  const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
     if (!repoPath) {
@@ -232,12 +232,11 @@ export function WishlistView({
           prompt = data.refined_prompt
         }
       }
-      // refine 失敗時は fallback（素のメモ）でそのまま起動。ブロックしない
     } catch {
-      // ネットワークエラー等もスルー
+      // refine 失敗時は fallback でそのまま起動
     }
 
-    // ② ai_tasks に INSERT
+    // ② ai_tasks に INSERT（executor 指定）
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -247,6 +246,7 @@ export function WishlistView({
         approval_type: "auto",
         source_ideal_goal_id: item.id,
         scheduled_at: new Date().toISOString(),
+        executor,
       }),
     })
     if (!res.ok) {
@@ -254,6 +254,10 @@ export function WishlistView({
       throw new Error(err?.error || `起動失敗 (${res.status})`)
     }
   }, [projects, selectedAiModel])
+
+  // 既存呼び出し向けエイリアス（後方互換）
+  const launchClaudeForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'claude'), [launchAiForMemo])
+  const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -833,6 +837,7 @@ export function WishlistView({
         projects={projects}
         tagColors={tagColors}
         onLaunchClaude={launchClaudeForMemo}
+        onLaunchCodex={launchCodexForMemo}
         onMemoChanged={fetchItems}
       />
     </div>

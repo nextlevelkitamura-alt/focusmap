@@ -332,6 +332,84 @@ async function launchRemoteControl(opts: {
   return { success: true, url, sessionName }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Codex CLI 起動（codex remote-control = JSON-RPC サーバー、tmux内）
+//   - Claude --remote-control と違い、Codex CLI のリモコンは JSON-RPC サーバー型
+//   - サーバー起動後、Codex for Mac/ChatGPT mobile app が同アカウントで認識する
+//   - プロンプトはサーバーへの初期入力としては渡せないので、tmux内のプロセスに
+//     ANSI-C 引数として送れる codex exec の方を採用するハイブリッド方針:
+//     ① tmux で `codex exec` を起動（ヘッドレス1発実行 + バイパスフラグ）
+//     ② プロンプト先頭に「# タイトル\n\n## 詳細」ブロックを付与してチャット名生成に効かせる
+//     ③ 出力ログを pipe-pane で捕捉
+// ─────────────────────────────────────────────────────────────────────────
+async function launchCodexExec(opts: {
+  taskId: string
+  prompt: string  // GLM 整理済プロンプト
+  cwd: string
+  displayTitle?: string  // 「メモ見出し · 詳細」形式
+  memoTitle?: string  // チャット名生成用のタイトルだけ
+  memoDescription?: string  // 同じく詳細だけ
+}): Promise<{ success: true; sessionName: string } | { success: false; error: string }> {
+  const sessionName = `codex-${opts.taskId.slice(0, 8)}`
+  const logPath = `/tmp/codex-exec-${opts.taskId}.log`
+
+  if (!fs.existsSync(opts.cwd)) {
+    return { success: false, error: `cwd not found: ${opts.cwd}` }
+  }
+
+  // 既存セッション残骸クリーンアップ
+  if (tmuxSessionExists(sessionName)) {
+    try { execSync(`tmux kill-session -t "${sessionName}"`, { stdio: 'ignore' }) } catch { /* ignore */ }
+  }
+
+  // ログファイル初期化
+  try { fs.unlinkSync(logPath) } catch { /* ignore */ }
+  fs.writeFileSync(logPath, '', 'utf-8')
+
+  // プロンプト先頭にメモ情報ブロックを付与（Codex のチャット名生成に効かせる）
+  // フォーマット: 「# {タイトル}\n\n## 詳細\n{詳細}\n\n---\n\n{元プロンプト}」
+  const titleBlock = opts.memoTitle
+    ? [
+        `# ${opts.memoTitle}`,
+        opts.memoDescription ? `\n## 詳細\n${opts.memoDescription}` : '',
+        '\n---\n',
+      ].join('')
+    : ''
+  const fullPrompt = `${titleBlock}${opts.prompt}`
+
+  // codex exec を tmux 内で起動
+  //   --cd: 作業ディレクトリ
+  //   --dangerously-bypass-approvals-and-sandbox: 全許可スキップ（無人実行）
+  //   --skip-git-repo-check: gitリポでなくても許可
+  //   プロンプトは positional 引数
+  const inner = `unset OPENAI_API_KEY_CONFLICT_NONE; exec codex exec --cd ${JSON.stringify(opts.cwd)} --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check ${ansiCQuote(fullPrompt)}`
+  const bashWrapped = `bash -c ${JSON.stringify(inner)}`
+
+  try {
+    execSync(
+      `tmux new-session -d -s ${JSON.stringify(sessionName)} -c ${JSON.stringify(opts.cwd)} ${bashWrapped}`,
+      { stdio: 'ignore' },
+    )
+  } catch (err) {
+    return { success: false, error: `tmux 起動失敗: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  // 出力を pipe-pane で捕捉
+  try {
+    execSync(
+      `tmux pipe-pane -o -t ${JSON.stringify(sessionName)} ${JSON.stringify(`cat >> ${logPath}`)}`,
+      { stdio: 'ignore' },
+    )
+  } catch {
+    console.error('[launchCodexExec] pipe-pane failed')
+  }
+
+  // displayTitle は将来 RC モード対応時に使用
+  void opts.displayTitle
+
+  return { success: true, sessionName }
+}
+
 /**
  * tmux セッションがもう存在しない running 状態のRCタスクを completed に更新。
  * 毎回 main() の冒頭で呼ぶことで、ユーザーが Claude を /exit したり Mac 再起動した場合の
@@ -577,7 +655,7 @@ async function main() {
   // ─── 1. due なタスクを取得 ───────────────────────────────────────────
   const { data: rawDueTasks, error } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, source_note_id, source_ideal_goal_id')
+    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, source_note_id, source_ideal_goal_id, executor')
     .eq('status', 'pending')
     .not('scheduled_at', 'is', null)
     .lte('scheduled_at', new Date().toISOString())
@@ -635,12 +713,11 @@ async function main() {
       continue
     }
 
-    // ─── メモから起動: claude --remote-control（tmux detached）───
+    // ─── メモから起動: executor 別に分岐 ───
     if ((task.source_note_id || task.source_ideal_goal_id) && task.cwd) {
-      notify(`スマホで操作可能に起動中: ${shortPrompt}`, 'Focusmap AI')
-
-      // Claude セッション一覧で見やすい表示タイトルを作る
-      // 「{メモ見出し} · {メモ詳細先頭}」形式
+      // 元メモを取得（タイトル付与・チャット名生成用）
+      let memoTitle: string | undefined
+      let memoDescription: string | undefined
       let displayTitle: string | undefined
       if (task.source_ideal_goal_id) {
         const { data: memo } = await supabase
@@ -649,10 +726,10 @@ async function main() {
           .eq('id', task.source_ideal_goal_id)
           .maybeSingle()
         if (memo?.title) {
-          const titlePart = String(memo.title).trim().slice(0, 30)
-          const descPart = memo.description
-            ? String(memo.description).replace(/\s+/g, ' ').trim().slice(0, 30)
-            : ''
+          memoTitle = String(memo.title).trim()
+          memoDescription = memo.description ? String(memo.description).trim() : undefined
+          const titlePart = memoTitle.slice(0, 30)
+          const descPart = memoDescription ? memoDescription.replace(/\s+/g, ' ').slice(0, 30) : ''
           displayTitle = descPart ? `${titlePart} · ${descPart}` : titlePart
         }
       } else if (task.source_note_id) {
@@ -662,29 +739,68 @@ async function main() {
           .eq('id', task.source_note_id)
           .maybeSingle()
         if (note?.content) {
-          displayTitle = String(note.content).replace(/\s+/g, ' ').trim().slice(0, 60)
+          memoTitle = String(note.content).replace(/\s+/g, ' ').trim().slice(0, 60)
+          displayTitle = memoTitle
         }
       }
 
+      const executor = task.executor === 'codex' ? 'codex' : 'claude'
+      const now = new Date().toISOString()
+
+      // ─── Codex executor ───
+      if (executor === 'codex') {
+        notify(`Codex 起動中: ${shortPrompt}`, 'Focusmap AI')
+        const result = await launchCodexExec({
+          taskId: task.id,
+          prompt: task.prompt,
+          cwd: task.cwd,
+          displayTitle,
+          memoTitle,
+          memoDescription,
+        })
+
+        if (!result.success) {
+          await supabase
+            .from('ai_tasks')
+            .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
+            .eq('id', task.id)
+          notify(`Codex 起動失敗: ${shortPrompt}`, 'Focusmap AI')
+          console.error(`[task-runner] Codex launch failed: ${task.id}: ${result.error}`)
+          continue
+        }
+
+        await supabase
+          .from('ai_tasks')
+          .update({
+            tmux_session_name: result.sessionName,
+            result: { message: 'Codex セッションを起動しました。実行完了後、結果が表示されます。' },
+          })
+          .eq('id', task.id)
+
+        notify(`Codex 実行開始: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Codex session started: ${task.id} (${result.sessionName})`)
+        continue
+      }
+
+      // ─── Claude executor （既存）───
+      notify(`Claude スマホで操作可能に起動中: ${shortPrompt}`, 'Focusmap AI')
       const result = await launchRemoteControl({
         taskId: task.id,
         prompt: task.prompt,
         cwd: task.cwd,
         displayTitle,
       })
-      const now = new Date().toISOString()
 
       if (!result.success) {
         await supabase
           .from('ai_tasks')
           .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
           .eq('id', task.id)
-        notify(`起動失敗: ${shortPrompt}`, 'Focusmap AI')
-        console.error(`[task-runner] RC launch failed: ${task.id}: ${result.error}`)
+        notify(`Claude 起動失敗: ${shortPrompt}`, 'Focusmap AI')
+        console.error(`[task-runner] Claude RC launch failed: ${task.id}: ${result.error}`)
         continue
       }
 
-      // 起動成功 → URL を保存。status は running のまま（tmux 内で claude が動き続ける）
       await supabase
         .from('ai_tasks')
         .update({
@@ -694,8 +810,8 @@ async function main() {
         })
         .eq('id', task.id)
 
-      notify(`スマホから接続可能: ${shortPrompt}`, 'Focusmap AI')
-      console.log(`[task-runner] RC session started: ${task.id} → ${result.url}`)
+      notify(`Claude スマホから接続可能: ${shortPrompt}`, 'Focusmap AI')
+      console.log(`[task-runner] Claude RC session started: ${task.id} → ${result.url}`)
       continue
     }
 

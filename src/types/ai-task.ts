@@ -37,4 +37,6 @@ export interface AiTask {
   remote_session_url: string | null
   /** tmux セッション名（後から attach / kill に使用） */
   tmux_session_name: string | null
+  /** 実行 AI エージェント: 'claude' (Claude Code) | 'codex' (OpenAI Codex) */
+  executor: 'claude' | 'codex'
 }
