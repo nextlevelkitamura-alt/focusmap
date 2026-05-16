@@ -1,111 +1,183 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
-import { chatCompletion } from "@/lib/ai-client"
+import { chatCompletionWithTools, type AgentMessage, type ToolDef, type ToolCall } from "@/lib/ai-client"
+import type { SupabaseClient } from "@supabase/supabase-js"
 
-// GLM/Kimi（OpenCode Go経由）でユーザーと対話してメモを整理する
-// 注意: このAPIは Claude Code を起動しない。メモ更新の素材を返すだけ。
+// ─── 与える道具 ─────────────────────────────────────────────────────────
+const TOOLS: ToolDef[] = [
+  {
+    type: "function",
+    function: {
+      name: "update_current_memo",
+      description: "現在話している元のメモの内容を更新する。タイトルと詳細を新しい内容に書き換える。",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "新しいタイトル（30字以内推奨、何をするかが一目で分かる）" },
+          description: { type: "string", description: "新しい詳細（200-600字、背景・目的・想定アクション）" },
+        },
+        required: ["title", "description"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_new_memo",
+      description: "新しい独立メモを作成する。元メモを複数の論点に分割したいときや、関連する別タスクを生やしたいときに使う。",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "新しいメモのタイトル（30字以内）" },
+          description: { type: "string", description: "新しいメモの詳細（200-600字）" },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "任意のタグ（例: 仕事/生活/学習/健康/人間関係/お金）",
+          },
+        },
+        required: ["title", "description"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_my_memos",
+      description: "ユーザーの他のメモを検索する。コンテキストを把握するため、または重複を避けるために使う。",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "検索キーワード（タイトル・詳細に含まれる文字列で部分一致）" },
+          limit: { type: "number", description: "最大件数（1〜20、デフォルト10）" },
+        },
+      },
+    },
+  },
+]
 
-const SYSTEM_PROMPT = `あなたはユーザーのメモを対話で整理するアシスタントです。
+// ─── システムプロンプト ─────────────────────────────────────────────────
+const SYSTEM_PROMPT = `あなたはユーザーのメモを対話で整理・改善するアシスタントです。
 
-## 目的
-ユーザーが雑に書いたメモを、本人が後から見返したとき分かる形に整理する。
-このメモは「人間がやるタスク」かもしれないし「AIに依頼するタスク」かもしれない。
-あなたの仕事は **メモを良くすること** であって、誰が実行するかは決めない。
+## あなたの権限
+あなたには以下のツールが与えられており、対話中に自由に使えます:
+- update_current_memo: 元メモを更新
+- create_new_memo: 新メモを作成（分岐用）
+- list_my_memos: 他メモを検索
 
-## 対話ルール
+ユーザーが「2つに分けて」と言ったら create_new_memo を呼び出すなど、
+**ユーザーの意図に応じて積極的にツールを使ってください**。
+ツール呼び出しは確認なしで実行されるので、ユーザーが望むときだけ使うこと。
+
+## 対話のスタイル
 - 質問は1ターンに1-2個まで
-- 全体で 2-3 ターン以内に完結させる
-- 質問は具体的かつ簡潔に（ユーザーが選択肢で答えられるなら選択肢を提示）
-- ターンが3を超えたら必ず最終整理に進む
+- 全体で 2-3 ターン以内に完結を目指す
+- 質問には選択肢を提示できるなら提示
 - 推測で勝手な要件を追加しない
+- ユーザーが「これで」「OK」「保存して」「分けて」等の確定的な指示を出したら、
+  即座にツール呼び出しで実行する
 
-## ステータス判定
-毎ターンの最初に、現在のメッセージ履歴を見て判断:
-- まだ質問が必要 → "type": "question"
-- 整理に十分な情報がある → "type": "final"
+## ツール使用の例
+- 「これで保存して」 → update_current_memo を呼ぶ
+- 「2つに分けて。1つは A、もう1つは B」 → 元を update し、create_new_memo で B を作成
+- 「3つに分けて、それぞれ詳細書いて」 → update + create × 2
+- 「似たメモあったっけ？」 → list_my_memos で検索してから回答
 
-## 出力フォーマット（必ずJSONのみ。前置きや後説明なし）
-
-質問する時:
-{
-  "type": "question",
-  "message": "ユーザーへの質問（丁寧、フレンドリー）",
-  "options": ["選択肢A", "選択肢B", "選択肢C"]
-}
-※ options は答えやすい場合のみ。自由記述で十分なら省略可
-
-最終整理する時:
-{
-  "type": "final",
-  "title": "整理されたメモタイトル（30字以内、何をするかが一目で分かる）",
-  "description": "整理されたメモ詳細（200-400字、人間が後で読んで分かる形。背景・目的・想定アクションなど）"
-}`
-
-interface ChatMessage {
-  role: "user" | "assistant"
-  content: string
-}
+## 注意
+- ツール呼び出した直後の応答では、何をしたかを1-2文で簡潔に報告すること
+- 元のメモは「現在話しているメモ」として update_current_memo の対象。新規は別IDで作成される`
 
 interface ChatRequest {
-  messages: ChatMessage[]            // フロントが保持する会話履歴
-  source: {                          // 元メモのコンテキスト
+  /** OpenAI 形式の会話履歴（フロントが保持） */
+  messages: AgentMessage[]
+  /** 元メモのコンテキスト */
+  source: {
+    id: string
     title: string
     description?: string
     repo_path?: string
   }
   model?: string
-  turn?: number
 }
 
-interface QuestionResponse {
-  type: "question"
-  message: string
-  options?: string[]
+interface ToolActionLog {
+  tool: string
+  args: unknown
+  result: unknown
 }
 
-interface FinalResponse {
-  type: "final"
-  title: string
-  description: string
-}
-
-type ChatResponse = QuestionResponse | FinalResponse
-
-function safeParseJson(raw: string): ChatResponse | null {
-  // ```json フェンスを剥がす
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
-  const cleaned = (fenced?.[1] ?? raw).trim()
-  // 最初の { から始まる balanced JSON を探す
-  const start = cleaned.indexOf("{")
-  if (start < 0) return null
-  let depth = 0
-  let inStr = false
-  let escaped = false
-  for (let i = start; i < cleaned.length; i++) {
-    const c = cleaned[i]
-    if (inStr) {
-      if (escaped) escaped = false
-      else if (c === "\\") escaped = true
-      else if (c === '"') inStr = false
-      continue
-    }
-    if (c === '"') inStr = true
-    else if (c === "{") depth++
-    else if (c === "}") {
-      depth--
-      if (depth === 0) {
-        const json = cleaned.slice(start, i + 1)
-        try {
-          return JSON.parse(json) as ChatResponse
-        } catch {
-          return null
-        }
-      }
-    }
+// ─── ツール実行 ─────────────────────────────────────────────────────────
+async function executeTool(
+  call: ToolCall,
+  ctx: { userId: string; sourceMemoId: string; supabase: SupabaseClient },
+): Promise<unknown> {
+  let args: Record<string, unknown>
+  try {
+    args = JSON.parse(call.function.arguments || "{}")
+  } catch {
+    return { success: false, error: "ツール引数のJSONパースに失敗" }
   }
-  return null
+
+  switch (call.function.name) {
+    case "update_current_memo": {
+      const title = String(args.title ?? "").trim()
+      const description = String(args.description ?? "").trim()
+      if (!title) return { success: false, error: "title は必須" }
+
+      const { error } = await ctx.supabase
+        .from("ideal_goals")
+        .update({ title, description })
+        .eq("id", ctx.sourceMemoId)
+        .eq("user_id", ctx.userId)
+      if (error) return { success: false, error: error.message }
+      return { success: true, memo_id: ctx.sourceMemoId, message: `元メモを更新しました: 「${title.slice(0, 30)}」` }
+    }
+
+    case "create_new_memo": {
+      const title = String(args.title ?? "").trim()
+      const description = String(args.description ?? "").trim()
+      const tags = Array.isArray(args.tags) ? args.tags.map(String).slice(0, 6) : null
+      if (!title) return { success: false, error: "title は必須" }
+
+      const { data, error } = await ctx.supabase
+        .from("ideal_goals")
+        .insert({
+          user_id: ctx.userId,
+          title,
+          description,
+          tags,
+          memo_status: "unsorted",
+          color: "#94a3b8",
+        })
+        .select("id")
+        .single()
+      if (error) return { success: false, error: error.message }
+      return { success: true, memo_id: data.id, message: `新規メモ作成: 「${title.slice(0, 30)}」` }
+    }
+
+    case "list_my_memos": {
+      const query = typeof args.query === "string" ? args.query.trim() : ""
+      const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 20)
+      let q = ctx.supabase
+        .from("ideal_goals")
+        .select("id, title, description, tags, memo_status")
+        .eq("user_id", ctx.userId)
+        .order("created_at", { ascending: false })
+        .limit(limit)
+      if (query) {
+        q = q.or(`title.ilike.%${query}%,description.ilike.%${query}%`)
+      }
+      const { data, error } = await q
+      if (error) return { success: false, error: error.message }
+      return { success: true, count: data?.length ?? 0, memos: data ?? [] }
+    }
+
+    default:
+      return { success: false, error: `unknown tool: ${call.function.name}` }
+  }
 }
 
+// ─── ルートハンドラ ─────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -113,48 +185,86 @@ export async function POST(req: Request) {
 
   const body = (await req.json()) as ChatRequest
   const messages = Array.isArray(body.messages) ? body.messages : []
-  const source = body.source ?? { title: "" }
+  const source = body.source
   const model = body.model ?? "glm-5.1"
-  const turn = body.turn ?? messages.filter(m => m.role === "user").length
 
-  if (!source.title?.trim() && !source.description?.trim()) {
-    return NextResponse.json({ error: "source.title or source.description required" }, { status: 400 })
+  if (!source?.id) {
+    return NextResponse.json({ error: "source.id required" }, { status: 400 })
   }
 
-  // 元メモを最初のコンテキストとしてシステムプロンプトに含める
   const contextBlock = [
     `## 元メモ`,
+    `ID: ${source.id}`,
     source.title ? `タイトル: ${source.title}` : null,
     source.description ? `詳細:\n${source.description}` : null,
     source.repo_path ? `関連リポ: ${source.repo_path}` : null,
-    `## 現在ターン: ${turn} / 3`,
-    turn >= 3 ? `※ 3ターンに達したので必ず "type": "final" を返してください` : null,
   ].filter(Boolean).join("\n")
 
-  const fullMessages = [
-    { role: "system" as const, content: `${SYSTEM_PROMPT}\n\n${contextBlock}` },
-    ...messages.map(m => ({ role: m.role, content: m.content })),
+  const history: AgentMessage[] = [
+    { role: "system", content: `${SYSTEM_PROMPT}\n\n${contextBlock}` },
+    ...messages,
   ]
 
-  try {
-    const raw = await chatCompletion(fullMessages, {
-      temperature: 0.4,
-      max_tokens: 1200,
-      model,
-    })
-    const parsed = safeParseJson(raw)
-    if (!parsed) {
-      // JSON が取れなかった場合のフォールバック: そのまま質問として返す
-      return NextResponse.json({
-        type: "question",
-        message: raw.trim().slice(0, 500),
-      } satisfies QuestionResponse)
+  const actions: ToolActionLog[] = []
+  let finalContent: string | null = null
+  let touched = false  // ツールでデータ変更があったかどうか
+
+  // Agentic loop（最大5回）
+  for (let iteration = 0; iteration < 5; iteration++) {
+    let result
+    try {
+      result = await chatCompletionWithTools(history, TOOLS, { model, temperature: 0.4 })
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "AI モデル呼び出し失敗" },
+        { status: 500 },
+      )
     }
-    return NextResponse.json(parsed)
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "AI モデルの呼び出しに失敗しました" },
-      { status: 500 },
-    )
+
+    if (result.tool_calls && result.tool_calls.length > 0) {
+      // ツール呼び出し → 実行 → 結果を履歴に追加してループ
+      history.push({
+        role: "assistant",
+        content: result.content ?? null,
+        tool_calls: result.tool_calls,
+      })
+
+      for (const call of result.tool_calls) {
+        const toolResult = await executeTool(call, {
+          userId: user.id,
+          sourceMemoId: source.id,
+          supabase,
+        })
+        actions.push({
+          tool: call.function.name,
+          args: (() => { try { return JSON.parse(call.function.arguments) } catch { return call.function.arguments } })(),
+          result: toolResult,
+        })
+        if (call.function.name === "update_current_memo" || call.function.name === "create_new_memo") {
+          touched = true
+        }
+        history.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(toolResult),
+        })
+      }
+      // ループ続行（次のイテレーションで GLM の応答を取りに行く）
+    } else {
+      // テキストだけの応答 → ここで終了
+      finalContent = result.content ?? ""
+      break
+    }
   }
+
+  return NextResponse.json({
+    /** GLM の最終テキスト応答（ユーザーに表示） */
+    response: finalContent ?? "（応答なし）",
+    /** このターンで実行されたツール一覧（UI に chip 表示） */
+    actions,
+    /** データが変更されたか（変更されたら親が memos リフレッシュすべき） */
+    touched,
+    /** 履歴の続き（フロントに保持してもらう） */
+    history_appended: history.slice(messages.length + 1),  // system + 既存除いた追加分
+  })
 }

@@ -833,6 +833,7 @@ export function WishlistView({
         projects={projects}
         tagColors={tagColors}
         onLaunchClaude={launchClaudeForMemo}
+        onMemoChanged={fetchItems}
       />
     </div>
   )

@@ -1,105 +1,123 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Loader2, Send, Sparkles, Check, Edit3, X } from "lucide-react"
+import { Loader2, Send, Sparkles, Check, AlertCircle, FilePlus2, FilePen, Search } from "lucide-react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 interface MemoSource {
+  id: string
   title: string
   description?: string
   repo_path?: string
 }
 
-interface ChatMessage {
-  role: "user" | "assistant"
-  content: string
-  /** GLMが提案した選択肢（UIで表示） */
-  options?: string[]
-  /** 最終提案の場合のメモ案 */
-  finalProposal?: { title: string; description: string }
+// OpenAI 互換の会話履歴メッセージ
+type AgentMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string }
+
+interface ToolCall {
+  id: string
+  type: "function"
+  function: { name: string; arguments: string }
 }
+
+interface ToolAction {
+  tool: string
+  args: Record<string, unknown>
+  result: { success?: boolean; message?: string; error?: string; memo_id?: string; count?: number }
+}
+
+// UI 表示用の項目
+type DisplayItem =
+  | { kind: "user"; content: string }
+  | { kind: "assistant"; content: string }
+  | { kind: "tool"; action: ToolAction }
 
 interface MemoRefineChatProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   source: MemoSource
   model: string
-  /** 「このメモに反映」が押されたとき呼ばれる。新しいtitle/descriptionを保存する責務 */
-  onApply: (title: string, description: string) => Promise<void>
+  /** ツール実行で何かが変更されたとき呼ばれる（メモ一覧リフレッシュ用）*/
+  onTouched?: () => void
 }
 
-export function MemoRefineChat({ open, onOpenChange, source, model, onApply }: MemoRefineChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }: MemoRefineChatProps) {
+  // フロントが保持する OpenAI 形式履歴（API に送る）
+  const [history, setHistory] = useState<AgentMessage[]>([])
+  // UI 表示用（user / assistant text / tool action のフラットリスト）
+  const [items, setItems] = useState<DisplayItem[]>([])
   const [input, setInput] = useState("")
   const [isWaiting, setIsWaiting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [editingFinal, setEditingFinal] = useState(false)
-  const [editedTitle, setEditedTitle] = useState("")
-  const [editedDesc, setEditedDesc] = useState("")
-  const [isApplying, setIsApplying] = useState(false)
-
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // シートを開いたときに最初のGLM質問を取得
+  // シートを開いたとき初期メッセージを GLM から取得
   useEffect(() => {
-    if (open && messages.length === 0) {
-      void fetchNext([])
+    if (open && history.length === 0) {
+      // 初回: system は backend で付与されるので、user の "start" 的なシード必要なし
+      // ただし GLM が黙ったままになるとUX悪いので、明示的に一発「読みました、まず質問します」を引き出すために
+      // ユーザーロールで「（自動: 元メモを見て会話を始めて）」を送る
+      const seed: AgentMessage = { role: "user", content: "元メモを読んで、整理を手伝ってください。まず何が必要か質問してください。" }
+      void runTurn([seed], false)
     }
     if (!open) {
       // 閉じたらリセット
-      setMessages([])
+      setHistory([])
+      setItems([])
       setInput("")
       setError(null)
-      setEditingFinal(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // 新メッセージが追加されたら下までスクロール
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [messages])
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [items, isWaiting])
 
-  const fetchNext = async (history: ChatMessage[]) => {
+  const runTurn = async (nextHistory: AgentMessage[], displaySeedAsUser: boolean) => {
     setIsWaiting(true)
     setError(null)
     try {
       const res = await fetch("/api/ai/memo-refine-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: history.map(m => ({ role: m.role, content: m.content })),
-          source,
-          model,
-          turn: history.filter(m => m.role === "user").length,
-        }),
+        body: JSON.stringify({ messages: nextHistory, source, model }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error || `HTTP ${res.status}`)
       }
-      const data = await res.json()
-      if (data.type === "final") {
-        const finalMsg: ChatMessage = {
-          role: "assistant",
-          content: `整理しました。以下の内容でメモを更新します:\n\n【タイトル】${data.title}\n\n【詳細】\n${data.description}`,
-          finalProposal: { title: data.title, description: data.description },
-        }
-        setMessages([...history, finalMsg])
-        setEditedTitle(data.title)
-        setEditedDesc(data.description)
-      } else {
-        const qMsg: ChatMessage = {
-          role: "assistant",
-          content: data.message ?? "（質問の生成に失敗しました）",
-          options: data.options,
-        }
-        setMessages([...history, qMsg])
+      const data = await res.json() as {
+        response: string
+        actions: ToolAction[]
+        touched: boolean
+        history_appended: AgentMessage[]
       }
+
+      // 履歴更新（シード user は表示用にしない場合がある）
+      setHistory([...nextHistory, ...data.history_appended])
+
+      // 表示項目追加
+      const newItems: DisplayItem[] = []
+      const lastUserMsg = nextHistory[nextHistory.length - 1]
+      if (displaySeedAsUser && lastUserMsg?.role === "user") {
+        newItems.push({ kind: "user", content: lastUserMsg.content })
+      }
+      for (const action of data.actions) {
+        newItems.push({ kind: "tool", action })
+      }
+      if (data.response && data.response.trim()) {
+        newItems.push({ kind: "assistant", content: data.response })
+      }
+      setItems(prev => [...prev, ...newItems])
+
+      // データ変更があったら親に通知
+      if (data.touched && onTouched) onTouched()
     } catch (e) {
       setError(e instanceof Error ? e.message : "通信エラー")
     } finally {
@@ -109,27 +127,11 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onApply }: M
 
   const sendUserMessage = async (text: string) => {
     if (!text.trim() || isWaiting) return
-    const userMsg: ChatMessage = { role: "user", content: text.trim() }
-    const newHistory = [...messages, userMsg]
-    setMessages(newHistory)
     setInput("")
-    await fetchNext(newHistory)
+    const userMsg: AgentMessage = { role: "user", content: text.trim() }
+    const nextHistory = [...history, userMsg]
+    await runTurn(nextHistory, true)
   }
-
-  const handleApply = async () => {
-    setIsApplying(true)
-    try {
-      await onApply(editedTitle.trim(), editedDesc.trim())
-      onOpenChange(false)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "保存に失敗しました")
-    } finally {
-      setIsApplying(false)
-    }
-  }
-
-  const lastMessage = messages[messages.length - 1]
-  const hasFinalProposal = !!lastMessage?.finalProposal
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -168,18 +170,13 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onApply }: M
 
         {/* チャット履歴 */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
-          {messages.length === 0 && !isWaiting && (
+          {items.length === 0 && !isWaiting && (
             <div className="text-center text-sm text-muted-foreground py-12">
               GLM があなたのメモを読んで、質問を考えます...
             </div>
           )}
-          {messages.map((msg, i) => (
-            <Message
-              key={i}
-              msg={msg}
-              isLast={i === messages.length - 1}
-              onClickOption={(opt) => sendUserMessage(opt)}
-            />
+          {items.map((item, i) => (
+            <DisplayRow key={i} item={item} />
           ))}
           {isWaiting && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -194,123 +191,98 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onApply }: M
           )}
         </div>
 
-        {/* 最終提案: 編集 + 保存 UI */}
-        {hasFinalProposal && (
-          <div className="border-t bg-background shrink-0">
-            {editingFinal ? (
-              <div className="px-4 py-3 space-y-2">
-                <input
-                  type="text"
-                  value={editedTitle}
-                  onChange={(e) => setEditedTitle(e.target.value)}
-                  placeholder="タイトル"
-                  className="w-full min-h-[44px] rounded-xl border bg-background px-3 text-base outline-none focus:ring-1 focus:ring-primary"
-                />
-                <textarea
-                  value={editedDesc}
-                  onChange={(e) => setEditedDesc(e.target.value)}
-                  placeholder="詳細"
-                  rows={5}
-                  className="w-full min-h-[120px] rounded-xl border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary resize-y"
-                />
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" className="flex-1 min-h-[44px]" onClick={() => setEditingFinal(false)}>
-                    <X className="h-4 w-4 mr-1" />キャンセル
-                  </Button>
-                  <Button type="button" className="flex-1 min-h-[44px]" onClick={handleApply} disabled={isApplying || !editedTitle.trim()}>
-                    {isApplying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
-                    このメモに反映
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="px-4 py-3 flex gap-2">
-                <Button type="button" variant="outline" className="flex-1 min-h-[48px]" onClick={() => setEditingFinal(true)}>
-                  <Edit3 className="h-4 w-4 mr-1" />編集
-                </Button>
-                <Button type="button" className="flex-1 min-h-[48px]" onClick={handleApply} disabled={isApplying}>
-                  {isApplying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
-                  このメモに反映
-                </Button>
-              </div>
-            )}
+        {/* 入力欄 */}
+        <div className="border-t px-3 py-2 shrink-0 bg-background">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendUserMessage(input) } }}
+              placeholder="返信を入力..."
+              disabled={isWaiting}
+              className="flex-1 min-h-[44px] rounded-xl bg-muted/60 px-3 text-base outline-none focus:bg-muted disabled:opacity-50"
+            />
+            <Button
+              type="button"
+              onClick={() => sendUserMessage(input)}
+              disabled={!input.trim() || isWaiting}
+              className="min-h-[44px] min-w-[56px]"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
           </div>
-        )}
-
-        {/* 入力欄（最終提案中は隠す） */}
-        {!hasFinalProposal && (
-          <div className="border-t px-3 py-2 shrink-0 bg-background">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendUserMessage(input) } }}
-                placeholder="自由記述で答える..."
-                disabled={isWaiting}
-                className="flex-1 min-h-[44px] rounded-xl bg-muted/60 px-3 text-base outline-none focus:bg-muted disabled:opacity-50"
-              />
-              <Button
-                type="button"
-                onClick={() => sendUserMessage(input)}
-                disabled={!input.trim() || isWaiting}
-                className="min-h-[44px] min-w-[56px]"
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
+          <p className="px-1 pt-1 text-[10px] text-muted-foreground leading-3">
+            「2つに分けて」「もっと深掘りして」「保存して」など自然な指示で OK
+          </p>
+        </div>
       </SheetContent>
     </Sheet>
   )
 }
 
-function Message({
-  msg,
-  isLast,
-  onClickOption,
-}: {
-  msg: ChatMessage
-  isLast: boolean
-  onClickOption: (opt: string) => void
-}) {
-  if (msg.role === "user") {
+function DisplayRow({ item }: { item: DisplayItem }) {
+  if (item.kind === "user") {
     return (
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-primary text-primary-foreground px-3 py-2 text-sm whitespace-pre-wrap">
-          {msg.content}
+          {item.content}
         </div>
       </div>
     )
   }
-  // assistant
-  return (
-    <div className="space-y-1.5">
+  if (item.kind === "assistant") {
+    return (
       <div className="flex items-start gap-1.5">
         <div className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 text-[10px] font-bold">G</div>
-        <div className={cn(
-          "max-w-[85%] rounded-2xl rounded-tl-md bg-muted px-3 py-2 text-sm whitespace-pre-wrap",
-          msg.finalProposal && "bg-amber-500/10 border border-amber-500/30",
-        )}>
-          {msg.content}
+        <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
+          {item.content}
         </div>
       </div>
-      {/* 選択肢チップ */}
-      {isLast && msg.options && msg.options.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 ml-7">
-          {msg.options.map((opt, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onClickOption(opt)}
-              className="min-h-[36px] rounded-full border bg-background px-3 py-1 text-xs hover:bg-muted active:bg-muted/80"
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
+    )
+  }
+  // tool
+  return <ToolChip action={item.action} />
+}
+
+function ToolChip({ action }: { action: ToolAction }) {
+  const success = action.result?.success !== false  // undefined or true は成功扱い
+  const args = action.args || {}
+
+  const config = {
+    update_current_memo: {
+      icon: <FilePen className="h-3 w-3" />,
+      label: "メモ更新",
+      detail: typeof args.title === "string" ? `「${args.title.slice(0, 30)}」` : "",
+    },
+    create_new_memo: {
+      icon: <FilePlus2 className="h-3 w-3" />,
+      label: "新規メモ作成",
+      detail: typeof args.title === "string" ? `「${args.title.slice(0, 30)}」` : "",
+    },
+    list_my_memos: {
+      icon: <Search className="h-3 w-3" />,
+      label: "他メモ検索",
+      detail: typeof args.query === "string" ? `「${args.query}」(${action.result?.count ?? 0}件)` : `(${action.result?.count ?? 0}件)`,
+    },
+  }[action.tool] ?? { icon: null, label: action.tool, detail: "" }
+
+  return (
+    <div className="flex justify-center">
+      <div className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]",
+        success
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
+      )}>
+        {success ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+        {config.icon}
+        <span className="font-medium">{config.label}</span>
+        {config.detail && <span className="text-muted-foreground">{config.detail}</span>}
+        {!success && action.result?.error && (
+          <span className="text-muted-foreground">— {action.result.error}</span>
+        )}
+      </div>
     </div>
   )
 }

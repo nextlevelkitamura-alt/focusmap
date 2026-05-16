@@ -36,6 +36,8 @@ interface WishlistCardDetailProps {
   projects?: Project[]
   tagColors?: Record<string, string>
   onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
+  /** GLM対話のツールがメモを更新/新規作成したとき呼ばれる（一覧リフレッシュ用）*/
+  onMemoChanged?: () => void
 }
 
 function linkify(text: string) {
@@ -148,6 +150,7 @@ export function WishlistCardDetail({
   projects = [],
   tagColors = {},
   onLaunchClaude,
+  onMemoChanged,
 }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
   const [isSavingMemo, setIsSavingMemo] = useState(false)
@@ -681,21 +684,18 @@ export function WishlistCardDetail({
         </div>
       </SheetContent>
 
-      {/* 対話で詰める Sheet */}
+      {/* 対話で詰める Sheet (tool calling: 元メモ更新 + 新メモ作成 + 他メモ検索) */}
       <MemoRefineChat
         open={chatOpen}
         onOpenChange={setChatOpen}
         source={{
+          id: item.id,
           title: draftTitle || item.title,
           description: draftDescription || item.description || undefined,
           repo_path: item.project_id ? projects.find(p => p.id === item.project_id)?.repo_path || undefined : undefined,
         }}
         model="glm-5.1"
-        onApply={async (newTitle, newDescription) => {
-          setDraftTitle(newTitle)
-          setDraftDescription(newDescription)
-          await update({ title: newTitle, description: newDescription })
-        }}
+        onTouched={onMemoChanged}
       />
     </Sheet>
   )
