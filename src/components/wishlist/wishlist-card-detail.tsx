@@ -590,16 +590,13 @@ export function WishlistCardDetail({
                             draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
                           ].filter(Boolean).join('\n')
                           await navigator.clipboard.writeText(text)
-                          // ② ChatGPT アプリを起動（URL スキーム）
-                          //    iOS: chatgpt:// で ChatGPT アプリが開く
-                          //    失敗時のフォールバックとして 1.5秒後に Web 版へ
-                          const openedAt = Date.now()
-                          window.location.href = 'chatgpt://'
-                          setTimeout(() => {
-                            if (document.visibilityState === 'visible' && Date.now() - openedAt > 1000) {
-                              window.open('https://chatgpt.com/', '_blank')
-                            }
-                          }, 1500)
+                          // ② ChatGPT アプリの Codex タブへ直接遷移
+                          //    Universal Link (chatgpt.com/codex) で ChatGPT アプリ自動起動を試す
+                          //    iOS Safari は ChatGPT アプリインストール時に自動でアプリに引き渡す
+                          //    アプリ未インストール時は Web 版 Codex が開く
+                          //    注: プロンプト自動貼付・リポ事前選択は ChatGPT 側未対応のため
+                          //    ユーザー側で「リポ選択 → 貼り付け」を行う
+                          window.location.href = 'https://chatgpt.com/codex'
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "クリップボードコピー失敗")
                         } finally {
@@ -609,7 +606,7 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">コピー → ChatGPT で貼付</span>
+                      <span className="text-[10px] text-muted-foreground">コピー → Codex タブへ</span>
                     </Button>
                   )}
                 </div>
