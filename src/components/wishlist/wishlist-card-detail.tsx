@@ -575,10 +575,17 @@ export function WishlistCardDetail({
                   <Terminal className="h-4 w-4" />
                   AI エージェントで実行
                 </Label>
-                <p className="text-xs text-muted-foreground leading-5">
+                <p className={cn(
+                  "text-xs leading-5",
+                  needsConfig && !active ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
+                )}>
                   {active
                     ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
-                    : "Claude / Codex どちらもスマホで進捗確認可（Codex はペアリング済 Codex.app 経由で mobile に自動表示）"}
+                    : !item.project_id
+                      ? "⚠ プロジェクト未設定。メモにプロジェクトを紐付けてから（Codex/Claude 共に必要）"
+                      : !repoConfigured
+                        ? "⚠ プロジェクトにリポジトリパス未設定。下のリンクから設定してください"
+                        : "Claude / Codex どちらもスマホで進捗確認可（Codex はペアリング済 Codex.app 経由で mobile に自動表示）"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -611,7 +618,7 @@ export function WishlistCardDetail({
                           setIsLaunchingClaude(false)
                         }
                       }}
-                      className="min-h-[60px] flex-col gap-0.5 border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                      className="min-h-[60px] flex-col gap-0.5 border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 dark:hover:bg-amber-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
                       {isLaunchingClaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">▲ Claude</span>}
                       <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
@@ -637,7 +644,7 @@ export function WishlistCardDetail({
                           setIsLaunchingCodex(false)
                         }
                       }}
-                      className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
+                      className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
                       <span className="text-[10px] text-muted-foreground">スマホで監視・無人実行</span>
