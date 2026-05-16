@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
   );
 
   // 認証URLを生成
+  // hl=en: OAuth同意画面を英語表示に強制する（OAuth verification審査要件）
   const authUrl = oauth2Client.generateAuthUrl({
     redirect_uri: redirectUri,
     access_type: 'offline', // refresh_tokenを取得
@@ -51,6 +52,7 @@ export async function GET(request: NextRequest) {
       'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
     ],
     state: encodeCalendarOAuthState(user.id, nextPath),
+    hl: 'en',
   });
 
   console.log('[Calendar Connect] Generated Auth URL:', authUrl);
