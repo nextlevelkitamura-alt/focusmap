@@ -12,7 +12,7 @@ export async function POST(request: Request) {
         }
 
         const body = await request.json()
-        const { space_id, title, status = "active", priority = 3, color_theme } = body
+        const { space_id, title, status = "active", priority = 3, color_theme, repo_path } = body
 
         if (!space_id || !title) {
             return NextResponse.json({ error: "space_id and title are required" }, { status: 400 })
@@ -27,6 +27,7 @@ export async function POST(request: Request) {
                 status,
                 priority,
                 ...(color_theme ? { color_theme } : {}),
+                ...(repo_path !== undefined ? { repo_path: repo_path || null } : {}),
             })
             .select()
             .single()

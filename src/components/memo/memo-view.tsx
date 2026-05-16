@@ -19,6 +19,8 @@ import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import type { Note, NoteAiAnalysis } from "@/types/note"
 import type { Project, Space } from "@/types/database"
 import { useCalendars } from "@/hooks/useCalendars"
+import { useNoteAiTasks } from "@/hooks/useNoteAiTasks"
+import { NoteClaudeRunnerButton, NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 
 // インライン提案の状態
 interface InlineProposal {
@@ -71,6 +73,42 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
 
   // カレンダー一覧（カレンダー追加用）
   const { calendars } = useCalendars()
+
+  // メモから起動した Claude タスクの状態（Realtime）
+  const { getByNoteId: getNoteAiTask } = useNoteAiTasks()
+
+  // メモのプロジェクトに紐付くリポパスを取得
+  const getNoteRepoPath = useCallback((projectId: string | null): string | null => {
+    if (!projectId) return null
+    return projects.find(p => p.id === projectId)?.repo_path ?? null
+  }, [projects])
+
+  // メモを Claude Code で実行
+  const startNoteWithClaude = useCallback(async (note: Note) => {
+    const repoPath = getNoteRepoPath(note.project_id)
+    if (!repoPath) {
+      showToast("error", "リポジトリパスが未設定です")
+      throw new Error("repo_path not configured")
+    }
+    const res = await fetch("/api/ai-tasks/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: note.content,
+        cwd: repoPath,
+        approval_type: "auto",
+        source_note_id: note.id,
+        scheduled_at: new Date().toISOString(),
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      const msg = err?.error || `起動失敗 (${res.status})`
+      showToast("error", msg)
+      throw new Error(msg)
+    }
+    showToast("success", "Claude Code を起動中（最大1分）")
+  }, [getNoteRepoPath])
 
   // 音声入力
   const handleTranscribed = useCallback((text: string) => {
@@ -1041,6 +1079,15 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                       )}
                     </Button>
 
+                    <NoteClaudeRunnerButton
+                      noteId={note.id}
+                      noteContent={note.content}
+                      projectId={note.project_id}
+                      repoPath={getNoteRepoPath(note.project_id)}
+                      latestTask={getNoteAiTask(note.id)}
+                      onStart={() => startNoteWithClaude(note)}
+                    />
+
                     {confirmDeleteId === note.id ? (
                       <div className="flex items-center gap-1">
                         <Button
@@ -1073,6 +1120,12 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                     )}
                   </div>
                 </div>
+
+                <NoteClaudeRunnerPanel
+                  latestTask={getNoteAiTask(note.id)}
+                  isProjectAssigned={!!note.project_id}
+                  isRepoConfigured={!!getNoteRepoPath(note.project_id)}
+                />
               </Card>
             ))}
           </div>

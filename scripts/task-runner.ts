@@ -185,6 +185,161 @@ function runClaude(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Remote Control 起動: tmux + claude --remote-control
+//   - メモから起動された ai_task はスマホ/Web からも操作できるよう RC モードで起動
+//   - tmux detached session で常駐させ、stdout からセッションURLをキャプチャ
+// ─────────────────────────────────────────────────────────────────────────
+const REMOTE_URL_PATTERN = /https:\/\/claude\.ai\/code\/[A-Za-z0-9_\-?=&./%]+/
+
+async function waitForRemoteUrl(logPath: string, timeoutMs: number): Promise<string | null> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (fs.existsSync(logPath)) {
+      try {
+        const content = fs.readFileSync(logPath, 'utf-8')
+        const m = content.match(REMOTE_URL_PATTERN)
+        if (m) return m[0]
+      } catch {
+        // 読み込みエラーは無視して再試行
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return null
+}
+
+function tmuxSessionExists(sessionName: string): boolean {
+  try {
+    execSync(`tmux has-session -t "${sessionName}"`, { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Remote Control モードで起動する。
+ * - 同期的に tmux 起動 → URL キャプチャ → プロンプト注入まで行い、URL を返す
+ * - tmux セッションは detached で残り、スマホ/Web から接続可能
+ */
+async function launchRemoteControl(opts: {
+  taskId: string
+  prompt: string
+  cwd: string
+}): Promise<{ success: true; url: string; sessionName: string } | { success: false; error: string }> {
+  const sessionName = `memo-${opts.taskId.slice(0, 8)}`
+  const logPath = `/tmp/claude-rc-${opts.taskId}.log`
+  const promptPath = `/tmp/claude-prompt-${opts.taskId}.txt`
+
+  // cwd 存在確認
+  if (!fs.existsSync(opts.cwd)) {
+    return { success: false, error: `cwd not found: ${opts.cwd}` }
+  }
+
+  // 既存セッション残骸があれば掃除
+  if (tmuxSessionExists(sessionName)) {
+    try { execSync(`tmux kill-session -t "${sessionName}"`, { stdio: 'ignore' }) } catch { /* ignore */ }
+  }
+
+  // プロンプトをファイルに保存（改行・特殊文字を安全に扱う）
+  fs.writeFileSync(promptPath, opts.prompt, 'utf-8')
+
+  // タイトルにメモ冒頭を入れる（dquote と backslash をエスケープ）
+  const title = `memo: ${opts.prompt.slice(0, 40).replace(/\\/g, '').replace(/"/g, '')}`
+
+  // 既存ログ削除
+  try { fs.unlinkSync(logPath) } catch { /* ignore */ }
+
+  // ANTHROPIC_API_KEY が環境にあると Remote Control が動かないので除外
+  const envExports = 'unset ANTHROPIC_API_KEY; unset CLAUDECODE; '
+
+  // tmux detached session で claude --remote-control を起動。出力は tee でログ保存
+  const claudeCmd = `${envExports}claude --remote-control "${title.replace(/"/g, '')}" 2>&1 | tee "${logPath}"`
+  try {
+    execSync(
+      `tmux new-session -d -s "${sessionName}" -c "${opts.cwd}" '${claudeCmd.replace(/'/g, "'\\''")}'`,
+      { stdio: 'ignore' },
+    )
+  } catch (err) {
+    return { success: false, error: `tmux 起動失敗: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  // セッションURLをキャプチャ（最大60秒）
+  const url = await waitForRemoteUrl(logPath, 60_000)
+  if (!url) {
+    if (tmuxSessionExists(sessionName)) {
+      try { execSync(`tmux kill-session -t "${sessionName}"`, { stdio: 'ignore' }) } catch { /* ignore */ }
+    }
+    // ログ末尾をエラーとして返す
+    let tail = ''
+    try {
+      const content = fs.readFileSync(logPath, 'utf-8')
+      tail = content.slice(-500)
+    } catch { /* ignore */ }
+    return {
+      success: false,
+      error: `Remote Control セッションURLを60秒以内に取得できませんでした。\n${tail || '（ログ読み取り失敗）'}`,
+    }
+  }
+
+  // プロンプトを paste-buffer 経由で安全に注入（改行を含んでも一括送信される）
+  try {
+    // バッファに読み込み
+    execSync(`tmux load-buffer -t "${sessionName}" "${promptPath}"`, { stdio: 'ignore' })
+    // ペースト
+    execSync(`tmux paste-buffer -t "${sessionName}"`, { stdio: 'ignore' })
+    // 改行を送信して送信確定
+    execSync(`tmux send-keys -t "${sessionName}" Enter`, { stdio: 'ignore' })
+  } catch (err) {
+    return { success: false, error: `プロンプト注入失敗: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  // プロンプトファイル削除（ログは残す：デバッグ用）
+  try { fs.unlinkSync(promptPath) } catch { /* ignore */ }
+
+  return { success: true, url, sessionName }
+}
+
+/**
+ * tmux セッションがもう存在しない running 状態のRCタスクを completed に更新。
+ * 毎回 main() の冒頭で呼ぶことで、ユーザーが Claude を /exit したり Mac 再起動した場合の
+ * 取り残しを掃除する。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
+  const { data: runningTasks } = await supabase
+    .from('ai_tasks')
+    .select('id, tmux_session_name, started_at')
+    .eq('status', 'running')
+    .not('tmux_session_name', 'is', null)
+    .limit(50)
+
+  const rows = (runningTasks ?? []) as Array<{ id: string; tmux_session_name: string | null; started_at: string | null }>
+  for (const task of rows) {
+    if (!task.tmux_session_name) continue
+    if (tmuxSessionExists(task.tmux_session_name)) continue
+    // セッションが消えていたら completed として記録
+    const logPath = `/tmp/claude-rc-${task.id}.log`
+    let tail = ''
+    try {
+      if (fs.existsSync(logPath)) {
+        const content = fs.readFileSync(logPath, 'utf-8')
+        tail = content.slice(-2000)
+      }
+    } catch { /* ignore */ }
+    await supabase
+      .from('ai_tasks')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        result: { message: tail || 'Remote Control セッションは終了しました' },
+      })
+      .eq('id', task.id)
+    console.log(`[task-runner] RC session ended: ${task.id}`)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // メイン処理
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
@@ -203,10 +358,13 @@ async function main() {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
+  // ─── 0. tmux セッションが消えた RC タスクを completed/failed に遷移 ─
+  await reconcileRemoteControlSessions(supabase)
+
   // ─── 1. due なタスクを取得 ───────────────────────────────────────────
   const { data: rawDueTasks, error } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at')
+    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, source_note_id')
     .eq('status', 'pending')
     .not('scheduled_at', 'is', null)
     .lte('scheduled_at', new Date().toISOString())
@@ -261,6 +419,41 @@ async function main() {
 
     if (updateErr) {
       console.error(`[task-runner] Failed to mark running: ${task.id}`, updateErr.message)
+      continue
+    }
+
+    // ─── メモから起動: claude --remote-control（tmux detached）───
+    if (task.source_note_id && task.cwd) {
+      notify(`スマホで操作可能に起動中: ${shortPrompt}`, 'Focusmap AI')
+      const result = await launchRemoteControl({
+        taskId: task.id,
+        prompt: task.prompt,
+        cwd: task.cwd,
+      })
+      const now = new Date().toISOString()
+
+      if (!result.success) {
+        await supabase
+          .from('ai_tasks')
+          .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
+          .eq('id', task.id)
+        notify(`起動失敗: ${shortPrompt}`, 'Focusmap AI')
+        console.error(`[task-runner] RC launch failed: ${task.id}: ${result.error}`)
+        continue
+      }
+
+      // 起動成功 → URL を保存。status は running のまま（tmux 内で claude が動き続ける）
+      await supabase
+        .from('ai_tasks')
+        .update({
+          remote_session_url: result.url,
+          tmux_session_name: result.sessionName,
+          result: { message: 'Remote Control セッションを起動しました。スマホ/Web から接続できます。' },
+        })
+        .eq('id', task.id)
+
+      notify(`スマホから接続可能: ${shortPrompt}`, 'Focusmap AI')
+      console.log(`[task-runner] RC session started: ${task.id} → ${result.url}`)
       continue
     }
 
