@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Terminal, Trash2 } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Sparkles, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -13,6 +13,7 @@ import Link from "next/link"
 import { Settings as SettingsIcon } from "lucide-react"
 import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
+import { MemoRefineChat } from "@/components/memo/memo-refine-chat"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
 
@@ -152,6 +153,7 @@ export function WishlistCardDetail({
   const [isSavingMemo, setIsSavingMemo] = useState(false)
   const [isLaunchingClaude, setIsLaunchingClaude] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
@@ -497,6 +499,18 @@ export function WishlistCardDetail({
             メモを保存
           </Button>
 
+          {/* 対話で詰めるボタン: GLMと2-3ラリーしてメモを更新（Claude起動とは独立）*/}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setChatOpen(true)}
+            disabled={!draftTitle.trim()}
+            className="w-full min-h-[44px] border-amber-500/50 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+          >
+            <Sparkles className="mr-2 h-4 w-4" />
+            対話で詰める（GLM と相談）
+          </Button>
+
           {onLaunchClaude && (() => {
             const aiTask = getMemoAiTask(item.id)
             const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
@@ -666,6 +680,23 @@ export function WishlistCardDetail({
           </div>
         </div>
       </SheetContent>
+
+      {/* 対話で詰める Sheet */}
+      <MemoRefineChat
+        open={chatOpen}
+        onOpenChange={setChatOpen}
+        source={{
+          title: draftTitle || item.title,
+          description: draftDescription || item.description || undefined,
+          repo_path: item.project_id ? projects.find(p => p.id === item.project_id)?.repo_path || undefined : undefined,
+        }}
+        model="glm-5.1"
+        onApply={async (newTitle, newDescription) => {
+          setDraftTitle(newTitle)
+          setDraftDescription(newDescription)
+          await update({ title: newTitle, description: newDescription })
+        }}
+      />
     </Sheet>
   )
 }
