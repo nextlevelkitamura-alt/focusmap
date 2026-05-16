@@ -73,24 +73,30 @@ export function NoteClaudeRunnerButton({
         ? "すでに実行中のタスクがあります"
         : "このメモを Claude Code で実行"
 
+  // 起動可能なときは強調表示（Claude ブランドカラーのアクセント）
+  const visiblyEnabled = !disabled
+  const isRunningNow = isActive && latestTask?.status === "running"
+
   return (
     <>
       <Button
-        variant="ghost"
-        size="sm"
+        variant={visiblyEnabled ? "outline" : "ghost"}
+        size="icon"
         onClick={handleClick}
         disabled={disabled}
         className={cn(
-          "h-7 w-7 p-0",
-          !isProjectAssigned || !isRepoConfigured ? "text-muted-foreground/40" : "text-foreground/70 hover:text-foreground",
+          "min-h-[44px] min-w-[44px] gap-1",
+          visiblyEnabled && "border-amber-500/60 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 hover:text-amber-700 dark:text-amber-300",
+          isRunningNow && "border-blue-500/60 bg-blue-500/10 text-blue-600 dark:text-blue-300",
+          !isProjectAssigned || !isRepoConfigured ? "text-muted-foreground/40" : "",
         )}
         title={title}
         aria-label={title}
       >
-        {isStarting || (isActive && latestTask?.status === "running") ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        {isStarting || isRunningNow ? (
+          <Loader2 className="w-5 h-5 animate-spin" />
         ) : (
-          <Terminal className="w-3.5 h-3.5" />
+          <Terminal className="w-5 h-5" />
         )}
       </Button>
       {error && (
