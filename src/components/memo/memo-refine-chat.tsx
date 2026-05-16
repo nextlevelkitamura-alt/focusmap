@@ -54,11 +54,15 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
   const [input, setInput] = useState("")
   const [isWaiting, setIsWaiting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 1セッション = 1 UUID。チャット保存の upsert キー
+  const [sessionId, setSessionId] = useState<string>("")
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // シートを開いたとき初期メッセージを GLM から取得
   useEffect(() => {
     if (open && history.length === 0) {
+      // セッションID生成（チャットシート1回ぶん）
+      setSessionId(crypto.randomUUID())
       // 初回: system は backend で付与されるので、user の "start" 的なシード必要なし
       // ただし GLM が黙ったままになるとUX悪いので、明示的に一発「読みました、まず質問します」を引き出すために
       // ユーザーロールで「（自動: 元メモを見て会話を始めて）」を送る
@@ -71,6 +75,7 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
       setItems([])
       setInput("")
       setError(null)
+      setSessionId("")
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -86,7 +91,12 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
       const res = await fetch("/api/ai/memo-refine-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextHistory, source, model }),
+        body: JSON.stringify({
+          messages: nextHistory,
+          source,
+          model,
+          session_id: sessionId || undefined,
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -128,9 +138,13 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
   const sendUserMessage = async (text: string) => {
     if (!text.trim() || isWaiting) return
     setInput("")
-    const userMsg: AgentMessage = { role: "user", content: text.trim() }
+    const trimmed = text.trim()
+    const userMsg: AgentMessage = { role: "user", content: trimmed }
+    // ① まずユーザーメッセージを即時表示（API応答待たない）
+    setItems(prev => [...prev, { kind: "user", content: trimmed }])
+    // ② API 呼び出し（"GLM が考えています..." がスピナーで出る）
     const nextHistory = [...history, userMsg]
-    await runTurn(nextHistory, true)
+    await runTurn(nextHistory, false)  // ユーザー表示は既に済んでいるので displaySeedAsUser=false
   }
 
   return (

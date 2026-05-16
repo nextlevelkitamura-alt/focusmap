@@ -14,6 +14,7 @@ import { Settings as SettingsIcon } from "lucide-react"
 import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { MemoRefineChat } from "@/components/memo/memo-refine-chat"
+import { MemoChatHistory } from "@/components/memo/memo-chat-history"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
 
@@ -513,6 +514,9 @@ export function WishlistCardDetail({
             <Sparkles className="mr-2 h-4 w-4" />
             対話で詰める（GLM と相談）
           </Button>
+
+          {/* 過去の対話履歴（このメモの分） */}
+          <MemoChatHistory memoId={item.id} />
 
           {onLaunchClaude && (() => {
             const aiTask = getMemoAiTask(item.id)

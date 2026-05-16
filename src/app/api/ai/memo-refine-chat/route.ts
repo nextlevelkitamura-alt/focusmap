@@ -134,7 +134,8 @@ ${isoLocal} (${weekday}曜日)
 
 ## ツール組み合わせ例
 - 「これで保存して」 → update_current_memo
-- 「2つに分けて。①と②」 → update + create_new_memo
+- 「2つに分けて。①と②」 → 必ず update_current_memo（①）+ create_new_memo（②）の2つを呼ぶ
+- 「3つに分けて、それぞれ詳細書いて」 → update + create_new_memo を2回（計3つのメモ）
 - 「明日朝8時に30分でやりたい」 → schedule_memo({scheduled_at: '明日8時のISO', duration_minutes: 30}) → カレンダーに入れるか確認
 - 「カレンダーに入れて」 → add_to_calendar
 - 「いつ空いてる?」 → list_calendar_events({date: '対象日'}) → 結果見て提案
@@ -143,8 +144,17 @@ ${isoLocal} (${weekday}曜日)
   → 候補時刻を提案
   → ユーザー確定後 schedule_memo + add_to_calendar
 
+## 【最重要】分割タスクのルール
+ユーザーが「N個に分けて」「N項目に整理して」と言った場合、**必ず以下を全て実行するまで終わらない**:
+- N=2 → update_current_memo を1回 + create_new_memo を1回（合計2メモ）
+- N=3 → update_current_memo を1回 + create_new_memo を2回（合計3メモ）
+- N=4 → update_current_memo を1回 + create_new_memo を3回（合計4メモ）
+1つだけ作って「他のメモも作りました」と嘘の報告をしてはいけない。
+ツールは並列でも順番でも呼べる。複数tool_callsを同時に返してもよい。
+全ての作成が完了してから初めてユーザーに結果を報告すること。
+
 ## 注意
-- ツール呼び出し後の応答では、何をしたかを1-2文で報告
+- ツール呼び出し後の応答では、何をしたかを1-2文で報告（実際に作成したものだけを正確に）
 - schedule_memo の scheduled_at は必ず JST タイムゾーン付き（+09:00）の ISO 文字列
 - 新規メモを作って予定登録する場合: create_new_memo → 返値の memo_id を使って schedule_memo`
 }
@@ -160,6 +170,8 @@ interface ChatRequest {
     repo_path?: string
   }
   model?: string
+  /** チャットシート1回分のセッションID（フロントが生成、UUID）。ログ upsert に使用 */
+  session_id?: string
 }
 
 interface ToolActionLog {
@@ -371,6 +383,7 @@ export async function POST(req: Request) {
   const messages = Array.isArray(body.messages) ? body.messages : []
   const source = body.source
   const model = body.model ?? "glm-5.1"
+  const sessionId = body.session_id ?? null
 
   if (!source?.id) {
     return NextResponse.json({ error: "source.id required" }, { status: 400 })
@@ -393,11 +406,15 @@ export async function POST(req: Request) {
   let finalContent: string | null = null
   let touched = false  // ツールでデータ変更があったかどうか
 
-  // Agentic loop（最大5回）
-  for (let iteration = 0; iteration < 5; iteration++) {
+  // Agentic loop（最大8回 = 分割タスクで複数 create_new_memo を順番に呼ぶ余裕を確保）
+  for (let iteration = 0; iteration < 8; iteration++) {
     let result
     try {
-      result = await chatCompletionWithTools(history, TOOLS, { model, temperature: 0.4 })
+      result = await chatCompletionWithTools(history, TOOLS, {
+        model,
+        temperature: 0.4,
+        max_tokens: 2500,  // tool_calls 複数 + 本文を切り詰めずに返せる余裕
+      })
     } catch (e) {
       return NextResponse.json(
         { error: e instanceof Error ? e.message : "AI モデル呼び出し失敗" },
@@ -444,6 +461,40 @@ export async function POST(req: Request) {
       finalContent = result.content ?? ""
       break
     }
+  }
+
+  // ─── チャットログをアーカイブ（session_id があれば upsert）─
+  if (sessionId) {
+    // システムメッセージ以外（user/assistant/tool）だけを保存
+    const messagesForLog = history.filter(m => m.role !== "system")
+    // 既存ログを取得して actions を追記
+    const { data: existing } = await supabase
+      .from("memo_chat_logs")
+      .select("id, actions, turn_count")
+      .eq("user_id", user.id)
+      .eq("session_id", sessionId)
+      .maybeSingle()
+
+    const existingActions = Array.isArray(existing?.actions) ? existing.actions : []
+    const mergedActions = [...existingActions, ...actions]
+    const userTurns = messagesForLog.filter(m => m.role === "user").length
+
+    await supabase
+      .from("memo_chat_logs")
+      .upsert({
+        user_id: user.id,
+        session_id: sessionId,
+        source_memo_id: source.id,
+        source_memo_title: source.title,
+        messages: messagesForLog,
+        actions: mergedActions,
+        source_snapshot: {
+          title: source.title,
+          description: source.description ?? null,
+          repo_path: source.repo_path ?? null,
+        },
+        turn_count: userTurns,
+      }, { onConflict: "user_id,session_id" })
   }
 
   return NextResponse.json({
