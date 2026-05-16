@@ -538,8 +538,8 @@ export function WishlistCardDetail({
                 </Label>
                 <p className="text-xs text-muted-foreground leading-5">
                   {active
-                    ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に状況）`
-                    : "Claude = プロジェクトのリポジトリで起動。Codex = クリップボードにコピーして ChatGPT アプリを開く"}
+                    ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
+                    : "プロジェクトのリポジトリで AI が作業します。ログは下のパネルでリアルタイム可視化されます"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -547,7 +547,7 @@ export function WishlistCardDetail({
                     className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
                   >
                     <SettingsIcon className="h-3.5 w-3.5" />
-                    Claude 用にリポジトリパスを設定（Codex は不要）
+                    {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
                   </Link>
                 )}
 
@@ -579,26 +579,16 @@ export function WishlistCardDetail({
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isLaunchingCodex || !draftTitle.trim()}
+                      disabled={claudeDisabled || isLaunchingCodex}
                       onClick={async () => {
                         setLaunchError(null)
                         setIsLaunchingCodex(true)
                         try {
-                          // ① メモ見出し+詳細をクリップボードにコピー
-                          const text = [
-                            `# ${draftTitle.trim()}`,
-                            draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
-                          ].filter(Boolean).join('\n')
-                          await navigator.clipboard.writeText(text)
-                          // ② ChatGPT アプリの Codex タブへ直接遷移
-                          //    Universal Link (chatgpt.com/codex) で ChatGPT アプリ自動起動を試す
-                          //    iOS Safari は ChatGPT アプリインストール時に自動でアプリに引き渡す
-                          //    アプリ未インストール時は Web 版 Codex が開く
-                          //    注: プロンプト自動貼付・リポ事前選択は ChatGPT 側未対応のため
-                          //    ユーザー側で「リポ選択 → 貼り付け」を行う
-                          window.location.href = 'https://chatgpt.com/codex'
+                          // headless `codex exec` をMacで起動。ライブログがDBに同期され
+                          // 完了後は結果テキストがパネルに表示される（AI読取可）
+                          await onLaunchCodex(item)
                         } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "クリップボードコピー失敗")
+                          setLaunchError(e instanceof Error ? e.message : "起動に失敗")
                         } finally {
                           setIsLaunchingCodex(false)
                         }
@@ -606,10 +596,31 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">コピー → Codex タブへ</span>
+                      <span className="text-[10px] text-muted-foreground">バックグラウンド実行・ログ可視</span>
                     </Button>
                   )}
                 </div>
+
+                {/* サブオプション: ChatGPT アプリで手動継続したい人向け */}
+                <button
+                  type="button"
+                  disabled={!draftTitle.trim()}
+                  onClick={async () => {
+                    try {
+                      const text = [
+                        `# ${draftTitle.trim()}`,
+                        draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
+                      ].filter(Boolean).join('\n')
+                      await navigator.clipboard.writeText(text)
+                      window.location.href = 'https://chatgpt.com/codex'
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
+                >
+                  ChatGPT アプリで開く（コピー + Codex タブ起動）
+                </button>
 
                 {launchError && (
                   <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
