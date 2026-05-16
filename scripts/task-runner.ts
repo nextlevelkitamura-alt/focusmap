@@ -415,37 +415,90 @@ async function launchCodexExec(opts: {
  * 毎回 main() の冒頭で呼ぶことで、ユーザーが Claude を /exit したり Mac 再起動した場合の
  * 取り残しを掃除する。
  */
+/**
+ * 実行中のCodexタスクのライブログを ai_tasks.result.live_log に書き込む。
+ * 毎サイクル冒頭で呼ぶことで、UI から進行状況をリアルタイムに見られる。
+ * Codex 専用（Claude は Remote Control 経由で見られるので不要）
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function syncCodexLiveLogs(supabase: any): Promise<void> {
+  const { data: codexRunning } = await supabase
+    .from('ai_tasks')
+    .select('id, tmux_session_name')
+    .eq('executor', 'codex')
+    .eq('status', 'running')
+    .not('tmux_session_name', 'is', null)
+    .limit(20)
+
+  for (const task of (codexRunning ?? []) as Array<{ id: string; tmux_session_name: string }>) {
+    if (!tmuxSessionExists(task.tmux_session_name)) continue  // reconcile が処理する
+    const logPath = `/tmp/codex-exec-${task.id}.log`
+    if (!fs.existsSync(logPath)) continue
+    try {
+      const content = fs.readFileSync(logPath, 'utf-8')
+      // ANSI エスケープシーケンス除去
+      const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+      // 末尾 6000 字（UI で読みやすい範囲）
+      const tail = cleaned.slice(-6000)
+      await supabase
+        .from('ai_tasks')
+        .update({ result: { live_log: tail, executor: 'codex' } })
+        .eq('id', task.id)
+    } catch {
+      // ログ読めなくても続行
+    }
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
   const { data: runningTasks } = await supabase
     .from('ai_tasks')
-    .select('id, tmux_session_name, started_at')
+    .select('id, executor, tmux_session_name, started_at')
     .eq('status', 'running')
     .not('tmux_session_name', 'is', null)
     .limit(50)
 
-  const rows = (runningTasks ?? []) as Array<{ id: string; tmux_session_name: string | null; started_at: string | null }>
+  const rows = (runningTasks ?? []) as Array<{
+    id: string
+    executor: string | null
+    tmux_session_name: string | null
+    started_at: string | null
+  }>
   for (const task of rows) {
     if (!task.tmux_session_name) continue
     if (tmuxSessionExists(task.tmux_session_name)) continue
+
     // セッションが消えていたら completed として記録
-    const logPath = `/tmp/claude-rc-${task.id}.log`
+    // executor に応じてログファイルを切替（Claude: claude-rc-*.log / Codex: codex-exec-*.log）
+    const executor = task.executor === 'codex' ? 'codex' : 'claude'
+    const logPath = executor === 'codex'
+      ? `/tmp/codex-exec-${task.id}.log`
+      : `/tmp/claude-rc-${task.id}.log`
+
     let tail = ''
     try {
       if (fs.existsSync(logPath)) {
         const content = fs.readFileSync(logPath, 'utf-8')
-        tail = content.slice(-2000)
+        // ANSI エスケープシーケンスを除去して読みやすく
+        const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+        tail = cleaned.slice(-3000)
       }
     } catch { /* ignore */ }
+
+    const defaultMessage = executor === 'codex'
+      ? 'Codex セッションは終了しました'
+      : 'Remote Control セッションは終了しました'
+
     await supabase
       .from('ai_tasks')
       .update({
         status: 'completed',
         completed_at: new Date().toISOString(),
-        result: { message: tail || 'Remote Control セッションは終了しました' },
+        result: { message: tail || defaultMessage, executor },
       })
       .eq('id', task.id)
-    console.log(`[task-runner] RC session ended: ${task.id}`)
+    console.log(`[task-runner] ${executor} session ended: ${task.id}`)
   }
 }
 
@@ -632,6 +685,9 @@ async function main() {
 
   // ─── 0. tmux セッションが消えた RC タスクを completed/failed に遷移 ─
   await reconcileRemoteControlSessions(supabase)
+
+  // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
+  await syncCodexLiveLogs(supabase)
 
   // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
   const hostname = os.hostname()

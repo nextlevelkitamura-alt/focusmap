@@ -210,13 +210,25 @@ export function NoteClaudeRunnerPanel({
             </div>
           )}
 
-          {/* Codex 実行中: モバイル接続ではなく、結果待ちの表示 */}
-          {latestTask.executor === "codex" && isActive && (
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Codex が実行中... 完了次第、結果が下に表示されます
-            </div>
-          )}
+          {/* Codex 実行中: ライブログ表示 */}
+          {latestTask.executor === "codex" && isActive && (() => {
+            const liveLog = typeof latestTask.result === "object" && latestTask.result !== null
+              ? (latestTask.result as { live_log?: string }).live_log
+              : null
+            return (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Codex が実行中（1分おきにログ更新）
+                </div>
+                {liveLog && (
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
+                    {liveLog.slice(-2500)}
+                  </pre>
+                )}
+              </div>
+            )
+          })()}
 
           {/* リモートセッションURL（Claude のみ） */}
           {latestTask.executor !== "codex" && url && (
@@ -254,11 +266,11 @@ export function NoteClaudeRunnerPanel({
             </div>
           )}
 
-          {/* 実際に Claude に送られたプロンプト（GLM で整理済） */}
+          {/* 実際に AI に送られたプロンプト（GLM で整理済） */}
           {latestTask.prompt && (
             <details className="text-[11px]">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                Claude に送られたプロンプト（GLM 整理済 / {latestTask.prompt.length} 字）
+                {latestTask.executor === "codex" ? "Codex" : "Claude"} に送られたプロンプト（GLM 整理済 / {latestTask.prompt.length} 字）
               </summary>
               <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4">
                 {latestTask.prompt}
