@@ -1,192 +1,60 @@
 import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
-import type { ReactNode } from "react"
-import { Bell, Bot, Brain, Calendar, FolderKanban, Key, Palette, User } from "lucide-react"
-import { CalendarSettings } from "@/components/dashboard/calendar-settings"
-import { NotificationSettings } from "@/components/notifications"
-import { AiContextSettings } from "@/components/settings/ai-context-settings"
-import { ThemeSettings } from "@/components/settings/theme-settings"
-import { AccountSettings } from "@/components/settings/account-settings"
-import { ApiKeySettings } from "@/components/settings/api-key-settings"
-import { AiModelSettings } from "@/components/settings/ai-model-settings"
-import { ProjectSettings } from "@/components/settings/project-settings"
+import Link from "next/link"
+import type { LucideIcon } from "lucide-react"
+import { Bot, Calendar, ChevronRight, FolderKanban, Key, Palette } from "lucide-react"
 
-const SETTING_GROUPS = [
-    {
-        id: "ai",
-        label: "AI",
-        description: "モデルとAIに渡す情報",
-        items: [
-            { id: "ai-model", label: "AIモデル", icon: Bot },
-            { id: "ai-context", label: "コンテキスト", icon: Brain },
-        ],
-    },
-    {
-        id: "workflow",
-        label: "連携",
-        description: "カレンダーと通知",
-        items: [
-            { id: "calendar", label: "カレンダー", icon: Calendar },
-            { id: "notifications", label: "通知", icon: Bell },
-        ],
-    },
-    {
-        id: "project",
-        label: "プロジェクト",
-        description: "色とタグ",
-        items: [
-            { id: "project-colors", label: "色設定", icon: FolderKanban },
-        ],
-    },
-    {
-        id: "access",
-        label: "アクセス",
-        description: "APIキーとアカウント",
-        items: [
-            { id: "api-keys", label: "APIキー", icon: Key },
-            { id: "account", label: "アカウント", icon: User },
-        ],
-    },
-    {
-        id: "appearance",
-        label: "表示",
-        description: "画面の見た目",
-        items: [
-            { id: "theme", label: "テーマ", icon: Palette },
-        ],
-    },
+interface SettingsRow {
+  href: string
+  label: string
+  description: string
+  icon: LucideIcon
+}
+
+const SETTING_ROWS: SettingsRow[] = [
+  { href: "/dashboard/settings/ai", label: "AI", description: "モデルとAIに渡す情報", icon: Bot },
+  { href: "/dashboard/settings/integrations", label: "連携", description: "カレンダー・通知", icon: Calendar },
+  { href: "/dashboard/settings/projects", label: "プロジェクトとリポジトリ", description: "色・自動スキャン・Claude起動先", icon: FolderKanban },
+  { href: "/dashboard/settings/access", label: "アクセス", description: "APIキー・アカウント", icon: Key },
+  { href: "/dashboard/settings/appearance", label: "表示", description: "テーマ・配色", icon: Palette },
 ]
 
 export default async function SettingsPage() {
-    const supabase = await createClient()
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
 
-    // Get current user
-    const { data: { user } } = await supabase.auth.getUser()
+  return (
+    <div className="flex-1 overflow-y-auto bg-background pb-12">
+      <div className="px-4 pt-4 pb-3">
+        <h1 className="text-2xl font-bold">設定</h1>
+      </div>
 
-    if (!user) {
-        redirect('/login')
-    }
+      <div className="mx-3 rounded-2xl bg-card overflow-hidden divide-y divide-border/40">
+        {SETTING_ROWS.map(row => {
+          const Icon = row.icon
+          return (
+            <Link
+              key={row.href}
+              href={row.href}
+              className="flex items-center gap-3 min-h-[60px] px-4 py-2 active:bg-muted/60"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-base">{row.label}</span>
+                <span className="block text-[11px] text-muted-foreground truncate">{row.description}</span>
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground/60" />
+            </Link>
+          )
+        })}
+      </div>
 
-    const [projectsResult, spacesResult] = await Promise.all([
-        supabase
-            .from("projects")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("created_at", { ascending: false }),
-        supabase
-            .from("spaces")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("created_at", { ascending: false }),
-    ])
-
-    return (
-        <div className="flex-1 overflow-y-auto bg-background">
-            <div className="mx-auto w-full max-w-6xl px-4 py-4 md:px-6 md:py-6">
-                <div className="mb-5">
-                    <h1 className="text-xl font-semibold md:text-2xl">設定</h1>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                        AI、連携、通知、表示をまとめて管理します。
-                    </p>
-                </div>
-
-                <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-                    <aside className="lg:sticky lg:top-4 lg:self-start">
-                        <nav className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
-                            {SETTING_GROUPS.map(group => (
-                                <div
-                                    key={group.id}
-                                    className="min-w-[190px] shrink-0 rounded-lg border bg-card p-2 lg:min-w-0"
-                                >
-                                    <a href={`#${group.id}`} className="block rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50">
-                                        <div className="text-sm font-medium">{group.label}</div>
-                                        <div className="mt-0.5 text-xs text-muted-foreground">{group.description}</div>
-                                    </a>
-                                    <div className="mt-1 space-y-0.5">
-                                        {group.items.map(item => {
-                                            const Icon = item.icon
-                                            return (
-                                                <a
-                                                    key={item.id}
-                                                    href={`#${item.id}`}
-                                                    className="flex min-h-8 items-center gap-2 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                                                >
-                                                    <Icon className="h-3.5 w-3.5" />
-                                                    {item.label}
-                                                </a>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </nav>
-                    </aside>
-
-                    <main className="space-y-6">
-                        <SettingsGroup id="ai" label="AI" description="思考メモの整理品質と、AIが参照する情報を設定します。">
-                            <div id="ai-model" className="scroll-mt-4">
-                                <AiModelSettings />
-                            </div>
-                            <div id="ai-context" className="scroll-mt-4">
-                                <AiContextSettings />
-                            </div>
-                        </SettingsGroup>
-
-                        <SettingsGroup id="workflow" label="連携" description="予定登録、通知、外部サービスとのつながりを設定します。">
-                            <div id="calendar" className="scroll-mt-4">
-                                <CalendarSettings />
-                            </div>
-                            <div id="notifications" className="scroll-mt-4">
-                                <NotificationSettings />
-                            </div>
-                        </SettingsGroup>
-
-                        <SettingsGroup id="project" label="プロジェクト" description="プロジェクトとタグの色を調整します。">
-                            <ProjectSettings
-                                initialProjects={projectsResult.data ?? []}
-                                initialSpaces={spacesResult.data ?? []}
-                            />
-                        </SettingsGroup>
-
-                        <SettingsGroup id="access" label="アクセス" description="外部アプリから使うキーとアカウント情報を管理します。">
-                            <div id="api-keys" className="scroll-mt-4">
-                                <ApiKeySettings />
-                            </div>
-                            <div id="account" className="scroll-mt-4">
-                                <AccountSettings userEmail={user.email} />
-                            </div>
-                        </SettingsGroup>
-
-                        <SettingsGroup id="appearance" label="表示" description="画面の見た目と操作感を調整します。">
-                            <div id="theme" className="scroll-mt-4">
-                                <ThemeSettings />
-                            </div>
-                        </SettingsGroup>
-                    </main>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-function SettingsGroup({
-    id,
-    label,
-    description,
-    children,
-}: {
-    id: string
-    label: string
-    description: string
-    children: ReactNode
-}) {
-    return (
-        <section id={id} className="scroll-mt-4">
-            <div className="mb-3">
-                <h2 className="text-base font-semibold">{label}</h2>
-                <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
-            </div>
-            <div className="space-y-3">{children}</div>
-        </section>
-    )
+      <p className="px-5 pt-2 text-[11px] text-muted-foreground leading-4">
+        各項目をタップすると詳細設定が開きます。
+      </p>
+    </div>
+  )
 }

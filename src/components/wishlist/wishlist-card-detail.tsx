@@ -520,7 +520,7 @@ export function WishlistCardDetail({
                 <p className="text-xs text-muted-foreground leading-5">{helperText}</p>
                 {needsConfig && (
                   <Link
-                    href="/dashboard/settings#project-repos"
+                    href="/dashboard/settings/projects#project-repos"
                     className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
                   >
                     <SettingsIcon className="h-3.5 w-3.5" />
