@@ -1013,12 +1013,56 @@ async function main() {
           .from('ai_tasks')
           .update({
             tmux_session_name: result.sessionName,
-            result: { message: 'Codex セッションを起動しました。実行完了後、結果が表示されます。' },
+            result: { message: 'Codex セッションを起動しました。実行完了後、結果が表示されます。', executor: 'codex' },
           })
           .eq('id', task.id)
 
         notify(`Codex 実行開始: ${shortPrompt}`, 'Focusmap AI')
         console.log(`[task-runner] Codex session started: ${task.id} (${result.sessionName})`)
+
+        // ─── 短期レコンサイル: 起動後5秒×8回 = 最大40秒待機 ───
+        // 短い質問だと数秒で完了するので、この task-runner サイクル内に
+        // 完了検知 + 結果取得まで済ませる。長いタスクは次サイクルで処理。
+        const codexLogPath = `/tmp/codex-exec-${task.id}.log`
+        let detected = false
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setTimeout(r, 5000))
+
+          // ライブログを即時同期（UI に「動いてる感」を出す）
+          if (fs.existsSync(codexLogPath)) {
+            try {
+              const content = fs.readFileSync(codexLogPath, 'utf-8')
+              const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+              const tail = cleaned.slice(-6000)
+              await supabase
+                .from('ai_tasks')
+                .update({ result: { live_log: tail, executor: 'codex' } })
+                .eq('id', task.id)
+            } catch { /* ignore */ }
+          }
+
+          // tmux セッション消滅 = 完了 → 即時 reconcile
+          if (!tmuxSessionExists(result.sessionName)) {
+            const finalContent = fs.existsSync(codexLogPath)
+              ? fs.readFileSync(codexLogPath, 'utf-8').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').slice(-3000)
+              : 'Codex セッションは終了しました（ログなし）'
+            await supabase
+              .from('ai_tasks')
+              .update({
+                status: 'completed',
+                completed_at: new Date().toISOString(),
+                result: { message: finalContent, executor: 'codex' },
+              })
+              .eq('id', task.id)
+            notify(`完了: ${shortPrompt}`, 'Focusmap AI')
+            console.log(`[task-runner] Codex finished quickly: ${task.id} (${(i + 1) * 5}s)`)
+            detected = true
+            break
+          }
+        }
+        if (!detected) {
+          console.log(`[task-runner] Codex still running after 40s, will reconcile next cycle: ${task.id}`)
+        }
         continue
       }
 

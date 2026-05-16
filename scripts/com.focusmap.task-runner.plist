@@ -31,9 +31,9 @@
     <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/run-task-runner.sh</string>
   </array>
 
-  <!-- 毎60秒（1分）ごとに実行 -->
+  <!-- 毎15秒ごとに実行（応答速度優先） -->
   <key>StartInterval</key>
-  <integer>60</integer>
+  <integer>15</integer>
 
   <!-- 作業ディレクトリ -->
   <key>WorkingDirectory</key>

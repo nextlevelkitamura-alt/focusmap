@@ -166,6 +166,8 @@ export function WishlistCardDetail({
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
   const [copiedUrl, setCopiedUrl] = useState(false)
+  const [elapsedSecs, setElapsedSecs] = useState(0)
+  const sentAtRef = useRef<number | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -222,6 +224,19 @@ export function WishlistCardDetail({
     }
   })
 
+  // 接続待ち中の経過秒数カウンター
+  useEffect(() => {
+    if (launchStep !== 'sent') {
+      sentAtRef.current = null
+      setElapsedSecs(0)
+      return
+    }
+    if (!sentAtRef.current) sentAtRef.current = Date.now()
+    const id = setInterval(() => {
+      setElapsedSecs(Math.floor((Date.now() - sentAtRef.current!) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [launchStep])
 
   if (!item) return null
 
@@ -669,13 +684,28 @@ export function WishlistCardDetail({
                         </span>
                       </div>
                       {launchStep !== 'sending' && (
-                        <div className="flex items-center gap-2">
-                          {launchStep === 'sent'
-                            ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
-                            : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                          <span className={launchStep === 'sent' ? 'text-blue-600' : 'text-muted-foreground'}>
-                            {launchStep === 'sent' ? '接続しています...' : '接続しました'}
-                          </span>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            {launchStep === 'sent'
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
+                              : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                            <span className={launchStep === 'sent' ? 'text-blue-600' : 'text-muted-foreground'}>
+                              {launchStep === 'sent'
+                                ? `接続しています...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
+                                : '接続しました'}
+                            </span>
+                          </div>
+                          {launchStep === 'sent' && (
+                            <div className="pl-5 space-y-1 text-[11px] text-muted-foreground">
+                              <p>通常15〜45秒かかります</p>
+                              {(() => {
+                                const status = aiTask?.status
+                                if (status === 'running') return <p className="text-blue-500 font-medium">▶ Claude Code が起動しました — URLを取得中...</p>
+                                if (status === 'pending') return <p>Mac でエージェントの起動を待っています...</p>
+                                return null
+                              })()}
+                            </div>
+                          )}
                         </div>
                       )}
                       {(launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
