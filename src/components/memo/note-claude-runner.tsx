@@ -3,10 +3,117 @@
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import QRCode from "react-qr-code"
-import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings } from "lucide-react"
+import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, Circle, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { AiTask } from "@/types/ai-task"
+
+// ─────────────────────────────────────────────────────────────────────────
+// Codex 実行ステップタイムライン
+//   task-runner が ai_tasks.result.steps[] に進捗を蓄積するので、
+//   想定順序に沿ってチェックマーク／スピナー／⋯ で表示する
+// ─────────────────────────────────────────────────────────────────────────
+type CodexStepStatus = "done" | "active" | "failed"
+interface CodexStepRecord {
+  key: string
+  label: string
+  status: CodexStepStatus
+  at: string
+}
+
+const CODEX_STEP_ORDER: { key: string; label: string }[] = [
+  { key: "received", label: "Mac で受信" },
+  { key: "daemon_ready", label: "Codex daemon 接続OK" },
+  { key: "spawn", label: "tmux セッション起動" },
+  { key: "connected", label: "Codex が app-server に接続" },
+  { key: "thread_visible", label: "Mobile / Codex.app に表示" },
+  { key: "completed", label: "完了" },
+]
+
+function formatStepTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+  } catch {
+    return ""
+  }
+}
+
+function CodexStepTimeline({
+  steps,
+  isRunning,
+  failed,
+}: {
+  steps: CodexStepRecord[]
+  isRunning: boolean
+  failed: boolean
+}) {
+  // 既知の step key と未知の step key をマージ（custom step もそのまま末尾に並べる）
+  const byKey = new Map(steps.map(s => [s.key, s]))
+  const known = CODEX_STEP_ORDER.map(({ key, label }) => ({
+    key,
+    label,
+    record: byKey.get(key) ?? null,
+  }))
+  const unknown = steps.filter(s => !CODEX_STEP_ORDER.some(o => o.key === s.key))
+    .map(s => ({ key: s.key, label: s.label, record: s }))
+  const allRows = [...known, ...unknown]
+
+  // 最後に到達した既知ステップ (= done) を求める。
+  // その次のステップを「active」として表示（スピナー）
+  const lastDoneIdx = allRows.reduceRight<number>((acc, row, idx) => {
+    if (acc !== -1) return acc
+    return row.record?.status === "done" ? idx : -1
+  }, -1)
+
+  return (
+    <ol className="space-y-1 text-[11px]">
+      {allRows.map((row, idx) => {
+        const rec = row.record
+        const isFailed = rec?.status === "failed"
+        const isDone = rec?.status === "done"
+        const isExplicitlyActive = rec?.status === "active"
+        // 「次に進む予定」のステップ = 最後の done の直後 + まだ完了していない + 全体が running 中
+        const isImplicitActive = !rec && isRunning && !failed && idx === lastDoneIdx + 1
+        const isActiveLike = isExplicitlyActive || isImplicitActive
+
+        const Icon = isFailed
+          ? XCircle
+          : isDone
+            ? CheckCircle2
+            : isActiveLike
+              ? Loader2
+              : Circle
+
+        return (
+          <li
+            key={row.key}
+            className={cn(
+              "flex items-start gap-2 leading-tight",
+              isFailed ? "text-red-600 dark:text-red-300"
+                : isDone ? "text-foreground"
+                : isActiveLike ? "text-blue-600 dark:text-blue-300"
+                : "text-muted-foreground/60",
+            )}
+          >
+            <Icon className={cn(
+              "w-3.5 h-3.5 shrink-0 mt-[1px]",
+              isActiveLike && !isFailed && !isDone && "animate-spin",
+              isDone && "text-emerald-500",
+              isFailed && "text-red-500",
+            )} />
+            <span className="flex-1 min-w-0 break-words">{rec?.label ?? row.label}</span>
+            {rec?.at && (
+              <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                {formatStepTime(rec.at)}
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
 
 interface NoteClaudeRunnerProps {
   noteId: string
@@ -226,21 +333,51 @@ export function NoteClaudeRunnerPanel({
             </div>
           )}
 
-          {/* Codex 実行中: ライブログ表示 */}
-          {latestTask.executor === "codex" && isActive && (() => {
-            const liveLog = typeof latestTask.result === "object" && latestTask.result !== null
-              ? (latestTask.result as { live_log?: string }).live_log
-              : null
+          {/* Codex: 進捗ステップタイムライン（実行中・完了・失敗で常に表示）*/}
+          {latestTask.executor === "codex" && (() => {
+            const resultObj = typeof latestTask.result === "object" && latestTask.result !== null
+              ? (latestTask.result as { steps?: CodexStepRecord[]; live_log?: string; codex_thread_id?: string })
+              : {}
+            const steps = Array.isArray(resultObj.steps) ? resultObj.steps : []
+            const liveLog = resultObj.live_log
+            const threadId = resultObj.codex_thread_id
+            const isFailed = latestTask.status === "failed"
+            const isRunning = isActive
+
             return (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Codex が実行中（1分おきにログ更新）
-                </div>
-                {liveLog && (
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
-                    {liveLog.slice(-2500)}
-                  </pre>
+              <div className="space-y-2">
+                {steps.length > 0 && (
+                  <div className="rounded-md border bg-muted/20 p-2">
+                    <CodexStepTimeline
+                      steps={steps}
+                      isRunning={isRunning}
+                      failed={isFailed}
+                    />
+                    {threadId && (
+                      <div className="mt-2 pt-2 border-t text-[10px] text-muted-foreground">
+                        thread <span className="font-mono">{threadId.slice(0, 8)}</span> ＝
+                        スマホ ChatGPT app の 💻 アイコンから接続できます
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* ライブログ（起動直後は空、Codex が走ると流れ始める） */}
+                {isRunning && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      ライブログ（task-runner サイクルごとに更新）
+                    </div>
+                    {liveLog ? (
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
+                        {liveLog.slice(-2500)}
+                      </pre>
+                    ) : (
+                      <div className="rounded bg-muted/20 px-2 py-1.5 text-[10px] text-muted-foreground italic">
+                        まだ出力なし（起動直後）
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )
