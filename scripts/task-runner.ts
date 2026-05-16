@@ -245,24 +245,44 @@ async function launchRemoteControl(opts: {
   // プロンプトをファイルに保存（改行・特殊文字を安全に扱う）
   fs.writeFileSync(promptPath, opts.prompt, 'utf-8')
 
-  // タイトルにメモ冒頭を入れる（dquote と backslash をエスケープ）
-  const title = `memo: ${opts.prompt.slice(0, 40).replace(/\\/g, '').replace(/"/g, '')}`
+  // タイトル: 改行・引用符・バックスラッシュを除去（tmux/claude のパース対策）
+  const title = `memo: ${opts.prompt
+    .slice(0, 40)
+    .replace(/[\n\r\t]+/g, ' ')
+    .replace(/\\/g, '')
+    .replace(/"/g, '')
+    .replace(/'/g, '')
+    .trim()}`
 
-  // 既存ログ削除
+  // 既存ログ削除して空ファイル作成（pipe-pane は append しか出来ないため）
   try { fs.unlinkSync(logPath) } catch { /* ignore */ }
+  fs.writeFileSync(logPath, '', 'utf-8')
 
-  // ANTHROPIC_API_KEY が環境にあると Remote Control が動かないので除外
-  const envExports = 'unset ANTHROPIC_API_KEY; unset CLAUDECODE; '
+  // claude を tmux 内で「TTYを保ったまま」起動する。
+  // パイプ（| tee）すると非対話と判定されて --print モードになるため、
+  // pipe-pane で別途出力を捕捉する。
+  // ANTHROPIC_API_KEY と CLAUDECODE は Remote Control が動かないので除外。
+  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)}`
+  const bashWrapped = `bash -c ${JSON.stringify(inner)}`
 
-  // tmux detached session で claude --remote-control を起動。出力は tee でログ保存
-  const claudeCmd = `${envExports}claude --remote-control "${title.replace(/"/g, '')}" 2>&1 | tee "${logPath}"`
   try {
     execSync(
-      `tmux new-session -d -s "${sessionName}" -c "${opts.cwd}" '${claudeCmd.replace(/'/g, "'\\''")}'`,
+      `tmux new-session -d -s ${JSON.stringify(sessionName)} -c ${JSON.stringify(opts.cwd)} ${bashWrapped}`,
       { stdio: 'ignore' },
     )
   } catch (err) {
     return { success: false, error: `tmux 起動失敗: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  // tmux pipe-pane で stdout/stderr を取り出してログファイルに追記
+  try {
+    execSync(
+      `tmux pipe-pane -o -t ${JSON.stringify(sessionName)} ${JSON.stringify(`cat >> ${logPath}`)}`,
+      { stdio: 'ignore' },
+    )
+  } catch {
+    // pipe-pane 失敗してもセッション自体は動くので警告だけ
+    console.error('[launchRemoteControl] pipe-pane failed (出力捕捉できないが続行)')
   }
 
   // セッションURLをキャプチャ（最大60秒）
@@ -546,7 +566,7 @@ async function main() {
   // ─── 1. due なタスクを取得 ───────────────────────────────────────────
   const { data: rawDueTasks, error } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, source_note_id')
+    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, source_note_id, source_ideal_goal_id')
     .eq('status', 'pending')
     .not('scheduled_at', 'is', null)
     .lte('scheduled_at', new Date().toISOString())
@@ -605,7 +625,7 @@ async function main() {
     }
 
     // ─── メモから起動: claude --remote-control（tmux detached）───
-    if (task.source_note_id && task.cwd) {
+    if ((task.source_note_id || task.source_ideal_goal_id) && task.cwd) {
       notify(`スマホで操作可能に起動中: ${shortPrompt}`, 'Focusmap AI')
       const result = await launchRemoteControl({
         taskId: task.id,
