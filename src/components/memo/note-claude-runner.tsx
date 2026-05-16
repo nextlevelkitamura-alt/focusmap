@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import QRCode from "react-qr-code"
 import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings } from "lucide-react"
@@ -123,8 +123,24 @@ export function NoteClaudeRunnerPanel({
   isProjectAssigned: boolean
   isRepoConfigured: boolean
 }) {
+  // デフォルト展開（完了・失敗の結果に気づきやすくする）
   const [expanded, setExpanded] = useState(true)
   const [copied, setCopied] = useState(false)
+
+  // タスクの状態が変わったとき、自動で展開（折り畳んでいても気づけるように）
+  // status の遷移を見て expanded を強制 true にする
+  // 何度も繰り返さないよう、直近の status を覚える
+  const lastStatusRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!latestTask) return
+    if (lastStatusRef.current !== latestTask.status) {
+      // 完了・失敗時は展開、開始時も展開
+      if (["running", "completed", "failed"].includes(latestTask.status)) {
+        setExpanded(true)
+      }
+      lastStatusRef.current = latestTask.status
+    }
+  }, [latestTask])
 
   if (!isProjectAssigned) return null
 
@@ -278,14 +294,18 @@ export function NoteClaudeRunnerPanel({
             </details>
           )}
 
-          {/* 結果メッセージ */}
+          {/* 結果メッセージ（完了時はデフォルト展開で目立つように）*/}
           {latestTask.status === "completed" && resultMessage && (
-            <details className="text-[11px]">
-              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">結果を表示</summary>
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] font-mono">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {latestTask.executor === "codex" ? "Codex" : "Claude"} 実行完了
+                <span className="text-muted-foreground font-normal">（{resultMessage.length} 字）</span>
+              </div>
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-emerald-500/5 border border-emerald-500/20 p-2 text-[10px] leading-4 font-mono">
                 {resultMessage}
               </pre>
-            </details>
+            </div>
           )}
 
           {/* エラー */}
