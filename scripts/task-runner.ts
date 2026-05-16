@@ -192,6 +192,21 @@ function runClaude(opts: {
 // ─────────────────────────────────────────────────────────────────────────
 const REMOTE_URL_PATTERN = /https:\/\/claude\.ai\/code\/[A-Za-z0-9_\-?=&./%]+/
 
+/**
+ * bash の ANSI-C quoting ($'...') 形式で文字列を引用符化する。
+ * 改行・タブ等を実際の制御文字として bash に渡せる。
+ * 例: "hello\nworld" → $'hello\nworld' （bash上で改行を含む文字列として展開される）
+ */
+function ansiCQuote(s: string): string {
+  return "$'" + s
+    .replace(/\\/g, '\\\\')   // backslash 最初
+    .replace(/'/g, "\\'")     // single quote
+    .replace(/\n/g, '\\n')    // newline
+    .replace(/\r/g, '\\r')    // CR
+    .replace(/\t/g, '\\t')    // tab
+    + "'"
+}
+
 async function waitForRemoteUrl(logPath: string, timeoutMs: number): Promise<string | null> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -263,9 +278,10 @@ async function launchRemoteControl(opts: {
   // pipe-pane で別途出力を捕捉する。
   // ANTHROPIC_API_KEY と CLAUDECODE は Remote Control が動かないので除外。
   // --dangerously-skip-permissions: 許可ダイアログを全部スキップ（無人実行のため必須）
-  // プロンプトは positional 引数で渡す → 起動時の最初の1メッセージとして送信される
-  // （以前は paste-buffer 経由で送っていたが改行が個別の Enter として送信されてしまうため廃止）
-  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)} --dangerously-skip-permissions ${JSON.stringify(opts.prompt)}`
+  // プロンプトは ANSI-C quoting ($'...') で渡す → 改行が実際の改行として claude に届く
+  // （JSON.stringify だと \n がリテラル2文字として渡されてしまうため）
+  const promptQuoted = ansiCQuote(opts.prompt)
+  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)} --dangerously-skip-permissions ${promptQuoted}`
   const bashWrapped = `bash -c ${JSON.stringify(inner)}`
 
   try {
