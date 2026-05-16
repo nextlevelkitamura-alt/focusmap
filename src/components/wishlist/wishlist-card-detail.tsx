@@ -526,7 +526,8 @@ export function WishlistCardDetail({
             const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
             const repoConfigured = !!project?.repo_path
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
-            const disabled = !item.project_id || !repoConfigured || !!active
+            // Claude はリポ設定必須、Codex は不要（クリップボード方式なので）
+            const claudeDisabled = !item.project_id || !repoConfigured || !!active
             const needsConfig = !item.project_id || !repoConfigured
             const taskExecutor = aiTask?.executor ?? null
             return (
@@ -536,13 +537,9 @@ export function WishlistCardDetail({
                   AI エージェントで実行
                 </Label>
                 <p className="text-xs text-muted-foreground leading-5">
-                  {!item.project_id
-                    ? "プロジェクト未設定のため使えません"
-                    : !repoConfigured
-                      ? "このプロジェクトにリポジトリパスが未設定です"
-                      : active
-                        ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に状況）`
-                        : "プロジェクトのリポジトリで、選んだ AI を起動します"}
+                  {active
+                    ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に状況）`
+                    : "Claude = プロジェクトのリポジトリで起動。Codex = クリップボードにコピーして ChatGPT アプリを開く"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -550,7 +547,7 @@ export function WishlistCardDetail({
                     className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
                   >
                     <SettingsIcon className="h-3.5 w-3.5" />
-                    {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
+                    Claude 用にリポジトリパスを設定（Codex は不要）
                   </Link>
                 )}
 
@@ -560,7 +557,7 @@ export function WishlistCardDetail({
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={disabled || isLaunchingClaude}
+                      disabled={claudeDisabled || isLaunchingClaude}
                       onClick={async () => {
                         setLaunchError(null)
                         setIsLaunchingClaude(true)
@@ -582,14 +579,29 @@ export function WishlistCardDetail({
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={disabled || isLaunchingCodex}
+                      disabled={isLaunchingCodex || !draftTitle.trim()}
                       onClick={async () => {
                         setLaunchError(null)
                         setIsLaunchingCodex(true)
                         try {
-                          await onLaunchCodex(item)
+                          // ① メモ見出し+詳細をクリップボードにコピー
+                          const text = [
+                            `# ${draftTitle.trim()}`,
+                            draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
+                          ].filter(Boolean).join('\n')
+                          await navigator.clipboard.writeText(text)
+                          // ② ChatGPT アプリを起動（URL スキーム）
+                          //    iOS: chatgpt:// で ChatGPT アプリが開く
+                          //    失敗時のフォールバックとして 1.5秒後に Web 版へ
+                          const openedAt = Date.now()
+                          window.location.href = 'chatgpt://'
+                          setTimeout(() => {
+                            if (document.visibilityState === 'visible' && Date.now() - openedAt > 1000) {
+                              window.open('https://chatgpt.com/', '_blank')
+                            }
+                          }, 1500)
                         } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "起動に失敗")
+                          setLaunchError(e instanceof Error ? e.message : "クリップボードコピー失敗")
                         } finally {
                           setIsLaunchingCodex(false)
                         }
@@ -597,7 +609,7 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">速い・サンドボックス強</span>
+                      <span className="text-[10px] text-muted-foreground">コピー → ChatGPT で貼付</span>
                     </Button>
                   )}
                 </div>
