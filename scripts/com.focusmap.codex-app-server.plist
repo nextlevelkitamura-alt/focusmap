@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Codex App-Server 常駐 daemon
+  =============================
+  `codex app-server --listen ws://127.0.0.1:7878` を常時起動。
+  task-runner はこれに `codex --remote ws://127.0.0.1:7878 "prompt"` で接続して
+  プロンプトを投入する。これにより:
+    - state_5.sqlite に thread 作成
+    - Codex.app の app-server が同じ DB を読む
+    - ペアリング済 mobile ChatGPT app の laptop-icon で見える
+
+  インストール:
+    cp scripts/com.focusmap.codex-app-server.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.focusmap.codex-app-server.plist
+
+  ログ:
+    tail -f /tmp/codex-app-server.log
+    tail -f /tmp/codex-app-server.err
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.focusmap.codex-app-server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/run-codex-app-server.sh</string>
+  </array>
+
+  <!-- 起動失敗時は自動再起動 -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- 再起動の最小間隔（10秒、即時連続再起動を防ぐ） -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/codex-app-server.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/codex-app-server.err</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kitamuranaohiro</string>
+</dict>
+</plist>

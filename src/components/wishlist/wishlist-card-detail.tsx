@@ -582,10 +582,8 @@ export function WishlistCardDetail({
                   {active
                     ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
                     : !item.project_id
-                      ? "⚠ プロジェクト未設定。メモにプロジェクトを紐付けてから（Codex/Claude 共に必要）"
-                      : !repoConfigured
-                        ? "⚠ プロジェクトにリポジトリパス未設定。下のリンクから設定してください"
-                        : "Claude / Codex どちらもスマホで進捗確認可（Codex はペアリング済 Codex.app 経由で mobile に自動表示）"}
+                      ? "⚠ プロジェクト未設定（Claude には必須、Codex は任意）"
+                      : "Claude = スマホで監視 / Codex = Mac で Codex.app 起動、ペアリング済の mobile にも自動表示"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -624,20 +622,19 @@ export function WishlistCardDetail({
                       <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
                     </Button>
                   )}
-                  {onLaunchCodex && (
+                  {onLaunchCodexApp && (
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={claudeDisabled || isLaunchingCodex}
+                      disabled={!draftTitle.trim() || isLaunchingCodex}
                       onClick={async () => {
                         setLaunchError(null)
                         setIsLaunchingCodex(true)
                         try {
-                          // A2: codex exec headless（完全自動）
-                          // - tmux 内で codex exec 実行 → state_5.sqlite に thread 作成
-                          // - mobile ChatGPT app の laptop-icon device に自動表示（ペアリング経由）
-                          // - Focusmap も result.live_log で1分おきに進捗追跡
-                          await onLaunchCodex(item)
+                          // A1: codex:// URL を Mac で open → Codex.app に prompt 注入
+                          // - Codex.app の app-server がセッション処理 → mobile/desktop の Codex に出る
+                          // - 注: ユーザーが Mac で Enter を押す必要あり（自動実行はしない）
+                          await onLaunchCodexApp(item)
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動失敗")
                         } finally {
@@ -647,27 +644,27 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">スマホで監視・無人実行</span>
+                      <span className="text-[10px] text-muted-foreground">Codex.app に送信（mobile表示可）</span>
                     </Button>
                   )}
                 </div>
 
-                {/* サブオプション: codex:// で Codex.app を開いて手動 Enter（A1）*/}
-                {onLaunchCodexApp && (
+                {/* サブオプション: codex exec ヘッドレス実行（A2、自動だが mobile に出ない）*/}
+                {onLaunchCodex && (
                   <button
                     type="button"
-                    disabled={!draftTitle.trim()}
+                    disabled={claudeDisabled}
                     onClick={async () => {
                       setLaunchError(null)
                       try {
-                        await onLaunchCodexApp(item)
+                        await onLaunchCodex(item)
                       } catch (e) {
                         setLaunchError(e instanceof Error ? e.message : "起動失敗")
                       }
                     }}
                     className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
                   >
-                    ◎ Codex.app を開いて手動送信（Enter 必要、リポ任意）
+                    ◎ Codex バックグラウンド実行（完全自動、Focusmap でログ確認・Codex.app には出ない）
                   </button>
                 )}
 

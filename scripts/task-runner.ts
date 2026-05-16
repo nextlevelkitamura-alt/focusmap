@@ -333,16 +333,74 @@ async function launchRemoteControl(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Codex CLI 起動（codex remote-control = JSON-RPC サーバー、tmux内）
-//   - Claude --remote-control と違い、Codex CLI のリモコンは JSON-RPC サーバー型
-//   - サーバー起動後、Codex for Mac/ChatGPT mobile app が同アカウントで認識する
-//   - プロンプトはサーバーへの初期入力としては渡せないので、tmux内のプロセスに
-//     ANSI-C 引数として送れる codex exec の方を採用するハイブリッド方針:
-//     ① tmux で `codex exec` を起動（ヘッドレス1発実行 + バイパスフラグ）
-//     ② プロンプト先頭に「# タイトル\n\n## 詳細」ブロックを付与してチャット名生成に効かせる
-//     ③ 出力ログを pipe-pane で捕捉
+// Codex app-server 健全性チェック（launchd 常駐の codex app-server に接続）
+//   - http://127.0.0.1:7878/readyz が HTTP 200 を返せば OK
+//   - 起動前に確認することで「daemon 停止」を即座に検知して step に記録
 // ─────────────────────────────────────────────────────────────────────────
-async function launchCodexExec(opts: {
+const CODEX_APP_SERVER_HTTP = 'http://127.0.0.1:7878'
+const CODEX_APP_SERVER_WS = 'ws://127.0.0.1:7878'
+
+function checkCodexAppServerReady(): { ready: boolean; error?: string } {
+  try {
+    const out = execSync(
+      `curl -sf -o /dev/null -w '%{http_code}' --max-time 3 ${CODEX_APP_SERVER_HTTP}/readyz`,
+      { encoding: 'utf-8', timeout: 5000 },
+    ).trim()
+    if (out === '200') return { ready: true }
+    return { ready: false, error: `readyz returned HTTP ${out}` }
+  } catch (e) {
+    return { ready: false, error: `daemon unreachable: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Codex ステップトラッキング
+//   - ai_tasks.result.steps[] に進捗イベントを蓄積し UI でタイムライン表示
+//   - 既存 key があれば上書き、なければ末尾追加
+//   - live_log も同時に渡せば一回の UPDATE で両方更新（書き込み競合を回避）
+// ─────────────────────────────────────────────────────────────────────────
+type CodexStepStatus = 'done' | 'active' | 'failed'
+interface CodexStep {
+  key: string
+  label: string
+  status: CodexStepStatus
+  at: string
+}
+
+function makeStep(key: string, label: string, status: CodexStepStatus = 'done'): CodexStep {
+  return { key, label, status, at: new Date().toISOString() }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function pushCodexStep(
+  supabase: any,
+  taskId: string,
+  step: CodexStep,
+  extra?: { liveLog?: string; threadId?: string; message?: string },
+): Promise<void> {
+  const { data } = await supabase.from('ai_tasks').select('result').eq('id', taskId).maybeSingle()
+  const current = (data?.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
+  const steps: CodexStep[] = Array.isArray(current.steps) ? [...current.steps] : []
+  const idx = steps.findIndex(s => s.key === step.key)
+  if (idx >= 0) steps[idx] = step
+  else steps.push(step)
+
+  const merged: Record<string, unknown> = { ...current, executor: 'codex', steps }
+  if (extra?.liveLog !== undefined) merged.live_log = extra.liveLog
+  if (extra?.threadId) merged.codex_thread_id = extra.threadId
+  if (extra?.message) merged.message = extra.message
+  await supabase.from('ai_tasks').update({ result: merged }).eq('id', taskId)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Codex CLI 起動（codex --remote 経由で app-server に接続）
+//   - codex app-server (launchd 常駐) に WebSocket 接続して thread を作成
+//   - 結果として ~/.codex/state_5.sqlite に thread が追加され、
+//     ペアリング済 Codex.app / ChatGPT mobile app の laptop アイコンで見える
+//   - tmux detached で常駐させ、stdout を pipe-pane で捕捉
+//   - 旧 launchCodexExec はモバイル可視性が無かったため置き換え
+// ─────────────────────────────────────────────────────────────────────────
+async function launchCodexRemote(opts: {
   taskId: string
   prompt: string  // GLM 整理済プロンプト
   cwd: string
@@ -377,12 +435,16 @@ async function launchCodexExec(opts: {
     : ''
   const fullPrompt = `${titleBlock}${opts.prompt}`
 
-  // codex exec を tmux 内で起動
+  // codex --remote (TUI mode) で app-server に接続し thread を作成
+  //   モバイル/Codex.app から接続可能になる
+  //   --remote: launchd 常駐の app-server (ws://127.0.0.1:7878) に接続
   //   --cd: 作業ディレクトリ
   //   --dangerously-bypass-approvals-and-sandbox: 全許可スキップ（無人実行）
-  //   --skip-git-repo-check: gitリポでなくても許可
-  //   プロンプトは positional 引数
-  const inner = `unset OPENAI_API_KEY_CONFLICT_NONE; exec codex exec --cd ${JSON.stringify(opts.cwd)} --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check ${ansiCQuote(fullPrompt)}`
+  //   --no-alt-screen: tmux でも安定動作（alt-screen モードを使わない）
+  //   プロンプトは positional 引数（ANSI-C quoting で改行を保持）
+  //   注: codex exec とは違い --remote は TUI でしか使えず、自動終了しない。
+  //       完了検知は syncCodexAppThreads (state_5.sqlite の updated_at_ms 停滞) で行う。
+  const inner = `exec codex --remote ${CODEX_APP_SERVER_WS} --cd ${JSON.stringify(opts.cwd)} --dangerously-bypass-approvals-and-sandbox --no-alt-screen ${ansiCQuote(fullPrompt)}`
   const bashWrapped = `bash -c ${JSON.stringify(inner)}`
 
   try {
@@ -401,10 +463,10 @@ async function launchCodexExec(opts: {
       { stdio: 'ignore' },
     )
   } catch {
-    console.error('[launchCodexExec] pipe-pane failed')
+    console.error('[launchCodexRemote] pipe-pane failed')
   }
 
-  // displayTitle は将来 RC モード対応時に使用
+  // displayTitle は将来 thread title 上書きに使用
   void opts.displayTitle
 
   return { success: true, sessionName }
@@ -458,11 +520,11 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return
 
-  // codex_app で running なタスク取得
+  // codex_app / codex 両 executor の running タスク取得（どちらも threads DB を共有）
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at')
-    .eq('executor', 'codex_app')
+    .select('id, prompt, codex_thread_id, started_at, executor, result, tmux_session_name')
+    .in('executor', ['codex_app', 'codex'])
     .eq('status', 'running')
     .limit(50)
 
@@ -473,6 +535,9 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
     prompt: string
     codex_thread_id: string | null
     started_at: string | null
+    executor: string | null
+    result: Record<string, unknown> | null
+    tmux_session_name: string | null
   }>) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
@@ -520,7 +585,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
       const row = rows[0]
 
       const liveLog = [
-        `📱 Codex.app セッション ${threadId.slice(0, 8)}`,
+        `📱 ${task.executor === 'codex' ? 'Codex CLI' : 'Codex.app'} セッション ${threadId.slice(0, 8)}`,
         `タイトル: ${row.title ?? '(未設定)'}`,
         `トークン使用: ${row.tokens_used ?? 0}`,
         `最終更新: ${row.updated_at_ms ? new Date(row.updated_at_ms).toLocaleString('ja-JP') : '(未更新)'}`,
@@ -530,17 +595,54 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         row.preview ?? '(空)',
       ].join('\n')
 
-      // archived=1 で completed 扱い
-      const updates: Record<string, unknown> = {
-        result: { live_log: liveLog, executor: 'codex_app', codex_thread_id: threadId },
+      const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
+
+      // 既存 steps を保持しつつ thread 検出を step として記録
+      const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
+      const steps: CodexStep[] = Array.isArray(current.steps) ? [...current.steps] : []
+      const hasThreadStep = steps.some(s => s.key === 'thread_visible')
+      if (!hasThreadStep) {
+        steps.push(makeStep('thread_visible', `Mobile/Codex.app に表示 (thread ${threadId.slice(0, 8)})`))
       }
-      if (row.archived === 1) {
+
+      const baseResult: Record<string, unknown> = {
+        ...current,
+        live_log: executor === 'codex' ? (current.live_log ?? liveLog) : liveLog,
+        executor,
+        codex_thread_id: threadId,
+        steps,
+      }
+
+      const updates: Record<string, unknown> = { result: baseResult }
+
+      // 完了判定:
+      //   - archived=1: ユーザーが手動でアーカイブ
+      //   - 90秒以上 thread が更新されていない: TUI が応答停止 = 完了とみなす
+      //     (codex --remote の TUI は自動終了しないため、stale 検知で代用)
+      const STALE_THRESHOLD_MS = 90_000
+      const isArchived = row.archived === 1
+      const isStale = !!(row.updated_at_ms && (Date.now() - row.updated_at_ms) > STALE_THRESHOLD_MS)
+      const isComplete = isArchived || (executor === 'codex' && isStale)
+
+      if (isComplete) {
+        const completedIdx = steps.findIndex(s => s.key === 'completed')
+        const completedStep = makeStep('completed', isArchived ? '完了（アーカイブ済）' : '完了（応答停止検知）')
+        if (completedIdx >= 0) steps[completedIdx] = completedStep
+        else steps.push(completedStep)
         updates.status = 'completed'
         updates.completed_at = new Date().toISOString()
         updates.result = {
-          message: `Codex.app セッション完了\n\n${liveLog}`,
-          executor: 'codex_app',
-          codex_thread_id: threadId,
+          ...baseResult,
+          steps,
+          message: `${executor === 'codex' ? 'Codex' : 'Codex.app'} セッション完了\n\n${liveLog}`,
+        }
+
+        // codex (CLI) の場合、TUI は自動終了しないので tmux セッションを掃除
+        if (executor === 'codex' && task.tmux_session_name) {
+          try {
+            execSync(`tmux kill-session -t ${JSON.stringify(task.tmux_session_name)}`, { stdio: 'ignore' })
+            console.log(`[codex] tmux cleaned: ${task.tmux_session_name}`)
+          } catch { /* セッション既に消滅 */ }
         }
       }
       await supabase
@@ -567,13 +669,17 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 async function syncCodexLiveLogs(supabase: any): Promise<void> {
   const { data: codexRunning } = await supabase
     .from('ai_tasks')
-    .select('id, tmux_session_name')
+    .select('id, tmux_session_name, result')
     .eq('executor', 'codex')
     .eq('status', 'running')
     .not('tmux_session_name', 'is', null)
     .limit(20)
 
-  for (const task of (codexRunning ?? []) as Array<{ id: string; tmux_session_name: string }>) {
+  for (const task of (codexRunning ?? []) as Array<{
+    id: string
+    tmux_session_name: string
+    result: Record<string, unknown> | null
+  }>) {
     if (!tmuxSessionExists(task.tmux_session_name)) continue  // reconcile が処理する
     const logPath = `/tmp/codex-exec-${task.id}.log`
     if (!fs.existsSync(logPath)) continue
@@ -583,9 +689,11 @@ async function syncCodexLiveLogs(supabase: any): Promise<void> {
       const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
       // 末尾 6000 字（UI で読みやすい範囲）
       const tail = cleaned.slice(-6000)
+      // 既存 result (steps/codex_thread_id) を保持したまま live_log のみ差し替え
+      const merged = { ...(task.result ?? {}), executor: 'codex', live_log: tail }
       await supabase
         .from('ai_tasks')
-        .update({ result: { live_log: tail, executor: 'codex' } })
+        .update({ result: merged })
         .eq('id', task.id)
     } catch {
       // ログ読めなくても続行
@@ -597,7 +705,7 @@ async function syncCodexLiveLogs(supabase: any): Promise<void> {
 async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
   const { data: runningTasks } = await supabase
     .from('ai_tasks')
-    .select('id, executor, tmux_session_name, started_at')
+    .select('id, executor, tmux_session_name, started_at, result')
     .eq('status', 'running')
     .not('tmux_session_name', 'is', null)
     .limit(50)
@@ -607,6 +715,7 @@ async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
     executor: string | null
     tmux_session_name: string | null
     started_at: string | null
+    result: Record<string, unknown> | null
   }>
   for (const task of rows) {
     if (!task.tmux_session_name) continue
@@ -633,12 +742,26 @@ async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
       ? 'Codex セッションは終了しました'
       : 'Remote Control セッションは終了しました'
 
+    // Codex の場合は既存 result (steps/thread_id) を保持しつつ completed step を追加
+    let mergedResult: Record<string, unknown>
+    if (executor === 'codex') {
+      const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
+      const steps: CodexStep[] = Array.isArray(current.steps) ? [...current.steps] : []
+      const completedIdx = steps.findIndex(s => s.key === 'completed')
+      const completedStep = makeStep('completed', '完了')
+      if (completedIdx >= 0) steps[completedIdx] = completedStep
+      else steps.push(completedStep)
+      mergedResult = { ...current, executor, steps, live_log: tail, message: tail || defaultMessage }
+    } else {
+      mergedResult = { message: tail || defaultMessage, executor }
+    }
+
     await supabase
       .from('ai_tasks')
       .update({
         status: 'completed',
         completed_at: new Date().toISOString(),
-        result: { message: tail || defaultMessage, executor },
+        result: mergedResult,
       })
       .eq('id', task.id)
     console.log(`[task-runner] ${executor} session ended: ${task.id}`)
@@ -987,10 +1110,36 @@ async function main() {
         continue
       }
 
-      // ─── Codex executor ───
+      // ─── Codex executor (app-server 経由 / mobile・Codex.app に出現) ───
       if (executor === 'codex') {
         notify(`Codex 起動中: ${shortPrompt}`, 'Focusmap AI')
-        const result = await launchCodexExec({
+
+        // ① Mac で受信（status=running 設定済 → step 化）
+        await pushCodexStep(supabase, task.id,
+          makeStep('received', 'Mac の task-runner が受信'))
+
+        // ② daemon 健全性チェック（codex app-server が起動していないと thread 作成できない）
+        const health = checkCodexAppServerReady()
+        if (!health.ready) {
+          await pushCodexStep(supabase, task.id,
+            makeStep('daemon_ready', `Codex daemon 未起動: ${health.error}`, 'failed'))
+          await supabase
+            .from('ai_tasks')
+            .update({
+              status: 'failed',
+              error: `codex app-server (ws://127.0.0.1:7878) に接続できません: ${health.error}\nlaunchctl で com.focusmap.codex-app-server が動作中か確認してください。`,
+              completed_at: now,
+            })
+            .eq('id', task.id)
+          notify(`Codex daemon 停止: ${shortPrompt}`, 'Focusmap AI')
+          console.error(`[task-runner] codex daemon unreachable: ${health.error}`)
+          continue
+        }
+        await pushCodexStep(supabase, task.id,
+          makeStep('daemon_ready', 'Codex daemon (ws://127.0.0.1:7878) 接続OK'))
+
+        // ③ tmux で codex --remote 起動
+        const result = await launchCodexRemote({
           taskId: task.id,
           prompt: task.prompt,
           cwd: task.cwd,
@@ -1000,6 +1149,8 @@ async function main() {
         })
 
         if (!result.success) {
+          await pushCodexStep(supabase, task.id,
+            makeStep('spawn', `tmux 起動失敗: ${result.error}`, 'failed'))
           await supabase
             .from('ai_tasks')
             .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
@@ -1008,50 +1159,86 @@ async function main() {
           console.error(`[task-runner] Codex launch failed: ${task.id}: ${result.error}`)
           continue
         }
+        await pushCodexStep(supabase, task.id,
+          makeStep('spawn', `tmux セッション起動 (${result.sessionName})`))
 
         await supabase
           .from('ai_tasks')
-          .update({
-            tmux_session_name: result.sessionName,
-            result: { message: 'Codex セッションを起動しました。実行完了後、結果が表示されます。', executor: 'codex' },
-          })
+          .update({ tmux_session_name: result.sessionName })
           .eq('id', task.id)
 
         notify(`Codex 実行開始: ${shortPrompt}`, 'Focusmap AI')
         console.log(`[task-runner] Codex session started: ${task.id} (${result.sessionName})`)
 
-        // ─── 短期レコンサイル: 起動後5秒×8回 = 最大40秒待機 ───
-        // 短い質問だと数秒で完了するので、この task-runner サイクル内に
-        // 完了検知 + 結果取得まで済ませる。長いタスクは次サイクルで処理。
+        // ─── 短期レコンサイル: 5秒×8回 = 最大40秒、step を進めながらポーリング ───
         const codexLogPath = `/tmp/codex-exec-${task.id}.log`
+        const codexDbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
+        const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
+        const sinceMs = Date.now() - 60_000
         let detected = false
+        let connectedStepDone = false
+        let threadStepDone = false
+        let threadId: string | null = null
+
         for (let i = 0; i < 8; i++) {
           await new Promise(r => setTimeout(r, 5000))
 
           // ライブログを即時同期（UI に「動いてる感」を出す）
+          let liveLog: string | undefined
           if (fs.existsSync(codexLogPath)) {
             try {
               const content = fs.readFileSync(codexLogPath, 'utf-8')
               const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-              const tail = cleaned.slice(-6000)
-              await supabase
-                .from('ai_tasks')
-                .update({ result: { live_log: tail, executor: 'codex' } })
-                .eq('id', task.id)
+              liveLog = cleaned.slice(-6000)
             } catch { /* ignore */ }
           }
 
-          // tmux セッション消滅 = 完了 → 即時 reconcile
+          // ④ Codex 接続検知（ログにバナーや WebSocket 接続文字列が出たら）
+          if (!connectedStepDone && liveLog && /connected|remote|websocket|app-server|session/i.test(liveLog)) {
+            connectedStepDone = true
+            await pushCodexStep(supabase, task.id,
+              makeStep('connected', 'Codex が app-server に接続'),
+              { liveLog })
+          } else if (liveLog !== undefined) {
+            await pushCodexStep(supabase, task.id,
+              makeStep('spawn', `tmux セッション起動 (${result.sessionName})`),
+              { liveLog })
+          }
+
+          // ⑤ Thread 作成検知（state_5.sqlite に thread が出現 → mobile に表示開始）
+          if (!threadStepDone && fs.existsSync(codexDbPath)) {
+            try {
+              const out = execSync(
+                `sqlite3 ${JSON.stringify(codexDbPath)} "SELECT id FROM threads WHERE first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs} ORDER BY created_at_ms DESC LIMIT 1"`,
+                { encoding: 'utf-8', timeout: 5000 },
+              ).trim()
+              if (out) {
+                threadId = out
+                threadStepDone = true
+                await pushCodexStep(supabase, task.id,
+                  makeStep('thread_visible', `Mobile/Codex.app に表示 (thread ${out.slice(0, 8)})`),
+                  { liveLog, threadId: out })
+                await supabase
+                  .from('ai_tasks')
+                  .update({ codex_thread_id: out })
+                  .eq('id', task.id)
+              }
+            } catch { /* DB ロック等、次サイクルで再試行 */ }
+          }
+
+          // ⑥ tmux セッション消滅 = 完了
           if (!tmuxSessionExists(result.sessionName)) {
-            const finalContent = fs.existsSync(codexLogPath)
+            const finalLog = fs.existsSync(codexLogPath)
               ? fs.readFileSync(codexLogPath, 'utf-8').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').slice(-3000)
               : 'Codex セッションは終了しました（ログなし）'
+            await pushCodexStep(supabase, task.id,
+              makeStep('completed', '完了'),
+              { liveLog: finalLog, message: finalLog, threadId: threadId ?? undefined })
             await supabase
               .from('ai_tasks')
               .update({
                 status: 'completed',
                 completed_at: new Date().toISOString(),
-                result: { message: finalContent, executor: 'codex' },
               })
               .eq('id', task.id)
             notify(`完了: ${shortPrompt}`, 'Focusmap AI')
