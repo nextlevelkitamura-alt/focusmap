@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 import { chatCompletionWithTools, type AgentMessage, type ToolDef, type ToolCall } from "@/lib/ai-client"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { getCalendarClient } from "@/lib/google-calendar"
 
 // ─── 与える道具 ─────────────────────────────────────────────────────────
 const TOOLS: ToolDef[] = [
@@ -54,38 +55,99 @@ const TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "schedule_memo",
+      description: "メモに実施予定時刻と所要時間を設定する。まだカレンダーには登録しない（add_to_calendar が別途必要）。「明日8時から30分でやる」のような指示で使う。",
+      parameters: {
+        type: "object",
+        properties: {
+          memo_id: { type: "string", description: "対象メモのID。元メモなら source の id を使う。create_new_memo で作ったメモなら そのidを使う" },
+          scheduled_at: { type: "string", description: "ISO 8601 形式の日時。タイムゾーンは +09:00 (JST) を含めること。例: 2026-05-17T08:00:00+09:00" },
+          duration_minutes: { type: "number", description: "所要時間（分）。15/30/45/60/90/120 のいずれか推奨" },
+        },
+        required: ["memo_id", "scheduled_at", "duration_minutes"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_to_calendar",
+      description: "予定時刻が設定済みのメモを Google カレンダーに登録する。先に schedule_memo で時刻設定済みであること。重複登録防止のため、google_event_id が既にあるメモには使わない。",
+      parameters: {
+        type: "object",
+        properties: {
+          memo_id: { type: "string", description: "対象メモのID" },
+        },
+        required: ["memo_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_calendar_events",
+      description: "指定日のGoogleカレンダー既存予定を取得する。スケジュール提案前に空き時間を確認するために使う。",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "ISO 8601 日付（YYYY-MM-DD）。例: 2026-05-17" },
+        },
+        required: ["date"],
+      },
+    },
+  },
 ]
 
 // ─── システムプロンプト ─────────────────────────────────────────────────
-const SYSTEM_PROMPT = `あなたはユーザーのメモを対話で整理・改善するアシスタントです。
+function buildSystemPrompt(): string {
+  const now = new Date()
+  const jstOffset = 9 * 60
+  const localTime = new Date(now.getTime() + (jstOffset - now.getTimezoneOffset()) * 60_000)
+  const isoLocal = localTime.toISOString().replace("Z", "+09:00")
+  const weekday = ["日", "月", "火", "水", "木", "金", "土"][localTime.getUTCDay()]
+  return `あなたはユーザーのメモを対話で整理・改善し、必要なら予定登録まで行うアシスタントです。
 
-## あなたの権限
-あなたには以下のツールが与えられており、対話中に自由に使えます:
+## 現在時刻（JST）
+${isoLocal} (${weekday}曜日)
+
+「今日」「明日」「来週」「今夜」等の相対表現はこの時刻を基準に解釈すること。
+
+## あなたが使えるツール
 - update_current_memo: 元メモを更新
-- create_new_memo: 新メモを作成（分岐用）
+- create_new_memo: 新規メモを作成（分岐用）
 - list_my_memos: 他メモを検索
+- schedule_memo: メモに予定時刻+所要時間を設定
+- add_to_calendar: メモを Google カレンダーに登録（先に schedule_memo 必要）
+- list_calendar_events: 指定日の既存予定を取得（空き時間提案前に使う）
 
-ユーザーが「2つに分けて」と言ったら create_new_memo を呼び出すなど、
-**ユーザーの意図に応じて積極的にツールを使ってください**。
-ツール呼び出しは確認なしで実行されるので、ユーザーが望むときだけ使うこと。
+**ユーザーの意図に応じて積極的に組み合わせて使ってください**。
 
 ## 対話のスタイル
 - 質問は1ターンに1-2個まで
-- 全体で 2-3 ターン以内に完結を目指す
-- 質問には選択肢を提示できるなら提示
+- 2-3 ターンで完結を目指す
+- 選択肢を提示できるなら提示（例: 「8時 / 9時 / 10時、どれが良いですか?」）
 - 推測で勝手な要件を追加しない
-- ユーザーが「これで」「OK」「保存して」「分けて」等の確定的な指示を出したら、
-  即座にツール呼び出しで実行する
+- 確定的な指示（「これで」「OK」「分けて」「カレンダーに入れて」等）が来たら即実行
 
-## ツール使用の例
-- 「これで保存して」 → update_current_memo を呼ぶ
-- 「2つに分けて。1つは A、もう1つは B」 → 元を update し、create_new_memo で B を作成
-- 「3つに分けて、それぞれ詳細書いて」 → update + create × 2
-- 「似たメモあったっけ？」 → list_my_memos で検索してから回答
+## ツール組み合わせ例
+- 「これで保存して」 → update_current_memo
+- 「2つに分けて。①と②」 → update + create_new_memo
+- 「明日朝8時に30分でやりたい」 → schedule_memo({scheduled_at: '明日8時のISO', duration_minutes: 30}) → カレンダーに入れるか確認
+- 「カレンダーに入れて」 → add_to_calendar
+- 「いつ空いてる?」 → list_calendar_events({date: '対象日'}) → 結果見て提案
+- 「明日早めにやりたいけどいつがいい?」
+  → list_calendar_events({date: '明日'}) で空き確認
+  → 候補時刻を提案
+  → ユーザー確定後 schedule_memo + add_to_calendar
 
 ## 注意
-- ツール呼び出した直後の応答では、何をしたかを1-2文で簡潔に報告すること
-- 元のメモは「現在話しているメモ」として update_current_memo の対象。新規は別IDで作成される`
+- ツール呼び出し後の応答では、何をしたかを1-2文で報告
+- schedule_memo の scheduled_at は必ず JST タイムゾーン付き（+09:00）の ISO 文字列
+- 新規メモを作って予定登録する場合: create_new_memo → 返値の memo_id を使って schedule_memo`
+}
 
 interface ChatRequest {
   /** OpenAI 形式の会話履歴（フロントが保持） */
@@ -172,6 +234,128 @@ async function executeTool(
       return { success: true, count: data?.length ?? 0, memos: data ?? [] }
     }
 
+    case "schedule_memo": {
+      const memoId = String(args.memo_id ?? "").trim()
+      const scheduledAt = String(args.scheduled_at ?? "").trim()
+      const durationMinutes = Number(args.duration_minutes)
+      if (!memoId) return { success: false, error: "memo_id は必須" }
+      if (!scheduledAt || isNaN(Date.parse(scheduledAt))) {
+        return { success: false, error: "scheduled_at は ISO 8601 (例: 2026-05-17T08:00:00+09:00)" }
+      }
+      if (!durationMinutes || durationMinutes <= 0 || durationMinutes > 600) {
+        return { success: false, error: "duration_minutes は 1-600 分" }
+      }
+      const { error } = await ctx.supabase
+        .from("ideal_goals")
+        .update({ scheduled_at: scheduledAt, duration_minutes: durationMinutes })
+        .eq("id", memoId)
+        .eq("user_id", ctx.userId)
+      if (error) return { success: false, error: error.message }
+      return {
+        success: true,
+        memo_id: memoId,
+        message: `予定時刻を設定: ${new Date(scheduledAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })} (${durationMinutes}分)`,
+      }
+    }
+
+    case "add_to_calendar": {
+      const memoId = String(args.memo_id ?? "").trim()
+      if (!memoId) return { success: false, error: "memo_id は必須" }
+
+      // メモ取得
+      const { data: memo, error: fetchErr } = await ctx.supabase
+        .from("ideal_goals")
+        .select("id, title, description, scheduled_at, duration_minutes, google_event_id")
+        .eq("id", memoId)
+        .eq("user_id", ctx.userId)
+        .single()
+      if (fetchErr || !memo) return { success: false, error: "メモが見つかりません" }
+      if (!memo.scheduled_at || !memo.duration_minutes) {
+        return { success: false, error: "先に schedule_memo で時刻と所要時間を設定してください" }
+      }
+      if (memo.google_event_id) {
+        return { success: false, error: "このメモは既にカレンダー登録済みです" }
+      }
+
+      // カレンダー設定取得
+      const { data: settings } = await ctx.supabase
+        .from("user_calendar_settings")
+        .select("is_sync_enabled, default_calendar_id")
+        .eq("user_id", ctx.userId)
+        .maybeSingle()
+      if (!settings?.is_sync_enabled) {
+        return { success: false, error: "Googleカレンダー未連携です。設定から連携してください" }
+      }
+
+      const startTime = new Date(memo.scheduled_at)
+      const endTime = new Date(startTime.getTime() + memo.duration_minutes * 60 * 1000)
+      const calendarId = settings.default_calendar_id ?? "primary"
+
+      try {
+        const { calendar } = await getCalendarClient(ctx.userId)
+        const gcalRes = await calendar.events.insert({
+          calendarId,
+          requestBody: {
+            summary: memo.title,
+            description: memo.description ?? "",
+            start: { dateTime: startTime.toISOString(), timeZone: "Asia/Tokyo" },
+            end: { dateTime: endTime.toISOString(), timeZone: "Asia/Tokyo" },
+          },
+        })
+        await ctx.supabase
+          .from("ideal_goals")
+          .update({ google_event_id: gcalRes.data.id, memo_status: "scheduled" })
+          .eq("id", memoId)
+          .eq("user_id", ctx.userId)
+        return {
+          success: true,
+          memo_id: memoId,
+          google_event_id: gcalRes.data.id,
+          message: `カレンダー登録完了: ${startTime.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
+        }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : "カレンダー登録失敗" }
+      }
+    }
+
+    case "list_calendar_events": {
+      const dateStr = String(args.date ?? "").trim()
+      if (!dateStr) return { success: false, error: "date は必須 (YYYY-MM-DD)" }
+
+      const { data: settings } = await ctx.supabase
+        .from("user_calendar_settings")
+        .select("is_sync_enabled, default_calendar_id")
+        .eq("user_id", ctx.userId)
+        .maybeSingle()
+      if (!settings?.is_sync_enabled) {
+        return { success: false, error: "Googleカレンダー未連携。空き時間を推測で提案してください" }
+      }
+
+      try {
+        const { calendar } = await getCalendarClient(ctx.userId)
+        const calendarId = settings.default_calendar_id ?? "primary"
+        // JST 00:00 〜 翌 00:00
+        const timeMin = new Date(`${dateStr}T00:00:00+09:00`).toISOString()
+        const timeMax = new Date(`${dateStr}T23:59:59+09:00`).toISOString()
+        const res = await calendar.events.list({
+          calendarId,
+          timeMin,
+          timeMax,
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 30,
+        })
+        const events = (res.data.items ?? []).map(e => ({
+          summary: e.summary,
+          start: e.start?.dateTime ?? e.start?.date,
+          end: e.end?.dateTime ?? e.end?.date,
+        }))
+        return { success: true, date: dateStr, count: events.length, events }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : "予定取得失敗" }
+      }
+    }
+
     default:
       return { success: false, error: `unknown tool: ${call.function.name}` }
   }
@@ -201,7 +385,7 @@ export async function POST(req: Request) {
   ].filter(Boolean).join("\n")
 
   const history: AgentMessage[] = [
-    { role: "system", content: `${SYSTEM_PROMPT}\n\n${contextBlock}` },
+    { role: "system", content: `${buildSystemPrompt()}\n\n${contextBlock}` },
     ...messages,
   ]
 
@@ -240,7 +424,12 @@ export async function POST(req: Request) {
           args: (() => { try { return JSON.parse(call.function.arguments) } catch { return call.function.arguments } })(),
           result: toolResult,
         })
-        if (call.function.name === "update_current_memo" || call.function.name === "create_new_memo") {
+        if ([
+          "update_current_memo",
+          "create_new_memo",
+          "schedule_memo",
+          "add_to_calendar",
+        ].includes(call.function.name)) {
           touched = true
         }
         history.push({

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Loader2, Send, Sparkles, Check, AlertCircle, FilePlus2, FilePen, Search } from "lucide-react"
+import { Loader2, Send, Sparkles, Check, AlertCircle, FilePlus2, FilePen, Search, Calendar, Clock, CalendarSearch } from "lucide-react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -213,7 +213,7 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
             </Button>
           </div>
           <p className="px-1 pt-1 text-[10px] text-muted-foreground leading-3">
-            「2つに分けて」「もっと深掘りして」「保存して」など自然な指示で OK
+            「2つに分けて」「明日朝8時に30分でやりたい」「カレンダーに入れて」など自然な指示で OK
           </p>
         </div>
       </SheetContent>
@@ -249,6 +249,13 @@ function ToolChip({ action }: { action: ToolAction }) {
   const success = action.result?.success !== false  // undefined or true は成功扱い
   const args = action.args || {}
 
+  const formatScheduledAt = (iso: unknown): string => {
+    if (typeof iso !== "string") return ""
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return ""
+    return d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", weekday: "short" })
+  }
+
   const config = {
     update_current_memo: {
       icon: <FilePen className="h-3 w-3" />,
@@ -264,6 +271,21 @@ function ToolChip({ action }: { action: ToolAction }) {
       icon: <Search className="h-3 w-3" />,
       label: "他メモ検索",
       detail: typeof args.query === "string" ? `「${args.query}」(${action.result?.count ?? 0}件)` : `(${action.result?.count ?? 0}件)`,
+    },
+    schedule_memo: {
+      icon: <Clock className="h-3 w-3" />,
+      label: "予定設定",
+      detail: `${formatScheduledAt(args.scheduled_at)} / ${args.duration_minutes ?? "?"}分`,
+    },
+    add_to_calendar: {
+      icon: <Calendar className="h-3 w-3" />,
+      label: "カレンダー登録",
+      detail: "",
+    },
+    list_calendar_events: {
+      icon: <CalendarSearch className="h-3 w-3" />,
+      label: "予定確認",
+      detail: typeof args.date === "string" ? `${args.date} (${action.result?.count ?? 0}件)` : "",
     },
   }[action.tool] ?? { icon: null, label: action.tool, detail: "" }
 
