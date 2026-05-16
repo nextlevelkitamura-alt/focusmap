@@ -242,6 +242,8 @@ async function launchRemoteControl(opts: {
   taskId: string
   prompt: string
   cwd: string
+  /** Claude セッション一覧表示用のタイトル。省略時は prompt から生成 */
+  displayTitle?: string
 }): Promise<{ success: true; url: string; sessionName: string } | { success: false; error: string }> {
   const sessionName = `memo-${opts.taskId.slice(0, 8)}`
   const logPath = `/tmp/claude-rc-${opts.taskId}.log`
@@ -261,13 +263,15 @@ async function launchRemoteControl(opts: {
   fs.writeFileSync(promptPath, opts.prompt, 'utf-8')
 
   // タイトル: 改行・引用符・バックスラッシュを除去（tmux/claude のパース対策）
-  const title = `memo: ${opts.prompt
-    .slice(0, 40)
+  // 60字に収める（Claude モバイルアプリのセッション一覧で省略されない長さ）
+  const rawTitle = opts.displayTitle ?? opts.prompt
+  const title = rawTitle
+    .slice(0, 60)
     .replace(/[\n\r\t]+/g, ' ')
     .replace(/\\/g, '')
     .replace(/"/g, '')
     .replace(/'/g, '')
-    .trim()}`
+    .trim() || 'メモ'
 
   // 既存ログ削除して空ファイル作成（pipe-pane は append しか出来ないため）
   try { fs.unlinkSync(logPath) } catch { /* ignore */ }
@@ -634,10 +638,39 @@ async function main() {
     // ─── メモから起動: claude --remote-control（tmux detached）───
     if ((task.source_note_id || task.source_ideal_goal_id) && task.cwd) {
       notify(`スマホで操作可能に起動中: ${shortPrompt}`, 'Focusmap AI')
+
+      // Claude セッション一覧で見やすい表示タイトルを作る
+      // 「{メモ見出し} · {メモ詳細先頭}」形式
+      let displayTitle: string | undefined
+      if (task.source_ideal_goal_id) {
+        const { data: memo } = await supabase
+          .from('ideal_goals')
+          .select('title, description')
+          .eq('id', task.source_ideal_goal_id)
+          .maybeSingle()
+        if (memo?.title) {
+          const titlePart = String(memo.title).trim().slice(0, 30)
+          const descPart = memo.description
+            ? String(memo.description).replace(/\s+/g, ' ').trim().slice(0, 30)
+            : ''
+          displayTitle = descPart ? `${titlePart} · ${descPart}` : titlePart
+        }
+      } else if (task.source_note_id) {
+        const { data: note } = await supabase
+          .from('notes')
+          .select('content')
+          .eq('id', task.source_note_id)
+          .maybeSingle()
+        if (note?.content) {
+          displayTitle = String(note.content).replace(/\s+/g, ' ').trim().slice(0, 60)
+        }
+      }
+
       const result = await launchRemoteControl({
         taskId: task.id,
         prompt: task.prompt,
         cwd: task.cwd,
+        displayTitle,
       })
       const now = new Date().toISOString()
 
