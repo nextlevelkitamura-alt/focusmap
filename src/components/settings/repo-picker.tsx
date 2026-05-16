@@ -1,8 +1,8 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Check, ChevronDown, FolderGit2, Loader2, RefreshCw, Search, X } from "lucide-react"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Check, ChevronRight, FolderGit2, Loader2, RefreshCw, Search, X } from "lucide-react"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAvailableRepos, type AvailableRepo } from "@/hooks/useAvailableRepos"
@@ -15,6 +15,10 @@ interface RepoPickerProps {
   allowCustom?: boolean
   className?: string
   disabled?: boolean
+  /** トリガー表示モード。"row" は iOS 設定風の行型、"button" は従来のボタン型 */
+  triggerVariant?: "row" | "button"
+  /** triggerVariant="row" のときの行ラベル */
+  rowLabel?: string
 }
 
 function formatRelative(iso: string | null): string {
@@ -35,10 +39,12 @@ function formatRelative(iso: string | null): string {
 export function RepoPicker({
   value,
   onChange,
-  placeholder = "リポジトリを選択...",
+  placeholder = "未設定",
   allowCustom = true,
   className,
   disabled,
+  triggerVariant = "button",
+  rowLabel = "リポジトリ",
 }: RepoPickerProps) {
   const { repos, isLoading, refresh, requestRescan } = useAvailableRepos()
   const [open, setOpen] = useState(false)
@@ -61,6 +67,16 @@ export function RepoPicker({
     )
   }, [repos, query])
 
+  // ホスト別グループ化
+  const groupedByHost = useMemo(() => {
+    const groups = new Map<string, AvailableRepo[]>()
+    for (const r of filtered) {
+      if (!groups.has(r.hostname)) groups.set(r.hostname, [])
+      groups.get(r.hostname)!.push(r)
+    }
+    return Array.from(groups.entries())
+  }, [filtered])
+
   const handleSelect = async (path: string | null) => {
     setSaving(true)
     try {
@@ -77,9 +93,8 @@ export function RepoPicker({
     setRescanning(true)
     try {
       await requestRescan()
-      // 最大1分待つ間に何度か再取得してみる
-      const start = Date.now()
       const previousCount = repos.length
+      const start = Date.now()
       while (Date.now() - start < 70_000) {
         await new Promise(r => setTimeout(r, 5000))
         await refresh()
@@ -90,66 +105,112 @@ export function RepoPicker({
     }
   }
 
-  return (
-    <div className={className}>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={disabled || saving}
-            className={cn(
-              "w-full min-h-[44px] justify-between font-normal",
-              !value && "text-muted-foreground",
-            )}
-          >
-            <span className="flex items-center gap-2 min-w-0">
-              <FolderGit2 className="h-4 w-4 shrink-0" />
-              <span className="truncate">
-                {saving ? "保存中..." : selectedRepo ? selectedRepo.display_name : value || placeholder}
-              </span>
-              {selectedRepo && (
-                <span className="text-[10px] text-muted-foreground shrink-0">
-                  {formatRelative(selectedRepo.last_git_commit_at)}
-                </span>
-              )}
-            </span>
-            <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
-          </Button>
-        </PopoverTrigger>
+  const displayValue = saving ? "保存中..." : selectedRepo ? selectedRepo.display_name : value || placeholder
 
-        <PopoverContent className="w-[min(420px,calc(100vw-32px))] p-0" align="start">
-          {/* 検索 */}
-          <div className="p-2 border-b">
+  // ─── トリガー ───────────────────────────────────────────
+  const trigger = triggerVariant === "row" ? (
+    <button
+      type="button"
+      onClick={() => !disabled && setOpen(true)}
+      disabled={disabled || saving}
+      className={cn(
+        "w-full flex items-center gap-3 min-h-[56px] px-4 py-2 text-left active:bg-muted/60 disabled:opacity-50",
+        className,
+      )}
+    >
+      <span className="text-base">{rowLabel}</span>
+      <span className="flex-1 min-w-0" />
+      <span className={cn(
+        "text-base text-right max-w-[60%] truncate",
+        selectedRepo ? "text-muted-foreground" : "text-muted-foreground/60",
+      )}>
+        {displayValue}
+      </span>
+      <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground/60" />
+    </button>
+  ) : (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={disabled || saving}
+      onClick={() => setOpen(true)}
+      className={cn(
+        "w-full min-h-[44px] justify-between font-normal",
+        !value && "text-muted-foreground",
+        className,
+      )}
+    >
+      <span className="flex items-center gap-2 min-w-0">
+        <FolderGit2 className="h-4 w-4 shrink-0" />
+        <span className="truncate">{displayValue}</span>
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />
+    </Button>
+  )
+
+  return (
+    <>
+      {trigger}
+
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent
+          side="bottom"
+          className="h-[92vh] sm:h-[80vh] p-0 flex flex-col rounded-t-3xl"
+        >
+          <SheetHeader className="px-4 py-3 border-b shrink-0">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-lg">リポジトリを選択</SheetTitle>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-base text-primary px-2 py-1 -mr-2 min-h-[44px]"
+              >
+                完了
+              </button>
+            </div>
+          </SheetHeader>
+
+          {/* 検索バー（sticky） */}
+          <div className="px-4 py-2 border-b shrink-0 bg-background">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                placeholder="名前 or パスで検索..."
-                className="w-full min-h-[40px] rounded-md border bg-background pl-7 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary"
-                autoFocus
+                placeholder="名前 or パスで検索"
+                className="w-full min-h-[44px] rounded-xl bg-muted/60 pl-10 pr-10 text-base outline-none focus:bg-muted"
+                autoComplete="off"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground"
+                  aria-label="検索クリア"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
 
-          {/* リスト */}
-          <div className="max-h-[50vh] overflow-y-auto">
+          {/* リスト（スクロール） */}
+          <div className="flex-1 overflow-y-auto overscroll-contain">
             {value && (
               <button
                 type="button"
                 onClick={() => handleSelect(null)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted border-b"
+                className="w-full flex items-center gap-2 min-h-[56px] px-4 text-left active:bg-muted/60 border-b border-border/40 text-base text-destructive"
               >
-                <X className="h-3 w-3" />
-                選択を解除
+                <X className="h-5 w-5" />
+                選択を解除（未設定にする）
               </button>
             )}
 
             {isLoading ? (
-              <div className="flex items-center justify-center py-6 text-xs text-muted-foreground gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> 読み込み中...
+              <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" /> 読み込み中...
               </div>
             ) : filtered.length === 0 ? (
               <RepoEmptyState
@@ -157,66 +218,86 @@ export function RepoPicker({
                 hasAnyRepos={repos.length > 0}
               />
             ) : (
-              <ul>
-                {filtered.map(repo => (
-                  <li key={repo.id}>
-                    <RepoRow
-                      repo={repo}
-                      selected={repo.absolute_path === value}
-                      onSelect={() => handleSelect(repo.absolute_path)}
-                    />
-                  </li>
+              <div>
+                {groupedByHost.map(([hostname, rows]) => (
+                  <div key={hostname}>
+                    {/* iOS 風セクションヘッダー */}
+                    <div className="px-4 pt-5 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {hostname}（{rows.length}件）
+                    </div>
+                    <div className="bg-card mx-3 rounded-2xl overflow-hidden mb-2 divide-y divide-border/40">
+                      {rows.map(repo => (
+                        <RepoRow
+                          key={repo.id}
+                          repo={repo}
+                          selected={repo.absolute_path === value}
+                          onSelect={() => handleSelect(repo.absolute_path)}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
-          </div>
 
-          {/* フッター: 再スキャン + カスタムパス */}
-          <div className="border-t p-2 space-y-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleRescan}
-              disabled={rescanning}
-              className="w-full justify-start min-h-[40px] text-xs"
-            >
-              {rescanning ? (
-                <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />スキャン中（最大1分）...</>
-              ) : (
-                <><RefreshCw className="mr-2 h-3.5 w-3.5" />Mac を再スキャンして最新化</>
-              )}
-            </Button>
+            {/* フッターアクション */}
+            <div className="mt-4 mb-4">
+              <div className="px-4 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                その他
+              </div>
+              <div className="bg-card mx-3 rounded-2xl overflow-hidden divide-y divide-border/40">
+                <button
+                  type="button"
+                  onClick={handleRescan}
+                  disabled={rescanning}
+                  className="w-full flex items-center gap-3 min-h-[56px] px-4 text-left active:bg-muted/60 disabled:opacity-60"
+                >
+                  {rescanning ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                  ) : (
+                    <RefreshCw className="h-5 w-5 text-primary shrink-0" />
+                  )}
+                  <span className="text-base flex-1">
+                    {rescanning ? "スキャン中（最大1分）..." : "Mac を再スキャン"}
+                  </span>
+                </button>
 
-            {allowCustom && (
-              <details className="text-xs">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground py-1">
-                  リストに無い → 絶対パスを直接入力
-                </summary>
-                <div className="flex gap-1 mt-1">
-                  <input
-                    type="text"
-                    value={customPath}
-                    onChange={e => setCustomPath(e.target.value)}
-                    placeholder="/Users/.../my-repo"
-                    className="flex-1 min-h-[36px] rounded-md border bg-background px-2 py-1 text-xs font-mono outline-none focus:ring-1 focus:ring-primary"
-                    spellCheck={false}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => customPath.trim() && handleSelect(customPath.trim())}
-                    disabled={!customPath.trim()}
-                  >
-                    使う
-                  </Button>
-                </div>
-              </details>
-            )}
+                {allowCustom && (
+                  <details className="group">
+                    <summary className="cursor-pointer list-none flex items-center gap-3 min-h-[56px] px-4 active:bg-muted/60">
+                      <span className="text-base flex-1">リストに無いパスを直接入力</span>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground/60 transition-transform group-open:rotate-90" />
+                    </summary>
+                    <div className="px-4 pb-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={customPath}
+                        onChange={e => setCustomPath(e.target.value)}
+                        placeholder="/Users/.../my-repo"
+                        className="flex-1 min-h-[44px] rounded-xl bg-muted/60 px-3 text-sm font-mono outline-none focus:bg-muted"
+                        spellCheck={false}
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => customPath.trim() && handleSelect(customPath.trim())}
+                        disabled={!customPath.trim()}
+                        className="min-h-[44px]"
+                      >
+                        使う
+                      </Button>
+                    </div>
+                  </details>
+                )}
+              </div>
+              <p className="px-5 pt-2 text-[11px] text-muted-foreground leading-4">
+                Mac の task-runner が <code className="font-mono">~/dev</code>{" "}
+                <code className="font-mono">~/Documents</code> 等を5分おきにスキャンします。
+              </p>
+            </div>
           </div>
-        </PopoverContent>
-      </Popover>
-    </div>
+        </SheetContent>
+      </Sheet>
+    </>
   )
 }
 
@@ -234,23 +315,23 @@ function RepoRow({
       type="button"
       onClick={onSelect}
       className={cn(
-        "w-full text-left px-3 py-2.5 hover:bg-muted flex items-start gap-2 min-h-[56px]",
+        "w-full text-left px-4 py-3 active:bg-muted/60 flex items-center gap-3 min-h-[64px]",
         selected && "bg-primary/10",
       )}
     >
-      <FolderGit2 className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+      <FolderGit2 className="h-5 w-5 shrink-0 text-muted-foreground" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium truncate">{repo.display_name}</span>
-          <span className="text-[10px] text-muted-foreground shrink-0">
+          <span className="text-base font-medium truncate">{repo.display_name}</span>
+          <span className="text-[11px] text-muted-foreground shrink-0">
             {formatRelative(repo.last_git_commit_at)}
           </span>
         </div>
-        <div className="text-[10px] text-muted-foreground truncate font-mono">
+        <div className="text-[11px] text-muted-foreground truncate font-mono mt-0.5">
           {repo.absolute_path}
         </div>
       </div>
-      {selected && <Check className="h-4 w-4 mt-0.5 shrink-0 text-primary" />}
+      {selected && <Check className="h-5 w-5 shrink-0 text-primary" />}
     </button>
   )
 }
@@ -258,22 +339,19 @@ function RepoRow({
 function RepoEmptyState({ hasQuery, hasAnyRepos }: { hasQuery: boolean; hasAnyRepos: boolean }) {
   if (hasQuery) {
     return (
-      <div className="py-6 px-3 text-center text-xs text-muted-foreground space-y-1">
-        <p>該当するリポが見つかりません</p>
-        <p className="text-[10px]">検索キーワードを変更するか、カスタムパス入力をお試しください</p>
+      <div className="py-12 px-6 text-center text-sm text-muted-foreground space-y-1">
+        <p className="text-base">該当するリポが見つかりません</p>
+        <p className="text-xs">検索キーワードを変更するか、カスタムパス入力をお試しください</p>
       </div>
     )
   }
   if (!hasAnyRepos) {
     return (
-      <div className="py-6 px-3 text-center text-xs text-muted-foreground space-y-2">
-        <p className="font-medium">スキャンされたリポがありません</p>
-        <p className="text-[10px] leading-5">
-          Mac の task-runner が <code className="bg-muted px-1 rounded">~/dev</code>,{" "}
-          <code className="bg-muted px-1 rounded">~/Documents</code>,{" "}
-          <code className="bg-muted px-1 rounded">~/Private</code> 等を自動探索します。
-          <br />
-          まだスキャンが終わっていないか、これらのフォルダに git リポがないかも。
+      <div className="py-12 px-6 text-center text-sm text-muted-foreground space-y-2">
+        <p className="text-base font-medium">スキャンされたリポがありません</p>
+        <p className="text-xs leading-5">
+          Mac の task-runner がデフォルトのフォルダを自動探索しますが、まだ完了していないかも。
+          下の「Mac を再スキャン」を押してみてください。
         </p>
       </div>
     )

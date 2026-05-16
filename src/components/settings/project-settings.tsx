@@ -77,7 +77,7 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
     <div id="project-colors" className="rounded-lg border bg-card p-4">
       <div className="mb-4">
         <h3 className="text-base font-semibold">プロジェクトとタグ</h3>
@@ -126,41 +126,33 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
       </div>
     </div>
 
-    <div id="project-repos" className="rounded-lg border bg-card p-4">
-      <div className="mb-4">
-        <h3 className="text-base font-semibold flex items-center gap-2">
-          <Terminal className="h-4 w-4" />
-          プロジェクトのリポジトリ
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          メモの「Claudeで実行」ボタンを使うと、プロジェクトに紐付くこのリポジトリで Claude Code が起動します。Mac から自動発見されたリポジトリを選択してください。
-        </p>
-      </div>
-      <div className="space-y-2">
-        {sortedProjects.length === 0 ? (
-          <div className="flex min-h-20 items-center justify-center text-xs text-muted-foreground">プロジェクトがありません</div>
-        ) : sortedProjects.map(project => (
-          <div
-            key={project.id}
-            className="flex flex-col gap-1.5 rounded-md border bg-background/40 p-3 sm:flex-row sm:items-center"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{project.title}</div>
-              {savingKey === `project-repo:${project.id}` && (
-                <div className="text-[10px] text-muted-foreground inline-flex items-center gap-1 mt-0.5">
-                  <Loader2 className="h-3 w-3 animate-spin" /> 保存中...
-                </div>
-              )}
-            </div>
-            <div className="sm:w-[280px] shrink-0">
-              <RepoPicker
-                value={project.repo_path ?? null}
-                onChange={(path) => updateProjectRepoPath(project, path ?? "")}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
+    <div id="project-repos">
+      {/* iOS 設定スタイル: セクションヘッダー */}
+      <h3 className="px-4 pt-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+        <Terminal className="h-3 w-3" />
+        プロジェクトのリポジトリ
+      </h3>
+      {sortedProjects.length === 0 ? (
+        <div className="mx-1 rounded-2xl bg-card flex min-h-[64px] items-center justify-center text-sm text-muted-foreground">
+          プロジェクトがありません
+        </div>
+      ) : (
+        <div className="mx-1 rounded-2xl bg-card overflow-hidden divide-y divide-border/40">
+          {sortedProjects.map(project => (
+            <RepoPicker
+              key={project.id}
+              value={project.repo_path ?? null}
+              onChange={(path) => updateProjectRepoPath(project, path ?? "")}
+              triggerVariant="row"
+              rowLabel={project.title}
+              disabled={savingKey === `project-repo:${project.id}`}
+            />
+          ))}
+        </div>
+      )}
+      <p className="px-5 pt-1.5 text-[11px] text-muted-foreground leading-4">
+        メモの「Claude で実行」ボタンを押すと、プロジェクトに紐付くこのリポジトリで Claude Code が起動します。
+      </p>
     </div>
 
     <ScanSettingsSection />
