@@ -262,7 +262,8 @@ async function launchRemoteControl(opts: {
   // パイプ（| tee）すると非対話と判定されて --print モードになるため、
   // pipe-pane で別途出力を捕捉する。
   // ANTHROPIC_API_KEY と CLAUDECODE は Remote Control が動かないので除外。
-  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)}`
+  // --dangerously-skip-permissions: 許可ダイアログを全部スキップ（無人実行のため必須）
+  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)} --dangerously-skip-permissions`
   const bashWrapped = `bash -c ${JSON.stringify(inner)}`
 
   try {
