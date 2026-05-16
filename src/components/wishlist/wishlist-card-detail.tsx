@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Sparkles, Terminal, Trash2 } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
+import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -38,6 +39,8 @@ interface WishlistCardDetailProps {
   tagColors?: Record<string, string>
   onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
   onLaunchCodex?: (item: IdealGoalWithItems) => Promise<void>
+  /** Codex.app を Mac で起動（codex:// URL 経由）。スマホからも呼べる */
+  onLaunchCodexApp?: (item: IdealGoalWithItems) => Promise<void>
   /** GLM対話のツールがメモを更新/新規作成したとき呼ばれる（一覧リフレッシュ用）*/
   onMemoChanged?: () => void
 }
@@ -153,6 +156,7 @@ export function WishlistCardDetail({
   tagColors = {},
   onLaunchClaude,
   onLaunchCodex,
+  onLaunchCodexApp,
   onMemoChanged,
 }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
@@ -160,6 +164,8 @@ export function WishlistCardDetail({
   const [isLaunchingClaude, setIsLaunchingClaude] = useState(false)
   const [isLaunchingCodex, setIsLaunchingCodex] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
+  const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
+  const [copiedUrl, setCopiedUrl] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -198,6 +204,24 @@ export function WishlistCardDetail({
   useEffect(() => {
     loadImages()
   }, [loadImages])
+
+  // aiTask の状態変化を launchStep に反映 + 完了時に自動クローズ
+  useEffect(() => {
+    if (!item) return
+    const aiTask = getMemoAiTask(item.id)
+    if (!aiTask || launchStep === null) return
+    if (aiTask.remote_session_url && launchStep === 'sent') {
+      setLaunchStep('connected')
+    }
+    if (aiTask.status === 'completed' && launchStep !== 'completed') {
+      setLaunchStep('completed')
+      setTimeout(() => {
+        onOpenChange(false)
+        setLaunchStep(null)
+      }, 2500)
+    }
+  })
+
 
   if (!item) return null
 
@@ -560,11 +584,14 @@ export function WishlistCardDetail({
                       disabled={claudeDisabled || isLaunchingClaude}
                       onClick={async () => {
                         setLaunchError(null)
+                        setLaunchStep('sending')
                         setIsLaunchingClaude(true)
                         try {
                           await onLaunchClaude(item)
+                          setLaunchStep('sent')
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動に失敗")
+                          setLaunchStep(null)
                         } finally {
                           setIsLaunchingClaude(false)
                         }
@@ -575,38 +602,28 @@ export function WishlistCardDetail({
                       <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
                     </Button>
                   )}
-                  {onLaunchCodex && (
+                  {onLaunchCodexApp && (
                     <Button
                       type="button"
                       variant="outline"
                       disabled={!draftTitle.trim() || isLaunchingCodex}
-                      onClick={() => {
+                      onClick={async () => {
                         setLaunchError(null)
                         setIsLaunchingCodex(true)
                         try {
-                          // A1: codex:// URL スキームで Codex.app に直接プロンプト注入
-                          // - prompt: URL エンコード必須
-                          // - path: 絶対パス（省略時は Codex.app 側でユーザーが選ぶ）
-                          // - 自動実行はされない。ユーザーが Enter で送信
-                          const prompt = [
-                            `# ${draftTitle.trim()}`,
-                            draftDescription.trim() ? `\n${draftDescription.trim()}` : '',
-                          ].filter(Boolean).join('\n')
-                          const params = new URLSearchParams()
-                          params.set('prompt', prompt)
-                          if (project?.repo_path) params.set('path', project.repo_path)
-                          window.location.href = `codex://new?${params.toString()}`
+                          // codex_app: スマホからでも動く Mac proxy。task-runner が
+                          // open codex://new?... を Mac で実行する
+                          await onLaunchCodexApp(item)
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動失敗")
                         } finally {
-                          // open は同期完了、すぐスピナー消す
-                          setTimeout(() => setIsLaunchingCodex(false), 800)
+                          setIsLaunchingCodex(false)
                         }
                       }}
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">Codex.app で開く</span>
+                      <span className="text-[10px] text-muted-foreground">Mac で Codex.app 起動</span>
                     </Button>
                   )}
                 </div>
@@ -635,6 +652,70 @@ export function WishlistCardDetail({
                     {launchError}
                   </div>
                 )}
+
+                {/* ステップログ */}
+                {launchStep !== null && (() => {
+                  const sessionUrl = aiTask?.remote_session_url ?? null
+                  return (
+                    <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-[12px]">
+                      <div className="flex items-center gap-2">
+                        {launchStep === 'sending'
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
+                          : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                        <span className={launchStep === 'sending' ? 'text-amber-600' : 'text-muted-foreground'}>
+                          {launchStep === 'sending' ? 'Claude Codeに送信しています...' : 'プロンプトを送信しました'}
+                        </span>
+                      </div>
+                      {launchStep !== 'sending' && (
+                        <div className="flex items-center gap-2">
+                          {launchStep === 'sent'
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
+                            : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                          <span className={launchStep === 'sent' ? 'text-blue-600' : 'text-muted-foreground'}>
+                            {launchStep === 'sent' ? '接続しています...' : '接続しました'}
+                          </span>
+                        </div>
+                      )}
+                      {(launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
+                        <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                          <div className="shrink-0 rounded-md border bg-white p-2 self-start">
+                            <QRCode value={sessionUrl} size={80} />
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <p className="text-muted-foreground">QRを読み取るかボタンで開く:</p>
+                            <a
+                              href={sessionUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+                            >
+                              <Wifi className="h-3.5 w-3.5" />
+                              このデバイスで開く
+                            </a>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await navigator.clipboard.writeText(sessionUrl).catch(() => {})
+                                setCopiedUrl(true)
+                                setTimeout(() => setCopiedUrl(false), 1500)
+                              }}
+                              className="ml-2 inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1.5 text-[11px] hover:bg-muted"
+                            >
+                              {copiedUrl ? 'コピー済' : 'URLコピー'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {launchStep === 'completed' && (
+                        <div className="flex items-center gap-2 text-emerald-600 font-medium">
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                          完了しました — メモ一覧に戻ります
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
                 <NoteClaudeRunnerPanel
                   latestTask={aiTask}
                   isProjectAssigned={!!item.project_id}

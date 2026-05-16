@@ -1,8 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { generateText } from 'ai'
-import type { ImagePart } from 'ai'
-import { getModelForSkill } from '@/lib/ai/providers'
+import { chatCompletion } from '@/lib/ai-client'
 
 // POST /api/ai/analyze-memo - メモをAIで分析・分類
 export async function POST(request: Request) {
@@ -14,29 +12,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Vercel AI SDK (@ai-sdk/google) は GOOGLE_GENERATIVE_AI_API_KEY を自動で読む
-    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      console.error('GOOGLE_GENERATIVE_AI_API_KEY is not configured')
-      return NextResponse.json({ error: 'AI service not configured' }, { status: 503 })
-    }
-
     const body = await request.json()
-    const { content, noteId, imageUrls } = body
+    const { content, noteId } = body
 
     if (!content || typeof content !== 'string' || content.trim().length === 0) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 })
     }
-
-    const imageParts: ImagePart[] = (Array.isArray(imageUrls) ? imageUrls : [])
-      .filter((url: unknown): url is string => typeof url === 'string' && url.length > 0)
-      .map((url: string): ImagePart => {
-        if (url.startsWith('data:')) {
-          const [header, base64] = url.split(',')
-          const mimeType = header.replace('data:', '').replace(';base64', '')
-          return { type: 'image', image: base64, mimeType }
-        }
-        return { type: 'image', image: new URL(url) }
-      })
 
     // ユーザーのプロジェクトとルートタスクを取得（コンテキスト用）
     const { data: projects } = await supabase
@@ -118,20 +99,11 @@ ${projectContext || '(プロジェクトなし)'}
 - 日時情報を含めず、予定の本質的な名前だけを抽出すること
 - map 分類の場合は null`
 
-    // Vercel AI SDK で生成（画像があればマルチモーダル）
-    const aiResult = await generateText({
-      model: getModelForSkill(),
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          ...imageParts,
-        ],
-      }],
-      maxOutputTokens: 800,
-      temperature: 0.3,
-    })
-    const responseText = aiResult.text
+    // GLM/Kimi（ai-client経由）で生成
+    const responseText = await chatCompletion(
+      [{ role: 'user', content: prompt }],
+      { max_tokens: 800 },
+    )
 
     // JSONを抽出（マークダウンのコードブロックを考慮）
     const jsonMatch = responseText.match(/\{[\s\S]*\}/)
@@ -159,11 +131,7 @@ ${projectContext || '(プロジェクトなし)'}
     const errMsg = error instanceof Error ? error.message : String(error)
     console.error('AI analysis error:', errMsg, error)
 
-    // Google API固有のエラーをユーザーフレンドリーなメッセージに変換
-    if (errMsg.includes('API key not valid') || errMsg.includes('API_KEY_INVALID')) {
-      return NextResponse.json({ error: 'AI設定を確認してください（APIキーエラー）', errorCode: 'API_KEY_INVALID' }, { status: 503 })
-    }
-    if (errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('RATE_LIMIT')) {
+    if (errMsg.includes('429') || errMsg.includes('RATE_LIMIT') || errMsg.includes('quota')) {
       return NextResponse.json({ error: 'リクエスト上限に達しました。しばらくお待ちください', errorCode: 'RATE_LIMIT' }, { status: 429 })
     }
 

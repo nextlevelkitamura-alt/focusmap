@@ -410,6 +410,149 @@ async function launchCodexExec(opts: {
   return { success: true, sessionName }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Codex.app 起動（codex:// URL スキーム経由、Mac proxy パターン）
+//   - スマホから API → DB → task-runner → open codex://... → Codex.app
+//   - Codex.app の threads DB (~/.codex/state_5.sqlite) で進捗追跡
+//   - ペアリング済の ChatGPT mobile からも見える可能性あり
+// ─────────────────────────────────────────────────────────────────────────
+function launchCodexApp(opts: {
+  taskId: string
+  prompt: string
+  cwd: string | null
+  memoTitle?: string
+  memoDescription?: string
+}): { success: true; openedAt: string } | { success: false; error: string } {
+  // プロンプト先頭にメモ情報ブロックを付与
+  const titleBlock = opts.memoTitle
+    ? [
+        `# ${opts.memoTitle}`,
+        opts.memoDescription ? `\n## 詳細\n${opts.memoDescription}` : '',
+        '\n---\n',
+      ].join('')
+    : ''
+  const fullPrompt = `${titleBlock}${opts.prompt}`
+
+  // codex://new?prompt=...&path=...
+  const params = new URLSearchParams()
+  params.set('prompt', fullPrompt)
+  if (opts.cwd) params.set('path', opts.cwd)
+  const url = `codex://new?${params.toString()}`
+
+  try {
+    // macOS `open` でアプリ起動 + URL 引き渡し
+    execSync(`open ${JSON.stringify(url)}`, { stdio: 'ignore', timeout: 5000 })
+    return { success: true, openedAt: new Date().toISOString() }
+  } catch (err) {
+    return { success: false, error: `open 失敗: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
+/**
+ * ~/.codex/state_5.sqlite を読み、codex_app タスクに対応するスレッドを探して
+ * Supabase の result に進捗を同期する。
+ * 1分おき（task-runner サイクル）に実行。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function syncCodexAppThreads(supabase: any): Promise<void> {
+  const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
+  if (!fs.existsSync(dbPath)) return
+
+  // codex_app で running なタスク取得
+  const { data: tasks } = await supabase
+    .from('ai_tasks')
+    .select('id, prompt, codex_thread_id, started_at')
+    .eq('executor', 'codex_app')
+    .eq('status', 'running')
+    .limit(50)
+
+  if (!tasks || tasks.length === 0) return
+
+  for (const task of tasks as Array<{
+    id: string
+    prompt: string
+    codex_thread_id: string | null
+    started_at: string | null
+  }>) {
+    // thread_id 未確定なら、プロンプト先頭でマッチング
+    let threadId = task.codex_thread_id
+    if (!threadId) {
+      // プロンプト先頭40文字（# タイトル...）でマッチ
+      const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
+      const sinceMs = task.started_at ? new Date(task.started_at).getTime() - 60_000 : 0
+      try {
+        const out = execSync(
+          `sqlite3 ${JSON.stringify(dbPath)} "SELECT id FROM threads WHERE first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs} ORDER BY created_at_ms DESC LIMIT 1"`,
+          { encoding: 'utf-8', timeout: 5000 },
+        ).trim()
+        if (out) {
+          threadId = out
+          await supabase
+            .from('ai_tasks')
+            .update({ codex_thread_id: threadId })
+            .eq('id', task.id)
+          console.log(`[codex-app] thread matched: ${task.id} → ${threadId}`)
+        }
+      } catch {
+        // thread 未生成 or DB ロック中、次サイクルで再試行
+      }
+    }
+
+    if (!threadId) continue
+
+    // thread 状態取得
+    try {
+      const stateOut = execSync(
+        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT title, tokens_used, has_user_event, archived, updated_at_ms, preview FROM threads WHERE id = '${threadId}'"`,
+        { encoding: 'utf-8', timeout: 5000 },
+      ).trim()
+      if (!stateOut) continue
+
+      const rows = JSON.parse(stateOut) as Array<{
+        title?: string
+        tokens_used?: number
+        has_user_event?: number
+        archived?: number
+        updated_at_ms?: number
+        preview?: string
+      }>
+      if (rows.length === 0) continue
+      const row = rows[0]
+
+      const liveLog = [
+        `📱 Codex.app セッション ${threadId.slice(0, 8)}`,
+        `タイトル: ${row.title ?? '(未設定)'}`,
+        `トークン使用: ${row.tokens_used ?? 0}`,
+        `最終更新: ${row.updated_at_ms ? new Date(row.updated_at_ms).toLocaleString('ja-JP') : '(未更新)'}`,
+        `ユーザー操作: ${row.has_user_event ? 'あり' : 'なし'}`,
+        '',
+        '── プレビュー ──',
+        row.preview ?? '(空)',
+      ].join('\n')
+
+      // archived=1 で completed 扱い
+      const updates: Record<string, unknown> = {
+        result: { live_log: liveLog, executor: 'codex_app', codex_thread_id: threadId },
+      }
+      if (row.archived === 1) {
+        updates.status = 'completed'
+        updates.completed_at = new Date().toISOString()
+        updates.result = {
+          message: `Codex.app セッション完了\n\n${liveLog}`,
+          executor: 'codex_app',
+          codex_thread_id: threadId,
+        }
+      }
+      await supabase
+        .from('ai_tasks')
+        .update(updates)
+        .eq('id', task.id)
+    } catch (e) {
+      console.error(`[codex-app] state read failed for ${task.id}:`, e instanceof Error ? e.message : e)
+    }
+  }
+}
+
 /**
  * tmux セッションがもう存在しない running 状態のRCタスクを completed に更新。
  * 毎回 main() の冒頭で呼ぶことで、ユーザーが Claude を /exit したり Mac 再起動した場合の
@@ -689,6 +832,9 @@ async function main() {
   // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
   await syncCodexLiveLogs(supabase)
 
+  // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
+  await syncCodexAppThreads(supabase)
+
   // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
   const hostname = os.hostname()
   try {
@@ -800,8 +946,46 @@ async function main() {
         }
       }
 
-      const executor = task.executor === 'codex' ? 'codex' : 'claude'
+      const executor: 'claude' | 'codex' | 'codex_app' =
+        task.executor === 'codex_app' ? 'codex_app' :
+        task.executor === 'codex' ? 'codex' :
+        'claude'
       const now = new Date().toISOString()
+
+      // ─── Codex.app executor (Mac proxy: open codex://...) ───
+      if (executor === 'codex_app') {
+        notify(`Codex.app 起動: ${shortPrompt}`, 'Focusmap AI')
+        const result = launchCodexApp({
+          taskId: task.id,
+          prompt: task.prompt,
+          cwd: task.cwd,
+          memoTitle,
+          memoDescription,
+        })
+        if (!result.success) {
+          await supabase
+            .from('ai_tasks')
+            .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
+            .eq('id', task.id)
+          console.error(`[task-runner] Codex.app launch failed: ${task.id}: ${result.error}`)
+          continue
+        }
+
+        await supabase
+          .from('ai_tasks')
+          .update({
+            result: {
+              message: 'Codex.app を起動しました。Mac の Codex アプリで内容を確認、ペアリング済ならスマホ ChatGPT app でも見られます',
+              executor: 'codex_app',
+              opened_at: result.openedAt,
+            },
+          })
+          .eq('id', task.id)
+
+        notify(`Codex.app 起動完了: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Codex.app launched: ${task.id} at ${result.openedAt}`)
+        continue
+      }
 
       // ─── Codex executor ───
       if (executor === 'codex') {

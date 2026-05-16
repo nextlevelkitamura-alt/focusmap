@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     cwd?: string
     source_note_id?: string
     source_ideal_goal_id?: string
-    executor?: 'claude' | 'codex'
+    executor?: 'claude' | 'codex' | 'codex_app'
   }
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -80,7 +80,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const resolvedExecutor = executor === 'codex' ? 'codex' : 'claude'
+  const resolvedExecutor =
+    executor === 'codex_app' ? 'codex_app' :
+    executor === 'codex' ? 'codex' :
+    'claude'
 
   const { data, error } = await supabase
     .from('ai_tasks')

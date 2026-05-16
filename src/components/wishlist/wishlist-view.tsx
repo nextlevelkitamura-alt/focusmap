@@ -202,47 +202,27 @@ export function WishlistView({
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
 
   // メモから AI エージェント（Claude / Codex）を起動
-  // フロー: ①GLM/Kimiでメモを実行可能な指示文に整理 → ②ai_tasksへINSERT → ③task-runnerがエージェント起動
-  const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' = 'claude') => {
+  // フロー: タイトル＋詳細をそのまま → ai_tasksへINSERT → task-runnerがエージェント起動
+  const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
-    if (!repoPath) {
+    // codex_app は repo_path 任意（Codex.app 側でユーザーが選べる）
+    // claude / codex (headless) は必須
+    if (!repoPath && executor !== 'codex_app') {
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
-    // ① GLM/Kimi（OpenCode Go経由）でメモを整理
-    const fallbackPrompt = item.description?.trim()
+    // タイトル＋詳細をそのままプロンプトとして使用（GLM書き換えなし）
+    const prompt = item.description?.trim()
       ? `${item.title}\n\n${item.description}`
       : item.title
-    let prompt = fallbackPrompt
-    try {
-      const refineRes = await fetch("/api/ai/refine-claude-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: item.title,
-          description: item.description ?? "",
-          repo_path: repoPath,
-          model: selectedAiModel,
-        }),
-      })
-      if (refineRes.ok) {
-        const data = await refineRes.json() as { refined_prompt?: string }
-        if (data.refined_prompt && data.refined_prompt.length > 0) {
-          prompt = data.refined_prompt
-        }
-      }
-    } catch {
-      // refine 失敗時は fallback でそのまま起動
-    }
 
-    // ② ai_tasks に INSERT（executor 指定）
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt,
-        cwd: repoPath,
+        cwd: repoPath ?? null,
         approval_type: "auto",
         source_ideal_goal_id: item.id,
         scheduled_at: new Date().toISOString(),
@@ -253,11 +233,12 @@ export function WishlistView({
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.error || `起動失敗 (${res.status})`)
     }
-  }, [projects, selectedAiModel])
+  }, [projects])
 
   // 既存呼び出し向けエイリアス（後方互換）
   const launchClaudeForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'claude'), [launchAiForMemo])
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
+  const launchCodexAppForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -838,6 +819,7 @@ export function WishlistView({
         tagColors={tagColors}
         onLaunchClaude={launchClaudeForMemo}
         onLaunchCodex={launchCodexForMemo}
+        onLaunchCodexApp={launchCodexAppForMemo}
         onMemoChanged={fetchItems}
       />
     </div>

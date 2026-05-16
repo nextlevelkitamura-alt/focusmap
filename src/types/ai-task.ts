@@ -37,6 +37,13 @@ export interface AiTask {
   remote_session_url: string | null
   /** tmux セッション名（後から attach / kill に使用） */
   tmux_session_name: string | null
-  /** 実行 AI エージェント: 'claude' (Claude Code) | 'codex' (OpenAI Codex) */
-  executor: 'claude' | 'codex'
+  /**
+   * 実行 AI エージェント
+   * - 'claude': Claude Code Remote Control (tmux内、スマホアプリ接続)
+   * - 'codex': Codex CLI headless (codex exec、ライブログ捕捉)
+   * - 'codex_app': Codex.app を Mac で起動（codex:// URL）+ thread DB 追跡
+   */
+  executor: 'claude' | 'codex' | 'codex_app'
+  /** Codex.app の thread ID (~/.codex/state_5.sqlite) */
+  codex_thread_id: string | null
 }
