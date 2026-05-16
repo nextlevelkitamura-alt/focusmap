@@ -1,10 +1,12 @@
 "use client"
 
 import { useMemo, useState, type ReactNode } from "react"
-import { ChevronDown, FolderKanban, Layers, Loader2, Pipette, Tags, Terminal, Check } from "lucide-react"
+import { ChevronDown, FolderKanban, Layers, Loader2, Pipette, Tags, Terminal } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useTagColors } from "@/hooks/useTagColors"
 import { COLOR_PRESETS, DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
+import { RepoPicker } from "./repo-picker"
+import { ScanSettingsSection } from "./scan-settings-section"
 
 interface ProjectSettingsProps {
   initialProjects: Project[]
@@ -128,64 +130,40 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
       <div className="mb-4">
         <h3 className="text-base font-semibold flex items-center gap-2">
           <Terminal className="h-4 w-4" />
-          プロジェクトのリポジトリパス
+          プロジェクトのリポジトリ
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          メモの「Claudeで実行」ボタンを使うと、プロジェクトに紐付くこのパスを cwd（作業ディレクトリ）として Claude Code が起動します。絶対パスを指定してください。
+          メモの「Claudeで実行」ボタンを使うと、プロジェクトに紐付くこのリポジトリで Claude Code が起動します。Mac から自動発見されたリポジトリを選択してください。
         </p>
       </div>
       <div className="space-y-2">
         {sortedProjects.length === 0 ? (
           <div className="flex min-h-20 items-center justify-center text-xs text-muted-foreground">プロジェクトがありません</div>
         ) : sortedProjects.map(project => (
-          <RepoPathRow
+          <div
             key={project.id}
-            project={project}
-            saving={savingKey === `project-repo:${project.id}`}
-            onSave={(path) => updateProjectRepoPath(project, path)}
-          />
+            className="flex flex-col gap-1.5 rounded-md border bg-background/40 p-3 sm:flex-row sm:items-center"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium truncate">{project.title}</div>
+              {savingKey === `project-repo:${project.id}` && (
+                <div className="text-[10px] text-muted-foreground inline-flex items-center gap-1 mt-0.5">
+                  <Loader2 className="h-3 w-3 animate-spin" /> 保存中...
+                </div>
+              )}
+            </div>
+            <div className="sm:w-[280px] shrink-0">
+              <RepoPicker
+                value={project.repo_path ?? null}
+                onChange={(path) => updateProjectRepoPath(project, path ?? "")}
+              />
+            </div>
+          </div>
         ))}
       </div>
     </div>
-    </div>
-  )
-}
 
-function RepoPathRow({
-  project,
-  saving,
-  onSave,
-}: {
-  project: Project
-  saving: boolean
-  onSave: (path: string) => Promise<void>
-}) {
-  const [value, setValue] = useState(project.repo_path ?? "")
-  const isDirty = value.trim() !== (project.repo_path ?? "")
-
-  return (
-    <div className="flex flex-col gap-1.5 rounded-md border bg-background/40 p-3 sm:flex-row sm:items-center">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium truncate">{project.title}</div>
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="/Users/you/dev/repo"
-          className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-primary"
-          spellCheck={false}
-          autoComplete="off"
-        />
-      </div>
-      <button
-        type="button"
-        disabled={!isDirty || saving}
-        onClick={() => onSave(value)}
-        className="h-8 shrink-0 rounded-md border bg-background px-3 text-xs hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1"
-      >
-        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-        保存
-      </button>
+    <ScanSettingsSection />
     </div>
   )
 }

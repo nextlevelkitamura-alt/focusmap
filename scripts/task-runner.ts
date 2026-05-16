@@ -20,6 +20,7 @@ import { spawn } from 'child_process'
 import { execSync } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
+import * as os from 'os'
 import { fileURLToPath } from 'url'
 
 // ES モジュール対応の __dirname
@@ -340,6 +341,168 @@ async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// リポジトリ自動発見スキャナー
+//   ~/dev, ~/Documents 等を再帰探索し .git 持ちフォルダを発見
+//   available_repos テーブルに upsert する
+// ─────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_SCAN_PATHS = [
+  '~/dev', '~/Documents', '~/Projects', '~/Workspace', '~/Private', '~/Code',
+]
+const SCANNER_SKIP_DIRS = new Set([
+  'node_modules', '.next', 'dist', 'build', '.cache', '.turbo',
+  'venv', '.venv', '__pycache__', '.git', 'target', '.vscode',
+  '.idea', 'Pods', '.gradle',
+])
+const SCANNER_MAX_DEPTH = 4
+const SCANNER_INTERVAL_MS = 5 * 60 * 1000
+
+function expandHome(p: string): string {
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2))
+  if (p === '~') return os.homedir()
+  return p
+}
+
+interface FoundRepo {
+  absolute_path: string
+  display_name: string
+  last_git_commit_at: string | null
+}
+
+function getLastCommitISO(repoDir: string): string | null {
+  try {
+    const out = execSync('git log -1 --format=%cI', {
+      cwd: repoDir,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    }).toString().trim()
+    return out || null
+  } catch {
+    return null
+  }
+}
+
+function findReposRec(rootDir: string, depth: number, out: FoundRepo[]): void {
+  if (depth > SCANNER_MAX_DEPTH) return
+  if (!fs.existsSync(rootDir)) return
+  let stats: fs.Stats
+  try { stats = fs.statSync(rootDir) } catch { return }
+  if (!stats.isDirectory()) return
+
+  if (fs.existsSync(path.join(rootDir, '.git'))) {
+    out.push({
+      absolute_path: rootDir,
+      display_name: path.basename(rootDir),
+      last_git_commit_at: getLastCommitISO(rootDir),
+    })
+    return
+  }
+
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(rootDir, { withFileTypes: true }) } catch { return }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name.startsWith('.')) continue
+    if (SCANNER_SKIP_DIRS.has(entry.name)) continue
+    findReposRec(path.join(rootDir, entry.name), depth + 1, out)
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function ensureDefaultScanSettings(supabase: any, userId: string, hostname: string): Promise<void> {
+  const { data: existing } = await supabase
+    .from('user_scan_settings')
+    .select('user_id')
+    .eq('user_id', userId)
+    .eq('hostname', hostname)
+    .maybeSingle()
+  if (existing) return
+  await supabase
+    .from('user_scan_settings')
+    .insert({ user_id: userId, hostname, scan_paths: DEFAULT_SCAN_PATHS })
+  console.log(`[repo-scanner] Created default scan settings for user ${userId.slice(0, 8)} on ${hostname}`)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function scanAndSync(supabase: any, hostname: string): Promise<void> {
+  const { data: settingsList } = await supabase
+    .from('user_scan_settings')
+    .select('user_id, scan_paths, scan_now_requested_at, last_scanned_at')
+    .eq('hostname', hostname)
+
+  if (!settingsList || settingsList.length === 0) return
+
+  const now = Date.now()
+  for (const setting of settingsList as Array<{
+    user_id: string
+    scan_paths: string[]
+    scan_now_requested_at: string | null
+    last_scanned_at: string | null
+  }>) {
+    const lastScannedMs = setting.last_scanned_at ? new Date(setting.last_scanned_at).getTime() : 0
+    const requestedMs = setting.scan_now_requested_at ? new Date(setting.scan_now_requested_at).getTime() : 0
+    const needsScan = (now - lastScannedMs) > SCANNER_INTERVAL_MS || requestedMs > lastScannedMs
+    if (!needsScan) continue
+
+    const paths = (setting.scan_paths && setting.scan_paths.length > 0) ? setting.scan_paths : DEFAULT_SCAN_PATHS
+    console.log(`[repo-scanner] Scanning for ${setting.user_id.slice(0, 8)} (${paths.length} paths)...`)
+
+    const found: FoundRepo[] = []
+    for (const rawPath of paths) {
+      try { findReposRec(expandHome(rawPath), 0, found) } catch (e) {
+        console.error(`[repo-scanner] error scanning ${rawPath}:`, e instanceof Error ? e.message : e)
+      }
+    }
+    console.log(`[repo-scanner]   Found ${found.length} repos`)
+
+    const uniq = new Map<string, FoundRepo>()
+    for (const r of found) uniq.set(r.absolute_path, r)
+
+    const nowIso = new Date().toISOString()
+
+    const { data: existing } = await supabase
+      .from('available_repos')
+      .select('id, absolute_path')
+      .eq('user_id', setting.user_id)
+      .eq('hostname', hostname)
+
+    const existingPaths = new Set((existing ?? []).map((r: { absolute_path: string }) => r.absolute_path))
+    const foundPaths = new Set(uniq.keys())
+
+    if (uniq.size > 0) {
+      const rows = Array.from(uniq.values()).map(r => ({
+        user_id: setting.user_id,
+        hostname,
+        absolute_path: r.absolute_path,
+        display_name: r.display_name,
+        last_git_commit_at: r.last_git_commit_at,
+        last_seen_at: nowIso,
+      }))
+      const { error: upsertErr } = await supabase
+        .from('available_repos')
+        .upsert(rows, { onConflict: 'user_id,hostname,absolute_path' })
+      if (upsertErr) console.error('[repo-scanner] upsert error:', upsertErr.message)
+    }
+
+    const toDelete = Array.from(existingPaths).filter(p => !foundPaths.has(p as string))
+    if (toDelete.length > 0) {
+      await supabase
+        .from('available_repos')
+        .delete()
+        .eq('user_id', setting.user_id)
+        .eq('hostname', hostname)
+        .in('absolute_path', toDelete)
+    }
+
+    await supabase
+      .from('user_scan_settings')
+      .update({ last_scanned_at: nowIso })
+      .eq('user_id', setting.user_id)
+      .eq('hostname', hostname)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // メイン処理
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
@@ -360,6 +523,25 @@ async function main() {
 
   // ─── 0. tmux セッションが消えた RC タスクを completed/failed に遷移 ─
   await reconcileRemoteControlSessions(supabase)
+
+  // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
+  const hostname = os.hostname()
+  try {
+    // ai_tasks を持つユーザーで scan_settings 未作成の人にデフォルトを入れる
+    const { data: activeUsers } = await supabase
+      .from('ai_tasks')
+      .select('user_id')
+      .limit(50)
+    const seen = new Set<string>()
+    for (const row of (activeUsers ?? []) as Array<{ user_id: string }>) {
+      if (seen.has(row.user_id)) continue
+      seen.add(row.user_id)
+      await ensureDefaultScanSettings(supabase, row.user_id, hostname)
+    }
+    await scanAndSync(supabase, hostname)
+  } catch (e) {
+    console.error('[task-runner] repo scan error:', e instanceof Error ? e.message : e)
+  }
 
   // ─── 1. due なタスクを取得 ───────────────────────────────────────────
   const { data: rawDueTasks, error } = await supabase
