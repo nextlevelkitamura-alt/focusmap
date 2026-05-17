@@ -310,11 +310,11 @@ export function NoteClaudeRunnerPanel({
           </span>
           <span className={cn(
             "text-[11px] px-1.5 py-0.5 rounded font-medium",
-            latestTask.executor === "codex"
+            latestTask.executor === "codex" || latestTask.executor === "codex_app"
               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
               : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
           )}>
-            {latestTask.executor === "codex" ? "◎ Codex" : "▲ Claude"}
+            {latestTask.executor === "codex" || latestTask.executor === "codex_app" ? "◎ Codex" : "▲ Claude"}
           </span>
           <span className="text-[11px] text-muted-foreground truncate">
             セッション
@@ -326,9 +326,9 @@ export function NoteClaudeRunnerPanel({
       {expanded && (
         <div className="border-t px-2.5 py-2 space-y-2">
           {/* セッションURLが取れるまでの待機表示（Claude のみ）*/}
-          {latestTask.executor !== "codex" && isActive && !url && (
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Loader2 className="w-3 h-3 animate-spin" />
+          {latestTask.executor !== "codex" && latestTask.executor !== "codex_app" && isActive && !url && (
+            <div className="flex items-center gap-1.5 text-[11px] text-blue-600 dark:text-blue-400">
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
               セッションを起動中...（最大 1 分）
             </div>
           )}
