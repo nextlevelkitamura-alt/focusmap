@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import QRCode from "react-qr-code"
 import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, Circle, XCircle } from "lucide-react"
@@ -231,24 +231,10 @@ export function NoteClaudeRunnerPanel({
   isProjectAssigned: boolean
   isRepoConfigured: boolean
 }) {
-  // デフォルト展開（完了・失敗の結果に気づきやすくする）
-  const [expanded, setExpanded] = useState(true)
+  // デフォルト折りたたみ（メモ一覧の masonry が長くなりすぎないため、
+  // ユーザーが意図的にクリックして開く運用に変更）
+  const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
-
-  // タスクの状態が変わったとき、自動で展開（折り畳んでいても気づけるように）
-  // status の遷移を見て expanded を強制 true にする
-  // 何度も繰り返さないよう、直近の status を覚える
-  const lastStatusRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!latestTask) return
-    if (lastStatusRef.current !== latestTask.status) {
-      // 完了・失敗時は展開、開始時も展開
-      if (["running", "completed", "failed"].includes(latestTask.status)) {
-        setExpanded(true)
-      }
-      lastStatusRef.current = latestTask.status
-    }
-  }, [latestTask])
 
   if (!isProjectAssigned) return null
 
@@ -325,7 +311,8 @@ export function NoteClaudeRunnerPanel({
       </button>
 
       {expanded && (
-        <div className="border-t px-2.5 py-2 space-y-2">
+        // 展開時の最大高さ。Claude QR 表示時の高さを目安に頭打ち（masonry でカードが伸びすぎないため）
+        <div className="border-t px-2.5 py-2 space-y-2 max-h-[420px] overflow-y-auto">
           {/* セッションURLが取れるまでの待機表示（Claude のみ）*/}
           {latestTask.executor !== "codex" && latestTask.executor !== "codex_app" && isActive && !url && (
             <div className="flex items-center gap-1.5 text-[11px] text-blue-600 dark:text-blue-400">
@@ -370,7 +357,7 @@ export function NoteClaudeRunnerPanel({
                       ライブログ（task-runner サイクルごとに更新）
                     </div>
                     {liveLog ? (
-                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
+                      <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
                         {liveLog.slice(-2500)}
                       </pre>
                     ) : (
@@ -426,7 +413,7 @@ export function NoteClaudeRunnerPanel({
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
                 {latestTask.executor === "codex" ? "Codex" : "Claude"} に送られたプロンプト（{latestTask.prompt.length} 字）
               </summary>
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4">
+              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4">
                 {latestTask.prompt}
               </pre>
             </details>
@@ -440,7 +427,7 @@ export function NoteClaudeRunnerPanel({
                 {latestTask.executor === "codex" ? "Codex" : "Claude"} 実行完了
                 <span className="text-muted-foreground font-normal">（{resultMessage.length} 字）</span>
               </div>
-              <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-emerald-500/5 border border-emerald-500/20 p-2 text-[10px] leading-4 font-mono">
+              <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-emerald-500/5 border border-emerald-500/20 p-2 text-[10px] leading-4 font-mono">
                 {resultMessage}
               </pre>
             </div>
