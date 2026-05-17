@@ -333,6 +333,27 @@ async function launchRemoteControl(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// メモ情報を Codex プロンプトに整形（タイトル → 空行 → 詳細 → 空行 → 本体）
+//   - シャープや --- 等のマークアップは入れない（ユーザー要望: 地の文として）
+//   - 完全一致する内容は重複させない
+// ─────────────────────────────────────────────────────────────────────────
+function buildPromptWithMemo(opts: {
+  memoTitle?: string
+  memoDescription?: string
+  prompt: string
+}): string {
+  const title = opts.memoTitle?.trim() ?? ''
+  const desc = opts.memoDescription?.trim() ?? ''
+  const body = opts.prompt.trim()
+
+  const parts: string[] = []
+  if (title && title !== body) parts.push(title)
+  if (desc && desc !== title && desc !== body) parts.push(desc)
+  parts.push(body)
+  return parts.join('\n\n')
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Codex app-server 健全性チェック（launchd 常駐の codex app-server に接続）
 //   - http://127.0.0.1:7878/readyz が HTTP 200 を返せば OK
 //   - 起動前に確認することで「daemon 停止」を即座に検知して step に記録
@@ -424,46 +445,48 @@ async function launchCodexRemote(opts: {
   try { fs.unlinkSync(logPath) } catch { /* ignore */ }
   fs.writeFileSync(logPath, '', 'utf-8')
 
-  // プロンプト先頭にメモ情報ブロックを付与（Codex のチャット名生成に効かせる）
-  // フォーマット: 「# {タイトル}\n\n## 詳細\n{詳細}\n\n---\n\n{元プロンプト}」
-  const titleBlock = opts.memoTitle
-    ? [
-        `# ${opts.memoTitle}`,
-        opts.memoDescription ? `\n## 詳細\n${opts.memoDescription}` : '',
-        '\n---\n',
-      ].join('')
-    : ''
-  const fullPrompt = `${titleBlock}${opts.prompt}`
+  // プロンプト組み立て: 「タイトル\n\n詳細\n\nプロンプト本体」
+  //   - シャープやセパレータ等のマークアップは入れない（Codex が地の文として読む）
+  //   - 重複は省く（title === desc / title === prompt の場合）
+  const fullPrompt = buildPromptWithMemo({
+    memoTitle: opts.memoTitle,
+    memoDescription: opts.memoDescription,
+    prompt: opts.prompt,
+  })
 
-  // codex --remote (TUI mode) で app-server に接続し thread を作成
-  //   モバイル/Codex.app から接続可能になる
-  //   --remote: launchd 常駐の app-server (ws://127.0.0.1:7878) に接続
-  //   --cd: 作業ディレクトリ
-  //   --dangerously-bypass-approvals-and-sandbox: 全許可スキップ（無人実行）
-  //   --no-alt-screen: tmux でも安定動作（alt-screen モードを使わない）
-  //   プロンプトは positional 引数（ANSI-C quoting で改行を保持）
-  //   注: codex exec とは違い --remote は TUI でしか使えず、自動終了しない。
-  //       完了検知は syncCodexAppThreads (state_5.sqlite の updated_at_ms 停滞) で行う。
-  const inner = `exec codex --remote ${CODEX_APP_SERVER_WS} --cd ${JSON.stringify(opts.cwd)} --dangerously-bypass-approvals-and-sandbox --no-alt-screen ${ansiCQuote(fullPrompt)}`
-  const bashWrapped = `bash -c ${JSON.stringify(inner)}`
+  // JSON-RPC ブリッジを detached child process として起動
+  //   旧 `codex --remote` (TUI) では positional prompt が auto-submit されず
+  //   tmux detached で誰も Enter を押せず thread だけ作って止まる問題があったため、
+  //   ws://127.0.0.1:7878 に直接接続して newConversation + sendUserMessage を打つ
+  //   Node.js クライアント (scripts/codex-rpc-bridge.ts) に切替。
+  //   完了検知も turn/completed notification を購読するので確実。
+  const promptFile = `/tmp/codex-prompt-${opts.taskId}.txt`
+  fs.writeFileSync(promptFile, fullPrompt, 'utf-8')
 
-  try {
-    execSync(
-      `tmux new-session -d -s ${JSON.stringify(sessionName)} -c ${JSON.stringify(opts.cwd)} ${bashWrapped}`,
-      { stdio: 'ignore' },
-    )
-  } catch (err) {
-    return { success: false, error: `tmux 起動失敗: ${err instanceof Error ? err.message : String(err)}` }
+  const bridgePath = path.resolve(__dirname, 'codex-rpc-bridge.ts')
+  if (!fs.existsSync(bridgePath)) {
+    return { success: false, error: `bridge script not found: ${bridgePath}` }
   }
 
-  // 出力を pipe-pane で捕捉
   try {
-    execSync(
-      `tmux pipe-pane -o -t ${JSON.stringify(sessionName)} ${JSON.stringify(`cat >> ${logPath}`)}`,
-      { stdio: 'ignore' },
+    // detached + unref で task-runner 終了後も bridge プロセスは生き残る
+    // stdout/stderr はファイルにリダイレクト
+    const bridgeLog = `/tmp/codex-bridge-stdout-${opts.taskId}.log`
+    const outFd = fs.openSync(bridgeLog, 'a')
+    const child = spawn(
+      '/usr/local/bin/npx',
+      ['ts-node', '--esm', bridgePath, opts.taskId, opts.cwd, promptFile],
+      {
+        detached: true,
+        stdio: ['ignore', outFd, outFd],
+        env: { ...process.env },
+        cwd: path.resolve(__dirname, '..'),
+      },
     )
-  } catch {
-    console.error('[launchCodexRemote] pipe-pane failed')
+    child.unref()
+    // sessionName は互換性のため bridge プロセスを表す論理名として返す
+  } catch (err) {
+    return { success: false, error: `bridge 起動失敗: ${err instanceof Error ? err.message : String(err)}` }
   }
 
   // displayTitle は将来 thread title 上書きに使用
@@ -485,15 +508,12 @@ function launchCodexApp(opts: {
   memoTitle?: string
   memoDescription?: string
 }): { success: true; openedAt: string } | { success: false; error: string } {
-  // プロンプト先頭にメモ情報ブロックを付与
-  const titleBlock = opts.memoTitle
-    ? [
-        `# ${opts.memoTitle}`,
-        opts.memoDescription ? `\n## 詳細\n${opts.memoDescription}` : '',
-        '\n---\n',
-      ].join('')
-    : ''
-  const fullPrompt = `${titleBlock}${opts.prompt}`
+  // プロンプト組み立て: タイトル / 詳細 / 本体 をシンプルに改行で繋ぐ（マークアップなし）
+  const fullPrompt = buildPromptWithMemo({
+    memoTitle: opts.memoTitle,
+    memoDescription: opts.memoDescription,
+    prompt: opts.prompt,
+  })
 
   // codex://new?prompt=...&path=...
   const params = new URLSearchParams()
@@ -616,17 +636,16 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
       const updates: Record<string, unknown> = { result: baseResult }
 
       // 完了判定:
-      //   - archived=1: ユーザーが手動でアーカイブ
-      //   - 90秒以上 thread が更新されていない: TUI が応答停止 = 完了とみなす
-      //     (codex --remote の TUI は自動終了しないため、stale 検知で代用)
-      const STALE_THRESHOLD_MS = 90_000
+      //   - codex_app (codex:// URL): threads.archived = 1 でのみ完了判定
+      //     （codex:// は prefill のみで自動送信されない＝ユーザー操作待ち）
+      //   - codex (JSON-RPC bridge): bridge が turn/completed 受信で
+      //     自前で status='completed' に更新するため、ここでは何もしない
       const isArchived = row.archived === 1
-      const isStale = !!(row.updated_at_ms && (Date.now() - row.updated_at_ms) > STALE_THRESHOLD_MS)
-      const isComplete = isArchived || (executor === 'codex' && isStale)
+      const isComplete = isArchived && executor !== 'codex'
 
       if (isComplete) {
         const completedIdx = steps.findIndex(s => s.key === 'completed')
-        const completedStep = makeStep('completed', isArchived ? '完了（アーカイブ済）' : '完了（応答停止検知）')
+        const completedStep = makeStep('completed', '完了（アーカイブ済）')
         if (completedIdx >= 0) steps[completedIdx] = completedStep
         else steps.push(completedStep)
         updates.status = 'completed'
@@ -634,15 +653,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         updates.result = {
           ...baseResult,
           steps,
-          message: `${executor === 'codex' ? 'Codex' : 'Codex.app'} セッション完了\n\n${liveLog}`,
-        }
-
-        // codex (CLI) の場合、TUI は自動終了しないので tmux セッションを掃除
-        if (executor === 'codex' && task.tmux_session_name) {
-          try {
-            execSync(`tmux kill-session -t ${JSON.stringify(task.tmux_session_name)}`, { stdio: 'ignore' })
-            console.log(`[codex] tmux cleaned: ${task.tmux_session_name}`)
-          } catch { /* セッション既に消滅 */ }
+          message: `Codex.app セッション完了\n\n${liveLog}`,
         }
       }
       await supabase
@@ -1160,96 +1171,14 @@ async function main() {
           continue
         }
         await pushCodexStep(supabase, task.id,
-          makeStep('spawn', `tmux セッション起動 (${result.sessionName})`))
-
-        await supabase
-          .from('ai_tasks')
-          .update({ tmux_session_name: result.sessionName })
-          .eq('id', task.id)
+          makeStep('spawn', 'JSON-RPC bridge プロセス起動'))
 
         notify(`Codex 実行開始: ${shortPrompt}`, 'Focusmap AI')
-        console.log(`[task-runner] Codex session started: ${task.id} (${result.sessionName})`)
+        console.log(`[task-runner] Codex bridge spawned: ${task.id}`)
 
-        // ─── 短期レコンサイル: 5秒×8回 = 最大40秒、step を進めながらポーリング ───
-        const codexLogPath = `/tmp/codex-exec-${task.id}.log`
-        const codexDbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
-        const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
-        const sinceMs = Date.now() - 60_000
-        let detected = false
-        let connectedStepDone = false
-        let threadStepDone = false
-        let threadId: string | null = null
-
-        for (let i = 0; i < 8; i++) {
-          await new Promise(r => setTimeout(r, 5000))
-
-          // ライブログを即時同期（UI に「動いてる感」を出す）
-          let liveLog: string | undefined
-          if (fs.existsSync(codexLogPath)) {
-            try {
-              const content = fs.readFileSync(codexLogPath, 'utf-8')
-              const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-              liveLog = cleaned.slice(-6000)
-            } catch { /* ignore */ }
-          }
-
-          // ④ Codex 接続検知（ログにバナーや WebSocket 接続文字列が出たら）
-          if (!connectedStepDone && liveLog && /connected|remote|websocket|app-server|session/i.test(liveLog)) {
-            connectedStepDone = true
-            await pushCodexStep(supabase, task.id,
-              makeStep('connected', 'Codex が app-server に接続'),
-              { liveLog })
-          } else if (liveLog !== undefined) {
-            await pushCodexStep(supabase, task.id,
-              makeStep('spawn', `tmux セッション起動 (${result.sessionName})`),
-              { liveLog })
-          }
-
-          // ⑤ Thread 作成検知（state_5.sqlite に thread が出現 → mobile に表示開始）
-          if (!threadStepDone && fs.existsSync(codexDbPath)) {
-            try {
-              const out = execSync(
-                `sqlite3 ${JSON.stringify(codexDbPath)} "SELECT id FROM threads WHERE first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs} ORDER BY created_at_ms DESC LIMIT 1"`,
-                { encoding: 'utf-8', timeout: 5000 },
-              ).trim()
-              if (out) {
-                threadId = out
-                threadStepDone = true
-                await pushCodexStep(supabase, task.id,
-                  makeStep('thread_visible', `Mobile/Codex.app に表示 (thread ${out.slice(0, 8)})`),
-                  { liveLog, threadId: out })
-                await supabase
-                  .from('ai_tasks')
-                  .update({ codex_thread_id: out })
-                  .eq('id', task.id)
-              }
-            } catch { /* DB ロック等、次サイクルで再試行 */ }
-          }
-
-          // ⑥ tmux セッション消滅 = 完了
-          if (!tmuxSessionExists(result.sessionName)) {
-            const finalLog = fs.existsSync(codexLogPath)
-              ? fs.readFileSync(codexLogPath, 'utf-8').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').slice(-3000)
-              : 'Codex セッションは終了しました（ログなし）'
-            await pushCodexStep(supabase, task.id,
-              makeStep('completed', '完了'),
-              { liveLog: finalLog, message: finalLog, threadId: threadId ?? undefined })
-            await supabase
-              .from('ai_tasks')
-              .update({
-                status: 'completed',
-                completed_at: new Date().toISOString(),
-              })
-              .eq('id', task.id)
-            notify(`完了: ${shortPrompt}`, 'Focusmap AI')
-            console.log(`[task-runner] Codex finished quickly: ${task.id} (${(i + 1) * 5}s)`)
-            detected = true
-            break
-          }
-        }
-        if (!detected) {
-          console.log(`[task-runner] Codex still running after 40s, will reconcile next cycle: ${task.id}`)
-        }
+        // bridge プロセスが独立して WebSocket 接続 → newConversation → turn/completed まで
+        // 担当するので、task-runner はここで早期 return。
+        // 進捗 step (connected / thread_visible / completed) は bridge が更新する。
         continue
       }
 
