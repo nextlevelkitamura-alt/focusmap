@@ -56,6 +56,42 @@ const statusColorMap: Record<string, string> = {
   archived: "bg-gray-500",
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 長文メモの折りたたみ表示
+//   - 5 行 / 200 字を超えたら max-h-[120px] で切って「もっと見る」を表示
+//   - 展開時は max-h-[400px] で頭打ち、超える分はカード内スクロール
+// ─────────────────────────────────────────────────────────────────────────
+function NoteContentCollapsible({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const lineCount = (text.match(/\n/g)?.length ?? 0) + 1
+  const needsCollapse = text.length > 200 || lineCount > 6
+
+  if (!needsCollapse) {
+    return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
+  }
+
+  return (
+    <div>
+      <div className={cn(
+        "relative",
+        expanded ? "max-h-[400px] overflow-y-auto" : "max-h-[120px] overflow-hidden",
+      )}>
+        <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
+        {!expanded && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent" />
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setExpanded(v => !v) }}
+        className="mt-1 text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+      >
+        {expanded ? "折りたたむ" : `もっと見る（全 ${text.length} 字）`}
+      </button>
+    </div>
+  )
+}
+
 export function MemoView({ className, projects = [], spaces = [], selectedSpaceId = null, onSelectSpace }: MemoViewProps) {
   const [content, setContent] = useState("")
   const [selectedImages, setSelectedImages] = useState<string[]>([])
@@ -1083,12 +1119,17 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          // masonry レイアウト: CSS Multi-column で Pinterest 風に詰める
+          // - columns-1 sm:columns-2 lg:columns-3 で画面幅に応じて列数自動
+          // - break-inside-avoid でカードが列をまたいで分断されない
+          // - mb-2 でカード間ギャップ（gap は multi-column では効かないので margin で代用）
+          <div className="columns-1 sm:columns-2 lg:columns-3 gap-2">
             {filteredNotes.map((note) => (
-              <Card key={note.id} className="p-3 hover:bg-muted/50 transition-colors group">
+              <div key={note.id} className="mb-2 break-inside-avoid">
+              <Card className="p-3 hover:bg-muted/50 transition-colors group">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                    <NoteContentCollapsible text={note.content} />
 
                     {/* 添付画像サムネイル */}
                     {note.image_urls && note.image_urls.length > 0 && (
@@ -1209,6 +1250,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                   isRepoConfigured={!!getNoteRepoPath(note.project_id)}
                 />
               </Card>
+              </div>
             ))}
           </div>
         )}
