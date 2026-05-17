@@ -10,6 +10,7 @@ import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Set
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import { useCalendars } from "@/hooks/useCalendars"
 
 interface CalendarStatus {
   isConnected: boolean
@@ -24,12 +25,6 @@ interface CalendarStatus {
   } | null
 }
 
-interface CalendarInfo {
-  google_calendar_id: string
-  name: string
-  background_color?: string
-}
-
 interface CalendarSettingsProps {
   compact?: boolean
 }
@@ -40,10 +35,10 @@ const IMPORT_PERIOD_OPTIONS = [
   { value: '90', label: '3ヶ月' },
 ]
 
-// LocalStorage keys
+// LocalStorage keys（auto_import_enabled / period_days はUI設定のみのため localStorage 継続。
+// 取り込みカレンダー選択はDB側 `selected` カラムに一本化したので localStorage は廃止）
 const STORAGE_KEY_AUTO_IMPORT = 'shikumika_auto_import_enabled'
 const STORAGE_KEY_IMPORT_PERIOD = 'shikumika_import_period_days'
-const STORAGE_KEY_IMPORT_CALENDARS = 'shikumika_import_calendar_ids'
 
 export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   const [status, setStatus] = useState<CalendarStatus>({
@@ -58,9 +53,15 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   // New settings (localStorage for now)
   const [autoImportEnabled, setAutoImportEnabled] = useState(true)
   const [importPeriod, setImportPeriod] = useState('30')
-  const [calendars, setCalendars] = useState<CalendarInfo[]>([])
-  const [selectedCalendarIds, setSelectedCalendarIds] = useState<Set<string>>(new Set())
   const [showCalendarSelect, setShowCalendarSelect] = useState(false)
+
+  // カレンダー選択はDB側 `selected` を正規ストアにし、useCalendars を信頼の源にする。
+  // 旧localStorage管理は実際の予定取得に何の影響もない死コードだったため廃止。
+  const {
+    calendars,
+    isLoading: calendarsLoading,
+    toggleCalendar,
+  } = useCalendars()
 
   useEffect(() => {
     fetchStatus()
@@ -71,18 +72,12 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
     // Load from localStorage
     const savedAutoImport = localStorage.getItem(STORAGE_KEY_AUTO_IMPORT)
     const savedPeriod = localStorage.getItem(STORAGE_KEY_IMPORT_PERIOD)
-    const savedCalendars = localStorage.getItem(STORAGE_KEY_IMPORT_CALENDARS)
 
     if (savedAutoImport !== null) {
       setAutoImportEnabled(savedAutoImport === 'true')
     }
     if (savedPeriod) {
       setImportPeriod(savedPeriod)
-    }
-    if (savedCalendars) {
-      try {
-        setSelectedCalendarIds(new Set(JSON.parse(savedCalendars)))
-      } catch {}
     }
   }
 
@@ -100,19 +95,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
     }
   }
 
-  // Fetch calendars when connected
-  useEffect(() => {
-    if (status.isConnected) {
-      fetch('/api/calendars')
-        .then(res => res.json())
-        .then(data => {
-          if (data.calendars) {
-            setCalendars(data.calendars)
-          }
-        })
-        .catch(console.error)
-    }
-  }, [status.isConnected])
+  // useCalendars が自前で /api/calendars をfetchするので、ここでの個別fetchは不要
 
   const handleConnect = () => {
     window.location.href = '/api/calendar/connect'
@@ -174,18 +157,8 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
     localStorage.setItem(STORAGE_KEY_IMPORT_PERIOD, period)
   }
 
-  const handleCalendarToggle = (calendarId: string) => {
-    setSelectedCalendarIds(prev => {
-      const next = new Set(prev)
-      if (next.has(calendarId)) {
-        next.delete(calendarId)
-      } else {
-        next.add(calendarId)
-      }
-      localStorage.setItem(STORAGE_KEY_IMPORT_CALENDARS, JSON.stringify([...next]))
-      return next
-    })
-  }
+  // カレンダーチェック切替は useCalendars.toggleCalendar(id, selected) を直接呼ぶ
+  // （DB `selected` カラムに反映 → useCalendarEvents が selected のみ fetch）
 
   // Compact mode (for header)
   if (compact) {
@@ -410,7 +383,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
             )}
 
             {/* カレンダー選択 */}
-            {autoImportEnabled && calendars.length > 0 && (
+            {autoImportEnabled && (calendarsLoading || calendars.length > 0) && (
               <div className="space-y-2">
                 <button
                   onClick={() => setShowCalendarSelect(!showCalendarSelect)}
@@ -419,32 +392,50 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                   <Settings2 className="w-4 h-4" />
                   取り込むカレンダーを選択
                   <span className="text-xs">
-                    ({selectedCalendarIds.size === 0 ? 'すべて' : `${selectedCalendarIds.size}件`})
+                    ({calendarsLoading
+                      ? '読み込み中…'
+                      : `${calendars.filter(c => c.selected).length} / ${calendars.length}件`})
                   </span>
                 </button>
 
                 {showCalendarSelect && (
                   <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
-                    {calendars.map(cal => (
-                      <label
-                        key={cal.google_calendar_id}
-                        className="flex items-center gap-2 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedCalendarIds.size === 0 || selectedCalendarIds.has(cal.google_calendar_id)}
-                          onChange={() => handleCalendarToggle(cal.google_calendar_id)}
-                          className="rounded border-gray-300"
-                        />
-                        <div
-                          className="w-3 h-3 rounded"
-                          style={{ backgroundColor: cal.background_color || '#039BE5' }}
-                        />
-                        <span className="text-sm truncate">{cal.name}</span>
-                      </label>
-                    ))}
+                    {calendarsLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        カレンダー一覧を読み込み中…
+                      </div>
+                    ) : (
+                      calendars.map(cal => (
+                        <label
+                          key={cal.id}
+                          className="flex items-center gap-2 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={cal.selected}
+                            onChange={(e) => {
+                              toggleCalendar(cal.id, e.target.checked).catch(err => {
+                                console.error('Failed to toggle calendar:', err)
+                              })
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <div
+                            className="w-3 h-3 rounded shrink-0"
+                            style={{ backgroundColor: cal.background_color || cal.color || '#039BE5' }}
+                          />
+                          <span className="text-sm truncate">
+                            {cal.name}
+                            {cal.is_primary && (
+                              <span className="ml-1 text-[10px] text-muted-foreground">(プライマリ)</span>
+                            )}
+                          </span>
+                        </label>
+                      ))
+                    )}
                     <p className="text-[10px] text-muted-foreground pt-1">
-                      ※ 選択なし = すべてのカレンダーを取り込み
+                      ※ チェックを外したカレンダーの予定はTodayタイムラインに表示されません
                     </p>
                   </div>
                 )}
@@ -457,14 +448,3 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   )
 }
 
-// Export helpers for use in today-view
-export function getAutoImportSettings() {
-  if (typeof window === 'undefined') {
-    return { enabled: true, periodDays: 30, calendarIds: [] }
-  }
-  const enabled = localStorage.getItem(STORAGE_KEY_AUTO_IMPORT) !== 'false'
-  const periodDays = parseInt(localStorage.getItem(STORAGE_KEY_IMPORT_PERIOD) || '30', 10)
-  const calendarIdsJson = localStorage.getItem(STORAGE_KEY_IMPORT_CALENDARS)
-  const calendarIds = calendarIdsJson ? JSON.parse(calendarIdsJson) : []
-  return { enabled, periodDays, calendarIds }
-}
