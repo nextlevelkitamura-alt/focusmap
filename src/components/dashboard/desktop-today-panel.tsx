@@ -18,6 +18,7 @@ import { formatTime } from "@/contexts/TimerContext"
 import { type QuickTaskData } from "@/components/today/quick-task-fab"
 import { PanelQuickTaskForm } from "@/components/dashboard/panel-quick-task-form"
 import { DesktopPanelFab } from "@/components/dashboard/desktop-panel-fab"
+import { DashboardCalendarPanel } from "@/components/dashboard/dashboard-calendar-panel"
 import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useIdealTracking } from "@/hooks/useIdealTracking"
 import { useClickOutside } from "@/hooks/useClickOutside"
@@ -561,22 +562,12 @@ export function DesktopTodayPanel({
                         </div>
                     ) : (
                     <div className={cn("h-full min-h-0 flex flex-col transition-all duration-200", showSideTaskForm && "pl-[352px]")}>
-                {/* Calendar Connection Required */}
-                {!logic.eventsLoading && !logic.calendarsLoading && logic.calendars.length === 0 && (
-                    <div className="mx-3 mt-2 py-3 px-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
-                        <p className="text-xs font-medium text-blue-800 dark:text-blue-200">
-                            カレンダーに接続されていません
-                        </p>
-                        <p className="text-[10px] text-blue-700 dark:text-blue-300 mt-1">
-                            Googleカレンダーと連携すると、予定を自動で表示できます
-                        </p>
-                        <button
-                            onClick={() => window.location.href = '/api/calendar/connect'}
-                            className="mt-2 px-2.5 py-1 text-[10px] font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-                        >
-                            カレンダーを接続
-                        </button>
-                    </div>
+                {/* Calendar Connection Panel
+                    - 未接続: 接続ボタン
+                    - 接続済み: 連携アカウント表示 + 取り込むカレンダー選択UI
+                    旧「カレンダーに接続されていません」をリッチ化（OAuth審査動画でも使用） */}
+                {!logic.eventsLoading && (
+                    <DashboardCalendarPanel />
                 )}
 
                 {/* Calendar Events Error */}

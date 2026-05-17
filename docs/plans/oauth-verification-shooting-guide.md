@@ -55,6 +55,18 @@
 - Focusmap撮影専用のGoogleアカウントを1つ用意（既存でも新規でもOK）
 - 過去にFocusmapと連携した経歴があれば https://myaccount.google.com/permissions で **Focusmapを削除**（初回同意画面を撮るため）
 
+### 1-5.5. 古いCookieを必ず削除（PKCEエラー回避）
+
+ドメイン切替（旧 `*.run.app` → `focusmap-official.com`）の直後は、ブラウザに古いCookieが残っていて **`error=exchange&reason=PKCE+code+verifier+not+found+in+storage`** というエラーが出る既知の問題があります。撮影前に必ず以下を実行してください。
+
+1. 撮影用Chromeプロファイルで `focusmap-official.com` を開く
+2. アドレスバー左の鍵アイコン → **「Cookieとサイトデータ」** → **すべて削除**
+3. 同様に **shikumika-app-364jgme3ja-an.a.run.app** のCookieも残っていれば削除（履歴→Cookieと他のサイトデータから検索）
+4. ブラウザを **完全終了→再起動**
+5. これで初回サインインから綺麗にやり直せる
+
+> もし撮影中にこのエラーが出たら、 **そのステージだけ撮り直し**＋上記Cookie削除を再実行。コード側にも修正の余地はあるが、撮影だけならCookie掃除で回避できる。
+
 ### 1-6. Chromeウィンドウサイズを1280x720に固定
 
 > なぜ1280x720？ → 1080p（1920x1080）で録画したいけど、Retinaディスプレイは見かけの解像度の2倍で記録される。なのでChromeウィンドウを **1280x720** にして撮ると、最終的に2560x1440 → 1920x1080にダウンスケールできて綺麗。
