@@ -24,9 +24,10 @@ interface CodexStepRecord {
 const CODEX_STEP_ORDER: { key: string; label: string }[] = [
   { key: "received", label: "Mac で受信" },
   { key: "daemon_ready", label: "Codex daemon 接続OK" },
-  { key: "spawn", label: "tmux セッション起動" },
-  { key: "connected", label: "Codex が app-server に接続" },
-  { key: "thread_visible", label: "Mobile / Codex.app に表示" },
+  { key: "spawn", label: "Bridge プロセス起動" },
+  { key: "connected", label: "app-server に接続 (initialize OK)" },
+  { key: "thread_visible", label: "Thread 作成 (mobile / Codex.app に表示)" },
+  { key: "turn_started", label: "プロンプト送信完了" },
   { key: "completed", label: "完了" },
 ]
 
