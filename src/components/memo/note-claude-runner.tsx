@@ -27,6 +27,7 @@ const CODEX_STEP_ORDER: { key: string; label: string }[] = [
   { key: "spawn", label: "Bridge プロセス起動" },
   { key: "connected", label: "app-server に接続 (initialize OK)" },
   { key: "thread_visible", label: "Thread 作成 (mobile / Codex.app に表示)" },
+  { key: "prompt_ready", label: "プロンプト準備完了" },
   { key: "turn_started", label: "プロンプト送信完了" },
   { key: "completed", label: "完了" },
 ]

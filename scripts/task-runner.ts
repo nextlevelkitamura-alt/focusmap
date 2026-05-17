@@ -15,7 +15,7 @@
  * launchd から毎分起動される（~/Library/LaunchAgents/com.focusmap.task-runner.plist）
  */
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { spawn } from 'child_process'
 import { execSync } from 'child_process'
 import * as path from 'path'
@@ -337,20 +337,77 @@ async function launchRemoteControl(opts: {
 //   - シャープや --- 等のマークアップは入れない（ユーザー要望: 地の文として）
 //   - 完全一致する内容は重複させない
 // ─────────────────────────────────────────────────────────────────────────
+function normalizePromptBlock(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function promptCompareKey(text: string): string {
+  return normalizePromptBlock(text).replace(/\s+/g, ' ')
+}
+
+function splitPromptBlocks(text: string): string[] {
+  return normalizePromptBlock(text)
+    .split(/\n{2,}/)
+    .map(block => normalizePromptBlock(block))
+    .filter(Boolean)
+}
+
+function removeRepeatedPromptBlocks(blocks: string[]): string[] {
+  const result: string[] = []
+  let i = 0
+
+  while (i < blocks.length) {
+    let repeatedBlockLength = 0
+    const remaining = blocks.length - i
+
+    for (let length = Math.floor(remaining / 2); length >= 1; length--) {
+      const first = blocks.slice(i, i + length).map(promptCompareKey)
+      const second = blocks.slice(i + length, i + length * 2).map(promptCompareKey)
+      if (first.every((key, index) => key === second[index])) {
+        repeatedBlockLength = length
+        break
+      }
+    }
+
+    if (repeatedBlockLength > 0) {
+      result.push(...blocks.slice(i, i + repeatedBlockLength))
+      i += repeatedBlockLength * 2
+    } else {
+      result.push(blocks[i])
+      i += 1
+    }
+  }
+
+  return result
+}
+
 function buildPromptWithMemo(opts: {
   memoTitle?: string
   memoDescription?: string
   prompt: string
 }): string {
-  const title = opts.memoTitle?.trim() ?? ''
-  const desc = opts.memoDescription?.trim() ?? ''
-  const body = opts.prompt.trim()
+  const title = normalizePromptBlock(opts.memoTitle ?? '')
+  const desc = normalizePromptBlock(opts.memoDescription ?? '')
+  const body = normalizePromptBlock(opts.prompt)
+  const bodyBlocks = splitPromptBlocks(body)
+  const bodyKeys = new Set(bodyBlocks.map(promptCompareKey))
 
   const parts: string[] = []
-  if (title && title !== body) parts.push(title)
-  if (desc && desc !== title && desc !== body) parts.push(desc)
-  parts.push(body)
-  return parts.join('\n\n')
+  if (title && !bodyKeys.has(promptCompareKey(title))) parts.push(title)
+  if (
+    desc &&
+    promptCompareKey(desc) !== promptCompareKey(title) &&
+    !bodyKeys.has(promptCompareKey(desc))
+  ) {
+    parts.push(desc)
+  }
+  parts.push(...bodyBlocks)
+
+  return removeRepeatedPromptBlocks(parts).join('\n\n')
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -359,7 +416,6 @@ function buildPromptWithMemo(opts: {
 //   - 起動前に確認することで「daemon 停止」を即座に検知して step に記録
 // ─────────────────────────────────────────────────────────────────────────
 const CODEX_APP_SERVER_HTTP = 'http://127.0.0.1:7878'
-const CODEX_APP_SERVER_WS = 'ws://127.0.0.1:7878'
 
 function checkCodexAppServerReady(): { ready: boolean; error?: string } {
   try {
@@ -392,9 +448,9 @@ function makeStep(key: string, label: string, status: CodexStepStatus = 'done'):
   return { key, label, status, at: new Date().toISOString() }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function pushCodexStep(
-  supabase: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any, any, any, any, any>,
   taskId: string,
   step: CodexStep,
   extra?: { liveLog?: string; threadId?: string; message?: string },
@@ -1123,13 +1179,18 @@ async function main() {
         task.executor === 'codex' ? 'codex' :
         'claude'
       const now = new Date().toISOString()
+      const memoPrompt = buildPromptWithMemo({
+        memoTitle,
+        memoDescription,
+        prompt: task.prompt,
+      })
 
       // ─── Codex.app executor (Mac proxy: open codex://...) ───
       if (executor === 'codex_app') {
         notify(`Codex.app 起動: ${shortPrompt}`, 'Focusmap AI')
         const result = launchCodexApp({
           taskId: task.id,
-          prompt: task.prompt,
+          prompt: memoPrompt,
           cwd: task.cwd,
           memoTitle,
           memoDescription,
@@ -1190,7 +1251,7 @@ async function main() {
         // ③ tmux で codex --remote 起動
         const result = await launchCodexRemote({
           taskId: task.id,
-          prompt: task.prompt,
+          prompt: memoPrompt,
           cwd: task.cwd,
           displayTitle,
           memoTitle,
@@ -1224,7 +1285,7 @@ async function main() {
       notify(`Claude スマホで操作可能に起動中: ${shortPrompt}`, 'Focusmap AI')
       const result = await launchRemoteControl({
         taskId: task.id,
-        prompt: task.prompt,
+        prompt: memoPrompt,
         cwd: task.cwd,
         displayTitle,
       })

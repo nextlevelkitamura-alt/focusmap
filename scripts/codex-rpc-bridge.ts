@@ -16,7 +16,7 @@
  * 1 タスクで 1 プロセス。完了/失敗で exit する。
  */
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -58,16 +58,146 @@ interface CodexStep {
   status: CodexStepStatus
   at: string
 }
+type AiTaskTerminalStatus = 'completed' | 'failed'
+
 function makeStep(key: string, label: string, status: CodexStepStatus = 'done'): CodexStep {
   return { key, label, status, at: new Date().toISOString() }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function stringifyError(value: unknown): string {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'object' && 'message' in value && typeof value.message === 'string') {
+    return value.message
+  }
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function extractText(value: unknown): string {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(extractText).join('')
+  if (typeof value !== 'object') return ''
+
+  const record = value as Record<string, unknown>
+  if (typeof record.text === 'string') return record.text
+  if (typeof record.delta === 'string') return record.delta
+  if (typeof record.content === 'string') return record.content
+  if (Array.isArray(record.content)) return record.content.map(extractText).join('')
+  if (Array.isArray(record.parts)) return record.parts.map(extractText).join('')
+  return ''
+}
+
+function normalizePromptBlock(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function promptCompareKey(text: string): string {
+  return normalizePromptBlock(text).replace(/\s+/g, ' ')
+}
+
+function dedupeRepeatedPromptBlocks(text: string): string {
+  const blocks = normalizePromptBlock(text)
+    .split(/\n{2,}/)
+    .map(block => normalizePromptBlock(block))
+    .filter(Boolean)
+  const result: string[] = []
+  let i = 0
+
+  while (i < blocks.length) {
+    let repeatedBlockLength = 0
+    const remaining = blocks.length - i
+    for (let length = Math.floor(remaining / 2); length >= 1; length--) {
+      const first = blocks.slice(i, i + length).map(promptCompareKey)
+      const second = blocks.slice(i + length, i + length * 2).map(promptCompareKey)
+      if (first.every((key, index) => key === second[index])) {
+        repeatedBlockLength = length
+        break
+      }
+    }
+    if (repeatedBlockLength > 0) {
+      result.push(...blocks.slice(i, i + repeatedBlockLength))
+      i += repeatedBlockLength * 2
+    } else {
+      result.push(blocks[i])
+      i += 1
+    }
+  }
+
+  return result.join('\n\n')
+}
+
+function resolveTurnOutcome(opts: {
+  status: string
+  error: unknown
+  hasAssistantOutput: boolean
+}): { status: AiTaskTerminalStatus; label: string; error?: string; note?: string } {
+  const normalized = opts.status.trim().toLowerCase()
+  const errorText = stringifyError(opts.error)
+
+  if (errorText) {
+    return {
+      status: 'failed',
+      label: `失敗 (${opts.status || 'error'})`,
+      error: `Codex turn ${opts.status || 'error'}: ${errorText}`,
+    }
+  }
+
+  const successful = new Set(['completed', 'complete', 'success', 'succeeded', 'done', 'finished'])
+  if (successful.has(normalized)) {
+    return { status: 'completed', label: '完了' }
+  }
+
+  const failed =
+    normalized.includes('fail') ||
+    normalized.includes('error') ||
+    normalized.includes('abort') ||
+    normalized.includes('cancel') ||
+    normalized.includes('timeout')
+  if (failed) {
+    return {
+      status: 'failed',
+      label: `失敗 (${opts.status})`,
+      error: `Codex turn ${opts.status}`,
+    }
+  }
+
+  if (normalized === 'interrupted' && opts.hasAssistantOutput) {
+    return {
+      status: 'completed',
+      label: '完了（Codex status: interrupted / errorなし）',
+      note: 'Codex app-server は interrupted を返しましたが、error はなく回答ログを取得できたため完了扱いにしました。',
+    }
+  }
+
+  if (opts.hasAssistantOutput) {
+    return {
+      status: 'completed',
+      label: `完了（Codex status: ${opts.status || 'unknown'}）`,
+      note: 'Codex app-server の終了 status は未分類ですが、error はなく回答ログを取得できたため完了扱いにしました。',
+    }
+  }
+
+  return {
+    status: 'failed',
+    label: `失敗 (${opts.status || 'unknown'})`,
+    error: `Codex turn ${opts.status || 'unknown'}: 回答ログを取得できないまま終了しました`,
+  }
+}
+
 async function pushStep(
-  supabase: any,
+  supabase: SupabaseClient,
   taskId: string,
   step: CodexStep,
-  extra?: { liveLog?: string; threadId?: string; message?: string },
+  extra?: { liveLog?: string; threadId?: string; message?: string; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const { data } = await supabase.from('ai_tasks').select('result').eq('id', taskId).maybeSingle()
   const current = (data?.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
@@ -80,6 +210,7 @@ async function pushStep(
   if (extra?.liveLog !== undefined) merged.live_log = extra.liveLog
   if (extra?.threadId) merged.codex_thread_id = extra.threadId
   if (extra?.message) merged.message = extra.message
+  if (extra?.metadata) Object.assign(merged, extra.metadata)
   await supabase.from('ai_tasks').update({ result: merged }).eq('id', taskId)
 }
 
@@ -173,7 +304,8 @@ async function main() {
     process.exit(2)
   }
 
-  const prompt = fs.readFileSync(promptFile, 'utf-8')
+  const rawPrompt = fs.readFileSync(promptFile, 'utf-8')
+  const prompt = dedupeRepeatedPromptBlocks(rawPrompt)
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
   const logFile = LOG_FILE_TEMPLATE(taskId)
   try { fs.unlinkSync(logFile) } catch { /* ignore */ }
@@ -247,19 +379,54 @@ async function main() {
         { threadId })
       await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
 
+      await pushStep(supabase, taskId, makeStep('prompt_ready', `プロンプト準備完了 (${prompt.length}文字)`), {
+        metadata: {
+          prompt_chars: prompt.length,
+          prompt_preview: prompt.slice(0, 1000),
+          prompt_deduped: rawPrompt !== prompt,
+        },
+      })
+
       // ─── 通知購読 ───
-      // 全 notification を stderr に詳細ログ。完了 method 名は実機ログから後で絞り込む
-      const tailLines: string[] = []
+      // app-server の notification は item.content[] / delta / commandExecution に分かれる。
+      // UI に出すログは人が読める粒度に整形し、DB 更新は debounce して書き込み過多を避ける。
+      const logEntries: string[] = []
+      const activeAgentMessages = new Map<string, string>()
       const seenNotifMethods = new Set<string>()
+      let flushTimer: NodeJS.Timeout | null = null
+
+      const trimEntries = () => {
+        if (logEntries.length > 200) logEntries.splice(0, logEntries.length - 200)
+      }
+      const buildLiveLog = (maxChars = 6000) => {
+        const active = [...activeAgentMessages.values()]
+          .filter(Boolean)
+          .map(text => `[assistant:streaming] ${text}`)
+        return [...logEntries, ...active].join('\n\n').slice(-maxChars)
+      }
       const flushLog = async (extraStep?: CodexStep) => {
-        const text = tailLines.join('\n').slice(-6000)
+        const text = buildLiveLog()
         await pushStep(supabase, taskId,
           extraStep ?? makeStep('connected', 'app-server に接続 (initialize OK)'),
           { liveLog: text })
       }
+      const scheduleFlushLog = () => {
+        if (flushTimer) return
+        flushTimer = setTimeout(() => {
+          flushTimer = null
+          flushLog().catch(() => { /* ignore */ })
+        }, 1200)
+      }
+      const appendLogEntry = (entry: string) => {
+        if (!entry.trim()) return
+        logEntries.push(entry.trim())
+        trimEntries()
+        scheduleFlushLog()
+      }
 
       let completed = false
       let completedStatus = 'completed'
+      let completedError: unknown = null
       rpc.onNotification((msg) => {
         const method = msg.method ?? ''
         seenNotifMethods.add(method)
@@ -267,21 +434,57 @@ async function main() {
         const params = msg.params as Record<string, unknown> | undefined
         if (!params) return
 
-        // 本文ぽい item を集める
-        const item = (params.item ?? params.message) as { text?: string; content?: string; role?: string } | undefined
-        if (item) {
-          const text = item.text ?? item.content ?? ''
-          if (text) {
-            tailLines.push(`[${method}] ${text}`)
-            if (tailLines.length > 200) tailLines.splice(0, tailLines.length - 200)
-            flushLog().catch(() => { /* ignore */ })
+        if (method === 'item/agentMessage/delta') {
+          const itemId = typeof params.itemId === 'string' ? params.itemId : null
+          const delta = extractText(params.delta)
+          if (itemId && delta) {
+            activeAgentMessages.set(itemId, (activeAgentMessages.get(itemId) ?? '') + delta)
+            scheduleFlushLog()
           }
+          return
+        }
+
+        const item = (params.item ?? params.message) as Record<string, unknown> | undefined
+        if (item) {
+          const itemType = typeof item.type === 'string' ? item.type : 'item'
+          if (itemType === 'agentMessage') {
+            const itemId = typeof item.id === 'string' ? item.id : null
+            const text = extractText(item) || (itemId ? activeAgentMessages.get(itemId) ?? '' : '')
+            if (itemId) activeAgentMessages.delete(itemId)
+            if (text) appendLogEntry(`[assistant] ${text}`)
+          } else if (itemType === 'userMessage' && method === 'item/completed') {
+            const text = extractText(item)
+            appendLogEntry(`[user] プロンプト送信済み (${text.length}文字)`)
+          } else if (itemType === 'commandExecution') {
+            const command = typeof item.command === 'string' ? item.command : '(command)'
+            const status = typeof item.status === 'string' ? item.status : ''
+            if (method === 'item/completed') {
+              const exitCode = typeof item.exitCode === 'number' ? `exit=${item.exitCode}` : ''
+              const duration = typeof item.durationMs === 'number' ? `duration=${item.durationMs}ms` : ''
+              appendLogEntry(
+                [
+                  `[command:${status || 'completed'}] ${command}`,
+                  [exitCode, duration].filter(Boolean).join(' '),
+                ].filter(Boolean).join('\n'),
+              )
+            } else if (method === 'item/started') {
+              appendLogEntry(`[command:started] ${command}`)
+            }
+          }
+        }
+
+        if (method === 'item/commandExecution/requestApproval') {
+          const command = typeof params.command === 'string' ? params.command : '(command)'
+          appendLogEntry(`[approval-requested] ${command}`)
+        } else if (method === 'serverRequest/resolved') {
+          appendLogEntry('[approval-resolved] Codex app-server request resolved')
         }
 
         // 完了系: turn/* で complet|finish|end|done をマッチ
         if (/^(turn|thread).*(complet|finish|end|done)/i.test(method)) {
-          const turn = (params.turn ?? params.task) as { status?: string } | undefined
+          const turn = (params.turn ?? params.task) as { status?: string; error?: unknown } | undefined
           if (turn?.status) completedStatus = turn.status
+          completedError = turn?.error ?? null
           completed = true
         }
         // 失敗系: turn/* で fail|error|interrupt
@@ -319,20 +522,40 @@ async function main() {
         await new Promise(r => setTimeout(r, 1000))
       }
       console.error(`[bridge] completed=true status=${completedStatus} seen notifs=[${[...seenNotifMethods].join(', ')}]`)
+      if (flushTimer) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
 
-      const finalLog = tailLines.join('\n').slice(-3000)
-      if (completedStatus === 'completed') {
-        await pushStep(supabase, taskId, makeStep('completed', '完了'),
-          { liveLog: finalLog, message: finalLog || '(本文なし)' })
+      const finalLog = buildLiveLog(6000)
+      const hasAssistantOutput = finalLog.includes('[assistant')
+      const outcome = resolveTurnOutcome({
+        status: completedStatus,
+        error: completedError,
+        hasAssistantOutput,
+      })
+      const resultMetadata = {
+        codex_turn_status: completedStatus,
+        codex_turn_error: completedError ?? null,
+        codex_seen_notifications: [...seenNotifMethods],
+        ...(outcome.note ? { codex_completion_note: outcome.note } : {}),
+      }
+
+      if (outcome.status === 'completed') {
+        await pushStep(supabase, taskId, makeStep('completed', outcome.label),
+          { liveLog: finalLog, message: finalLog || '(本文なし)', metadata: resultMetadata })
         await supabase.from('ai_tasks').update({
-          status: 'completed',
+          status: outcome.status,
+          error: null,
           completed_at: new Date().toISOString(),
         }).eq('id', taskId)
       } else {
-        await pushStep(supabase, taskId, makeStep('completed', `失敗 (${completedStatus})`, 'failed'))
+        const errorText = `${outcome.error ?? `Codex turn ${completedStatus}`}: ${finalLog.slice(0, 500)}`
+        await pushStep(supabase, taskId, makeStep('completed', outcome.label, 'failed'),
+          { liveLog: finalLog, message: finalLog || '(本文なし)', metadata: resultMetadata })
         await supabase.from('ai_tasks').update({
-          status: 'failed',
-          error: `Codex turn ${completedStatus}: ${finalLog.slice(0, 500)}`,
+          status: outcome.status,
+          error: errorText.slice(0, 1000),
           completed_at: new Date().toISOString(),
         }).eq('id', taskId)
       }

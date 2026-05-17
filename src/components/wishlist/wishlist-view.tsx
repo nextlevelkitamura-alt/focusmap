@@ -202,7 +202,8 @@ export function WishlistView({
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
 
   // メモから AI エージェント（Claude / Codex）を起動
-  // フロー: タイトル＋詳細をそのまま → ai_tasksへINSERT → task-runnerがエージェント起動
+  // title/description は source_ideal_goal_id から task-runner が再取得する。
+  // ここで両方を連結すると、最終プロンプトで二重送信になる。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
@@ -212,10 +213,7 @@ export function WishlistView({
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
-    // タイトル＋詳細をそのままプロンプトとして使用（GLM書き換えなし）
-    const prompt = item.description?.trim()
-      ? `${item.title}\n\n${item.description}`
-      : item.title
+    const prompt = item.description?.trim() || item.title
 
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
