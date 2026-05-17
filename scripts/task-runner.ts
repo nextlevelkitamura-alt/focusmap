@@ -712,6 +712,43 @@ async function syncCodexLiveLogs(supabase: any): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 古い Codex タスクの掃除
+//   - PR #9 以前の tmux 経由 codex タスクが ハングして残っている (codex-* セッション)
+//   - bridge 異常終了で running のまま放置されたタスクもここで failed マーク
+//   - 基準: executor='codex' で started_at が 30 分以上前
+// ─────────────────────────────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function cleanupStaleCodexTasks(supabase: any): Promise<void> {
+  const cutoff = new Date(Date.now() - 30 * 60_000).toISOString()
+  const { data } = await supabase
+    .from('ai_tasks')
+    .select('id, tmux_session_name')
+    .eq('executor', 'codex')
+    .eq('status', 'running')
+    .lt('started_at', cutoff)
+    .limit(50)
+
+  for (const t of (data ?? []) as Array<{ id: string; tmux_session_name: string | null }>) {
+    // 旧 tmux セッションが残っていれば kill（codex_app の codex:// は tmux 使わないので影響なし）
+    if (t.tmux_session_name && t.tmux_session_name.startsWith('codex-')) {
+      try {
+        execSync(`tmux kill-session -t ${JSON.stringify(t.tmux_session_name)}`, { stdio: 'ignore' })
+        console.log(`[cleanup] tmux killed: ${t.tmux_session_name}`)
+      } catch { /* セッション既に消滅 */ }
+    }
+    await supabase
+      .from('ai_tasks')
+      .update({
+        status: 'failed',
+        completed_at: new Date().toISOString(),
+        error: 'Codex タスクが 30 分以上停滞したため自動失敗マーク（PR #9 以前の遺物 / bridge 異常死）',
+      })
+      .eq('id', t.id)
+    console.log(`[cleanup] stale codex task failed: ${t.id}`)
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
   const { data: runningTasks } = await supabase
@@ -962,6 +999,7 @@ async function main() {
 
   // ─── 0. tmux セッションが消えた RC タスクを completed/failed に遷移 ─
   await reconcileRemoteControlSessions(supabase)
+  await cleanupStaleCodexTasks(supabase)
 
   // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
   await syncCodexLiveLogs(supabase)

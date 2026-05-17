@@ -208,59 +208,53 @@ async function main() {
     process.exit(1)
   })
 
+  // ─── response.error チェックでフォールバックを正しく動かすヘルパー ───
+  // rpc.call は error response を resolve で返すので「.catch + ??」のフォールバックは効かない
+  async function callOk(rpc: RpcClient, method: string, params: unknown): Promise<RpcEnvelope | null> {
+    const resp = await rpc.call(method, params).catch((e): RpcEnvelope =>
+      ({ error: { message: String(e?.message ?? e) } }))
+    if (resp?.error) {
+      console.error(`[bridge] ${method} ERROR: ${JSON.stringify(resp.error)}`)
+      return null
+    }
+    return resp
+  }
+
   ws.on('open', async () => {
     clearTimeout(connectTimer)
     const rpc = new RpcClient(ws, logFile)
 
     try {
       // ─── initialize ───
-      const initResp = await rpc.call('initialize', {
+      // Codex 0.130 app-server は initialize → thread/start → turn/start が正解の流れ
+      // method 一覧は /tmp/codex-bridge-28cd0e3e-*.log の error response で確証済
+      const initResp = await callOk(rpc, 'initialize', {
         clientInfo: { name: 'focusmap', version: '0.1.0' },
       })
-      if (initResp.error) {
-        throw new Error(`initialize 失敗: ${initResp.error.message}`)
-      }
+      if (!initResp) throw new Error('initialize 失敗')
       await pushStep(supabase, taskId, makeStep('connected', 'app-server に接続 (initialize OK)'))
 
-      // ─── newConversation ───
-      // codex-rs/app-server の典型的なメソッド名:
-      //   newConversation: 新規スレッド作成
-      //   sendUserMessage / sendUserTurn: プロンプト送信
-      // 環境により異なる可能性があるので両方試す
-      let threadId: string | undefined
-      let conversationId: string | undefined
-      const conv = await rpc.call('newConversation', {
-        cwd,
-        approvalPolicy: 'never',
-        sandboxPolicy: 'danger-full-access',
-      }).catch(() => null)
+      // ─── thread/start で新規 thread 作成 ───
+      // response: { result: { thread: { id, ... }, model, ... } }
+      const threadResp = await callOk(rpc, 'thread/start', { cwd })
+      if (!threadResp) throw new Error('thread/start 失敗')
+      const threadResult = threadResp.result as { thread?: { id?: string }; threadId?: string }
+      const threadId = threadResult.thread?.id ?? threadResult.threadId
+      if (!threadId) throw new Error('thread/start レスポンスから id を取得できない')
 
-      if (conv && !conv.error && conv.result) {
-        const r = conv.result as { conversationId?: string; threadId?: string; thread?: { id?: string } }
-        conversationId = r.conversationId
-        threadId = r.threadId ?? r.thread?.id
-      } else {
-        // fallback: thread/start
-        const t = await rpc.call('thread/start', { cwd }).catch(() => null)
-        if (t?.result) {
-          const r = t.result as { thread?: { id?: string }; threadId?: string }
-          threadId = r.thread?.id ?? r.threadId
-        }
-      }
-
-      if (!threadId && !conversationId) {
-        throw new Error('thread/conversation 作成失敗（newConversation/thread/start 両方失敗）')
-      }
-      const visibleId = conversationId ?? threadId!
       await pushStep(supabase, taskId, makeStep('thread_visible',
-        `Mobile/Codex.app に表示 (id ${visibleId.slice(0, 8)})`), { threadId: visibleId })
-      await supabase.from('ai_tasks').update({ codex_thread_id: visibleId }).eq('id', taskId)
+        `Thread 作成 (mobile/Codex.app に表示, id ${threadId.slice(0, 8)})`),
+        { threadId })
+      await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
 
-      // ─── 通知購読: live_log を Supabase に逐次反映 ───
+      // ─── 通知購読 ───
+      // 全 notification を stderr に詳細ログ。完了 method 名は実機ログから後で絞り込む
       const tailLines: string[] = []
-      const flushLog = async () => {
+      const seenNotifMethods = new Set<string>()
+      const flushLog = async (extraStep?: CodexStep) => {
         const text = tailLines.join('\n').slice(-6000)
-        await pushStep(supabase, taskId, makeStep('connected', 'app-server に接続 (initialize OK)'),
+        await pushStep(supabase, taskId,
+          extraStep ?? makeStep('connected', 'app-server に接続 (initialize OK)'),
           { liveLog: text })
       }
 
@@ -268,10 +262,12 @@ async function main() {
       let completedStatus = 'completed'
       rpc.onNotification((msg) => {
         const method = msg.method ?? ''
+        seenNotifMethods.add(method)
+        console.error(`[bridge] notif method=${method} params=${JSON.stringify(msg.params).slice(0, 300)}`)
         const params = msg.params as Record<string, unknown> | undefined
         if (!params) return
 
-        // item/started, item/completed 等で本文を拾う
+        // 本文ぽい item を集める
         const item = (params.item ?? params.message) as { text?: string; content?: string; role?: string } | undefined
         if (item) {
           const text = item.text ?? item.content ?? ''
@@ -282,45 +278,51 @@ async function main() {
           }
         }
 
-        // turn/completed (or task_complete) で完了マーク
-        if (method.includes('completed') || method.includes('complete')) {
+        // 完了系: turn/* で complet|finish|end|done をマッチ
+        if (/^(turn|thread).*(complet|finish|end|done)/i.test(method)) {
           const turn = (params.turn ?? params.task) as { status?: string } | undefined
           if (turn?.status) completedStatus = turn.status
-          if (method === 'turn/completed' || method === 'task_complete') {
-            completed = true
-          }
+          completed = true
         }
-        // failed/error notification
-        if (method.includes('failed') || method.includes('error')) {
-          if (method !== 'item/error') completed = true
+        // 失敗系: turn/* で fail|error|interrupt
+        if (/^(turn|thread).*(fail|error|interrupt)/i.test(method) && method !== 'item/error') {
+          completed = true
           completedStatus = 'failed'
         }
       })
 
-      // ─── turn/start (or sendUserMessage) ───
-      const turnPayload: Record<string, unknown> = {
-        threadId,
-        conversationId,
-        input: [{ type: 'text', text: prompt }],
-        approvalPolicy: 'never',
-        sandboxPolicy: 'danger-full-access',
+      // ─── turn/start ───
+      // Phase A で確定: input-no-policy が正解
+      //   { threadId, input: [{ type: 'text', text }] }
+      //   sandboxPolicy/approvalPolicy は thread/start の defaults を継承（"never" 文字列は型エラー）
+      // 念のためフォールバック shape も残す（codex バージョン違い対策）
+      const TURN_SHAPES: Array<{ name: string; payload: Record<string, unknown> }> = [
+        { name: 'input-no-policy', payload: { threadId, input: [{ type: 'text', text: prompt }] } },
+        { name: 'input-approval-only', payload: { threadId, input: [{ type: 'text', text: prompt }], approvalPolicy: 'never' } },
+        { name: 'items-array', payload: { threadId, items: [{ type: 'text', text: prompt }] } },
+        { name: 'text-flat', payload: { threadId, text: prompt } },
+      ]
+      let turnOk: RpcEnvelope | null = null
+      for (const s of TURN_SHAPES) {
+        turnOk = await callOk(rpc, 'turn/start', s.payload)
+        if (turnOk) {
+          console.error(`[bridge] turn/start OK shape=${s.name}`)
+          break
+        }
       }
-      const turnResp = await rpc.call('sendUserMessage', turnPayload).catch(() => null)
-        ?? await rpc.call('turn/start', turnPayload).catch(() => null)
-        ?? await rpc.call('sendUserTurn', turnPayload).catch(() => null)
+      if (!turnOk) throw new Error('turn/start 全 shape で失敗')
 
-      if (!turnResp || turnResp.error) {
-        throw new Error(`turn 送信失敗: ${turnResp?.error?.message ?? '全メソッドで応答なし'}`)
-      }
+      await pushStep(supabase, taskId, makeStep('turn_started', 'プロンプト送信完了 (turn/start)'))
 
-      // ─── 完了待ち (notification の completed フラグ or timeout) ───
+      // ─── 完了待ち ───
       while (!completed) {
         await new Promise(r => setTimeout(r, 1000))
       }
+      console.error(`[bridge] completed=true status=${completedStatus} seen notifs=[${[...seenNotifMethods].join(', ')}]`)
 
       const finalLog = tailLines.join('\n').slice(-3000)
       if (completedStatus === 'completed') {
-        await pushStep(supabase, taskId, makeStep('completed', '完了 (turn/completed)'),
+        await pushStep(supabase, taskId, makeStep('completed', '完了'),
           { liveLog: finalLog, message: finalLog || '(本文なし)' })
         await supabase.from('ai_tasks').update({
           status: 'completed',
