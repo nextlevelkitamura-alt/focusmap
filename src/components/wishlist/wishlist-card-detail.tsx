@@ -165,6 +165,7 @@ export function WishlistCardDetail({
   const [isLaunchingCodex, setIsLaunchingCodex] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
+  const [launchExecutor, setLaunchExecutor] = useState<'claude' | 'codex' | 'codex_app' | null>(null)
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [elapsedSecs, setElapsedSecs] = useState(0)
   const sentAtRef = useRef<number | null>(null)
@@ -213,6 +214,10 @@ export function WishlistCardDetail({
     const aiTask = getMemoAiTask(item.id)
     if (!aiTask || launchStep === null) return
     if (aiTask.remote_session_url && launchStep === 'sent') {
+      setLaunchStep('connected')
+    }
+    // Codex は remote_session_url がないので status === 'running' で connected に遷移
+    if ((aiTask.executor === 'codex' || aiTask.executor === 'codex_app') && aiTask.status === 'running' && launchStep === 'sent') {
       setLaunchStep('connected')
     }
     if (aiTask.status === 'completed' && launchStep !== 'completed') {
@@ -605,6 +610,7 @@ export function WishlistCardDetail({
                       onClick={async () => {
                         setLaunchError(null)
                         setLaunchStep('sending')
+                        setLaunchExecutor('claude')
                         setIsLaunchingClaude(true)
                         try {
                           await onLaunchClaude(item)
@@ -612,6 +618,7 @@ export function WishlistCardDetail({
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動に失敗")
                           setLaunchStep(null)
+                          setLaunchExecutor(null)
                         } finally {
                           setIsLaunchingClaude(false)
                         }
@@ -622,21 +629,25 @@ export function WishlistCardDetail({
                       <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
                     </Button>
                   )}
-                  {onLaunchCodexApp && (
+                  {onLaunchCodex && (
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={!draftTitle.trim() || isLaunchingCodex}
+                      disabled={claudeDisabled || isLaunchingCodex}
                       onClick={async () => {
                         setLaunchError(null)
+                        setLaunchStep('sending')
+                        setLaunchExecutor('codex')
                         setIsLaunchingCodex(true)
                         try {
-                          // A1: codex:// URL を Mac で open → Codex.app に prompt 注入
-                          // - Codex.app の app-server がセッション処理 → mobile/desktop の Codex に出る
-                          // - 注: ユーザーが Mac で Enter を押す必要あり（自動実行はしない）
-                          await onLaunchCodexApp(item)
+                          // codex --remote 経由で app-server に接続
+                          // → Codex.app/mobile に thread が表示され、プロンプトも自動送信される
+                          await onLaunchCodex(item)
+                          setLaunchStep('sent')
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動失敗")
+                          setLaunchStep(null)
+                          setLaunchExecutor(null)
                         } finally {
                           setIsLaunchingCodex(false)
                         }
@@ -644,27 +655,35 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">Codex.app に送信（mobile表示可）</span>
+                      <span className="text-[10px] text-muted-foreground">自動送信・mobile表示可</span>
                     </Button>
                   )}
                 </div>
 
-                {/* サブオプション: codex exec ヘッドレス実行（A2、自動だが mobile に出ない）*/}
-                {onLaunchCodex && (
+                {/* サブオプション: codex:// URL スキームで Codex.app に prefill だけ（送信は手動）*/}
+                {onLaunchCodexApp && (
                   <button
                     type="button"
-                    disabled={claudeDisabled}
+                    disabled={!draftTitle.trim() || isLaunchingCodex}
                     onClick={async () => {
                       setLaunchError(null)
+                      setLaunchStep('sending')
+                      setLaunchExecutor('codex_app')
+                      setIsLaunchingCodex(true)
                       try {
-                        await onLaunchCodex(item)
+                        await onLaunchCodexApp(item)
+                        setLaunchStep('sent')
                       } catch (e) {
                         setLaunchError(e instanceof Error ? e.message : "起動失敗")
+                        setLaunchStep(null)
+                        setLaunchExecutor(null)
+                      } finally {
+                        setIsLaunchingCodex(false)
                       }
                     }}
                     className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
                   >
-                    ◎ Codex バックグラウンド実行（完全自動、Focusmap でログ確認・Codex.app には出ない）
+                    ◎ Codex.app に prefill だけする（送信は手動・自分で内容を確認したい時）
                   </button>
                 )}
 
@@ -677,26 +696,30 @@ export function WishlistCardDetail({
                 {/* ステップログ */}
                 {launchStep !== null && (() => {
                   const sessionUrl = aiTask?.remote_session_url ?? null
+                  const isCodex = launchExecutor === 'codex' || launchExecutor === 'codex_app'
+                  const executorLabel = launchExecutor === 'claude' ? 'Claude Code' : 'Codex'
                   return (
                     <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-[12px]">
+                      {/* Step 1: 送信 */}
                       <div className="flex items-center gap-2">
                         {launchStep === 'sending'
                           ? <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
                           : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                        <span className={launchStep === 'sending' ? 'text-amber-600' : 'text-muted-foreground'}>
-                          {launchStep === 'sending' ? 'Claude Codeに送信しています...' : 'プロンプトを送信しました'}
+                        <span className={launchStep === 'sending' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
+                          {launchStep === 'sending' ? `${executorLabel}に送信しています...` : `${executorLabel}に送信しました`}
                         </span>
                       </div>
+                      {/* Step 2: 接続/起動 */}
                       {launchStep !== 'sending' && (
                         <div className="space-y-1.5">
                           <div className="flex items-center gap-2">
                             {launchStep === 'sent'
                               ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
                               : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                            <span className={launchStep === 'sent' ? 'text-blue-600' : 'text-muted-foreground'}>
+                            <span className={launchStep === 'sent' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}>
                               {launchStep === 'sent'
-                                ? `接続しています...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
-                                : '接続しました'}
+                                ? `${isCodex ? '起動しています' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
+                                : (isCodex ? '起動しました' : '接続しました')}
                             </span>
                           </div>
                           {launchStep === 'sent' && (
@@ -704,7 +727,7 @@ export function WishlistCardDetail({
                               <p>通常15〜45秒かかります</p>
                               {(() => {
                                 const status = aiTask?.status
-                                if (status === 'running') return <p className="text-blue-500 font-medium">▶ Claude Code が起動しました — URLを取得中...</p>
+                                if (status === 'running') return <p className="text-blue-500 dark:text-blue-400 font-medium">▶ {executorLabel} が起動しました{isCodex ? '' : ' — URLを取得中...'}</p>
                                 if (status === 'pending') return <p>Mac でエージェントの起動を待っています...</p>
                                 return null
                               })()}
@@ -712,7 +735,8 @@ export function WishlistCardDetail({
                           )}
                         </div>
                       )}
-                      {(launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
+                      {/* Claude: QRコード + URL */}
+                      {!isCodex && (launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
                         <div className="flex flex-col sm:flex-row gap-3 pt-1">
                           <div className="shrink-0 rounded-md border bg-white p-2 self-start">
                             <QRCode value={sessionUrl} size={80} />
@@ -742,8 +766,18 @@ export function WishlistCardDetail({
                           </div>
                         </div>
                       )}
+                      {/* Codex: 起動完了メッセージ */}
+                      {isCodex && (launchStep === 'connected' || launchStep === 'completed') && (
+                        <div className="pl-1 text-[11px] text-muted-foreground space-y-0.5">
+                          {launchExecutor === 'codex_app'
+                            ? <p>✓ Codex.app が開きました。Mac で Enter を押すと実行開始します。</p>
+                            : <p>✓ Codex がバックグラウンドで実行中です。下のパネルでログを確認できます。</p>
+                          }
+                        </div>
+                      )}
+                      {/* 完了 */}
                       {launchStep === 'completed' && (
-                        <div className="flex items-center gap-2 text-emerald-600 font-medium">
+                        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-medium">
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                           完了しました — メモ一覧に戻ります
                         </div>
