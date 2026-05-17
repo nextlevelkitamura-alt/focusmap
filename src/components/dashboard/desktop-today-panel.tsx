@@ -18,7 +18,6 @@ import { formatTime } from "@/contexts/TimerContext"
 import { type QuickTaskData } from "@/components/today/quick-task-fab"
 import { PanelQuickTaskForm } from "@/components/dashboard/panel-quick-task-form"
 import { DesktopPanelFab } from "@/components/dashboard/desktop-panel-fab"
-import { DashboardCalendarPanel } from "@/components/dashboard/dashboard-calendar-panel"
 import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
 import { useIdealTracking } from "@/hooks/useIdealTracking"
 import { useClickOutside } from "@/hooks/useClickOutside"
@@ -562,14 +561,6 @@ export function DesktopTodayPanel({
                         </div>
                     ) : (
                     <div className={cn("h-full min-h-0 flex flex-col transition-all duration-200", showSideTaskForm && "pl-[352px]")}>
-                {/* Calendar Connection Panel
-                    - 未接続: 接続ボタン
-                    - 接続済み: 連携アカウント表示 + 取り込むカレンダー選択UI
-                    旧「カレンダーに接続されていません」をリッチ化（OAuth審査動画でも使用） */}
-                {!logic.eventsLoading && (
-                    <DashboardCalendarPanel />
-                )}
-
                 {/* Calendar Events Error */}
                 {logic.eventsError && logic.calendars.length > 0 && (
                     <div className="mx-3 mt-2 py-3 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">

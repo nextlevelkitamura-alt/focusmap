@@ -94,6 +94,29 @@ export async function GET() {
       }
     }
 
+    // フォールバック: Google API からプロフィールが取れなかった場合は、
+    // Supabase ログインユーザーの情報を使う（同一Googleアカウントの可能性が高い）。
+    // これで「アカウント情報を取得中です」のまま固まることを防ぐ。
+    if (!linkedAccount && hasTokens) {
+      const fallbackEmail = user.email || null;
+      const fallbackName =
+        (user.user_metadata?.full_name as string | undefined) ||
+        (user.user_metadata?.name as string | undefined) ||
+        null;
+      const fallbackPicture =
+        (user.user_metadata?.avatar_url as string | undefined) ||
+        (user.user_metadata?.picture as string | undefined) ||
+        null;
+
+      if (fallbackEmail) {
+        linkedAccount = {
+          name: fallbackName,
+          email: fallbackEmail,
+          picture: fallbackPicture,
+        };
+      }
+    }
+
     // デバッグログ
     console.log('[Calendar Status] User:', user.id, {
       settingsExists: !!settings,
