@@ -10,6 +10,7 @@ import { useMindMapSync } from "@/hooks/useMindMapSync"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
+import { CalendarConnectedToast } from "@/components/dashboard/calendar-connected-toast"
 import { ChevronLeft, ChevronRight, Target } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -823,6 +824,9 @@ export function DashboardClient({
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
                 />
+
+                {/* Google カレンダー連携完了の一時通知（?calendar_connected=true を検知して3秒表示） */}
+                <CalendarConnectedToast />
 
                 {/* Undo/Redo Toast */}
                 {undoToast && (
