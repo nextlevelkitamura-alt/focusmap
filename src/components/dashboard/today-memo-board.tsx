@@ -106,10 +106,9 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) throw new Error(data.error || "カレンダー追加に失敗しました")
-        // カレンダー再取得（既存ヘルパー）+ メモ画面同期
-        // refetch すると楽観イベントは本物（同じ google_event_id ではないので新規追加扱い）に置き換わる
-        // 念のため楽観イベントを削除してから refetch を待つ
-        window.__focusmapRemoveOptimisticEvent?.(tempId)
+        // 楽観イベントは敢えて削除しない。useCalendarEvents の次回 refetch で
+        // setEvents(全置換) されるとき自動的に本物イベントへ差し替わる。
+        // 先に削除してしまうと refetch 完了までの数秒、何も表示されない時間が生じる。
         invalidateCalendarCache()
         broadcastCalendarSync()
         window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
