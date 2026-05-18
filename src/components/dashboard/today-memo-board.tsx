@@ -3,9 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Sparkles, Loader2 } from "lucide-react"
 import type { IdealGoalWithItems, Project } from "@/types/database"
+import type { CalendarEvent } from "@/types/calendar"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { WishlistCard } from "@/components/wishlist/wishlist-card"
 import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+
+declare global {
+  interface Window {
+    __focusmapAddOptimisticEvent?: (event: CalendarEvent) => void
+    __focusmapRemoveOptimisticEvent?: (eventId: string, googleEventId?: string) => void
+  }
+}
 
 type MemoItem = IdealGoalWithItems
 
@@ -60,10 +68,31 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
       const target = items.find(it => it.id === memoId)
       if (!target) return
       const prev = items
-      // 楽観更新: 一覧から消す
+      // 楽観更新: メモ一覧から消す
       setItems(curr => curr.map(it => it.id === memoId
         ? { ...it, scheduled_at: startTime.toISOString(), duration_minutes: durationMinutes, memo_status: "scheduled" }
         : it))
+
+      // 楽観更新: カレンダーにも即座に予定枠を表示
+      const tempId = `optimistic-memo-${memoId}-${Date.now()}`
+      const nowIso = new Date().toISOString()
+      const optimisticEvent: CalendarEvent = {
+        id: tempId,
+        user_id: target.user_id,
+        google_event_id: tempId,
+        calendar_id: "primary",
+        title: target.title,
+        description: target.description ?? "",
+        start_time: startTime.toISOString(),
+        end_time: new Date(startTime.getTime() + durationMinutes * 60_000).toISOString(),
+        is_all_day: false,
+        timezone: "Asia/Tokyo",
+        synced_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      }
+      window.__focusmapAddOptimisticEvent?.(optimisticEvent)
+
       try {
         const res = await fetch(`/api/wishlist/${memoId}/calendar`, {
           method: "POST",
@@ -78,11 +107,16 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) throw new Error(data.error || "カレンダー追加に失敗しました")
         // カレンダー再取得（既存ヘルパー）+ メモ画面同期
+        // refetch すると楽観イベントは本物（同じ google_event_id ではないので新規追加扱い）に置き換わる
+        // 念のため楽観イベントを削除してから refetch を待つ
+        window.__focusmapRemoveOptimisticEvent?.(tempId)
         invalidateCalendarCache()
         broadcastCalendarSync()
         window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
         void fetchItems()
       } catch (e) {
+        // ロールバック: 楽観イベント削除＋メモ一覧復元
+        window.__focusmapRemoveOptimisticEvent?.(tempId)
         setItems(prev)
         setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
       }
