@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Calendar, Check, Clock, GripVertical, Trash2 } from "lucide-react"
+import { Calendar, Check, Clock, GripVertical, Sun, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
@@ -21,7 +21,7 @@ interface WishlistCardProps {
   draggable?: boolean
   onDragStart?: () => void
   aiTask?: AiTask | null
-  onLaunchClaude?: () => Promise<void>
+  onOpenCodex?: () => Promise<void>
 }
 
 function formatDateTime(value: string | null): string | null {
@@ -48,11 +48,12 @@ export function WishlistCard({
   draggable,
   onDragStart,
   aiTask = null,
-  onLaunchClaude,
+  onOpenCodex,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
   const isCompleted = item.is_completed || item.memo_status === "completed"
+  const isToday = !!item.is_today
   const tags = item.tags ?? []
   const subCount = item.ideal_items?.length ?? 0
   const formattedDate = formatDateTime(item.scheduled_at)
@@ -63,10 +64,18 @@ export function WishlistCard({
 
   const handleCheck = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    const next = !isCompleted
     await onUpdate(item.id, {
-      is_completed: !isCompleted,
-      memo_status: !isCompleted ? "completed" : "unsorted",
+      is_completed: next,
+      memo_status: next ? "completed" : "unsorted",
+      // 完了化したら「今日する」も外す
+      ...(next ? { is_today: false } : {}),
     } as Partial<MemoItem>)
+  }
+
+  const handleToggleToday = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    await onUpdate(item.id, { is_today: !isToday } as Partial<MemoItem>)
   }
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -181,22 +190,41 @@ export function WishlistCard({
       </div>
 
       <div className="mt-2 flex items-center justify-between" onClick={e => e.stopPropagation()}>
-        <button
-          type="button"
-          onPointerDown={e => e.stopPropagation()}
-          onMouseDown={e => e.stopPropagation()}
-          onClick={handleCheck}
-          className={cn(
-            "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground",
-            isCompleted && "text-foreground",
-          )}
-          style={accentColor ? { color: accentColor } : undefined}
-          title={isCompleted ? "完了済み" : "完了にする"}
-        >
-          {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}
-        </button>
         <div className="flex items-center gap-1">
-          {onLaunchClaude && (
+          <button
+            type="button"
+            onPointerDown={e => e.stopPropagation()}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={handleCheck}
+            className={cn(
+              "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground",
+              isCompleted && "text-foreground",
+            )}
+            style={accentColor ? { color: accentColor } : undefined}
+            title={isCompleted ? "完了済み" : "完了にする"}
+          >
+            {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}
+          </button>
+          <button
+            type="button"
+            onPointerDown={e => e.stopPropagation()}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={handleToggleToday}
+            className={cn(
+              "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md transition-colors",
+              isToday
+                ? "bg-amber-500/15 text-amber-600 dark:text-amber-300 hover:bg-amber-500/25"
+                : "text-muted-foreground hover:text-amber-600",
+            )}
+            title={isToday ? "今日するリストから外す" : "今日するリストに追加"}
+            aria-label={isToday ? "今日するリストから外す" : "今日するリストに追加"}
+            aria-pressed={isToday}
+          >
+            <Sun className={cn("h-5 w-5", isToday && "fill-amber-400/30")} />
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
+          {onOpenCodex && (
             <div className="flex items-center" onClick={e => e.stopPropagation()}>
               <NoteClaudeRunnerButton
                 noteId={item.id}
@@ -204,7 +232,7 @@ export function WishlistCard({
                 projectId={item.project_id}
                 repoPath={project?.repo_path ?? null}
                 latestTask={aiTask}
-                onStart={onLaunchClaude}
+                onOpenCodex={onOpenCodex}
               />
             </div>
           )}
@@ -220,7 +248,7 @@ export function WishlistCard({
         </div>
       </div>
 
-      {onLaunchClaude && aiTask && (
+      {onOpenCodex && aiTask && (
         <div onClick={e => e.stopPropagation()}>
           <NoteClaudeRunnerPanel
             latestTask={aiTask}
