@@ -10,8 +10,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useTagColors } from "@/hooks/useTagColors"
-import { broadcastCalendarSync, CALENDAR_EVENT_TIME_UPDATE_EVENT, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+import { useCalendars } from "@/hooks/useCalendars"
+import {
+  broadcastCalendarOptimisticEvent,
+  broadcastCalendarOptimisticEventRemoval,
+  broadcastCalendarSync,
+  CALENDAR_EVENT_TIME_UPDATE_EVENT,
+  invalidateCalendarCache,
+} from "@/hooks/useCalendarEvents"
 import { IdealGoalWithItems, Project } from "@/types/database"
+import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
 import { getTagColor } from "@/lib/color-utils"
 import { WishlistCard } from "./wishlist-card"
@@ -232,6 +240,7 @@ export function WishlistView({
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
+  const { calendars } = useCalendars()
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
 
   // メモから AI エージェント（Claude / Codex）を起動
@@ -646,6 +655,36 @@ export function WishlistView({
   }
 
   const handleCalendarAdd = async (item: MemoItem) => {
+    const optimisticEventId = `optimistic-wishlist-${item.id}`
+    const startTime = item.scheduled_at ? new Date(item.scheduled_at) : null
+    const durationMinutes = item.duration_minutes ?? 60
+    const calendarId =
+      calendars.find(calendar => calendar.is_primary)?.google_calendar_id ??
+      calendars.find(calendar => calendar.access_level === "owner" || calendar.access_level === "writer")?.google_calendar_id ??
+      calendars[0]?.google_calendar_id ??
+      "primary"
+
+    if (startTime && !Number.isNaN(startTime.getTime())) {
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000)
+      const now = new Date().toISOString()
+      const optimisticEvent: CalendarEvent = {
+        id: optimisticEventId,
+        user_id: item.user_id ?? "",
+        google_event_id: "",
+        calendar_id: calendarId,
+        title: item.title,
+        description: item.description ?? undefined,
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+        is_all_day: false,
+        timezone: "Asia/Tokyo",
+        synced_at: now,
+        created_at: now,
+        updated_at: now,
+      }
+      broadcastCalendarOptimisticEvent(optimisticEvent)
+    }
+
     const res = await fetch(`/api/wishlist/${item.id}/calendar`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -657,6 +696,7 @@ export function WishlistView({
       }),
     })
     if (!res.ok) {
+      broadcastCalendarOptimisticEventRemoval(optimisticEventId)
       const { error } = await res.json()
       alert(`カレンダー登録に失敗しました: ${error}`)
       return

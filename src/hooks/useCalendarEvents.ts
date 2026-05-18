@@ -43,11 +43,31 @@ export function invalidateCalendarCache() {
 const CALENDAR_SYNC_EVENT = 'focusmap:calendar-sync-request';
 const EVENT_COMPLETION_EVENT = 'focusmap:event-completion-changed';
 const CALENDAR_EVENT_TIME_UPDATE_EVENT = 'focusmap:calendar-event-time-update';
+const CALENDAR_OPTIMISTIC_EVENT_ADD = 'focusmap:calendar-optimistic-event-add';
+const CALENDAR_OPTIMISTIC_EVENT_REMOVE = 'focusmap:calendar-optimistic-event-remove';
 
 /** 全 useCalendarEvents インスタンスにキャッシュ再取得を通知 */
 export function broadcastCalendarSync() {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(CALENDAR_SYNC_EVENT));
+  }
+}
+
+/** カレンダーイベントを全 useCalendarEvents インスタンスに即時追加する */
+export function broadcastCalendarOptimisticEvent(event: CalendarEvent) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(CALENDAR_OPTIMISTIC_EVENT_ADD, {
+      detail: { event },
+    }));
+  }
+}
+
+/** 楽観追加したカレンダーイベントを全 useCalendarEvents インスタンスから削除する */
+export function broadcastCalendarOptimisticEventRemoval(eventId: string, googleEventId?: string) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(CALENDAR_OPTIMISTIC_EVENT_REMOVE, {
+      detail: { eventId, googleEventId },
+    }));
   }
 }
 
@@ -282,6 +302,9 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
         setIsLoading(false);
       }
     }
+  // calendarIds is often rebuilt as a new array with the same values, so use
+  // stable primitive keys to prevent refetch loops.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRangeKey, calendarIdsKey, options.enabled]);
 
   // Initial fetch + calendarIds/timeMin/timeMax change detection
@@ -318,6 +341,58 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     window.addEventListener(CALENDAR_SYNC_EVENT, handler);
     return () => window.removeEventListener(CALENDAR_SYNC_EVENT, handler);
   }, [fetchEvents, options.enabled]);
+
+  // Cross-instance optimistic event add/remove. This makes the calendar respond
+  // immediately to drops/creates that happen outside the current calendar panel.
+  useEffect(() => {
+    if (typeof window === 'undefined' || options.enabled === false) return;
+
+    const isInRangeAndCalendar = (event: CalendarEvent) => {
+      const start = new Date(event.start_time);
+      const end = new Date(event.end_time);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+      if (!(end > options.timeMin && start < options.timeMax)) return false;
+      if (options.calendarIds && options.calendarIds.length > 0) {
+        return options.calendarIds.includes(event.calendar_id);
+      }
+      return true;
+    };
+
+    const addHandler = (event: Event) => {
+      const optimisticEvent = (event as CustomEvent<{ event: CalendarEvent }>).detail?.event;
+      if (!optimisticEvent || !isInRangeAndCalendar(optimisticEvent)) return;
+
+      setEvents(prev => {
+        const next = prev.filter(existing => {
+          if (existing.id === optimisticEvent.id) return false;
+          if (optimisticEvent.google_event_id && existing.google_event_id === optimisticEvent.google_event_id) return false;
+          return true;
+        });
+        return [...next, optimisticEvent].sort((a, b) =>
+          new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+        );
+      });
+    };
+
+    const removeHandler = (event: Event) => {
+      const { eventId, googleEventId } = (event as CustomEvent<{ eventId: string; googleEventId?: string }>).detail ?? {};
+      if (!eventId) return;
+      setEvents(prev => prev.filter(existing => {
+        if (googleEventId) return existing.google_event_id !== googleEventId;
+        return existing.id !== eventId;
+      }));
+    };
+
+    window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
+    window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_REMOVE, removeHandler);
+    return () => {
+      window.removeEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
+      window.removeEventListener(CALENDAR_OPTIMISTIC_EVENT_REMOVE, removeHandler);
+    };
+  // See fetchEvents deps above: the stable keys intentionally stand in for the
+  // Date objects and calendarIds array.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRangeKey, calendarIdsKey, options.enabled]);
 
   // Manual sync (force refresh)
   const syncNow = useCallback((options?: { silent?: boolean }) => {

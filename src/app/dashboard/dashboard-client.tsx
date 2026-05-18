@@ -11,6 +11,10 @@ import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
 import { CalendarConnectedToast } from "@/components/dashboard/calendar-connected-toast"
+import {
+    broadcastCalendarOptimisticEvent,
+    broadcastCalendarOptimisticEventRemoval,
+} from "@/hooks/useCalendarEvents"
 import { ChevronLeft, ChevronRight, Target } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -323,7 +327,7 @@ export function DashboardClient({
         if (eventData) {
             const startTime = new Date(eventData.scheduled_at)
             const endTime = new Date(startTime.getTime() + eventData.estimated_time * 60 * 1000)
-            rightSidebarRef.current?.addOptimisticEvent({
+            broadcastCalendarOptimisticEvent({
                 id: `optimistic-${eventData.id}`,
                 user_id: '',
                 google_event_id: '',
@@ -752,10 +756,10 @@ export function DashboardClient({
 
     // Optimistic calendar event handlers (PC: mind-map → right-sidebar)
     const handleAddOptimisticEvent = useCallback((event: import('@/types/calendar').CalendarEvent) => {
-        rightSidebarRef.current?.addOptimisticEvent(event)
+        broadcastCalendarOptimisticEvent(event)
     }, [])
     const handleRemoveOptimisticEvent = useCallback((eventId: string) => {
-        rightSidebarRef.current?.removeOptimisticEvent(eventId)
+        broadcastCalendarOptimisticEventRemoval(eventId)
     }, [])
 
     // Toggle left sidebar
