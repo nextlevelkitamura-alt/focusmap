@@ -123,7 +123,14 @@ export function WishlistCard({
       durationMinutes: effectiveDuration,
       title: item.title,
     }
-    e.dataTransfer.setData(MEMO_DRAG_MIME, JSON.stringify(payload))
+    const serialized = JSON.stringify(payload)
+    try {
+      e.dataTransfer.setData(MEMO_DRAG_MIME, serialized)
+    } catch {
+      // 一部ブラウザでカスタム MIME が拒否される場合のフォールバック
+    }
+    // text/plain にも prefix 付きで載せておく（カスタム MIME が読めない環境向け）
+    e.dataTransfer.setData("text/plain", `__focusmap_memo__${serialized}`)
     e.dataTransfer.effectAllowed = "move"
     window.__focusmapMemoDrag = payload
   }
@@ -139,7 +146,8 @@ export function WishlistCard({
       onDragEnd={nativeMemoDrag ? handleNativeDragEnd : undefined}
       onClick={onClick}
       className={cn(
-        "group relative flex cursor-pointer flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
+        "group relative flex flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
+        nativeMemoDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         accentColor && "border-l-4",
         isCompleted && "opacity-55",
       )}

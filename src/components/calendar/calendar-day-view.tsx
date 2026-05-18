@@ -311,6 +311,19 @@ export function CalendarDayView({
         return false
     }, [])
 
+    // メモ payload の抽出（カスタム MIME → text/plain prefix → window グローバルの順）
+    const extractMemoPayload = useCallback((e: React.DragEvent) => {
+        const raw = e.dataTransfer.getData(MEMO_DRAG_MIME)
+        if (raw) {
+            try { return JSON.parse(raw) as { memoId: string; durationMinutes: number; title: string } } catch { /* fall through */ }
+        }
+        const plain = e.dataTransfer.getData("text/plain")
+        if (plain.startsWith("__focusmap_memo__")) {
+            try { return JSON.parse(plain.slice("__focusmap_memo__".length)) as { memoId: string; durationMinutes: number; title: string } } catch { /* fall through */ }
+        }
+        return window.__focusmapMemoDrag ?? null
+    }, [])
+
     // HTML5ドラッグ&ドロップ（タスク用 / メモ用）
     const onDragOver = useCallback((e: React.DragEvent) => {
         if (dragState) return
@@ -349,10 +362,7 @@ export function CalendarDayView({
             const memoHandler = typeof window !== "undefined" ? window.__focusmapMemoDropHandler : undefined
             if (isMemoDrag(e) && memoHandler) {
                 e.preventDefault()
-                const raw = e.dataTransfer.getData(MEMO_DRAG_MIME) || ""
-                let parsed: { memoId: string; durationMinutes: number; title: string } | null = null
-                try { parsed = raw ? JSON.parse(raw) : null } catch { parsed = null }
-                const drag = parsed ?? window.__focusmapMemoDrag ?? null
+                const drag = extractMemoPayload(e)
                 const start = computeSnappedStart(e.clientY)
                 setMemoDragOver(null)
                 window.__focusmapMemoDrag = null
@@ -397,7 +407,7 @@ export function CalendarDayView({
                 handleDrop(e, { currentDate })
             }
         }
-    }, [handleDrop, currentDate, dragState, hourHeight, onEventTimeChange, calendarGridRef, isMemoDrag, computeSnappedStart])
+    }, [handleDrop, currentDate, dragState, hourHeight, onEventTimeChange, calendarGridRef, isMemoDrag, computeSnappedStart, extractMemoPayload])
 
     return (
         <div

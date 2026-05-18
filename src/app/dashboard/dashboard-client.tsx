@@ -107,6 +107,17 @@ export function DashboardClient({
     const [isAiChatOpen, setIsAiChatOpen] = useState(false)
     // Scheduling panel open state
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
+
+    // Today タブのサブビュー: 'memo' = 今日するメモ + D&D / 'timeline' = 従来のタスクボード
+    const [todaySubView, setTodaySubView] = useState<'memo' | 'timeline'>('memo')
+    useEffect(() => {
+        const saved = typeof window !== "undefined" ? window.localStorage.getItem('focusmap:today-sub-view') : null
+        if (saved === 'memo' || saved === 'timeline') setTodaySubView(saved)
+    }, [])
+    const updateTodaySubView = useCallback((v: 'memo' | 'timeline') => {
+        setTodaySubView(v)
+        if (typeof window !== "undefined") window.localStorage.setItem('focusmap:today-sub-view', v)
+    }, [])
     // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
     const [isTaskListVisible, setIsTaskListVisible] = useState(false)
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
@@ -1020,7 +1031,50 @@ export function DashboardClient({
                     {activeView === 'habits' ? (
                         <HabitsView onUpdateTask={updateTask} />
                     ) : activeView === 'today' ? (
-                        <TodayMemoBoard projects={projects} />
+                        <div className="flex h-full w-full flex-col overflow-hidden">
+                            <div className="shrink-0 border-b bg-background px-3 py-2">
+                                <div className="inline-flex rounded-md border bg-muted/30 p-0.5 text-xs">
+                                    <button
+                                        type="button"
+                                        onClick={() => updateTodaySubView('memo')}
+                                        className={cn(
+                                            "min-h-[28px] rounded px-3 py-1 transition-colors",
+                                            todaySubView === 'memo'
+                                                ? "bg-background text-foreground shadow-sm"
+                                                : "text-muted-foreground hover:text-foreground",
+                                        )}
+                                    >
+                                        メモ + カレンダー
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => updateTodaySubView('timeline')}
+                                        className={cn(
+                                            "min-h-[28px] rounded px-3 py-1 transition-colors",
+                                            todaySubView === 'timeline'
+                                                ? "bg-background text-foreground shadow-sm"
+                                                : "text-muted-foreground hover:text-foreground",
+                                        )}
+                                    >
+                                        タイムライン
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex-1 min-h-0 overflow-hidden">
+                                {todaySubView === 'memo' ? (
+                                    <TodayMemoBoard projects={projects} />
+                                ) : (
+                                    <TodayTaskBoard
+                                        allTasks={allTasksMerged}
+                                        onUpdateTask={handleUpdateTaskWithQuickSync}
+                                        projects={projects}
+                                        onCreateQuickTask={handleCreateQuickTask}
+                                        onDeleteTask={handleDeleteTaskFromToday}
+                                        syncFailedIds={syncFailedIds}
+                                    />
+                                )}
+                            </div>
+                        </div>
                     ) : activeView === 'long-term' ? (
                         <WishlistView
                             projects={projects}
