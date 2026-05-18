@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
-import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
+import { TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
+import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -77,11 +77,6 @@ const DURATION_OPTIONS = [
   { label: "15分", minutes: 15 },
   { label: "30分", minutes: 30 },
   { label: "60分", minutes: 60 },
-]
-
-const QUICK_MODEL_OPTIONS = [
-  { id: "glm-5.1", label: "GLM", note: "" },
-  { id: "gemini-2.5-flash", label: "Gemini", note: "無料枠あり" },
 ]
 
 const STATUS_LABEL: Record<MemoStatus | "all", string> = {
@@ -235,10 +230,14 @@ export function WishlistView({
   projects = [],
   selectedProjectId = null,
   onOpenTodayMemoSchedule,
+  isCalendarSplitVisible = false,
+  onToggleCalendarSplit,
 }: {
   projects?: Project[]
   selectedProjectId?: string | null
   onOpenTodayMemoSchedule?: (payload: { memoId: string; date: Date }) => void
+  isCalendarSplitVisible?: boolean
+  onToggleCalendarSplit?: () => void
 }) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -249,13 +248,14 @@ export function WishlistView({
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null)
   const [analyzeElapsedSeconds, setAnalyzeElapsedSeconds] = useState(0)
   const [intakeError, setIntakeError] = useState<string | null>(null)
-  const [selectedAiModel, setSelectedAiModel] = useState("glm-5.1")
+  const [selectedAiModel, setSelectedAiModel] = useState("gemini-2.5-flash-lite")
   const [suggestion, setSuggestion] = useState<MemoSuggestion | null>(null)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
   const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [filterOpen, setFilterOpen] = useState(false)
+  const [isCheckingVisibleAi, setIsCheckingVisibleAi] = useState(false)
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
@@ -401,10 +401,14 @@ export function WishlistView({
         const data = await res.json()
         const savedModel = typeof data.preferences?.ai_ingest_model === "string"
           ? data.preferences.ai_ingest_model
-          : "glm-5.1"
-        setSelectedAiModel(savedModel === "gemini-3.0-flash" ? "gemini-2.5-flash" : savedModel)
+          : "gemini-2.5-flash-lite"
+        setSelectedAiModel(
+          savedModel === "gemini-3.0-flash" || savedModel === "gemini-3.1-flash-lite"
+            ? "gemini-2.5-flash-lite"
+            : savedModel,
+        )
       } catch {
-        setSelectedAiModel("glm-5.1")
+        setSelectedAiModel("gemini-2.5-flash-lite")
       }
     }
     loadAiModel()
@@ -430,7 +434,36 @@ export function WishlistView({
     })
   }, [items, statusFilter, tagFilter])
 
-  const selectedModelOption = QUICK_MODEL_OPTIONS.find(option => option.id === selectedAiModel) || QUICK_MODEL_OPTIONS[0]
+  const visibleAiTaskIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const item of filteredItems) {
+      const task = getMemoAiTask(item.id)
+      if (task?.id) ids.add(task.id)
+    }
+    return [...ids]
+  }, [filteredItems, getMemoAiTask])
+
+  const checkVisibleAiProgress = useCallback(async () => {
+    if (isCheckingVisibleAi || visibleAiTaskIds.length === 0) return
+    setIsCheckingVisibleAi(true)
+    setIntakeError(null)
+    try {
+      for (let index = 0; index < visibleAiTaskIds.length; index += 3) {
+        const batch = visibleAiTaskIds.slice(index, index + 3)
+        await Promise.all(batch.map(async taskId => {
+          const res = await fetch(`/api/ai-tasks/${taskId}/progress-check`, { method: "POST" })
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error(data?.error || `AI状況更新に失敗しました (${res.status})`)
+          }
+        }))
+      }
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "AI状況更新に失敗しました")
+    } finally {
+      setIsCheckingVisibleAi(false)
+    }
+  }, [isCheckingVisibleAi, visibleAiTaskIds])
 
   // 今日の範囲を 1 分単位で再評価（日跨ぎでも自動で再判定）
   const [nowMinuteKey, setNowMinuteKey] = useState(() => Math.floor(Date.now() / 60_000))
@@ -615,15 +648,6 @@ export function WishlistView({
     }
   }
 
-  const handleQuickModelChange = async (modelId: string) => {
-    setSelectedAiModel(modelId)
-    await fetch("/api/ai/context", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ preferences: { ai_ingest_model: modelId } }),
-    }).catch(() => null)
-  }
-
   const handleVoiceToggle = async () => {
     if (isTranscribing) return
     if (isRecording) {
@@ -716,35 +740,92 @@ export function WishlistView({
       broadcastCalendarOptimisticEvent(optimisticEvent)
     }
 
-    const res = await fetch(`/api/wishlist/${item.id}/calendar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scheduled_at: item.scheduled_at,
-        duration_minutes: item.duration_minutes,
-        title: item.title,
-        description: item.description,
-        calendar_id: calendarId,
-      }),
-    })
-    if (!res.ok) {
+    try {
+      const res = await fetch(`/api/wishlist/${item.id}/calendar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduled_at: item.scheduled_at,
+          duration_minutes: item.duration_minutes,
+          title: item.title,
+          description: item.description,
+          calendar_id: calendarId,
+        }),
+      })
+      if (!res.ok) {
+        broadcastCalendarOptimisticEventRemoval(optimisticEventId)
+        broadcastCalendarSync()
+        const { error } = await res.json()
+        setIntakeError(`カレンダー登録に失敗しました: ${error}`)
+        return false
+      }
+      const { google_event_id, item: updatedItem } = await res.json()
+      if (updatedItem) {
+        setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
+        setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
+      } else {
+        await handleUpdate(item.id, { google_event_id, memo_status: "scheduled", is_today: false })
+      }
+    } catch (err) {
       broadcastCalendarOptimisticEventRemoval(optimisticEventId)
       broadcastCalendarSync()
-      const { error } = await res.json()
-      setIntakeError(`カレンダー登録に失敗しました: ${error}`)
+      setIntakeError(`カレンダー登録に失敗しました: ${err instanceof Error ? err.message : "通信エラー"}`)
       return false
-    }
-    const { google_event_id, item: updatedItem } = await res.json()
-    if (updatedItem) {
-      setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
-      setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
-    } else {
-      await handleUpdate(item.id, { google_event_id, memo_status: "scheduled", is_today: false })
     }
     invalidateCalendarCache()
     broadcastCalendarSync()
     return true
   }, [handleUpdate, targetCalendarId])
+
+  const handleMemoCalendarDrop = useCallback(async (memoId: string, startTime: Date, durationMinutes: number) => {
+    const target = items.find(item => item.id === memoId)
+    if (!target || target.is_completed || target.memo_status === "completed") return
+    if (Number.isNaN(startTime.getTime())) {
+      setIntakeError("カレンダー登録に失敗しました: 日時を取得できませんでした")
+      return
+    }
+
+    const nextDuration = durationMinutes > 0 ? durationMinutes : TODAY_DURATION_DEFAULT
+    const scheduledAt = startTime.toISOString()
+    const previousItems = items
+    const previousSelectedItem = selectedItem
+    const now = new Date().toISOString()
+    const scheduleItem = (item: MemoItem): MemoItem => ({
+      ...item,
+      scheduled_at: scheduledAt,
+      duration_minutes: nextDuration,
+      memo_status: "scheduled",
+      is_today: false,
+      updated_at: now,
+    })
+    const itemForSchedule = scheduleItem(target)
+
+    setItems(prev => prev.map(item => item.id === memoId ? scheduleItem(item) : item))
+    setSelectedItem(prev => prev?.id === memoId ? scheduleItem(prev) : prev)
+    setIntakeError(null)
+
+    const scheduled = await handleCalendarAdd(itemForSchedule)
+    if (!scheduled) {
+      setItems(previousItems)
+      setSelectedItem(previousSelectedItem)
+      return
+    }
+
+    window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+  }, [handleCalendarAdd, items, selectedItem])
+
+  useEffect(() => {
+    if (!isCalendarSplitVisible) return
+    const handler = (memoId: string, startTime: Date, durationMinutes: number) => {
+      return handleMemoCalendarDrop(memoId, startTime, durationMinutes)
+    }
+    window.__focusmapMemoDropHandler = handler
+    return () => {
+      if (window.__focusmapMemoDropHandler === handler) {
+        window.__focusmapMemoDropHandler = undefined
+      }
+    }
+  }, [handleMemoCalendarDrop, isCalendarSplitVisible])
 
   const openTodayRemovalDialog = useCallback((item: MemoItem) => {
     const scheduledDate = item.scheduled_at ? new Date(item.scheduled_at) : new Date()
@@ -929,41 +1010,90 @@ export function WishlistView({
     return <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">読み込み中...</div>
   }
 
+  const hasIntakeText = intakeText.trim().length > 0
+  const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (tagFilter !== "all" ? 1 : 0)
+  const primaryActionLabel = isAnalyzing
+    ? "整理中"
+    : isTranscribing
+      ? "変換中"
+      : isRecording
+        ? "停止"
+        : hasIntakeText
+          ? "生成"
+          : "音声"
+  const PrimaryActionIcon = isAnalyzing || isTranscribing
+    ? Loader2
+    : isRecording
+      ? Square
+      : hasIntakeText
+        ? Sparkles
+        : Mic
+  const handlePrimaryIntakeAction = async () => {
+    if (isAnalyzing || isTranscribing) return
+    if (hasIntakeText) {
+      await handleAnalyze()
+      return
+    }
+    await handleVoiceToggle()
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
-      <div className="shrink-0 space-y-2 border-b px-4 py-3 md:px-6">
+      <div className="shrink-0 space-y-2 border-b px-3 py-2 md:px-5">
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-semibold leading-tight">メモ</h1>
-            <p className="truncate text-xs text-muted-foreground">雑な入力を整理</p>
+            <p className="hidden truncate text-xs text-muted-foreground sm:block">雑な入力を整理</p>
           </div>
           <Button
             type="button"
-            variant={isRecording ? "destructive" : "outline"}
-            size="icon"
-            onClick={handleVoiceToggle}
-            disabled={isTranscribing}
-            aria-label={isRecording ? "録音を停止" : "音声入力を開始"}
-            className="min-h-[44px] min-w-[44px] shrink-0"
+            variant="outline"
+            size="sm"
+            onClick={checkVisibleAiProgress}
+            disabled={isCheckingVisibleAi || visibleAiTaskIds.length === 0}
+            className="min-h-[40px] shrink-0 gap-1.5 px-3"
+            title="表示中メモのAI状況をまとめて更新"
           >
-            {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+            <RefreshCw className={cn("h-4 w-4", isCheckingVisibleAi && "animate-spin")} />
+            <span className="hidden sm:inline">AI状況</span>
+            {visibleAiTaskIds.length > 0 && (
+              <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
+                {visibleAiTaskIds.length}
+              </span>
+            )}
           </Button>
-          <label className="relative min-h-[44px] w-[112px] shrink-0 rounded-md border bg-muted/20">
-            <span className="sr-only">AIモデル</span>
-            <select
-              value={selectedAiModel}
-              onChange={e => handleQuickModelChange(e.target.value)}
-              disabled={isAnalyzing}
-              className="h-[44px] w-full appearance-none rounded-md bg-transparent pl-8 pr-7 text-sm font-medium outline-none disabled:opacity-50"
+          {onToggleCalendarSplit && (
+            <Button
+              type="button"
+              variant={isCalendarSplitVisible ? "default" : "outline"}
+              size="sm"
+              onClick={onToggleCalendarSplit}
+              aria-pressed={isCalendarSplitVisible}
+              aria-label={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
+              className="hidden min-h-[40px] shrink-0 gap-1.5 px-3 md:inline-flex"
+              title={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
             >
-              {QUICK_MODEL_OPTIONS.map(option => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-            <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          </label>
-          <Button onClick={handleCreate} size="sm" className="min-h-[44px] shrink-0 gap-1 px-3">
+              <Calendar className="h-4 w-4" />
+              <span>{isCalendarSplitVisible ? "閉じる" : "カレンダー"}</span>
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant={filterOpen ? "default" : "outline"}
+            size="sm"
+            onClick={() => setFilterOpen(open => !open)}
+            aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
+            className="min-h-[40px] shrink-0 gap-1.5 px-3"
+          >
+            <Filter className="h-4 w-4" />
+            <span className="hidden sm:inline">フィルター</span>
+            {activeFilterCount > 0 && (
+              <span className="ml-0.5 rounded-full bg-background/80 px-1.5 text-[10px] text-foreground">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+          <Button onClick={handleCreate} size="sm" className="min-h-[40px] shrink-0 gap-1 px-3">
             <Plus className="h-4 w-4" /> 追加
           </Button>
         </div>
@@ -973,23 +1103,19 @@ export function WishlistView({
             value={intakeText}
             onChange={e => setIntakeText(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAnalyze() }}
-            placeholder={`マイクまたはテキストで入力。${selectedModelOption.label}で整理`}
+            placeholder="音声またはテキストで入力"
             rows={1}
             className="min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
           />
-          <Button onClick={handleAnalyze} disabled={isAnalyzing || !intakeText.trim()} className="min-h-[44px] shrink-0 gap-1 px-3">
-            {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            <span>{isAnalyzing ? "整理中" : "生成"}</span>
-          </Button>
           <Button
             type="button"
-            variant={filterOpen ? "default" : "outline"}
-            size="icon"
-            onClick={() => setFilterOpen(open => !open)}
-            aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-            className="min-h-[44px] min-w-[44px] shrink-0"
+            onClick={handlePrimaryIntakeAction}
+            disabled={isAnalyzing || isTranscribing}
+            variant={isRecording ? "destructive" : hasIntakeText ? "default" : "outline"}
+            className="min-h-[44px] min-w-[86px] shrink-0 gap-1 px-3"
           >
-            <Filter className="h-4 w-4" />
+            <PrimaryActionIcon className={cn("h-4 w-4", (isAnalyzing || isTranscribing) && "animate-spin")} />
+            <span>{primaryActionLabel}</span>
           </Button>
         </div>
         {isAnalyzing && (
@@ -1014,12 +1140,11 @@ export function WishlistView({
           </div>
         )}
         {(isRecording || isTranscribing || voiceError) && (
-          <div className="flex min-h-9 flex-wrap items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <div className="flex min-h-8 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
             {isRecording && (
               <>
                 <span className="font-medium text-destructive">録音中</span>
-                <VoiceWaveform analyserRef={analyserRef} height={24} barCount={28} />
-                <span>もう一度マイクを押すと文字起こしします</span>
+                <VoiceWaveform analyserRef={analyserRef} height={20} barCount={20} />
               </>
             )}
             {isTranscribing && (
@@ -1080,7 +1205,7 @@ export function WishlistView({
           ) : (
             <DragDropContext onDragEnd={handleDragEnd}>
             <div className="mx-auto overflow-x-auto pb-2">
-              <div className="grid min-w-[72rem] max-w-7xl gap-4 lg:grid-cols-5">
+              <div className="grid min-w-0 max-w-7xl gap-4 md:min-w-[72rem] md:grid-cols-5">
                 <MemoSection
                   columnKey="unsorted"
                   title="未予定"
@@ -1095,7 +1220,8 @@ export function WishlistView({
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
-                  className="lg:col-span-2"
+                  nativeMemoDrag={isCalendarSplitVisible}
+                  className="md:col-span-2"
                   listClassName="sm:grid-cols-2"
                 />
                 <MemoSection
@@ -1112,6 +1238,7 @@ export function WishlistView({
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
+                  nativeMemoDrag={isCalendarSplitVisible}
                 />
                 <MemoSection
                   columnKey="scheduled"
@@ -1127,6 +1254,7 @@ export function WishlistView({
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
+                  nativeMemoDrag={isCalendarSplitVisible}
                 />
                 <MemoSection
                   columnKey="completed"
@@ -1142,6 +1270,7 @@ export function WishlistView({
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
+                  nativeMemoDrag={isCalendarSplitVisible}
                 />
               </div>
             </div>
@@ -1295,6 +1424,7 @@ function MemoSection({
   getAiTask,
   onOpenCodex,
   onToggleToday,
+  nativeMemoDrag = false,
 }: {
   columnKey: ColumnKey
   title: string
@@ -1311,6 +1441,7 @@ function MemoSection({
   getAiTask: (sourceId: string) => import("@/types/ai-task").AiTask | null
   onOpenCodex: (item: MemoItem) => Promise<void>
   onToggleToday: (item: MemoItem, isTodayColumn: boolean) => Promise<void>
+  nativeMemoDrag?: boolean
 }) {
   return (
     <section className={cn("min-w-0", className)}>
@@ -1356,6 +1487,7 @@ function MemoSection({
                           aiTask={getAiTask(item.id)}
                           onOpenCodex={() => onOpenCodex(item)}
                           onToggleToday={onToggleToday}
+                          nativeMemoDrag={nativeMemoDrag}
                         />
                       </div>
                     )}

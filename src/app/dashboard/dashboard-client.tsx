@@ -858,7 +858,7 @@ export function DashboardClient({
                     showTaskListToggle={activeView !== 'today'}
                     isTaskListVisible={isTaskListVisible}
                     onToggleTaskList={() => setIsTaskListVisible(prev => !prev)}
-                    showCalendarSplitToggle={isOptionalCalendarView}
+                    showCalendarSplitToggle={activeView === 'map'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
                 />
@@ -968,6 +968,8 @@ export function DashboardClient({
                             projects={projects}
                             selectedProjectId={selectedProjectId}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
+                            isCalendarSplitVisible={false}
+                            onToggleCalendarSplit={toggleCalendarSplit}
                         />
                     </div>
                 )}
@@ -1114,6 +1116,8 @@ export function DashboardClient({
                             projects={projects}
                             selectedProjectId={selectedProjectId}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
+                            isCalendarSplitVisible={isCalendarPanelVisible}
+                            onToggleCalendarSplit={toggleCalendarSplit}
                         />
                     ) : (
                         <CenterPane

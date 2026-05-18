@@ -120,10 +120,11 @@ export function WishlistCard({
     && scheduledMs >= todayStart.getTime() && scheduledMs < todayEnd.getTime()
   const isTodayColumn = isToday || isScheduledToday
   const effectiveDuration = item.duration_minutes ?? TODAY_DURATION_DEFAULT
+  const canNativeMemoDrag = nativeMemoDrag && !isCompleted
 
   // Native HTML5 D&D（Today タブで使用）
   const handleNativeDragStart = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!nativeMemoDrag) return
+    if (!canNativeMemoDrag) return
     const payload = {
       memoId: item.id,
       durationMinutes: effectiveDuration,
@@ -157,19 +158,19 @@ export function WishlistCard({
     setTimeout(() => ghost.remove(), 0)
   }
   const handleNativeDragEnd = () => {
-    if (!nativeMemoDrag) return
+    if (!canNativeMemoDrag) return
     window.__focusmapMemoDrag = null
   }
 
   return (
     <div
-      draggable={nativeMemoDrag || draggable}
-      onDragStart={nativeMemoDrag ? handleNativeDragStart : onDragStart}
-      onDragEnd={nativeMemoDrag ? handleNativeDragEnd : undefined}
+      draggable={canNativeMemoDrag || draggable}
+      onDragStart={canNativeMemoDrag ? handleNativeDragStart : onDragStart}
+      onDragEnd={canNativeMemoDrag ? handleNativeDragEnd : undefined}
       onClick={onClick}
       className={cn(
         "group relative flex flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
-        nativeMemoDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+        canNativeMemoDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         accentColor && "border-l-4",
         isCompleted && "opacity-55",
       )}
