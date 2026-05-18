@@ -1,7 +1,7 @@
 /**
  * AI プロバイダー — Vercel AI SDK ベース
  *
- * 現在: 全スキルで Gemini 3.0 Flash を使用
+ * 現在: 全スキルで Gemini Flash-Lite を使用
  * 将来: APIキー追加で OpenAI / Anthropic に切替可能
  */
 import { google } from '@ai-sdk/google'
@@ -10,6 +10,8 @@ import type { AgentId } from '../agents/index'
 // 将来追加:
 // import { openai } from '@ai-sdk/openai'
 // import { anthropic } from '@ai-sdk/anthropic'
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
 
 export interface SkillModelConfig {
   maxTokens: number
@@ -45,6 +47,7 @@ const DEFAULT_CONFIG: SkillModelConfig = {
  * - ANTHROPIC_API_KEY が設定されたら brainstorm/counseling を anthropic('claude-sonnet-4-6') に
  */
 export function getModelForSkill(_skillId?: string) {
+  void _skillId
   // 将来の切替例:
   // if (process.env.OPENAI_API_KEY && (skillId === 'scheduling' || skillId === 'task')) {
   //   return openai('gpt-4o-mini')
@@ -53,7 +56,7 @@ export function getModelForSkill(_skillId?: string) {
   //   return anthropic('claude-sonnet-4-6')
   // }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.0-flash'
+  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
   return google(modelName)
 }
 
@@ -96,11 +99,12 @@ const AGENT_MODEL_MAP: Record<string, AgentModelConfig> = {
  * - AGENT_MODEL_MAP の provider フィールドを変えるだけで全体に反映
  */
 export function getModelForAgent(_agentId: AgentId) {
+  void _agentId
   // 将来の切替例:
   // if (process.env.ANTHROPIC_API_KEY && ['coach', 'strategist'].includes(_agentId)) {
   //   return anthropic('claude-sonnet-4-6')
   // }
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.0-flash'
+  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
   return google(modelName)
 }
 

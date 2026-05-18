@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 
-const DEFAULT_MODEL = "glm-5.1"
+const DEFAULT_MODEL = "gemini-2.5-flash-lite"
 
 const MODEL_OPTIONS = [
-  { id: "glm-5.1", label: "GLM-5.1", note: "標準モデル", badge: "推奨" },
+  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "低遅延・低コストの標準モデル", badge: "推奨" },
+  { id: "glm-5.1", label: "GLM-5.1", note: "外部APIの予備モデル", badge: "予備" },
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "高速。無料枠あり", badge: "高速" },
   { id: "kimi-k2.6", label: "Kimi K2.6", note: "品質優先。時間はかかりやすい", badge: "品質" },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", note: "品質と速度のバランス", badge: "バランス" },
@@ -42,7 +43,10 @@ export function AiModelSettings() {
         const savedModel = typeof data.preferences?.ai_ingest_model === "string"
           ? data.preferences.ai_ingest_model
           : DEFAULT_MODEL
-        const normalizedModel = savedModel === "gemini-3.0-flash" ? DEFAULT_MODEL : savedModel
+        const normalizedModel =
+          savedModel === "gemini-3.0-flash" || savedModel === "gemini-3.1-flash-lite"
+            ? DEFAULT_MODEL
+            : savedModel
         setModel(normalizedModel)
         if (!modelIds.has(normalizedModel)) {
           setIsCustom(true)
@@ -180,7 +184,7 @@ export function AiModelSettings() {
               <Input
                 value={customModel}
                 onChange={e => setCustomModel(e.target.value)}
-                placeholder="例: kimi-k2.6"
+                placeholder="例: gemini-2.5-flash-lite"
                 className="min-h-[44px]"
               />
             )}
