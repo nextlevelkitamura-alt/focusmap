@@ -53,6 +53,7 @@ function mockFetchError(
 const baseOptions = {
   timeMin: new Date('2026-02-17T00:00:00Z'),
   timeMax: new Date('2026-02-24T00:00:00Z'),
+  autoSync: false,
 }
 
 beforeEach(async () => {
@@ -60,12 +61,14 @@ beforeEach(async () => {
   // mockResolvedValueOnce のキューもリセット（clearAllMocks ではキューが残る）
   mockFetch.mockReset()
   vi.useFakeTimers()
+  window.sessionStorage.clear()
   // モジュールレベルの cache / quota 状態をリセット
   vi.resetModules()
 })
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('useCalendarEvents', () => {
@@ -353,6 +356,30 @@ describe('useCalendarEvents', () => {
       // キャッシュから返されるのでfetchは増えない
       expect(mockFetch).toHaveBeenCalledTimes(1)
     })
+
+    test('同じタブ内の再マウントではsessionStorageから即表示する', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([createMockEvent({ title: 'Cached Event' })])
+
+      const { result, unmount } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(result.current.events[0].title).toBe('Cached Event')
+      unmount()
+
+      vi.resetModules()
+      const useCalendarEventsReloaded = await getHook()
+      mockFetch.mockClear()
+
+      const restored = renderHook(() => useCalendarEventsReloaded(baseOptions))
+
+      expect(restored.result.current.events[0].title).toBe('Cached Event')
+      expect(restored.result.current.isLoading).toBe(false)
+      expect(mockFetch).toHaveBeenCalledTimes(0)
+    })
   })
 
   // ===========================
@@ -426,6 +453,7 @@ describe('useCalendarEvents', () => {
   describe('autoSync', () => {
     test('autoSync=true でインターバル同期する', async () => {
       const useCalendarEvents = await getHook()
+      vi.spyOn(Math, 'random').mockReturnValue(0.5)
       mockFetchSuccess([])
 
       const options = {
@@ -444,14 +472,15 @@ describe('useCalendarEvents', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1)
 
-      // 5秒後の自動同期（キャッシュヒットするのでfetchは増えない）
-      // キャッシュTTL(5分)以内なのでfetchは増えない
+      mockFetchSuccess([])
+
+      // 5秒後の自動同期は forceSync の silent refresh として実行される
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5000)
       })
 
-      // autoSync ではキャッシュが有効な間はfetchしない（forceSync=false）
-      expect(mockFetch).toHaveBeenCalledTimes(1) // キャッシュヒット
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(mockFetch.mock.calls[1][0]).toContain('forceSync=true')
     })
 
     test('autoSync=false ではインターバル同期しない', async () => {

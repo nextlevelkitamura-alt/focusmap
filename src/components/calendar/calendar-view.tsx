@@ -48,7 +48,6 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
     timeMax,
     calendarIds: selectedCalendarIds,
     autoSync: true,
-    syncInterval: 300000 // 5分
   })
 
   // 今日に戻る

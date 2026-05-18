@@ -118,7 +118,6 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
             timeMax,
             calendarIds: visibleCalendarIds.length > 0 ? visibleCalendarIds : undefined,
             autoSync: true,
-            syncInterval: 300000
         })
 
         // 親コンポーネントから refetch + 楽観的イベント操作を呼び出せるようにする

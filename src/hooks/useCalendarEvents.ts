@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type SetStateAction } from 'react';
 import { CalendarEvent } from '@/types/calendar';
 
 interface UseCalendarEventsOptions {
@@ -9,7 +9,7 @@ interface UseCalendarEventsOptions {
   calendarIds?: string[];
   enabled?: boolean;
   autoSync?: boolean;
-  syncInterval?: number;  // ミリ秒（デフォルト: 600000 = 10分）
+  syncInterval?: number;  // ミリ秒（デフォルト: 120000 = 2分）
 }
 
 type CalendarFetchError = Error & { code?: string; reauthUrl?: string };
@@ -18,27 +18,131 @@ type CalendarFetchError = Error & { code?: string; reauthUrl?: string };
 interface CacheEntry {
   events: CalendarEvent[];
   syncedAt: Date;
+  staleAt: number;
   expiresAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
-const CACHE_TTL = 2 * 60 * 1000; // 2 minutes（ゴーストイベント残留を最小化）
+const CACHE_DISPLAY_TTL_MS = 5 * 60 * 1000;
+const CACHE_REVALIDATE_AFTER_MS = 60 * 1000;
+const DEFAULT_SYNC_INTERVAL_MS = 120 * 1000;
+const SYNC_INTERVAL_JITTER_RATIO = 0.25;
+const SESSION_CACHE_PREFIX = 'focusmap:calendar-events:';
 const OPTIMISTIC_EVENT_KEEP_MS = 60 * 1000;
-const inflightRequests = new Map<string, Promise<CalendarEvent[]>>();
+const inflightRequests = new Map<string, Promise<CacheEntry>>();
 
 // Backoff state for quota errors
 let quotaErrorCount = 0;
 let quotaBackoffUntil = 0;
 
 function getCacheKey(timeMin: Date, timeMax: Date, calendarIds?: string[]): string {
-  const ids = calendarIds && calendarIds.length > 0 ? calendarIds.sort().join(',') : 'primary';
+  const ids = calendarIds && calendarIds.length > 0 ? [...calendarIds].sort().join(',') : 'primary';
   return `${timeMin.toISOString()}-${timeMax.toISOString()}-${ids}`;
+}
+
+function getSessionCacheKey(cacheKey: string): string {
+  return `${SESSION_CACHE_PREFIX}${cacheKey}`;
+}
+
+function removeSessionCacheEntry(cacheKey: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(getSessionCacheKey(cacheKey));
+  } catch {
+    // Ignore storage access errors.
+  }
+}
+
+function writeCacheEntry(cacheKey: string, entry: CacheEntry) {
+  cache.set(cacheKey, entry);
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(getSessionCacheKey(cacheKey), JSON.stringify({
+      ...entry,
+      syncedAt: entry.syncedAt.toISOString(),
+    }));
+  } catch {
+    // Calendar data is still available in memory even if sessionStorage is full/blocked.
+  }
+}
+
+function readSessionCacheEntry(cacheKey: string): CacheEntry | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(getSessionCacheKey(cacheKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      events?: CalendarEvent[];
+      syncedAt?: string;
+      staleAt?: number;
+      expiresAt?: number;
+    };
+    if (!Array.isArray(parsed.events) || !parsed.syncedAt || !parsed.expiresAt || !parsed.staleAt) return null;
+    const syncedAt = new Date(parsed.syncedAt);
+    if (Number.isNaN(syncedAt.getTime())) return null;
+    return {
+      events: parsed.events,
+      syncedAt,
+      staleAt: parsed.staleAt,
+      expiresAt: parsed.expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getUsableCacheEntry(cacheKey: string): CacheEntry | null {
+  const now = Date.now();
+  const memoryEntry = cache.get(cacheKey);
+  if (memoryEntry) {
+    if (memoryEntry.expiresAt > now) return memoryEntry;
+    cache.delete(cacheKey);
+  }
+
+  const sessionEntry = readSessionCacheEntry(cacheKey);
+  if (!sessionEntry) return null;
+  if (sessionEntry.expiresAt <= now) {
+    removeSessionCacheEntry(cacheKey);
+    return null;
+  }
+
+  cache.set(cacheKey, sessionEntry);
+  return sessionEntry;
+}
+
+function shouldRevalidate(entry: CacheEntry | null): boolean {
+  return !entry || Date.now() >= entry.staleAt;
+}
+
+function createCacheEntry(events: CalendarEvent[], syncedAt = new Date()): CacheEntry {
+  const now = Date.now();
+  return {
+    events,
+    syncedAt,
+    staleAt: now + CACHE_REVALIDATE_AFTER_MS,
+    expiresAt: now + CACHE_DISPLAY_TTL_MS,
+  };
+}
+
+function clearSessionCache() {
+  if (typeof window === 'undefined') return;
+  try {
+    for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+      const key = window.sessionStorage.key(i);
+      if (key?.startsWith(SESSION_CACHE_PREFIX)) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Ignore storage access errors.
+  }
 }
 
 /** キャッシュを全クリア（削除・更新後に呼び出す） */
 export function invalidateCalendarCache() {
   cache.clear();
   inflightRequests.clear();
+  clearSessionCache();
 }
 
 const CALENDAR_SYNC_EVENT = 'focusmap:calendar-sync-request';
@@ -127,6 +231,13 @@ function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): Ca
   return sortEventsByStartTime([...next, event]);
 }
 
+function removeEvent(events: CalendarEvent[], eventId: string, googleEventId?: string): CalendarEvent[] {
+  return events.filter(event => {
+    if (googleEventId) return event.google_event_id !== googleEventId;
+    return event.id !== eventId;
+  });
+}
+
 function mergeRecentOptimisticEvents(fetchedEvents: CalendarEvent[], previousEvents: CalendarEvent[]): CalendarEvent[] {
   const now = Date.now();
   const fetchedKeys = new Set(
@@ -152,7 +263,7 @@ async function fetchEventsShared(
   timeMax: Date,
   calendarIds?: string[],
   forceSync = false
-): Promise<CalendarEvent[]> {
+): Promise<CacheEntry> {
   const cacheKey = getCacheKey(timeMin, timeMax, calendarIds);
 
   // Check backoff
@@ -161,17 +272,18 @@ async function fetchEventsShared(
     throw new Error(`API quota exceeded. Please wait ${waitTime} seconds before retrying.`);
   }
 
-  // Return cache if fresh and not forced
+  // Return cache if fresh and not forced. Stale-but-usable entries are shown by
+  // the hook immediately, then refreshed in the background.
   if (!forceSync) {
-    const cached = cache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
-      return cached.events;
+    const cached = getUsableCacheEntry(cacheKey);
+    if (cached && Date.now() < cached.staleAt) {
+      return cached;
     }
   }
 
   // Deduplicate in-flight requests
   const inflight = inflightRequests.get(cacheKey);
-  if (inflight && !forceSync) {
+  if (inflight) {
     return inflight;
   }
 
@@ -207,7 +319,9 @@ async function fetchEventsShared(
           throw new Error('Failed to fetch events after token refresh');
         }
         const retryData = await retryResponse.json();
-        return retryData.events || [];
+        const entry = createCacheEntry(retryData.events || []);
+        writeCacheEntry(cacheKey, entry);
+        return entry;
       }
 
       const contentType = response.headers.get("content-type");
@@ -255,14 +369,10 @@ async function fetchEventsShared(
       // Reset quota error count on success
       quotaErrorCount = 0;
 
-      // Update cache
-      cache.set(cacheKey, {
-        events,
-        syncedAt: new Date(),
-        expiresAt: Date.now() + CACHE_TTL
-      });
+      const entry = createCacheEntry(events);
+      writeCacheEntry(cacheKey, entry);
 
-      return events;
+      return entry;
     } finally {
       inflightRequests.delete(cacheKey);
     }
@@ -273,15 +383,8 @@ async function fetchEventsShared(
 }
 
 export function useCalendarEvents(options: UseCalendarEventsOptions) {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
-
-  // Use ref to track previous calendarIds to prevent unnecessary refetches
-  const prevCalendarIdsRef = useRef<string | undefined>(undefined);
   const calendarIdsKey = useMemo(() =>
-    options.calendarIds?.sort().join(',') || '',
+    options.calendarIds ? [...options.calendarIds].sort().join(',') : '',
     [options.calendarIds]
   );
 
@@ -290,6 +393,42 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     `${options.timeMin.toISOString()}-${options.timeMax.toISOString()}`,
     [options.timeMin, options.timeMax]
   );
+  const cacheKey = useMemo(
+    () => getCacheKey(options.timeMin, options.timeMax, options.calendarIds),
+    // calendarIds is often rebuilt as a new array with the same values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [timeRangeKey, calendarIdsKey]
+  );
+  const initialCacheEntry = options.enabled === false ? null : getUsableCacheEntry(cacheKey);
+
+  const [events, setEventsState] = useState<CalendarEvent[]>(() => initialCacheEntry?.events ?? []);
+  const [isLoading, setIsLoading] = useState(() => options.enabled !== false && !initialCacheEntry);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => initialCacheEntry?.syncedAt ?? null);
+
+  const commitEvents = useCallback((
+    update: SetStateAction<CalendarEvent[]>,
+    cacheSource?: CacheEntry
+  ) => {
+    setEventsState(prev => {
+      const next = typeof update === 'function'
+        ? (update as (previous: CalendarEvent[]) => CalendarEvent[])(prev)
+        : update;
+      const existing = getUsableCacheEntry(cacheKey);
+      writeCacheEntry(cacheKey, {
+        events: next,
+        syncedAt: cacheSource?.syncedAt ?? existing?.syncedAt ?? new Date(),
+        staleAt: cacheSource?.staleAt ?? existing?.staleAt ?? Date.now() + CACHE_REVALIDATE_AFTER_MS,
+        expiresAt: cacheSource?.expiresAt ?? Math.max(existing?.expiresAt ?? 0, Date.now() + CACHE_DISPLAY_TTL_MS),
+      });
+      return next;
+    });
+  }, [cacheKey]);
+
+  const setEvents = useCallback((update: SetStateAction<CalendarEvent[]>) => {
+    commitEvents(update);
+  }, [commitEvents]);
 
   // Fetch events with proper caching
   const fetchEvents = useCallback(async (
@@ -307,20 +446,24 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       ? false
       : !!forceSyncOrOptions.silent;
 
-    if (!silent) {
+    const cached = getUsableCacheEntry(cacheKey);
+    if (!silent && !cached) {
       setIsLoading(true);
+    }
+    if (silent) {
+      setIsRefreshing(true);
     }
     setError(null);
 
     try {
-      const result = await fetchEventsShared(
+      const entry = await fetchEventsShared(
         options.timeMin,
         options.timeMax,
         options.calendarIds,
         forceSync
       );
-      setEvents(prev => mergeRecentOptimisticEvents(result, prev));
-      setLastSyncedAt(new Date());
+      commitEvents(prev => mergeRecentOptimisticEvents(entry.events, prev), entry);
+      setLastSyncedAt(entry.syncedAt);
     } catch (err) {
       setError(err as Error);
       const error = err instanceof Error ? err : new Error(String(err));
@@ -337,34 +480,91 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       if (!silent) {
         setIsLoading(false);
       }
+      if (silent) {
+        setIsRefreshing(false);
+      }
     }
   // calendarIds is often rebuilt as a new array with the same values, so use
   // stable primitive keys to prevent refetch loops.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRangeKey, calendarIdsKey, options.enabled]);
+  }, [timeRangeKey, calendarIdsKey, cacheKey, options.enabled, commitEvents]);
 
-  // Initial fetch + calendarIds/timeMin/timeMax change detection
+  // Initial fetch + calendarIds/timeMin/timeMax change detection. If a cached
+  // entry exists, render it immediately and refresh only in the background.
   useEffect(() => {
     if (options.enabled === false) {
       setIsLoading(false);
+      setIsRefreshing(false);
       return;
     }
-    fetchEvents(false); // Use cache first
-  }, [fetchEvents, options.enabled]);
+    const cached = getUsableCacheEntry(cacheKey);
+    if (cached) {
+      setEventsState(cached.events);
+      setLastSyncedAt(cached.syncedAt);
+      setIsLoading(false);
+      if (shouldRevalidate(cached)) {
+        fetchEvents({ forceSync: true, silent: true });
+      }
+      return;
+    }
 
-  // Auto-sync (10 minutes interval by default)
+    setEventsState([]);
+    setLastSyncedAt(null);
+    fetchEvents(false);
+  }, [cacheKey, fetchEvents, options.enabled]);
+
+  // Auto-sync while visible. Default is 120s with +/-25% jitter to avoid
+  // synchronized Calendar API traffic spikes.
   useEffect(() => {
-    if (!options.autoSync || options.enabled === false) return;
+    const autoSync = options.autoSync ?? true;
+    if (!autoSync || options.enabled === false) return;
 
-    const interval = setInterval(
-      () => {
-        fetchEvents(false); // Use cache first, only fetch if expired
-      },
-      options.syncInterval || 600000 // 10 minutes
-    );
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const baseInterval = options.syncInterval ?? DEFAULT_SYNC_INTERVAL_MS;
+    const nextInterval = () => {
+      const jitter = 1 - SYNC_INTERVAL_JITTER_RATIO + Math.random() * SYNC_INTERVAL_JITTER_RATIO * 2;
+      return Math.round(baseInterval * jitter);
+    };
 
-    return () => clearInterval(interval);
+    const schedule = () => {
+      timeout = setTimeout(() => {
+        if (cancelled) return;
+        const isVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+        if (isVisible) {
+          fetchEvents({ forceSync: true, silent: true });
+        }
+        schedule();
+      }, nextInterval());
+    };
+
+    schedule();
+
+    return () => {
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+    };
   }, [options.autoSync, options.syncInterval, options.enabled, fetchEvents]);
+
+  // Refresh on tab/window return only when the cached data is older than 60s.
+  useEffect(() => {
+    if (typeof window === 'undefined' || options.enabled === false) return;
+
+    const refreshIfStale = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const cached = getUsableCacheEntry(cacheKey);
+      if (shouldRevalidate(cached)) {
+        fetchEvents({ forceSync: true, silent: true });
+      }
+    };
+
+    window.addEventListener('focus', refreshIfStale);
+    document.addEventListener('visibilitychange', refreshIfStale);
+    return () => {
+      window.removeEventListener('focus', refreshIfStale);
+      document.removeEventListener('visibilitychange', refreshIfStale);
+    };
+  }, [cacheKey, fetchEvents, options.enabled]);
 
   // Cross-instance sync: listen for broadcast events from other panels
   useEffect(() => {
@@ -398,7 +598,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       const optimisticEvent = (event as CustomEvent<{ event: CalendarEvent }>).detail?.event;
       if (!optimisticEvent || !isInRangeAndCalendar(optimisticEvent)) return;
 
-      setEvents(prev => {
+      commitEvents(prev => {
         return mergeOptimisticEvent(prev, optimisticEvent);
       });
     };
@@ -406,10 +606,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     const removeHandler = (event: Event) => {
       const { eventId, googleEventId } = (event as CustomEvent<{ eventId: string; googleEventId?: string }>).detail ?? {};
       if (!eventId) return;
-      setEvents(prev => prev.filter(existing => {
-        if (googleEventId) return existing.google_event_id !== googleEventId;
-        return existing.id !== eventId;
-      }));
+      commitEvents(prev => removeEvent(prev, eventId, googleEventId));
     };
 
     window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
@@ -430,21 +627,18 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
   // Optimistic event: add immediately to UI, then sync will replace with real data
   const addOptimisticEvent = useCallback((event: CalendarEvent) => {
-    setEvents(prev => mergeOptimisticEvent(prev, event));
-  }, []);
+    commitEvents(prev => mergeOptimisticEvent(prev, event));
+  }, [commitEvents]);
 
   const removeOptimisticEvent = useCallback((eventId: string, googleEventId?: string) => {
-    setEvents(prev => prev.filter(e => {
-      // googleEventId が指定された場合はそれで削除、そうでなければ eventId で削除
-      if (googleEventId) return e.google_event_id !== googleEventId;
-      return e.id !== eventId;
-    }));
-  }, []);
+    commitEvents(prev => removeEvent(prev, eventId, googleEventId));
+  }, [commitEvents]);
 
   return {
     events,
     setEvents,
     isLoading,
+    isRefreshing,
     error,
     lastSyncedAt,
     syncNow,
