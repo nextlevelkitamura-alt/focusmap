@@ -6,21 +6,21 @@ export const dagreGraph = new dagre.graphlib.Graph();
 dagreGraph.setDefaultEdgeLabel(() => ({}));
 
 export const NODE_WIDTH = 180;
-export const NODE_WIDTH_MOBILE = 150;
+export const NODE_WIDTH_MOBILE = 128;
 export const NODE_HEIGHT = 36;
 export const PROJECT_NODE_WIDTH = 220;
 export const PROJECT_NODE_HEIGHT = 52;
 export const NODE_MAX_WIDTH = 180;
-export const NODE_MAX_WIDTH_MOBILE = 150;
+export const NODE_MAX_WIDTH_MOBILE = 128;
 export const NODE_MIN_WIDTH = 110;
-export const NODE_MIN_WIDTH_MOBILE = 96;
+export const NODE_MIN_WIDTH_MOBILE = 92;
 export const NODE_RESIZE_MAX_WIDTH = 500;
 const NODE_TEXT_LINE_HEIGHT = 16;
 const NODE_VERTICAL_PADDING = 12;
 const NODE_INFO_ROW_HEIGHT = 16;
 // 固定要素の実幅: padding(8) + grip(14) + gap×3(8) + statusDot(6) + menuBtn(20) ≈ 60px
 const NODE_TEXT_RESERVED_WIDTH = 60;
-const NODE_TEXT_RESERVED_WIDTH_MOBILE = 56;
+const NODE_TEXT_RESERVED_WIDTH_MOBILE = 48;
 
 /** テキストの視覚的な幅をピクセル単位で推定（全角≈14.0px, 半角≈8.0px @13px font-bold） */
 const estimateTextWidthPx = (text: string): number => {

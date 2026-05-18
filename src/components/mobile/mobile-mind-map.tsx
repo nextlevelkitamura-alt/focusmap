@@ -31,7 +31,7 @@ import { estimateTaskNodeWidth, estimateTaskNodeHeight } from "@/lib/mindmap-lay
 
 // --- Dagre Layout ---
 const NODE_HEIGHT = 40
-const PROJECT_NODE_WIDTH = 220
+const PROJECT_NODE_WIDTH = 188
 const PROJECT_NODE_HEIGHT = 48
 const fileToDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -232,7 +232,7 @@ const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     return (
         <div
             className={cn(
-                "min-w-[180px] max-w-[260px] min-h-[48px] rounded-xl bg-primary text-primary-foreground px-3 py-2 flex items-center shadow-md transition-all",
+                "min-w-[160px] max-w-[208px] min-h-[48px] rounded-xl bg-primary text-primary-foreground px-3 py-2 flex items-center shadow-md transition-all",
                 isNodeSelected && "ring-2 ring-white ring-offset-2"
             )}
         >
@@ -416,7 +416,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     return (
         <div
             className={cn(
-                "relative px-2 py-1.5 rounded-lg bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all min-h-[36px] min-w-[140px] max-w-[220px]",
+                "relative px-2 py-1.5 rounded-lg bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all min-h-[36px] min-w-[92px] max-w-[128px]",
                 isHabit && "border-blue-400 bg-blue-50 dark:bg-blue-950/30",
                 isNodeSelected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
                 isNodeSelected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
@@ -916,8 +916,8 @@ function MobileMindMapContent({
 
             const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at || !!task.memo
             const isNested = depth >= 1
-            const nodeWidth = estimateTaskNodeWidth(task.title)
-            const height = estimateTaskNodeHeight(task.title, hasInfoRow, nodeWidth)
+            const nodeWidth = estimateTaskNodeWidth(task.title, true)
+            const height = estimateTaskNodeHeight(task.title, hasInfoRow, nodeWidth, true)
 
             nodes.push({
                 id: task.id,

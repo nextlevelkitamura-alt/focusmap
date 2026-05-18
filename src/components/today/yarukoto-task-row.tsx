@@ -39,7 +39,7 @@ export function YarukotoTaskRow({
   const hasChildren = children.length > 0
   const taskDone = task.status === 'done'
   const projectName = task.project_id ? projectNameMap?.get(task.project_id) : null
-  const indentPx = depth * 16
+  const indentPx = variant === 'mobile' ? Math.min(depth * 12, 36) : depth * 16
 
   const doneChildrenCount = children.filter(c => c.status === 'done').length
 
@@ -136,7 +136,7 @@ export function YarukotoTaskRow({
         data-syncing={isSyncing || undefined}
         data-sync-failed={isSyncFailed || undefined}
         className={cn(
-          "flex items-stretch rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-all duration-300 ease-out",
+          "flex items-stretch rounded-lg border border-border/60 bg-background active:bg-muted/50 transition-all duration-300 ease-out max-w-full",
           isSyncing && "opacity-50",
           isSyncFailed && "border-amber-400/60 bg-amber-50/40 dark:bg-amber-950/20"
         )}
@@ -155,22 +155,29 @@ export function YarukotoTaskRow({
         </button>
         <button
           onClick={() => onToggle(task.id)}
-          className="flex items-center gap-3 py-3 px-3 flex-1 min-w-0 text-left min-h-[44px]"
+          className="flex items-start gap-2.5 py-3 pl-2 pr-3 flex-1 min-w-0 text-left min-h-[44px]"
         >
           {taskDone
-            ? <CheckSquare className="w-5 h-5 text-primary shrink-0" />
-            : <Square className="w-5 h-5 text-muted-foreground/40 shrink-0" />
+            ? <CheckSquare className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+            : <Square className="w-5 h-5 text-muted-foreground/40 shrink-0 mt-0.5" />
           }
-          {task.scheduled_at && (
-            <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-[90px]">
-              {formatScheduledTime(task.scheduled_at)}
-            </span>
-          )}
-          <div className="flex-1 min-w-0 flex items-center gap-2">
-            <span className={cn('text-sm', taskDone && 'line-through text-muted-foreground')}>{task.title}</span>
-            {hasChildren && (
-              <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
-                {doneChildrenCount}/{children.length}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start gap-1.5 min-w-0">
+              <span className={cn(
+                'min-w-0 flex-1 text-sm leading-snug break-words [overflow-wrap:anywhere]',
+                taskDone && 'line-through text-muted-foreground'
+              )}>
+                {task.title}
+              </span>
+              {hasChildren && (
+                <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0 pt-0.5">
+                  {doneChildrenCount}/{children.length}
+                </span>
+              )}
+            </div>
+            {task.scheduled_at && (
+              <span className="mt-1 inline-flex rounded bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground tabular-nums">
+                {formatScheduledTime(task.scheduled_at)}
               </span>
             )}
           </div>
