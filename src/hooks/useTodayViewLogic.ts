@@ -521,7 +521,13 @@ export function useTodayViewLogic({
                 const response = await fetch('/api/calendar/events/complete', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ google_event_id: googleEventId, is_completed: newCompleted }),
+                    body: JSON.stringify({
+                        google_event_id: googleEventId,
+                        calendar_id: targetEvent.calendar_id,
+                        completed_date: formatDateString(new Date(targetEvent.start_time)),
+                        start_time: targetEvent.start_time,
+                        is_completed: newCompleted,
+                    }),
                 })
                 console.log('[toggleEventCompletion] API response:', response.status, response.ok)
                 if (!response.ok) {

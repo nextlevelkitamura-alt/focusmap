@@ -4,6 +4,27 @@ import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } f
 import { classifyCalendarAuthError, shouldAttemptTokenRefresh } from '@/lib/calendar-auth-errors';
 import { buildCalendarReauthUrl } from '@/lib/google-oauth';
 
+function getCompletionKey(calendarId: string, googleEventId: string): string {
+  return `${calendarId}::${googleEventId}`;
+}
+
+function toTokyoDateString(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const year = parts.find(part => part.type === 'year')?.value;
+  const month = parts.find(part => part.type === 'month')?.value;
+  const day = parts.find(part => part.type === 'day')?.value;
+
+  return year && month && day
+    ? `${year}-${month}-${day}`
+    : date.toISOString().slice(0, 10);
+}
+
 /**
  * Googleカレンダーからイベントを取得
  * GET /api/calendar/events/list?timeMin=xxx&timeMax=xxx&calendarId=xxx,xxx&forceSync=true
@@ -250,15 +271,47 @@ export async function GET(request: NextRequest) {
       console.log('[events/list] Task map size:', taskMap.size);
     }
 
-    // Build is_completed map from DB events
+    const completionDateMin = toTokyoDateString(timeMin);
+    const completionDateMax = toTokyoDateString(timeMax);
+    const { data: eventCompletions, error: eventCompletionError } = await supabase
+      .from('event_completions')
+      .select('google_event_id, calendar_id, completed_date')
+      .eq('user_id', user.id)
+      .gte('completed_date', completionDateMin)
+      .lte('completed_date', completionDateMax);
+
+    if (eventCompletionError) {
+      console.error('[events/list] Failed to load event completions:', eventCompletionError);
+    }
+
+    // Build is_completed map from DB event cache and completion sidecar records.
     const completionMap = new Map<string, boolean>();
+    const completionFallbackMap = new Map<string, boolean>();
+    const setCompleted = (calendarId: string | null | undefined, googleEventId: string | null | undefined) => {
+      if (!googleEventId) return;
+      if (calendarId) {
+        completionMap.set(getCompletionKey(calendarId, googleEventId), true);
+      }
+      completionFallbackMap.set(googleEventId, true);
+    };
+    const isEventCompleted = (event: { calendar_id?: string | null; google_event_id?: string | null }) => {
+      if (!event.google_event_id) return false;
+      if (event.calendar_id && completionMap.get(getCompletionKey(event.calendar_id, event.google_event_id))) {
+        return true;
+      }
+      return completionFallbackMap.get(event.google_event_id) || false;
+    };
+
     if (allDbEvents) {
       allDbEvents.forEach(event => {
         if (event.google_event_id && event.is_completed) {
-          completionMap.set(event.google_event_id, event.is_completed);
+          setCompleted(event.calendar_id, event.google_event_id);
         }
       });
     }
+    (eventCompletions || []).forEach(completion => {
+      setCompleted(completion.calendar_id, completion.google_event_id);
+    });
 
     // Google Calendar API のイベントとローカルのみのイベントをマージ（task_id, priority, estimated_time, is_completed を追加）
     const allEvents = [
@@ -269,7 +322,7 @@ export async function GET(request: NextRequest) {
           task_id: taskInfo?.id,
           priority: numericPriorityToString(taskInfo?.priority),
           estimated_time: taskInfo?.estimated_time ?? undefined,
-          is_completed: completionMap.get(event.google_event_id) || false,
+          is_completed: isEventCompleted(event),
         };
       }),
       ...localOnlyEvents.map(event => {
@@ -279,7 +332,7 @@ export async function GET(request: NextRequest) {
           task_id: taskInfo?.id,
           priority: numericPriorityToString(taskInfo?.priority),
           estimated_time: taskInfo?.estimated_time ?? undefined,
-          is_completed: event.is_completed || false,
+          is_completed: event.is_completed || isEventCompleted(event),
         };
       })
     ];
@@ -322,7 +375,7 @@ export async function GET(request: NextRequest) {
     const eventsWithSyncTime = googleEventsWithId.map(({ id: _id, ...event }) => ({
       ...event,
       // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
-      is_completed: completionMap.get(event.google_event_id) ?? false,
+      is_completed: isEventCompleted(event),
       synced_at: now
     }));
 
