@@ -57,6 +57,8 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
   // （CalendarDayView は別ツリーなので props で渡せない）
   useEffect(() => {
     const handler = async (memoId: string, startTime: Date, durationMinutes: number) => {
+      const target = items.find(it => it.id === memoId)
+      if (!target) return
       const prev = items
       // 楽観更新: 一覧から消す
       setItems(curr => curr.map(it => it.id === memoId
@@ -69,6 +71,8 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
           body: JSON.stringify({
             scheduled_at: startTime.toISOString(),
             duration_minutes: durationMinutes,
+            title: target.title,
+            description: target.description ?? "",
           }),
         })
         const data = await res.json().catch(() => ({}))
