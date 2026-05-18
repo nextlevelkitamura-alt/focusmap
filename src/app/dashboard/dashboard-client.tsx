@@ -26,6 +26,7 @@ import { IdealView } from "@/components/ideal/ideal-view"
 import { WishlistView } from "@/components/wishlist/wishlist-view"
 import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
 import { TodayTaskBoard } from "@/components/today/today-task-board"
+import { TodayMemoBoard } from "@/components/dashboard/today-memo-board"
 import { TodayDateProvider } from "@/contexts/TodayDateContext"
 
 interface DashboardClientProps {
@@ -1019,14 +1020,7 @@ export function DashboardClient({
                     {activeView === 'habits' ? (
                         <HabitsView onUpdateTask={updateTask} />
                     ) : activeView === 'today' ? (
-                        <TodayTaskBoard
-                            allTasks={allTasksMerged}
-                            onUpdateTask={handleUpdateTaskWithQuickSync}
-                            projects={projects}
-                            onCreateQuickTask={handleCreateQuickTask}
-                            onDeleteTask={handleDeleteTaskFromToday}
-                            syncFailedIds={syncFailedIds}
-                        />
+                        <TodayMemoBoard projects={projects} />
                     ) : activeView === 'long-term' ? (
                         <WishlistView
                             projects={projects}

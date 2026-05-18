@@ -250,6 +250,23 @@ export async function DELETE(
       }
     }
 
+    // 連動: 同じ google_event_id を持つメモ（ideal_goals）の予定状態をリセット。
+    // 「今日する」から「未予定」に戻し、開始時刻をクリア。所要時間は保持。
+    const { error: memoResetError } = await supabase
+      .from('ideal_goals')
+      .update({
+        scheduled_at: null,
+        google_event_id: null,
+        memo_status: 'unsorted',
+        is_today: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', user.id)
+      .eq('google_event_id', googleEventId);
+    if (memoResetError) {
+      console.error('[events/delete] Failed to reset linked memo:', memoResetError);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Event deleted successfully'
