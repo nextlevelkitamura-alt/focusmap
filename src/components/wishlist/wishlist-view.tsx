@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
+import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -321,6 +322,13 @@ export function WishlistView({
 
   useEffect(() => {
     fetchItems().finally(() => setIsLoading(false))
+  }, [fetchItems])
+
+  // 他画面（Today タブ / カレンダー削除）からの更新通知で再取得
+  useEffect(() => {
+    const handler = () => { void fetchItems() }
+    window.addEventListener(WISHLIST_REFRESH_EVENT, handler)
+    return () => window.removeEventListener(WISHLIST_REFRESH_EVENT, handler)
   }, [fetchItems])
 
   useEffect(() => {

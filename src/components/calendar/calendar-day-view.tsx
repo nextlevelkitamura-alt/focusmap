@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback, RefObject } from "react"
 import { calculateEventLayout } from "@/lib/calendar-layout"
-import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WIDTH_DAY, QUARTER_HOURS, GUTTER_WIDTH } from "@/lib/calendar-constants"
+import { HOUR_HEIGHT, DAY_TOTAL_HEIGHT, DEFAULT_SCROLL_HOUR, HOURS, MIN_GRID_WIDTH_DAY, QUARTER_HOURS, GUTTER_WIDTH, MEMO_DRAG_MIME } from "@/lib/calendar-constants"
 import { useCalendarDragDropDay } from "@/hooks/useCalendarDragDrop"
 import { useScrollSync } from "@/hooks/useScrollSync"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
@@ -43,6 +43,14 @@ interface CalendarDayViewProps {
     timer?: TimerInfo
 }
 
+// メモ→カレンダー D&D のグローバルハンドラ。多階層 props を避けるため window 経由。
+// TodayMemoBoard が mount 時に登録、unmount でクリア。
+declare global {
+    interface Window {
+        __focusmapMemoDropHandler?: (memoId: string, startTime: Date, durationMinutes: number) => void | Promise<void>
+    }
+}
+
 export function CalendarDayView({
     currentDate,
     onTaskDrop,
@@ -55,7 +63,7 @@ export function CalendarDayView({
     gridRef,
     taskMap,
     onToggleTask,
-    timer
+    timer,
 }: CalendarDayViewProps) {
     const [currentTime, setCurrentTime] = useState(() => {
         // SSR-safe: midnight as initial value, updated in useEffect
@@ -84,11 +92,26 @@ export function CalendarDayView({
     }>>({})
     const [savingEventIds, setSavingEventIds] = useState<Set<string>>(new Set())
 
+    // メモ D&D 中のプレビュー枠（top: px、durationMinutes、title）
+    const [memoDragOver, setMemoDragOver] = useState<{
+        topPx: number
+        durationMinutes: number
+        title: string
+        startTime: Date
+    } | null>(null)
+
     // events が更新されたら楽観的UIをクリア（refetch完了 = 保存完了）
     useEffect(() => {
         setSavingEventIds(prev => prev.size > 0 ? new Set() : prev)
         setOptimisticMoves(prev => Object.keys(prev).length > 0 ? {} : prev)
     }, [events])
+
+    // ドラッグ終了時にメモプレビューをクリア（ドロップ先がグリッド外でも反応）
+    useEffect(() => {
+        const clear = () => setMemoDragOver(null)
+        window.addEventListener("dragend", clear)
+        return () => window.removeEventListener("dragend", clear)
+    }, [])
 
     // スワイプナビゲーション
     const { swipeDirection } = useSwipeNavigation({
@@ -267,23 +290,77 @@ export function CalendarDayView({
         document.addEventListener('mouseup', handleMouseUp)
     }, [currentDate, totalHeight, hourHeight, onEventTimeChange, onEventEdit, eventLayouts])
 
-    // HTML5ドラッグ&ドロップ（タスク用）はそのまま維持
+    // y 座標 → 15分スナップ済み開始時刻
+    const computeSnappedStart = useCallback((clientY: number): Date | null => {
+        const rect = calendarGridRef.current?.getBoundingClientRect()
+        if (!rect) return null
+        const scrollTop = calendarGridRef.current?.scrollTop || 0
+        const y = clientY - rect.top + scrollTop
+        const totalMinutes = (y / totalHeight) * 24 * 60
+        const snapped = Math.max(0, Math.min(snapTo15Min(totalMinutes), 24 * 60 - 15))
+        const start = new Date(currentDate)
+        start.setHours(Math.floor(snapped / 60), snapped % 60, 0, 0)
+        return start
+    }, [calendarGridRef, currentDate, totalHeight])
+
+    // メモ D&D 判定
+    const isMemoDrag = useCallback((e: React.DragEvent): boolean => {
+        // 一部ブラウザは types は読めるが getData は drop まで読めない
+        if (e.dataTransfer.types.includes(MEMO_DRAG_MIME)) return true
+        if (typeof window !== "undefined" && window.__focusmapMemoDrag) return true
+        return false
+    }, [])
+
+    // HTML5ドラッグ&ドロップ（タスク用 / メモ用）
     const onDragOver = useCallback((e: React.DragEvent) => {
-        // カレンダーイベントドラッグ中はタスク用ハイライトを表示しない
-        if (!dragState) {
-            handleDragOver(e, { currentDate })
+        if (dragState) return
+        if (isMemoDrag(e)) {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = "move"
+            const drag = window.__focusmapMemoDrag
+            const start = computeSnappedStart(e.clientY)
+            if (!drag || !start) return
+            const startMin = start.getHours() * 60 + start.getMinutes()
+            const topPx = (startMin / (24 * 60)) * totalHeight
+            setMemoDragOver({
+                topPx,
+                durationMinutes: drag.durationMinutes,
+                title: drag.title,
+                startTime: start,
+            })
+            return
         }
-    }, [handleDragOver, currentDate, dragState])
+        handleDragOver(e, { currentDate })
+    }, [handleDragOver, currentDate, dragState, isMemoDrag, computeSnappedStart, totalHeight])
 
     const onDragLeave = useCallback((e: React.DragEvent) => {
-        if (!dragState) {
-            e.preventDefault()
-            handleDragLeave()
+        if (dragState) return
+        if (isMemoDrag(e)) {
+            // dragover が連続発火するので即クリアしない（drop か dragend で消す）
+            return
         }
-    }, [handleDragLeave, dragState])
+        e.preventDefault()
+        handleDragLeave()
+    }, [handleDragLeave, dragState, isMemoDrag])
 
     const onDrop = useCallback((e: React.DragEvent) => {
         if (!dragState) {
+            // メモドロップ優先（window グローバルハンドラ経由）
+            const memoHandler = typeof window !== "undefined" ? window.__focusmapMemoDropHandler : undefined
+            if (isMemoDrag(e) && memoHandler) {
+                e.preventDefault()
+                const raw = e.dataTransfer.getData(MEMO_DRAG_MIME) || ""
+                let parsed: { memoId: string; durationMinutes: number; title: string } | null = null
+                try { parsed = raw ? JSON.parse(raw) : null } catch { parsed = null }
+                const drag = parsed ?? window.__focusmapMemoDrag ?? null
+                const start = computeSnappedStart(e.clientY)
+                setMemoDragOver(null)
+                window.__focusmapMemoDrag = null
+                if (drag && start) {
+                    void memoHandler(drag.memoId, start, drag.durationMinutes)
+                }
+                return
+            }
             // Check if it's an event drag or task drag
             const eventDataStr = e.dataTransfer.getData('application/json')
             const taskId = e.dataTransfer.getData('text/plain')
@@ -320,7 +397,7 @@ export function CalendarDayView({
                 handleDrop(e, { currentDate })
             }
         }
-    }, [handleDrop, currentDate, dragState, hourHeight, onEventTimeChange, calendarGridRef])
+    }, [handleDrop, currentDate, dragState, hourHeight, onEventTimeChange, calendarGridRef, isMemoDrag, computeSnappedStart])
 
     return (
         <div
@@ -381,8 +458,24 @@ export function CalendarDayView({
                         </div>
                     )}
 
+                    {/* メモ D&D プレビュー枠（duration 分の縦長半透明枠） */}
+                    {memoDragOver && !dragState && (
+                        <div
+                            className="absolute left-12 right-2 pointer-events-none z-30 rounded-md bg-amber-400/20 border-2 border-dashed border-amber-500/70"
+                            style={{
+                                top: memoDragOver.topPx,
+                                height: (memoDragOver.durationMinutes / 60) * hourHeight,
+                            }}
+                        >
+                            <div className="bg-amber-500 text-white text-[11px] px-2 py-0.5 inline-block m-1 rounded-md shadow font-medium">
+                                {format(memoDragOver.startTime, "HH:mm")}・{memoDragOver.durationMinutes}分
+                                <span className="ml-1 opacity-90">{memoDragOver.title}</span>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Drag Highlight (タスク用 - イベントドラッグ中は非表示) */}
-                    {dragOverHour !== null && !dragState && (
+                    {dragOverHour !== null && !dragState && !memoDragOver && (
                         <div
                             className="absolute w-full bg-primary/5 z-10 pointer-events-none transition-all border-l-2 border-primary/30"
                             style={{ top: dragOverHour * hourHeight, height: hourHeight }}

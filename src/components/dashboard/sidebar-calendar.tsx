@@ -347,6 +347,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                 }
                 // 削除成功: キャッシュを無効化して次回フェッチで最新データを取得
                 invalidateCalendarCache() // refetchは呼ばず、楽観的削除済みのため不要
+                // 連動: メモ画面 / Today タブの今日するリストにメモを戻すため refetch を促す
+                window.dispatchEvent(new CustomEvent("wishlist:refresh"))
             } catch (err) {
                 // 失敗時: イベントを復元
                 setEvents(prev => [...prev, event].sort((a, b) =>

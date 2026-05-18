@@ -8,6 +8,19 @@ import { cn } from "@/lib/utils"
 import { colorToRgba, DEFAULT_PROJECT_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
 import type { AiTask } from "@/types/ai-task"
 import { NoteClaudeRunnerButton, NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
+import { MEMO_DRAG_MIME, TODAY_DURATION_DEFAULT, TODAY_DURATION_PRESETS } from "@/lib/calendar-constants"
+
+// グローバル: dragover ハンドラは dataTransfer の中身を読めないため、
+// 直近のドラッグ中メモを window 経由で参照する（type-safe な declare 拡張）
+declare global {
+  interface Window {
+    __focusmapMemoDrag?: {
+      memoId: string
+      durationMinutes: number
+      title: string
+    } | null
+  }
+}
 
 type MemoItem = IdealGoalWithItems
 
@@ -22,6 +35,8 @@ interface WishlistCardProps {
   onDragStart?: () => void
   aiTask?: AiTask | null
   onOpenCodex?: () => Promise<void>
+  // Today タブで native HTML5 D&D を有効化（カレンダー上に配置するため）
+  nativeMemoDrag?: boolean
 }
 
 function formatDateTime(value: string | null): string | null {
@@ -49,6 +64,7 @@ export function WishlistCard({
   onDragStart,
   aiTask = null,
   onOpenCodex,
+  nativeMemoDrag = false,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
@@ -85,10 +101,42 @@ export function WishlistCard({
     await onDelete(item.id)
   }
 
+  const handleSetDuration = async (e: React.MouseEvent, minutes: number) => {
+    e.stopPropagation()
+    await onUpdate(item.id, { duration_minutes: minutes } as Partial<MemoItem>)
+  }
+
+  // scheduled_at が今日のものも「今日カラム」相当として扱う（duration チップ表示判定）
+  const scheduledMs = item.scheduled_at ? new Date(item.scheduled_at).getTime() : null
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
+  const isScheduledToday = scheduledMs != null && !Number.isNaN(scheduledMs)
+    && scheduledMs >= todayStart.getTime() && scheduledMs < todayEnd.getTime()
+  const isTodayColumn = isToday || isScheduledToday
+  const effectiveDuration = item.duration_minutes ?? TODAY_DURATION_DEFAULT
+
+  // Native HTML5 D&D（Today タブで使用）
+  const handleNativeDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!nativeMemoDrag) return
+    const payload = {
+      memoId: item.id,
+      durationMinutes: effectiveDuration,
+      title: item.title,
+    }
+    e.dataTransfer.setData(MEMO_DRAG_MIME, JSON.stringify(payload))
+    e.dataTransfer.effectAllowed = "move"
+    window.__focusmapMemoDrag = payload
+  }
+  const handleNativeDragEnd = () => {
+    if (!nativeMemoDrag) return
+    window.__focusmapMemoDrag = null
+  }
+
   return (
     <div
-      draggable={draggable}
-      onDragStart={onDragStart}
+      draggable={nativeMemoDrag || draggable}
+      onDragStart={nativeMemoDrag ? handleNativeDragStart : onDragStart}
+      onDragEnd={nativeMemoDrag ? handleNativeDragEnd : undefined}
       onClick={onClick}
       className={cn(
         "group relative flex cursor-pointer flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
@@ -181,13 +229,44 @@ export function WishlistCard({
             <Calendar className="h-3.5 w-3.5" /> {formattedDate}
           </span>
         )}
-        {item.duration_minutes && (
+        {item.duration_minutes && !isTodayColumn && (
           <span className="inline-flex items-center gap-1">
             <Clock className="h-3.5 w-3.5" /> {item.duration_minutes}分
           </span>
         )}
         {subCount > 0 && <span>候補 {subCount}</span>}
       </div>
+
+      {isTodayColumn && !isCompleted && (
+        <div className="mt-2 flex flex-wrap items-center gap-1" onClick={e => e.stopPropagation()}>
+          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+          {TODAY_DURATION_PRESETS.map(min => {
+            const selected = (item.duration_minutes ?? TODAY_DURATION_DEFAULT) === min
+            const isDefault = item.duration_minutes == null && min === TODAY_DURATION_DEFAULT
+            return (
+              <button
+                key={min}
+                type="button"
+                onPointerDown={e => e.stopPropagation()}
+                onMouseDown={e => e.stopPropagation()}
+                onClick={e => handleSetDuration(e, min)}
+                className={cn(
+                  "min-h-7 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                  selected
+                    ? "border-primary/60 bg-primary/15 text-primary"
+                    : isDefault
+                      ? "border-primary/30 bg-primary/5 text-primary/80"
+                      : "border-border bg-background text-muted-foreground hover:bg-muted",
+                )}
+                aria-pressed={selected}
+                title={`所要時間 ${min}分`}
+              >
+                {min}分
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <div className="mt-2 flex items-center justify-between" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-1">

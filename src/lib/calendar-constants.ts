@@ -31,6 +31,16 @@ export const EVENT_FONT_SIZES = {
   NORMAL: { duration: Infinity, timeSize: 12, titleSize: 14 }  // 120分以上
 } as const
 
+/** Quick duration presets for "today" memo chips and calendar D&D */
+export const TODAY_DURATION_PRESETS = [15, 30, 60, 90] as const
+export const TODAY_DURATION_DEFAULT = 30 as const
+
+/** Custom DataTransfer MIME type for memo → calendar D&D */
+export const MEMO_DRAG_MIME = "application/x-focusmap-memo" as const
+
+/** Custom event name for refetching wishlist items across views */
+export const WISHLIST_REFRESH_EVENT = "wishlist:refresh" as const
+
 /** Zoom configuration */
 export const ZOOM_CONFIG = {
   MIN_HOUR_HEIGHT: 32,     // 最小（50%ズームアウト）
