@@ -122,7 +122,9 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
   }, [projects])
 
   // メモを Claude Code で実行
-  const startNoteWithClaude = useCallback(async (note: Note) => {
+  // 将来の安定版で再利用するため温存（現在ボタンからは呼ばれない）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _startNoteWithClaude = useCallback(async (note: Note) => {
     const repoPath = getNoteRepoPath(note.project_id)
     if (!repoPath) {
       showToast("error", "リポジトリパスが未設定です")
@@ -147,6 +149,37 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
     }
     showToast("success", "Claude Code を起動中（最大1分）")
   }, [getNoteRepoPath])
+
+  // メモから Codex Web を開く（見出し+本文をクリップボードへ）
+  const openInCodexWeb = useCallback(async (note: Note) => {
+    const content = note.content.trim()
+    const firstLine = content.split("\n")[0]?.trim() ?? ""
+    const eventTitle = note.ai_analysis?.event_title?.trim() ?? ""
+    const title = eventTitle || firstLine
+    // 先頭行重複の除去
+    const body = (title === firstLine)
+      ? content.split("\n").slice(1).join("\n").trim()
+      : content
+    const clip = body ? `${title}\n\n${body}` : title
+
+    // ユーザー操作直後のタブで window.open するためにポップアップブロックを回避。
+    // clipboard 失敗時もタブは開く。
+    let copied = false
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(clip)
+        copied = true
+      }
+    } catch {
+      copied = false
+    }
+    window.open("https://chatgpt.com/codex", "_blank", "noopener,noreferrer")
+    if (copied) {
+      showToast("success", "Codex を開きました（クリップボードにコピー済）")
+    } else {
+      showToast("error", "クリップボードコピー失敗。手動でコピーしてください")
+    }
+  }, [])
 
   // 画像選択
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1205,10 +1238,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                     <NoteClaudeRunnerButton
                       noteId={note.id}
                       noteContent={note.content}
-                      projectId={note.project_id}
-                      repoPath={getNoteRepoPath(note.project_id)}
-                      latestTask={getNoteAiTask(note.id)}
-                      onStart={() => startNoteWithClaude(note)}
+                      onOpenCodex={() => openInCodexWeb(note)}
                     />
 
                     {confirmDeleteId === note.id ? (
