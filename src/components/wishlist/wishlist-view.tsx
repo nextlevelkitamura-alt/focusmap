@@ -5,8 +5,18 @@ import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-p
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { DateTimePicker } from "@/components/ui/date-time-picker"
+import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useTagColors } from "@/hooks/useTagColors"
@@ -29,6 +39,13 @@ import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type ColumnKey = "unsorted" | "today" | "scheduled" | "completed"
 type MemoItem = IdealGoalWithItems
+
+interface TodayRemovalDialogState {
+  item: MemoItem
+  scheduledDate: Date | undefined
+  durationMinutes: number
+  isSaving: boolean
+}
 
 interface MemoSuggestion {
   title: string
@@ -217,9 +234,11 @@ function combineDateTime(dateValue: string, timeValue: string) {
 export function WishlistView({
   projects = [],
   selectedProjectId = null,
+  onOpenTodayMemoSchedule,
 }: {
   projects?: Project[]
   selectedProjectId?: string | null
+  onOpenTodayMemoSchedule?: (payload: { memoId: string; date: Date }) => void
 }) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -237,6 +256,7 @@ export function WishlistView({
   const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
   const [filterOpen, setFilterOpen] = useState(false)
+  const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
@@ -448,6 +468,18 @@ export function WishlistView({
     )
   }, [filteredItems, todayRange])
 
+  const targetCalendarId = useMemo(() => {
+    const writableCalendars = calendars.filter(calendar => calendar.access_level === "owner" || calendar.access_level === "writer")
+    return (
+      writableCalendars.find(calendar => calendar.selected && calendar.is_primary)?.google_calendar_id ??
+      writableCalendars.find(calendar => calendar.selected)?.google_calendar_id ??
+      calendars.find(calendar => calendar.is_primary)?.google_calendar_id ??
+      writableCalendars[0]?.google_calendar_id ??
+      calendars[0]?.google_calendar_id ??
+      "primary"
+    )
+  }, [calendars])
+
   const enqueueItemSave = useCallback((id: string, operation: () => Promise<void>) => {
     const previous = itemSaveQueues.current.get(id) ?? Promise.resolve()
     const save = previous.catch(() => undefined).then(operation)
@@ -654,17 +686,16 @@ export function WishlistView({
     }
   }
 
-  const handleCalendarAdd = async (item: MemoItem) => {
+  const handleCalendarAdd = useCallback(async (item: MemoItem) => {
     const optimisticEventId = `optimistic-wishlist-${item.id}`
     const startTime = item.scheduled_at ? new Date(item.scheduled_at) : null
     const durationMinutes = item.duration_minutes ?? 60
-    const calendarId =
-      calendars.find(calendar => calendar.is_primary)?.google_calendar_id ??
-      calendars.find(calendar => calendar.access_level === "owner" || calendar.access_level === "writer")?.google_calendar_id ??
-      calendars[0]?.google_calendar_id ??
-      "primary"
+    const calendarId = targetCalendarId
 
     if (startTime && !Number.isNaN(startTime.getTime())) {
+      if (item.google_event_id) {
+        broadcastCalendarOptimisticEventRemoval(item.google_event_id, item.google_event_id)
+      }
       const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000)
       const now = new Date().toISOString()
       const optimisticEvent: CalendarEvent = {
@@ -693,24 +724,149 @@ export function WishlistView({
         duration_minutes: item.duration_minutes,
         title: item.title,
         description: item.description,
+        calendar_id: calendarId,
       }),
     })
     if (!res.ok) {
       broadcastCalendarOptimisticEventRemoval(optimisticEventId)
+      broadcastCalendarSync()
       const { error } = await res.json()
-      alert(`カレンダー登録に失敗しました: ${error}`)
-      return
+      setIntakeError(`カレンダー登録に失敗しました: ${error}`)
+      return false
     }
     const { google_event_id, item: updatedItem } = await res.json()
     if (updatedItem) {
       setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
       setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
     } else {
-      await handleUpdate(item.id, { google_event_id, memo_status: "scheduled" })
+      await handleUpdate(item.id, { google_event_id, memo_status: "scheduled", is_today: false })
     }
     invalidateCalendarCache()
     broadcastCalendarSync()
-  }
+    return true
+  }, [handleUpdate, targetCalendarId])
+
+  const openTodayRemovalDialog = useCallback((item: MemoItem) => {
+    const scheduledDate = item.scheduled_at ? new Date(item.scheduled_at) : new Date()
+    if (Number.isNaN(scheduledDate.getTime())) {
+      scheduledDate.setTime(Date.now())
+    }
+    if (!item.scheduled_at) {
+      scheduledDate.setHours(9, 0, 0, 0)
+    }
+    setTodayRemovalDialog({
+      item,
+      scheduledDate,
+      durationMinutes: item.duration_minutes ?? 30,
+      isSaving: false,
+    })
+  }, [])
+
+  const handleToggleTodayFromCard = useCallback(async (item: MemoItem, isTodayColumn: boolean) => {
+    if (isTodayColumn) {
+      openTodayRemovalDialog(item)
+      return
+    }
+    await handleUpdate(item.id, { is_today: true })
+  }, [handleUpdate, openTodayRemovalDialog])
+
+  const handleUnscheduleMemo = useCallback(async (item: MemoItem) => {
+    const previousItem = item
+    const previousSelectedItem = selectedItem?.id === item.id ? selectedItem : null
+    const clearedItem = (target: MemoItem): MemoItem => ({
+      ...target,
+      scheduled_at: null,
+      google_event_id: null,
+      memo_status: "unsorted",
+      is_today: false,
+      updated_at: new Date().toISOString(),
+    })
+
+    setItems(prev => prev.map(existing => existing.id === item.id ? clearedItem(existing) : existing))
+    setSelectedItem(prev => prev?.id === item.id ? clearedItem(prev) : prev)
+    setIntakeError(null)
+
+    try {
+      let data: { item?: MemoItem; error?: string } = {}
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const res = await fetch(`/api/wishlist/${item.id}/unschedule`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ calendar_id: targetCalendarId }),
+          })
+          data = await res.json().catch(() => ({}))
+          if (!res.ok || data.error) {
+            throw new Error(data.error || "予定の解除に失敗しました")
+          }
+          lastError = null
+          break
+        } catch (err) {
+          lastError = err
+          if (attempt === 0) {
+            await new Promise(resolve => window.setTimeout(resolve, 350))
+          }
+        }
+      }
+      if (lastError) {
+        throw lastError
+      }
+      if (data.item) {
+        const updatedItem = data.item as MemoItem
+        setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
+        setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
+      }
+      invalidateCalendarCache()
+      broadcastCalendarSync()
+      window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+    } catch (err) {
+      setItems(prev => prev.map(existing => existing.id === item.id ? previousItem : existing))
+      setSelectedItem(prev => prev?.id === item.id ? previousSelectedItem ?? previousItem : prev)
+      const message = err instanceof Error ? err.message : "予定の解除に失敗しました"
+      setIntakeError(`予定の解除に失敗したため、元の状態に戻しました。${message}`)
+      throw err
+    }
+  }, [selectedItem, targetCalendarId])
+
+  const handleDialogUnschedule = useCallback(() => {
+    if (!todayRemovalDialog) return
+    const item = todayRemovalDialog.item
+    setTodayRemovalDialog(null)
+    void handleUnscheduleMemo(item).catch(() => undefined)
+  }, [handleUnscheduleMemo, todayRemovalDialog])
+
+  const handleDialogOpenTodaySchedule = useCallback(() => {
+    if (!todayRemovalDialog) return
+    const date = todayRemovalDialog.scheduledDate ?? new Date()
+    onOpenTodayMemoSchedule?.({ memoId: todayRemovalDialog.item.id, date })
+    setTodayRemovalDialog(null)
+  }, [onOpenTodayMemoSchedule, todayRemovalDialog])
+
+  const handleDialogReschedule = useCallback(async () => {
+    if (!todayRemovalDialog) return
+    const scheduledDate = todayRemovalDialog.scheduledDate
+    if (!scheduledDate) {
+      setIntakeError("日付を選択してください")
+      return
+    }
+    setTodayRemovalDialog(prev => prev ? { ...prev, isSaving: true } : prev)
+    try {
+      const itemForSchedule = {
+        ...todayRemovalDialog.item,
+        scheduled_at: scheduledDate.toISOString(),
+        duration_minutes: todayRemovalDialog.durationMinutes,
+        memo_status: "time_candidates",
+        is_today: false,
+      } as MemoItem
+      const scheduled = await handleCalendarAdd(itemForSchedule)
+      if (!scheduled) throw new Error("カレンダー登録に失敗しました")
+      setTodayRemovalDialog(null)
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "予定の変更に失敗しました")
+      setTodayRemovalDialog(prev => prev ? { ...prev, isSaving: false } : prev)
+    }
+  }, [handleCalendarAdd, todayRemovalDialog])
 
   const openDetail = useCallback((item: MemoItem) => {
     setSelectedItem(item)
@@ -742,12 +898,24 @@ export function WishlistView({
         ? { is_completed: false, memo_status: "unsorted", is_today: true }
         : { is_today: true }
     } else if (to === "unsorted") {
-      // today → unsorted: is_today=false
-      // scheduled → unsorted: is_today=false（scheduled_at が今日のものは today に残るが仕様）
-      // completed → unsorted: 完了解除
-      updates = source.droppableId === "completed"
-        ? { is_completed: false, memo_status: "unsorted", is_today: false }
-        : { is_today: false }
+      // today → unsorted: 確認ダイアログで、未予定へ戻すか別日に予定し直すかを選ぶ
+      if (source.droppableId === "today") {
+        openTodayRemovalDialog(item)
+        return
+      }
+      // scheduled → unsorted: Google カレンダー予定も含めて予定情報を解除
+      if (source.droppableId === "scheduled") {
+        await handleUnscheduleMemo(item)
+        return
+      }
+      // completed → unsorted: 完了解除し、予定情報も残さない
+      updates = {
+        is_completed: false,
+        memo_status: "unsorted",
+        is_today: false,
+        scheduled_at: null,
+        google_event_id: null,
+      }
     } else if (to === "completed") {
       updates = { is_completed: true, memo_status: "completed", is_today: false }
     }
@@ -755,7 +923,7 @@ export function WishlistView({
     if (updates) {
       await handleUpdate(item.id, updates as Record<string, unknown>)
     }
-  }, [itemById, handleUpdate, openDetail])
+  }, [handleUnscheduleMemo, itemById, handleUpdate, openDetail, openTodayRemovalDialog])
 
   if (isLoading) {
     return <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">読み込み中...</div>
@@ -926,6 +1094,7 @@ export function WishlistView({
                   tagColors={tagColors}
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
                   className="lg:col-span-2"
                   listClassName="sm:grid-cols-2"
                 />
@@ -942,6 +1111,7 @@ export function WishlistView({
                   tagColors={tagColors}
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
                 />
                 <MemoSection
                   columnKey="scheduled"
@@ -956,6 +1126,7 @@ export function WishlistView({
                   tagColors={tagColors}
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
                 />
                 <MemoSection
                   columnKey="completed"
@@ -970,6 +1141,7 @@ export function WishlistView({
                   tagColors={tagColors}
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
                 />
               </div>
             </div>
@@ -995,7 +1167,7 @@ export function WishlistView({
         open={detailOpen}
         onOpenChange={setDetailOpen}
         onUpdate={handleUpdate}
-        onCalendarAdd={handleCalendarAdd}
+        onCalendarAdd={async item => { await handleCalendarAdd(item) }}
         onSaved={() => setDetailOpen(false)}
         tagOptions={allTags}
         projects={projects}
@@ -1005,7 +1177,105 @@ export function WishlistView({
         onLaunchCodexApp={launchCodexAppForMemo}
         onMemoChanged={fetchItems}
       />
+
+      <TodayRemovalDialog
+        state={todayRemovalDialog}
+        onChange={updates => setTodayRemovalDialog(prev => prev ? { ...prev, ...updates } : prev)}
+        onOpenChange={open => {
+          if (!open && !todayRemovalDialog?.isSaving) setTodayRemovalDialog(null)
+        }}
+        onUnschedule={handleDialogUnschedule}
+        onOpenTodaySchedule={handleDialogOpenTodaySchedule}
+        onReschedule={handleDialogReschedule}
+      />
     </div>
+  )
+}
+
+function TodayRemovalDialog({
+  state,
+  onChange,
+  onOpenChange,
+  onUnschedule,
+  onOpenTodaySchedule,
+  onReschedule,
+}: {
+  state: TodayRemovalDialogState | null
+  onChange: (updates: Partial<TodayRemovalDialogState>) => void
+  onOpenChange: (open: boolean) => void
+  onUnschedule: () => void
+  onOpenTodaySchedule: () => void
+  onReschedule: () => Promise<void>
+}) {
+  if (!state) return null
+
+  const scheduledLabel = state.scheduledDate
+    ? state.scheduledDate.toLocaleString("ja-JP", {
+        month: "numeric",
+        day: "numeric",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "日時を選択"
+
+  return (
+    <Dialog open={!!state} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-4 sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>今日するから外しますか？</DialogTitle>
+          <DialogDescription>
+            「{state.item.title}」を未予定へ戻すか、Todayのカレンダーにドラッグして別日に入れ直せます。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3">
+          <Button type="button" variant="secondary" disabled={state.isSaving} onClick={onUnschedule} className="min-h-[44px] justify-start">
+            未予定に戻す
+          </Button>
+          <Button type="button" variant="outline" disabled={state.isSaving} onClick={onOpenTodaySchedule} className="min-h-[44px] justify-start">
+            <Calendar className="mr-1 h-4 w-4" />
+            ドラッグで予定し直す
+          </Button>
+
+          <div className="rounded-lg border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">日時を指定</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <DateTimePicker
+                date={state.scheduledDate}
+                setDate={date => onChange({ scheduledDate: date })}
+                trigger={
+                  <Button type="button" variant="outline" className="min-h-[44px] w-full justify-start">
+                    <Calendar className="mr-2 h-4 w-4" />
+                    {scheduledLabel}
+                  </Button>
+                }
+              />
+              <DurationWheelPicker
+                duration={state.durationMinutes}
+                onDurationChange={durationMinutes => onChange({ durationMinutes })}
+                trigger={
+                  <Button type="button" variant="outline" className="min-h-[44px] w-full justify-start">
+                    <Clock className="mr-2 h-4 w-4" />
+                    {formatDuration(state.durationMinutes)}
+                  </Button>
+                }
+              />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={state.isSaving} onClick={() => onOpenChange(false)}>
+            キャンセル
+          </Button>
+          <Button type="button" disabled={state.isSaving || !state.scheduledDate} onClick={onReschedule}>
+            {state.isSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Calendar className="mr-1 h-4 w-4" />}
+            この日時で予定
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1024,6 +1294,7 @@ function MemoSection({
   listClassName,
   getAiTask,
   onOpenCodex,
+  onToggleToday,
 }: {
   columnKey: ColumnKey
   title: string
@@ -1039,6 +1310,7 @@ function MemoSection({
   listClassName?: string
   getAiTask: (sourceId: string) => import("@/types/ai-task").AiTask | null
   onOpenCodex: (item: MemoItem) => Promise<void>
+  onToggleToday: (item: MemoItem, isTodayColumn: boolean) => Promise<void>
 }) {
   return (
     <section className={cn("min-w-0", className)}>
@@ -1083,6 +1355,7 @@ function MemoSection({
                           tagColors={tagColors}
                           aiTask={getAiTask(item.id)}
                           onOpenCodex={() => onOpenCodex(item)}
+                          onToggleToday={onToggleToday}
                         />
                       </div>
                     )}

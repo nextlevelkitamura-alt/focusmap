@@ -34,6 +34,8 @@ interface DesktopTodayPanelProps {
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
     syncFailedIds?: Set<string>
+    calendarScrollToHour?: number
+    calendarScrollRequestKey?: number
 }
 
 // --- Component ---
@@ -47,6 +49,8 @@ export function DesktopTodayPanel({
     onDeleteTask,
     onOpenAiChat,
     syncFailedIds,
+    calendarScrollToHour,
+    calendarScrollRequestKey,
 }: DesktopTodayPanelProps) {
     const panelRef = useRef<HTMLDivElement>(null)
     const calendarAreaRef = useRef<HTMLDivElement>(null)
@@ -67,16 +71,68 @@ export function DesktopTodayPanel({
         onCreateSubTask,
         onDeleteTask,
     })
-    const scrollPositionRef = logic.scrollPositionRef
+    const {
+        calendarMonth,
+        calendarOpen,
+        calendarReauthUrl,
+        calendars,
+        cancelNotifications,
+        childTasksMap,
+        currentTime,
+        dateFmt,
+        dateHabits,
+        displayAllDayEvents,
+        displayItems,
+        doneHabitCount,
+        editTarget,
+        eventsError,
+        eventsLoading,
+        expandedHabitId,
+        goToNextDay,
+        goToPrevDay,
+        habitsExpanded,
+        habitsLoading,
+        handleCloseEditModal,
+        handleDateSelect,
+        handleDeleteEvent,
+        handleDeleteTask,
+        handleDragDrop,
+        handleItemTap,
+        handleSaveEvent,
+        handleSaveTask,
+        isEditModalOpen,
+        isToday,
+        onCreateSubTask: logicOnCreateSubTask,
+        openTaskEditModal,
+        projectNameMap,
+        scheduleNotification,
+        scrollPositionRef,
+        selectedDate,
+        selectedDateStr,
+        setCalendarMonth,
+        setCalendarOpen,
+        setExpandedHabitId,
+        setHabitsExpanded,
+        setTimelineMode,
+        syncState,
+        timelineMode,
+        timer,
+        toggleChildTask,
+        toggleCompletion,
+        toggleEventCompletion,
+        toggleTask,
+        unscheduledTasks,
+        writableCalendars,
+    } = logic
 
     // Close calendar on outside click
-    useClickOutside(calendarAreaRef, useCallback(() => logic.setCalendarOpen(false), [logic.setCalendarOpen]), logic.calendarOpen)
+    useClickOutside(calendarAreaRef, useCallback(() => setCalendarOpen(false), [setCalendarOpen]), calendarOpen)
 
     // 2-finger horizontal trackpad swipe for date navigation
     useTrackpadNavigation({
         containerRef: panelRef,
-        onNavigateLeft: logic.goToNextDay,
-        onNavigateRight: logic.goToPrevDay,
+        onNavigateLeft: goToNextDay,
+        onNavigateRight: goToPrevDay,
     })
 
     // 理想像データ取得
@@ -108,24 +164,21 @@ export function DesktopTodayPanel({
     const { todaySummary, toggleItemCompletion, refresh: refreshIdealTracking } = useIdealTracking(ideals, idealDateRange)
 
     // 習慣完了時に理想進捗もリフレッシュ
-    const originalToggleCompletion = logic.toggleCompletion
+    const originalToggleCompletion = toggleCompletion
     const wrappedToggleCompletion = useCallback(async (habitId: string) => {
         await originalToggleCompletion(habitId)
         // 少し待ってからリフレッシュ（DB反映を待つ）
         setTimeout(() => refreshIdealTracking(), 500)
     }, [originalToggleCompletion, refreshIdealTracking])
 
-    const runningTask = allTasks.find(t => t.id === logic.timer.runningTaskId)
     const defaultQuickCreateCalendarId =
-        logic.calendars.find(c =>
+        calendars.find(c =>
             c.selected && (c.access_level === 'owner' || c.access_level === 'writer')
         )?.google_calendar_id
-        ?? logic.writableCalendars[0]?.id
+        ?? writableCalendars[0]?.id
         ?? null
-    const showSideTaskForm = !!(isTaskFormOpen && onCreateQuickTask && activeTab === 'today' && logic.timelineMode === 'calendar')
-    const showBottomTaskForm = !!(isTaskFormOpen && onCreateQuickTask && !showSideTaskForm)
     const draftCalendarColor = taskFormDraft?.calendarId
-        ? logic.writableCalendars.find(c => c.id === taskFormDraft.calendarId)?.background_color
+        ? writableCalendars.find(c => c.id === taskFormDraft.calendarId)?.background_color
         : undefined
     const draftPreview = taskFormDraft?.scheduledDate
         ? {
@@ -135,6 +188,9 @@ export function DesktopTodayPanel({
             color: draftCalendarColor || '#F97316',
         }
         : null
+    const effectiveTimelineMode = calendarScrollRequestKey != null ? 'calendar' : timelineMode
+    const showSideTaskForm = !!(isTaskFormOpen && onCreateQuickTask && activeTab === 'today' && effectiveTimelineMode === 'calendar')
+    const showBottomTaskForm = !!(isTaskFormOpen && onCreateQuickTask && !showSideTaskForm)
 
     return (
         <div ref={panelRef} className="h-full flex flex-col bg-background/50 backdrop-blur-sm border-l border-border/30 relative overflow-hidden">
@@ -144,28 +200,28 @@ export function DesktopTodayPanel({
                 {/* Date navigation — arrows are flex-none so they never shift */}
                 <div className="flex items-center min-w-0 flex-1">
                     <button
-                        onClick={logic.goToPrevDay}
+                        onClick={goToPrevDay}
                         className="flex-none p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
                     >
                         <ChevronLeft className="w-4 h-4" />
                     </button>
                     <div className="flex-1 flex flex-col items-center min-w-0">
-                        {logic.isToday && (
+                        {isToday && (
                             <span className="text-[9px] font-semibold text-primary leading-none mb-0.5 tracking-wide">Today</span>
                         )}
                         <button
-                            onClick={() => logic.setCalendarOpen(prev => !prev)}
+                            onClick={() => setCalendarOpen(prev => !prev)}
                             className={cn(
                                 "flex items-center gap-1 px-2 py-0.5 rounded-md transition-colors text-sm font-semibold",
-                                logic.calendarOpen ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
+                                calendarOpen ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
                             )}
                         >
                             <CalendarDays className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>{logic.dateFmt}</span>
+                            <span>{dateFmt}</span>
                         </button>
                     </div>
                     <button
-                        onClick={logic.goToNextDay}
+                        onClick={goToNextDay}
                         className="flex-none p-1 rounded-full hover:bg-muted/60 transition-colors text-muted-foreground"
                     >
                         <ChevronRight className="w-4 h-4" />
@@ -174,19 +230,19 @@ export function DesktopTodayPanel({
 
                 {/* Sync indicator + mode toggle */}
                 <div className="flex items-center gap-1 flex-shrink-0">
-                    <div className="w-4 h-4 flex items-center justify-center" aria-hidden={logic.syncState === 'idle'}>
-                        {logic.syncState === 'syncing' ? (
+                    <div className="w-4 h-4 flex items-center justify-center" aria-hidden={syncState === 'idle'}>
+                        {syncState === 'syncing' ? (
                             <RefreshCw className="w-3 h-3 animate-spin text-primary" />
-                        ) : logic.syncState === 'done' ? (
+                        ) : syncState === 'done' ? (
                             <Check className="w-3 h-3 text-green-500" />
                         ) : null}
                     </div>
                     <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5">
                         <button
-                            onClick={() => logic.setTimelineMode('calendar')}
+                            onClick={() => setTimelineMode('calendar')}
                             className={cn(
                                 "p-1 rounded transition-colors",
-                                logic.timelineMode === 'calendar'
+                                effectiveTimelineMode === 'calendar'
                                     ? "bg-background shadow-sm text-foreground"
                                     : "text-muted-foreground"
                             )}
@@ -194,10 +250,10 @@ export function DesktopTodayPanel({
                             <LayoutGrid className="w-3.5 h-3.5" />
                         </button>
                         <button
-                            onClick={() => logic.setTimelineMode('cards')}
+                            onClick={() => setTimelineMode('cards')}
                             className={cn(
                                 "p-1 rounded transition-colors",
-                                logic.timelineMode === 'cards'
+                                effectiveTimelineMode === 'cards'
                                     ? "bg-background shadow-sm text-foreground"
                                     : "text-muted-foreground"
                             )}
@@ -232,26 +288,26 @@ export function DesktopTodayPanel({
                     >
                         <Inbox className="w-3.5 h-3.5" />
                         Inbox
-                        <span className="text-[10px] tabular-nums">({logic.unscheduledTasks.length})</span>
+                        <span className="text-[10px] tabular-nums">({unscheduledTasks.length})</span>
                     </button>
                 </div>
             </div>
 
             {/* ② Collapsible mini-calendar */}
-            {activeTab === 'today' && logic.calendarOpen && (
+            {activeTab === 'today' && calendarOpen && (
                 <div ref={calendarAreaRef} className="flex-shrink-0 border-b border-border/30 px-3 py-2 bg-background/60 animate-in slide-in-from-top-2 duration-200">
                     <SimpleCalendar
-                        selected={logic.selectedDate}
-                        onSelect={logic.handleDateSelect}
-                        month={logic.calendarMonth}
-                        onMonthChange={logic.setCalendarMonth}
+                        selected={selectedDate}
+                        onSelect={handleDateSelect}
+                        month={calendarMonth}
+                        onMonthChange={setCalendarMonth}
                         className="w-full"
                     />
                 </div>
             )}
 
             {/* ③ Habit Bar */}
-            {activeTab === 'today' && logic.habitsLoading ? (
+            {activeTab === 'today' && habitsLoading ? (
                 <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-3 py-1.5">
                     <div className="flex items-center gap-1.5 mb-1.5">
                         <Target className="w-3 h-3 text-primary/40 flex-shrink-0" />
@@ -267,21 +323,21 @@ export function DesktopTodayPanel({
                         ))}
                     </div>
                 </div>
-            ) : activeTab === 'today' && logic.dateHabits.length > 0 ? (
+            ) : activeTab === 'today' && dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b border-border/30 bg-background/40">
                     <div className="px-3 py-1.5">
                         <button
-                            onClick={() => logic.setHabitsExpanded(prev => !prev)}
+                            onClick={() => setHabitsExpanded(prev => !prev)}
                             className="flex items-center gap-1.5 mb-1.5 w-full text-left"
                         >
                             <Target className="w-3 h-3 text-primary flex-shrink-0" />
                             <span className="text-[10px] font-medium text-muted-foreground flex-1">
-                                {logic.isToday ? '今日の習慣' : `${format(logic.selectedDate, 'M/d', { locale: ja })}の習慣`}
+                                {isToday ? '今日の習慣' : `${format(selectedDate, 'M/d', { locale: ja })}の習慣`}
                             </span>
                             <span className="text-[10px] text-muted-foreground mr-1">
-                                {logic.doneHabitCount}/{logic.dateHabits.length}
+                                {doneHabitCount}/{dateHabits.length}
                             </span>
-                            {logic.habitsExpanded
+                            {habitsExpanded
                                 ? <ChevronUp className="w-3 h-3 text-muted-foreground" />
                                 : <ChevronDown className="w-3 h-3 text-muted-foreground" />
                             }
@@ -289,14 +345,14 @@ export function DesktopTodayPanel({
 
                         {/* Habit pills */}
                         <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-                            {logic.dateHabits.map(item => {
+                            {dateHabits.map(item => {
                                 const hasChildren = item.childTasks.length > 0
-                                const isCompleted = logic.isToday
+                                const isCompleted = isToday
                                     ? item.isCompletedToday
-                                    : item.completions.some(c => c.completed_date === logic.selectedDateStr)
+                                    : item.completions.some(c => c.completed_date === selectedDateStr)
                                 const doneChildCount = hasChildren
                                     ? item.childTasks.filter(c =>
-                                        item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === logic.selectedDateStr)
+                                        item.taskCompletions.some(tc => tc.task_id === c.id && tc.completed_date === selectedDateStr)
                                     ).length
                                     : 0
                                 return (
@@ -304,18 +360,18 @@ export function DesktopTodayPanel({
                                         key={item.habit.id}
                                         onClick={() => {
                                             if (hasChildren) {
-                                                logic.setHabitsExpanded(true)
-                                                logic.setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
+                                                setHabitsExpanded(true)
+                                                setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
                                                 return
                                             }
-                                            if (logic.isToday) wrappedToggleCompletion(item.habit.id)
+                                            if (isToday) wrappedToggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
                                             "flex items-center gap-1 px-2 py-1 rounded-full transition-all flex-shrink-0 border text-[11px]",
-                                            !hasChildren && logic.isToday && "active:scale-[0.98]",
+                                            !hasChildren && isToday && "active:scale-[0.98]",
                                             isCompleted
                                                 ? "bg-primary/10 border-primary/30"
-                                                : !hasChildren && logic.isToday
+                                                : !hasChildren && isToday
                                                     ? "border-border hover:bg-muted/40"
                                                     : "border-border"
                                         )}
@@ -356,10 +412,10 @@ export function DesktopTodayPanel({
                     </div>
 
                     {/* Expanded habit detail */}
-                    {logic.habitsExpanded && (
+                    {habitsExpanded && (
                         <div className="px-3 pb-2 space-y-0.5 animate-in slide-in-from-top-2 duration-200">
                             {(() => {
-                                const expandedHabit = logic.dateHabits.find(h => h.habit.id === logic.expandedHabitId && h.childTasks.length > 0)
+                                const expandedHabit = dateHabits.find(h => h.habit.id === expandedHabitId && h.childTasks.length > 0)
                                 if (!expandedHabit) {
                                     return (
                                         <div className="px-2 py-1 text-[11px] text-muted-foreground">
@@ -371,12 +427,12 @@ export function DesktopTodayPanel({
                                 return (
                                     <div key={expandedHabit.habit.id} className="space-y-0">
                                         {expandedHabit.childTasks.map(child => {
-                                            const isRunning = logic.isToday && logic.timer.runningTaskId === child.id
+                                            const isRunning = isToday && timer.runningTaskId === child.id
                                             const isDoneForDate = expandedHabit.taskCompletions.some(
-                                                tc => tc.task_id === child.id && tc.completed_date === logic.selectedDateStr
+                                                tc => tc.task_id === child.id && tc.completed_date === selectedDateStr
                                             )
                                             const todayCompletion = expandedHabit.taskCompletions.find(
-                                                tc => tc.task_id === child.id && tc.completed_date === logic.selectedDateStr
+                                                tc => tc.task_id === child.id && tc.completed_date === selectedDateStr
                                             )
                                             const todayElapsed = todayCompletion?.elapsed_seconds ?? 0
                                             return (
@@ -387,10 +443,10 @@ export function DesktopTodayPanel({
                                                         isRunning && "bg-primary/10"
                                                     )}
                                                 >
-                                                    {logic.isToday ? (
+                                                    {isToday ? (
                                                         <button
                                                             className="flex items-center gap-1.5 flex-1 min-w-0 py-1 px-2 rounded-md hover:bg-muted/50 transition-colors"
-                                                            onClick={() => logic.toggleChildTask(child.id, child.status || 'todo', expandedHabit)}
+                                                            onClick={() => toggleChildTask(child.id, child.status || 'todo', expandedHabit)}
                                                         >
                                                             {isDoneForDate
                                                                 ? <CheckSquare className="w-3 h-3 text-primary flex-shrink-0" />
@@ -424,13 +480,13 @@ export function DesktopTodayPanel({
                                                     )}
 
                                                     {/* Timer control */}
-                                                    {logic.isToday && (
+                                                    {isToday && (
                                                         <button
                                                             onClick={() => {
-                                                                if (isRunning) logic.timer.pauseTimer()
+                                                                if (isRunning) timer.pauseTimer()
                                                                 else {
                                                                     const taskObj = allTasks.find(t => t.id === child.id)
-                                                                    if (taskObj) logic.timer.startTimer(taskObj)
+                                                                    if (taskObj) timer.startTimer(taskObj)
                                                                 }
                                                             }}
                                                             className={cn(
@@ -508,14 +564,14 @@ export function DesktopTodayPanel({
                 {/* Schedule summary */}
                 <div className="flex-shrink-0 px-3 py-1 border-b border-border/20">
                     <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
-                        {activeTab === 'today' && logic.eventsLoading ? (
+                        {activeTab === 'today' && eventsLoading ? (
                             <><Loader2 className="w-3 h-3 animate-spin" /><span>取得中...</span></>
                         ) : activeTab === 'inbox' ? (
-                            <>{logic.unscheduledTasks.length}件の未スケジュール</>
+                            <>{unscheduledTasks.length}件の未スケジュール</>
                         ) : (
                             <>
-                                {logic.displayItems.length}件のスケジュール
-                                {logic.dateHabits.length > 0 && ` · ${logic.doneHabitCount}/${logic.dateHabits.length} 習慣完了`}
+                                {displayItems.length}件のスケジュール
+                                {dateHabits.length > 0 && ` · ${doneHabitCount}/${dateHabits.length} 習慣完了`}
                             </>
                         )}
                     </p>
@@ -523,22 +579,22 @@ export function DesktopTodayPanel({
                 <div className="relative flex-1 min-h-0">
                     {activeTab === 'inbox' ? (
                         <div className="h-full overflow-y-auto no-scrollbar px-3 py-2">
-                            {logic.unscheduledTasks.length === 0 ? (
+                            {unscheduledTasks.length === 0 ? (
                                 <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
                                     Inbox は空です
                                 </div>
                             ) : (
                                 <div className="space-y-1.5">
-                                    {logic.unscheduledTasks.map(task => (
+                                    {unscheduledTasks.map(task => (
                                         <div
                                             key={task.id}
                                             role="button"
                                             tabIndex={0}
-                                            onClick={() => logic.openTaskEditModal(task.id)}
+                                            onClick={() => openTaskEditModal(task.id)}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter' || e.key === ' ') {
                                                     e.preventDefault()
-                                                    logic.openTaskEditModal(task.id)
+                                                    openTaskEditModal(task.id)
                                                 }
                                             }}
                                             className="w-full text-left flex items-center justify-between gap-2 px-2 py-2 rounded-md border border-border/50 bg-background/60 hover:bg-muted/40 transition-colors"
@@ -547,7 +603,7 @@ export function DesktopTodayPanel({
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation()
-                                                    logic.handleDeleteTask(task.id)
+                                                    handleDeleteTask(task.id)
                                                 }}
                                                 className="p-1 rounded-md text-muted-foreground/70 hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0"
                                                 aria-label={`${task.title}を削除`}
@@ -562,7 +618,7 @@ export function DesktopTodayPanel({
                     ) : (
                     <div className={cn("h-full min-h-0 flex flex-col transition-all duration-200", showSideTaskForm && "pl-[352px]")}>
                 {/* Calendar Events Error */}
-                {logic.eventsError && logic.calendars.length > 0 && (
+                {eventsError && calendars.length > 0 && (
                     <div className="mx-3 mt-2 py-3 px-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
                         <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
                             カレンダーデータの取得に失敗しました
@@ -575,7 +631,7 @@ export function DesktopTodayPanel({
                                 再読み込み
                             </button>
                             <button
-                                onClick={() => window.location.href = logic.calendarReauthUrl}
+                                onClick={() => window.location.href = calendarReauthUrl}
                                 className="px-2.5 py-1 text-[10px] font-medium bg-white dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 rounded-md hover:bg-amber-50 transition-colors"
                             >
                                 再接続
@@ -585,43 +641,49 @@ export function DesktopTodayPanel({
                 )}
 
                 {/* Timeline */}
-                {logic.timelineMode === 'calendar' ? (
+                {effectiveTimelineMode === 'calendar' ? (
                     <TodayTimelineCalendar
-                        timelineItems={logic.displayItems}
-                        allDayEvents={logic.displayAllDayEvents}
-                        eventsLoading={logic.eventsLoading}
-                        currentTime={logic.currentTime}
-                        onToggleTask={logic.toggleTask}
-                        onToggleEvent={logic.toggleEventCompletion}
-                        onItemTap={logic.handleItemTap}
-                        onDragDrop={logic.handleDragDrop}
-                        childTasksMap={logic.childTasksMap}
-                        onCreateSubTask={logic.onCreateSubTask}
-                        onDeleteSubTask={logic.handleDeleteTask}
-                        projectNameMap={logic.projectNameMap}
+                        timelineItems={displayItems}
+                        allDayEvents={displayAllDayEvents}
+                        eventsLoading={eventsLoading}
+                        currentTime={currentTime}
+                        onToggleTask={toggleTask}
+                        onToggleEvent={toggleEventCompletion}
+                        onItemTap={handleItemTap}
+                        onDragDrop={handleDragDrop}
+                        childTasksMap={childTasksMap}
+                        onCreateSubTask={logicOnCreateSubTask}
+                        onDeleteSubTask={handleDeleteTask}
+                        projectNameMap={projectNameMap}
+                        // eslint-disable-next-line react-hooks/refs
                         initialScrollTop={scrollPositionRef.current}
                         onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
                         onQuickCreateTask={onCreateQuickTask}
                         defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                         draftPreview={draftPreview}
-                        selectedDate={logic.selectedDate}
+                        selectedDate={selectedDate}
                         onQuickCreateRangeSelect={({ scheduledAt, estimatedTime }) => {
                             setTaskFormPreset({ scheduledDate: scheduledAt, estimatedTime })
                             setIsTaskFormOpen(true)
                         }}
                         syncFailedIds={syncFailedIds}
+                        scrollToHourRequest={
+                            calendarScrollToHour != null && calendarScrollRequestKey != null
+                                ? { hour: calendarScrollToHour, requestKey: calendarScrollRequestKey }
+                                : undefined
+                        }
                     />
                 ) : (
                     <div className="flex-1 overflow-y-auto no-scrollbar">
                         <TodayTimelineCards
-                            timelineItems={logic.displayItems}
-                            allDayEvents={logic.displayAllDayEvents}
-                            eventsLoading={logic.eventsLoading}
-                            currentTime={logic.currentTime}
-                            onToggleTask={logic.toggleTask}
-                            onToggleEvent={logic.toggleEventCompletion}
-                            onItemTap={logic.handleItemTap}
-                            projectNameMap={logic.projectNameMap}
+                            timelineItems={displayItems}
+                            allDayEvents={displayAllDayEvents}
+                            eventsLoading={eventsLoading}
+                            currentTime={currentTime}
+                            onToggleTask={toggleTask}
+                            onToggleEvent={toggleEventCompletion}
+                            onItemTap={handleItemTap}
+                            projectNameMap={projectNameMap}
                         />
                     </div>
                 )}
@@ -633,7 +695,7 @@ export function DesktopTodayPanel({
                             <PanelQuickTaskForm
                                 variant="side-panel"
                                 projects={projects}
-                                calendars={logic.writableCalendars}
+                                calendars={writableCalendars}
                                 onCreateTask={async (data) => {
                                     await onCreateQuickTask(data)
                                     setTaskFormPreset(null)
@@ -659,17 +721,17 @@ export function DesktopTodayPanel({
 
             {/* Edit Modal (shared with mobile for consistent UX) */}
             <MobileEventEditModal
-                target={logic.editTarget}
-                isOpen={logic.isEditModalOpen}
-                onClose={logic.handleCloseEditModal}
-                onSaveTask={logic.handleSaveTask}
-                onSaveEvent={logic.handleSaveEvent}
-                onDeleteTask={logic.handleDeleteTask}
-                onDeleteEvent={logic.handleDeleteEvent}
-                availableCalendars={logic.writableCalendars}
+                target={editTarget}
+                isOpen={isEditModalOpen}
+                onClose={handleCloseEditModal}
+                onSaveTask={handleSaveTask}
+                onSaveEvent={handleSaveEvent}
+                onDeleteTask={handleDeleteTask}
+                onDeleteEvent={handleDeleteEvent}
+                availableCalendars={writableCalendars}
                 onScheduleReminder={async (targetType, targetId, scheduledAt, title, advanceMinutes) => {
-                    await logic.cancelNotifications(targetType, targetId)
-                    await logic.scheduleNotification({
+                    await cancelNotifications(targetType, targetId)
+                    await scheduleNotification({
                         targetType,
                         targetId,
                         notificationType: targetType === 'task' ? 'task_start' : 'event_start',
@@ -685,7 +747,7 @@ export function DesktopTodayPanel({
                 <div className="absolute bottom-0 left-0 right-0 z-20 border-t border-border/30 bg-background/95 backdrop-blur-sm animate-in slide-in-from-bottom-2 duration-200">
                     <PanelQuickTaskForm
                         projects={projects}
-                        calendars={logic.writableCalendars}
+                        calendars={writableCalendars}
                         onCreateTask={async (data) => {
                             await onCreateQuickTask(data)
                             setTaskFormPreset(null)
@@ -707,7 +769,7 @@ export function DesktopTodayPanel({
             )}
 
             {/* Desktop Panel FAB */}
-            {onCreateQuickTask && onOpenAiChat && !logic.isEditModalOpen && (
+            {onCreateQuickTask && onOpenAiChat && !isEditModalOpen && (
                 <DesktopPanelFab
                     onOpenAiChat={onOpenAiChat}
                     onOpenTaskForm={() => {

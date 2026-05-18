@@ -1,6 +1,6 @@
 "use client"
 
-import { forwardRef, useImperativeHandle, useRef } from "react"
+import { forwardRef, useImperativeHandle } from "react"
 import { Task, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { DesktopTodayPanel } from "@/components/dashboard/desktop-today-panel"
@@ -21,6 +21,8 @@ interface DesktopRightPanelProps {
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
     syncFailedIds?: Set<string>
+    calendarScrollToHour?: number
+    calendarScrollRequestKey?: number
 }
 
 export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPanelProps>(
@@ -33,6 +35,8 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
         onDeleteTask,
         onOpenAiChat,
         syncFailedIds,
+        calendarScrollToHour,
+        calendarScrollRequestKey,
     }, ref) {
         // Ref interface is maintained for backward compatibility
         // DesktopTodayPanel uses useTodayViewLogic which manages its own calendar state
@@ -52,6 +56,8 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                 onDeleteTask={onDeleteTask}
                 onOpenAiChat={onOpenAiChat}
                 syncFailedIds={syncFailedIds}
+                calendarScrollToHour={calendarScrollToHour}
+                calendarScrollRequestKey={calendarScrollRequestKey}
             />
         )
     }

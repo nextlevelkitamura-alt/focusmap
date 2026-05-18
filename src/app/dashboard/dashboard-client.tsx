@@ -114,14 +114,36 @@ export function DashboardClient({
 
     // Today タブのサブビュー: 'memo' = 今日するメモ + D&D / 'timeline' = 従来のタスクボード
     const [todaySubView, setTodaySubView] = useState<'memo' | 'timeline'>('memo')
+    const [todaySelectedDate, setTodaySelectedDate] = useState<Date>(() => {
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d
+    })
+    const [todayMemoScheduleFocus, setTodayMemoScheduleFocus] = useState<{
+        memoId: string
+        requestKey: number
+    } | null>(null)
+    const todayMemoScheduleRequestRef = useRef(0)
     useEffect(() => {
         const saved = typeof window !== "undefined" ? window.localStorage.getItem('focusmap:today-sub-view') : null
-        if (saved === 'memo' || saved === 'timeline') setTodaySubView(saved)
+        if (saved === 'memo' || saved === 'timeline') {
+            queueMicrotask(() => setTodaySubView(saved))
+        }
     }, [])
     const updateTodaySubView = useCallback((v: 'memo' | 'timeline') => {
         setTodaySubView(v)
         if (typeof window !== "undefined") window.localStorage.setItem('focusmap:today-sub-view', v)
     }, [])
+    const openTodayMemoSchedule = useCallback((payload: { memoId: string; date: Date }) => {
+        const normalizedDate = new Date(payload.date)
+        normalizedDate.setHours(0, 0, 0, 0)
+        todayMemoScheduleRequestRef.current += 1
+        setTodaySelectedDate(normalizedDate)
+        setTodayMemoScheduleFocus({
+            memoId: payload.memoId,
+            requestKey: todayMemoScheduleRequestRef.current,
+        })
+        updateTodaySubView('memo')
+        setActiveView('today')
+    }, [setActiveView, updateTodaySubView])
     // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
     const [isTaskListVisible, setIsTaskListVisible] = useState(false)
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
@@ -945,6 +967,7 @@ export function DashboardClient({
                         <WishlistView
                             projects={projects}
                             selectedProjectId={selectedProjectId}
+                            onOpenTodayMemoSchedule={openTodayMemoSchedule}
                         />
                     </div>
                 )}
@@ -985,7 +1008,7 @@ export function DashboardClient({
                 )}
 
                 {/* === Desktop: 3-pane layout === */}
-                <TodayDateProvider>
+                <TodayDateProvider selectedDate={todaySelectedDate} setSelectedDate={setTodaySelectedDate}>
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
@@ -1068,7 +1091,12 @@ export function DashboardClient({
                             </div>
                             <div className="flex-1 min-h-0 overflow-hidden">
                                 {todaySubView === 'memo' ? (
-                                    <TodayMemoBoard projects={projects} />
+                                    <TodayMemoBoard
+                                        projects={projects}
+                                        scheduleFocusMemoId={todayMemoScheduleFocus?.memoId ?? null}
+                                        scheduleFocusRequestKey={todayMemoScheduleFocus?.requestKey ?? null}
+                                        onClearScheduleFocus={() => setTodayMemoScheduleFocus(null)}
+                                    />
                                 ) : (
                                     <TodayTaskBoard
                                         allTasks={allTasksMerged}
@@ -1085,6 +1113,7 @@ export function DashboardClient({
                         <WishlistView
                             projects={projects}
                             selectedProjectId={selectedProjectId}
+                            onOpenTodayMemoSchedule={openTodayMemoSchedule}
                         />
                     ) : (
                         <CenterPane
@@ -1135,6 +1164,8 @@ export function DashboardClient({
                             onDeleteTask={handleDeleteTaskFromToday}
                             onOpenAiChat={() => setIsAiChatOpen(true)}
                             syncFailedIds={syncFailedIds}
+                            calendarScrollToHour={todayMemoScheduleFocus ? 12 : undefined}
+                            calendarScrollRequestKey={todayMemoScheduleFocus?.requestKey}
                         />
                     </div>
                 )}

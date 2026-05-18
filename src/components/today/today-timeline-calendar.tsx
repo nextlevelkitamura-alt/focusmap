@@ -6,7 +6,7 @@ import { CalendarEvent } from "@/types/calendar"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
 import { useClickOutside } from "@/hooks/useClickOutside"
-import { Play, Pause, Check, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
+import { Play, Pause, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
@@ -63,6 +63,7 @@ interface TodayTimelineCalendarProps {
     onQuickCreateRangeSelect?: (payload: { scheduledAt: Date; estimatedTime: number }) => void
     selectedDate?: Date
     syncFailedIds?: Set<string>
+    scrollToHourRequest?: { hour: number; requestKey: number }
 }
 
 // --- Helpers ---
@@ -116,6 +117,7 @@ export function TodayTimelineCalendar({
     onConvertEventAndExpand,
     pendingExpandTaskId,
     syncFailedIds,
+    scrollToHourRequest,
 }: TodayTimelineCalendarProps) {
     const timer = useTimer()
     const gridRef = useRef<HTMLDivElement>(null)
@@ -360,6 +362,13 @@ export function TodayTimelineCalendar({
             gridRef.current.scrollTop = scrollTo
         }
     }, [initialScrollTop])
+
+    const scrollToHour = scrollToHourRequest?.hour
+    const scrollToHourRequestKey = scrollToHourRequest?.requestKey
+    useEffect(() => {
+        if (scrollToHour == null || scrollToHourRequestKey == null || !gridRef.current) return
+        gridRef.current.scrollTop = clamp(scrollToHour, 0, 23) * HOUR_HEIGHT
+    }, [scrollToHourRequestKey, scrollToHour])
 
     // Prevent scroll chaining to the page on iOS/Android when reaching timeline edges.
     useEffect(() => {

@@ -37,6 +37,7 @@ interface WishlistCardProps {
   onOpenCodex?: () => Promise<void>
   // Today タブで native HTML5 D&D を有効化（カレンダー上に配置するため）
   nativeMemoDrag?: boolean
+  onToggleToday?: (item: MemoItem, isTodayColumn: boolean) => Promise<void>
 }
 
 function formatDateTime(value: string | null): string | null {
@@ -65,6 +66,7 @@ export function WishlistCard({
   aiTask = null,
   onOpenCodex,
   nativeMemoDrag = false,
+  onToggleToday,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
@@ -91,6 +93,10 @@ export function WishlistCard({
 
   const handleToggleToday = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (onToggleToday) {
+      await onToggleToday(item, isTodayColumn)
+      return
+    }
     await onUpdate(item.id, { is_today: !isToday } as Partial<MemoItem>)
   }
 
@@ -315,15 +321,15 @@ export function WishlistCard({
             onClick={handleToggleToday}
             className={cn(
               "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md transition-colors",
-              isToday
+              isTodayColumn
                 ? "bg-amber-500/15 text-amber-600 dark:text-amber-300 hover:bg-amber-500/25"
                 : "text-muted-foreground hover:text-amber-600",
             )}
-            title={isToday ? "今日するリストから外す" : "今日するリストに追加"}
-            aria-label={isToday ? "今日するリストから外す" : "今日するリストに追加"}
-            aria-pressed={isToday}
+            title={isTodayColumn ? "今日するリストから外す" : "今日するリストに追加"}
+            aria-label={isTodayColumn ? "今日するリストから外す" : "今日するリストに追加"}
+            aria-pressed={isTodayColumn}
           >
-            <Sun className={cn("h-5 w-5", isToday && "fill-amber-400/30")} />
+            <Sun className={cn("h-5 w-5", isTodayColumn && "fill-amber-400/30")} />
           </button>
         </div>
         <div className="flex items-center gap-1">

@@ -21,6 +21,8 @@ interface RightSidebarProps {
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
     syncFailedIds?: Set<string>
+    calendarScrollToHour?: number
+    calendarScrollRequestKey?: number
 }
 
 export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(function RightSidebar(props, ref) {

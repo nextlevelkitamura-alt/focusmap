@@ -13,11 +13,15 @@ import {
   broadcastCalendarOptimisticEventRemoval,
 } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
+import { cn } from "@/lib/utils"
 
 type MemoItem = IdealGoalWithItems
 
 interface TodayMemoBoardProps {
   projects: Project[]
+  scheduleFocusMemoId?: string | null
+  scheduleFocusRequestKey?: number | null
+  onClearScheduleFocus?: () => void
 }
 
 /**
@@ -27,7 +31,12 @@ interface TodayMemoBoardProps {
  * データ取得・更新は wishlist-view と同じパターン（fetch + 楽観更新）。
  * 他ビュー（メモ画面など）と同期するため WISHLIST_REFRESH_EVENT を listen する。
  */
-export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
+export function TodayMemoBoard({
+  projects,
+  scheduleFocusMemoId = null,
+  scheduleFocusRequestKey = null,
+  onClearScheduleFocus,
+}: TodayMemoBoardProps) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -82,7 +91,7 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
       const prev = items
       // 楽観更新: メモ一覧から消す
       setItems(curr => curr.map(it => it.id === memoId
-        ? { ...it, scheduled_at: startTime.toISOString(), duration_minutes: durationMinutes, memo_status: "scheduled" }
+        ? { ...it, scheduled_at: startTime.toISOString(), duration_minutes: durationMinutes, memo_status: "scheduled", is_today: false }
         : it))
 
       // 楽観更新: カレンダーにも即座に予定枠を表示
@@ -90,6 +99,9 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
       const nowIso = new Date().toISOString()
       const calendarId = targetCalendar?.google_calendar_id ?? "primary"
       const calendarColor = targetCalendar?.background_color ?? "#F59E0B"
+      if (target.google_event_id) {
+        broadcastCalendarOptimisticEventRemoval(target.google_event_id, target.google_event_id)
+      }
       const optimisticEvent: CalendarEvent = {
         id: tempId,
         user_id: target.user_id,
@@ -135,10 +147,12 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         invalidateCalendarCache()
         broadcastCalendarSync()
         window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+        if (scheduleFocusMemoId === memoId) onClearScheduleFocus?.()
         void fetchItems()
       } catch (e) {
         // ロールバック: 楽観イベント削除＋メモ一覧復元
         broadcastCalendarOptimisticEventRemoval(tempId)
+        broadcastCalendarSync()
         setItems(prev)
         setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
       }
@@ -149,7 +163,7 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         window.__focusmapMemoDropHandler = undefined
       }
     }
-  }, [items, fetchItems, targetCalendar])
+  }, [items, fetchItems, targetCalendar, scheduleFocusMemoId, onClearScheduleFocus])
 
   // 今日するメモのフィルタ + 並び替え（scheduled_at 昇順、未設定は末尾）
   const todayItems = useMemo(() => {
@@ -174,6 +188,19 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
     })
     void now
   }, [items])
+
+  const focusedItem = useMemo(() => {
+    if (!scheduleFocusMemoId) return null
+    return items.find(item => item.id === scheduleFocusMemoId) ?? null
+  }, [items, scheduleFocusMemoId])
+
+  const visibleItems = useMemo(() => {
+    if (!focusedItem) return todayItems
+    return [
+      focusedItem,
+      ...todayItems.filter(item => item.id !== focusedItem.id),
+    ]
+  }, [focusedItem, todayItems])
 
   // 楽観更新付き PATCH（wishlist-view と同等の最小版）
   const handleUpdate = useCallback(async (id: string, updates: Partial<MemoItem>) => {
@@ -211,6 +238,37 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
     }
   }, [items])
 
+  const handleToggleToday = useCallback(async (item: MemoItem, isTodayColumn: boolean) => {
+    if (!isTodayColumn) {
+      await handleUpdate(item.id, { is_today: true } as Partial<MemoItem>)
+      return
+    }
+
+    const prev = items
+    setItems(curr => curr.map(it => it.id === item.id
+      ? { ...it, is_today: false, scheduled_at: null, google_event_id: null, memo_status: "unsorted", updated_at: new Date().toISOString() }
+      : it))
+    try {
+      if (item.scheduled_at || item.google_event_id) {
+        const res = await fetch(`/api/wishlist/${item.id}/unschedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ calendar_id: targetCalendar?.google_calendar_id ?? "primary" }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data.error) throw new Error(data.error || "更新失敗")
+      } else {
+        await handleUpdate(item.id, { is_today: false } as Partial<MemoItem>)
+      }
+      invalidateCalendarCache()
+      broadcastCalendarSync()
+      window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
+    } catch (e) {
+      setItems(prev)
+      setError(e instanceof Error ? e.message : "メモの更新に失敗しました")
+    }
+  }, [handleUpdate, items, targetCalendar])
+
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -226,11 +284,13 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
           <Sparkles className="h-4 w-4 text-amber-500" />
           <h2 className="text-sm font-semibold">今日するメモ</h2>
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            {todayItems.length}
+            {visibleItems.length}
           </span>
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          所要時間を選んで、右のカレンダーにドラッグして予定に追加できます。
+          {focusedItem
+            ? "強調中のメモを右のカレンダーへドラッグして、別の日程に入れ直せます。"
+            : "所要時間を選んで、右のカレンダーにドラッグして予定に追加できます。"}
         </p>
       </div>
 
@@ -246,24 +306,35 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
       )}
 
       <div className="flex-1 overflow-y-auto px-4 py-3">
-        {todayItems.length === 0 ? (
+        {visibleItems.length === 0 ? (
           <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             <p>今日するメモはありません。</p>
             <p className="text-xs">メモ画面で Sun ボタンを押すか、メモを今日カラムにドラッグしてください。</p>
           </div>
         ) : (
           <div className="grid gap-3">
-            {todayItems.map(item => (
-              <WishlistCard
-                key={item.id}
-                item={item}
-                onUpdate={handleUpdate}
-                onDelete={handleDelete}
-                onClick={() => { /* TODO: 詳細シートを Today タブにも統合する場合はここで開く */ }}
-                project={item.project_id ? projectById.get(item.project_id) ?? null : null}
-                nativeMemoDrag
-              />
-            ))}
+            {visibleItems.map(item => {
+              const isFocused = item.id === scheduleFocusMemoId
+              return (
+                <div
+                  key={`${item.id}-${isFocused ? scheduleFocusRequestKey ?? "focus" : "normal"}`}
+                  className={cn(
+                    "rounded-lg transition-shadow",
+                    isFocused && "ring-2 ring-primary/60 ring-offset-2 ring-offset-background",
+                  )}
+                >
+                  <WishlistCard
+                    item={item}
+                    onUpdate={handleUpdate}
+                    onDelete={handleDelete}
+                    onClick={() => { /* TODO: 詳細シートを Today タブにも統合する場合はここで開く */ }}
+                    project={item.project_id ? projectById.get(item.project_id) ?? null : null}
+                    onToggleToday={handleToggleToday}
+                    nativeMemoDrag
+                  />
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

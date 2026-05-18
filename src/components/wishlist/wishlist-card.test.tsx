@@ -70,7 +70,35 @@ describe('WishlistCard', () => {
       expect(onUpdate).toHaveBeenCalledWith('memo-1', {
         is_completed: true,
         memo_status: 'completed',
+        is_today: false,
       })
+    })
+  })
+
+  test('今日に予定済みのカードは今日する解除として扱う', async () => {
+    const onToggleToday = vi.fn().mockResolvedValue(undefined)
+    const scheduledAt = new Date()
+    scheduledAt.setHours(18, 30, 0, 0)
+    const item = createMemoItem({
+      scheduled_at: scheduledAt.toISOString(),
+      memo_status: 'scheduled',
+      is_today: false,
+    })
+
+    render(
+      <WishlistCard
+        item={item}
+        onUpdate={vi.fn()}
+        onDelete={vi.fn()}
+        onClick={vi.fn()}
+        onToggleToday={onToggleToday}
+      />
+    )
+
+    fireEvent.click(screen.getByTitle('今日するリストから外す'))
+
+    await waitFor(() => {
+      expect(onToggleToday).toHaveBeenCalledWith(item, true)
     })
   })
 })
