@@ -27,6 +27,8 @@ export async function PATCH(
   const updates = {
     ...body,
     tags: Array.isArray(body.tags) ? body.tags : body.tags,
+    // 完了化したら「今日する」を強制解除（他経路からの完了化でも一貫させる）
+    ...(body.is_completed === true ? { is_today: false } : {}),
     updated_at: new Date().toISOString(),
   }
   const { data, error } = await supabase

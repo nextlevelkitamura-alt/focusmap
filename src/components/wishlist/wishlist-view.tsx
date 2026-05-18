@@ -17,6 +17,7 @@ import { WishlistCardDetail } from "./wishlist-card-detail"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
+type ColumnKey = "unsorted" | "today" | "scheduled" | "completed"
 type MemoItem = IdealGoalWithItems
 
 interface MemoSuggestion {
@@ -71,14 +72,44 @@ function getStatus(item: MemoItem): MemoStatus {
   return "unsorted"
 }
 
+// Asia/Tokyo の本日 0:00 / 翌日 0:00 を返す（UTC ミリ秒）
+function getTodayRangeJST(now: number = Date.now()): { start: number; end: number } {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  })
+  const ymd = fmt.format(new Date(now)) // "YYYY-MM-DD"
+  // JST は UTC+9。"YYYY-MM-DDT00:00:00+09:00" → UTC ms。
+  const start = new Date(`${ymd}T00:00:00+09:00`).getTime()
+  const end = start + 24 * 60 * 60 * 1000
+  return { start, end }
+}
+
+function getColumn(item: MemoItem, todayStart: number, todayEnd: number): ColumnKey {
+  if (item.is_completed || item.memo_status === "completed") return "completed"
+  const sched = item.scheduled_at ? new Date(item.scheduled_at).getTime() : null
+  const isScheduledToday = sched != null && !Number.isNaN(sched) && sched >= todayStart && sched < todayEnd
+  if (item.is_today || isScheduledToday) return "today"
+  if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
+  return "unsorted"
+}
+
 function getTimestamp(value: string | null | undefined) {
   if (!value) return 0
   const time = new Date(value).getTime()
   return Number.isNaN(time) ? 0 : time
 }
 
-function sortMemoItemsForSection(items: MemoItem[], section: MemoStatus) {
+function sortMemoItemsForSection(items: MemoItem[], section: ColumnKey) {
   return [...items].sort((a, b) => {
+    if (section === "today") {
+      // scheduled_at 昇順、無いものは末尾
+      const sa = getTimestamp(a.scheduled_at)
+      const sb = getTimestamp(b.scheduled_at)
+      if (sa === 0 && sb !== 0) return 1
+      if (sa !== 0 && sb === 0) return -1
+      return sa - sb || getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
+    }
     if (section === "scheduled") {
       return getTimestamp(a.scheduled_at) - getTimestamp(b.scheduled_at)
         || getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
@@ -233,10 +264,30 @@ export function WishlistView({
     }
   }, [projects])
 
-  // 既存呼び出し向けエイリアス（後方互換）
+  // 既存呼び出し向けエイリアス（後方互換 / 詳細画面で使用）
   const launchClaudeForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'claude'), [launchAiForMemo])
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
   const launchCodexAppForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
+
+  // 一覧カードの Codex ボタン: Codex Web を新規タブで開く + タイトル/本文をクリップボードへ
+  const openInCodexWebForMemo = useCallback(async (item: MemoItem) => {
+    const title = item.title.trim()
+    const desc = (item.description ?? "").trim()
+    const clip = desc ? `${title}\n\n${desc}` : title
+    let copied = false
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(clip)
+        copied = true
+      }
+    } catch {
+      copied = false
+    }
+    window.open("https://chatgpt.com/codex", "_blank", "noopener,noreferrer")
+    if (!copied) {
+      throw new Error("クリップボードコピー失敗。手動でコピーしてください")
+    }
+  }, [])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -343,17 +394,41 @@ export function WishlistView({
 
   const selectedModelOption = QUICK_MODEL_OPTIONS.find(option => option.id === selectedAiModel) || QUICK_MODEL_OPTIONS[0]
 
+  // 今日の範囲を 1 分単位で再評価（日跨ぎでも自動で再判定）
+  const [nowMinuteKey, setNowMinuteKey] = useState(() => Math.floor(Date.now() / 60_000))
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMinuteKey(Math.floor(Date.now() / 60_000)), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+  const todayRange = useMemo(() => getTodayRangeJST(nowMinuteKey * 60_000), [nowMinuteKey])
+
+  const todayItems = useMemo(() => {
+    return sortMemoItemsForSection(
+      filteredItems.filter(item => getColumn(item, todayRange.start, todayRange.end) === "today"),
+      "today",
+    )
+  }, [filteredItems, todayRange])
+
   const scheduledItems = useMemo(() => {
-    return sortMemoItemsForSection(filteredItems.filter(item => getStatus(item) === "scheduled"), "scheduled")
-  }, [filteredItems])
+    return sortMemoItemsForSection(
+      filteredItems.filter(item => getColumn(item, todayRange.start, todayRange.end) === "scheduled"),
+      "scheduled",
+    )
+  }, [filteredItems, todayRange])
 
   const unscheduledItems = useMemo(() => {
-    return sortMemoItemsForSection(filteredItems.filter(item => getStatus(item) === "unsorted"), "unsorted")
-  }, [filteredItems])
+    return sortMemoItemsForSection(
+      filteredItems.filter(item => getColumn(item, todayRange.start, todayRange.end) === "unsorted"),
+      "unsorted",
+    )
+  }, [filteredItems, todayRange])
 
   const completedItems = useMemo(() => {
-    return sortMemoItemsForSection(filteredItems.filter(item => getStatus(item) === "completed"), "completed")
-  }, [filteredItems])
+    return sortMemoItemsForSection(
+      filteredItems.filter(item => getColumn(item, todayRange.start, todayRange.end) === "completed"),
+      "completed",
+    )
+  }, [filteredItems, todayRange])
 
   const enqueueItemSave = useCallback((id: string, operation: () => Promise<void>) => {
     const previous = itemSaveQueues.current.get(id) ?? Promise.resolve()
@@ -746,48 +821,63 @@ export function WishlistView({
               </Button>
             </div>
           ) : (
-            <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-4">
-              <MemoSection
-                title="未予定"
-                count={unscheduledItems.length}
-                items={unscheduledItems}
-                emptyText="未予定のメモはありません"
-                onUpdate={handleUpdate}
-                onDelete={handleDelete}
-                onOpen={openDetail}
-                projectById={projectById}
-                tagColors={tagColors}
-                getAiTask={getMemoAiTask}
-                onLaunchClaude={launchClaudeForMemo}
-                className="lg:col-span-2"
-                listClassName="sm:grid-cols-2"
-              />
-              <MemoSection
-                title="予定済み"
-                count={scheduledItems.length}
-                items={scheduledItems}
-                emptyText="予定済みのメモはありません"
-                onUpdate={handleUpdate}
-                onDelete={handleDelete}
-                onOpen={openDetail}
-                projectById={projectById}
-                tagColors={tagColors}
-                getAiTask={getMemoAiTask}
-                onLaunchClaude={launchClaudeForMemo}
-              />
-              <MemoSection
-                title="完了"
-                count={completedItems.length}
-                items={completedItems}
-                emptyText="完了したメモはありません"
-                onUpdate={handleUpdate}
-                onDelete={handleDelete}
-                onOpen={openDetail}
-                projectById={projectById}
-                tagColors={tagColors}
-                getAiTask={getMemoAiTask}
-                onLaunchClaude={launchClaudeForMemo}
-              />
+            <div className="mx-auto overflow-x-auto pb-2">
+              <div className="grid min-w-[72rem] max-w-7xl gap-4 lg:grid-cols-5">
+                <MemoSection
+                  title="未予定"
+                  count={unscheduledItems.length}
+                  items={unscheduledItems}
+                  emptyText="未予定のメモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                  className="lg:col-span-2"
+                  listClassName="sm:grid-cols-2"
+                />
+                <MemoSection
+                  title="今日する"
+                  count={todayItems.length}
+                  items={todayItems}
+                  emptyText="今日するメモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                />
+                <MemoSection
+                  title="予定済み"
+                  count={scheduledItems.length}
+                  items={scheduledItems}
+                  emptyText="予定済みのメモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                />
+                <MemoSection
+                  title="完了"
+                  count={completedItems.length}
+                  items={completedItems}
+                  emptyText="完了したメモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -837,7 +927,7 @@ function MemoSection({
   className,
   listClassName,
   getAiTask,
-  onLaunchClaude,
+  onOpenCodex,
 }: {
   title: string
   count: number
@@ -851,7 +941,7 @@ function MemoSection({
   className?: string
   listClassName?: string
   getAiTask: (sourceId: string) => import("@/types/ai-task").AiTask | null
-  onLaunchClaude: (item: MemoItem) => Promise<void>
+  onOpenCodex: (item: MemoItem) => Promise<void>
 }) {
   return (
     <section className={cn("min-w-0", className)}>
@@ -875,7 +965,7 @@ function MemoSection({
               project={item.project_id ? projectById.get(item.project_id) ?? null : null}
               tagColors={tagColors}
               aiTask={getAiTask(item.id)}
-              onLaunchClaude={() => onLaunchClaude(item)}
+              onOpenCodex={() => onOpenCodex(item)}
             />
           ))}
         </div>
