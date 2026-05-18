@@ -151,7 +151,7 @@ function requestUrl(input: RequestInfo | URL) {
   return input.url
 }
 
-async function renderVisibleWishlist() {
+async function renderVisibleWishlist(expectedText = 'Drop memo') {
   render(
     <WishlistView
       isCalendarSplitVisible
@@ -160,7 +160,7 @@ async function renderVisibleWishlist() {
   )
 
   await waitFor(() => {
-    expect(screen.getByText('Drop memo')).toBeInTheDocument()
+    expect(screen.getByText(expectedText)).toBeInTheDocument()
     expect(window.__focusmapMemoDropHandler).toEqual(expect.any(Function))
   })
 
@@ -263,5 +263,43 @@ describe('WishlistView calendar D&D', () => {
     })
     expect(screen.getAllByText('予定済み')).toHaveLength(2)
     expect(calendarEvents.broadcastCalendarOptimisticEventRemoval).toHaveBeenCalled()
+  })
+
+  test('カレンダー表示中は未予定と今日するだけをカレンダーD&D対象にする', async () => {
+    const scheduled = new Date()
+    scheduled.setDate(scheduled.getDate() + 1)
+    scheduled.setHours(11, 0, 0, 0)
+    const wishlistItems = [
+      createMemoItem({ id: 'memo-unsorted', title: 'Unsorted memo' }),
+      createMemoItem({ id: 'memo-today', title: 'Today memo', is_today: true }),
+      createMemoItem({
+        id: 'memo-scheduled',
+        title: 'Scheduled memo',
+        scheduled_at: scheduled.toISOString(),
+        memo_status: 'scheduled',
+        google_event_id: 'google-event-1',
+      }),
+      createMemoItem({
+        id: 'memo-completed',
+        title: 'Completed memo',
+        is_completed: true,
+        memo_status: 'completed',
+      }),
+    ]
+    vi.stubGlobal('fetch', vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist') return jsonResponse({ items: wishlistItems })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    }))
+
+    await renderVisibleWishlist('Unsorted memo')
+
+    expect(screen.getByLabelText('カレンダーを閉じる')).toHaveTextContent('')
+    expect(screen.getByLabelText('フィルターを開く')).toHaveTextContent('')
+    expect(screen.getByText('Unsorted memo').closest('div[draggable="true"]')).toBeTruthy()
+    expect(screen.getByText('Today memo').closest('div[draggable="true"]')).toBeTruthy()
+    expect(screen.getByText('Scheduled memo').closest('div[draggable="true"]')).toBeNull()
+    expect(screen.getByText('Completed memo').closest('div[draggable="true"]')).toBeNull()
   })
 })

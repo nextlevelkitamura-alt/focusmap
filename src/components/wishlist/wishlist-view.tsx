@@ -1066,29 +1066,28 @@ export function WishlistView({
             <Button
               type="button"
               variant={isCalendarSplitVisible ? "default" : "outline"}
-              size="sm"
+              size="icon"
               onClick={onToggleCalendarSplit}
               aria-pressed={isCalendarSplitVisible}
               aria-label={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
-              className="hidden min-h-[40px] shrink-0 gap-1.5 px-3 md:inline-flex"
+              className="hidden min-h-[40px] min-w-[40px] shrink-0 md:inline-flex"
               title={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
             >
               <Calendar className="h-4 w-4" />
-              <span>{isCalendarSplitVisible ? "閉じる" : "カレンダー"}</span>
             </Button>
           )}
           <Button
             type="button"
             variant={filterOpen ? "default" : "outline"}
-            size="sm"
+            size="icon"
             onClick={() => setFilterOpen(open => !open)}
             aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-            className="min-h-[40px] shrink-0 gap-1.5 px-3"
+            className="relative min-h-[40px] min-w-[40px] shrink-0"
+            title={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
           >
             <Filter className="h-4 w-4" />
-            <span className="hidden sm:inline">フィルター</span>
             {activeFilterCount > 0 && (
-              <span className="ml-0.5 rounded-full bg-background/80 px-1.5 text-[10px] text-foreground">
+              <span className="absolute -right-1 -top-1 rounded-full bg-background px-1.5 text-[10px] leading-4 text-foreground ring-1 ring-border">
                 {activeFilterCount}
               </span>
             )}
@@ -1254,7 +1253,7 @@ export function WishlistView({
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
-                  nativeMemoDrag={isCalendarSplitVisible}
+                  nativeMemoDrag={false}
                 />
                 <MemoSection
                   columnKey="completed"
@@ -1270,7 +1269,7 @@ export function WishlistView({
                   getAiTask={getMemoAiTask}
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
-                  nativeMemoDrag={isCalendarSplitVisible}
+                  nativeMemoDrag={false}
                 />
               </div>
             </div>
