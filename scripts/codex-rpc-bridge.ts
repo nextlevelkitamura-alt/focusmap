@@ -3,7 +3,7 @@
  * Codex App-Server JSON-RPC ブリッジ
  * ===================================
  * 1 タスクを ws://127.0.0.1:7878 の codex app-server に直接送信し、
- * `turn/completed` を待って Supabase の ai_tasks を更新する。
+ * `turn/completed` を待って Supabase の ai_tasks を確認待ちに更新する。
  *
  * 旧 task-runner の `codex --remote` (TUI) 方式は positional prompt が
  * auto-submit されず（Enter 待ち）、tmux detached では誰も Enter を押せず
@@ -58,7 +58,7 @@ interface CodexStep {
   status: CodexStepStatus
   at: string
 }
-type AiTaskTerminalStatus = 'completed' | 'failed'
+type AiTaskTerminalStatus = 'awaiting_approval' | 'failed'
 
 function makeStep(key: string, label: string, status: CodexStepStatus = 'done'): CodexStep {
   return { key, label, status, at: new Date().toISOString() }
@@ -153,7 +153,7 @@ function resolveTurnOutcome(opts: {
 
   const successful = new Set(['completed', 'complete', 'success', 'succeeded', 'done', 'finished'])
   if (successful.has(normalized)) {
-    return { status: 'completed', label: '完了' }
+    return { status: 'awaiting_approval', label: '完了候補（確認待ち）' }
   }
 
   const failed =
@@ -172,16 +172,16 @@ function resolveTurnOutcome(opts: {
 
   if (normalized === 'interrupted' && opts.hasAssistantOutput) {
     return {
-      status: 'completed',
-      label: '完了（Codex status: interrupted / errorなし）',
+      status: 'awaiting_approval',
+      label: '完了候補（Codex status: interrupted / errorなし）',
       note: 'Codex app-server は interrupted を返しましたが、error はなく回答ログを取得できたため完了扱いにしました。',
     }
   }
 
   if (opts.hasAssistantOutput) {
     return {
-      status: 'completed',
-      label: `完了（Codex status: ${opts.status || 'unknown'}）`,
+      status: 'awaiting_approval',
+      label: `完了候補（Codex status: ${opts.status || 'unknown'}）`,
       note: 'Codex app-server の終了 status は未分類ですが、error はなく回答ログを取得できたため完了扱いにしました。',
     }
   }
@@ -541,13 +541,20 @@ async function main() {
         ...(outcome.note ? { codex_completion_note: outcome.note } : {}),
       }
 
-      if (outcome.status === 'completed') {
+      if (outcome.status === 'awaiting_approval') {
         await pushStep(supabase, taskId, makeStep('completed', outcome.label),
-          { liveLog: finalLog, message: finalLog || '(本文なし)', metadata: resultMetadata })
+          {
+            liveLog: finalLog,
+            message: finalLog || '(本文なし)',
+            metadata: {
+              ...resultMetadata,
+              session_health: 'stopped',
+              awaiting_approval_at: new Date().toISOString(),
+            },
+          })
         await supabase.from('ai_tasks').update({
           status: outcome.status,
           error: null,
-          completed_at: new Date().toISOString(),
         }).eq('id', taskId)
       } else {
         const errorText = `${outcome.error ?? `Codex turn ${completedStatus}`}: ${finalLog.slice(0, 500)}`

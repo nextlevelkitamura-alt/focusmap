@@ -50,6 +50,72 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10分
 const PAUSE_FILE = path.resolve(__dirname, 'task-runner.paused')
 const SUPABASE_RESTRICTED_PATTERN = /exceed_cached_egress_quota|Service for this project is restricted/i
+const FOCUSMAP_RUNS_DIR = path.join(os.homedir(), '.focusmap', 'ai-runs')
+const CLAUDE_HOOK_SCRIPT = path.resolve(__dirname, 'focusmap-claude-hook.mjs')
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function ensureRunDir(taskId: string): string {
+  const runDir = path.join(FOCUSMAP_RUNS_DIR, taskId)
+  fs.mkdirSync(runDir, { recursive: true })
+  return runDir
+}
+
+function appendRunEvent(taskId: string, event: Record<string, unknown>): void {
+  const runDir = ensureRunDir(taskId)
+  fs.appendFileSync(
+    path.join(runDir, 'events.jsonl'),
+    `${JSON.stringify({ task_id: taskId, observed_at: new Date().toISOString(), ...event })}\n`,
+    'utf-8',
+  )
+}
+
+function readRunPath(taskId: string, fileName: string): string {
+  return path.join(ensureRunDir(taskId), fileName)
+}
+
+function writeClaudeHookSettings(taskId: string, runDir: string): string {
+  const settingsPath = path.join(runDir, 'claude-settings.json')
+  const commandFor = (eventName: string) =>
+    [
+      shellQuote(process.execPath),
+      shellQuote(CLAUDE_HOOK_SCRIPT),
+      shellQuote(taskId),
+      shellQuote(runDir),
+      shellQuote(eventName),
+    ].join(' ')
+  const commandHook = (eventName: string) => ({ type: 'command', command: commandFor(eventName) })
+  const settings = {
+    hooks: {
+      SessionStart: [
+        { matcher: 'startup|resume', hooks: [commandHook('SessionStart')] },
+      ],
+      PostToolUse: [
+        { matcher: '*', hooks: [commandHook('PostToolUse')] },
+      ],
+      Stop: [
+        { matcher: '', hooks: [commandHook('Stop')] },
+      ],
+      SessionEnd: [
+        { matcher: '', hooks: [commandHook('SessionEnd')] },
+      ],
+      Notification: [
+        { matcher: '', hooks: [commandHook('Notification')] },
+      ],
+      PermissionDenied: [
+        { matcher: '', hooks: [commandHook('PermissionDenied')] },
+      ],
+    },
+  }
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8')
+  return settingsPath
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // macOS 通知
@@ -71,16 +137,32 @@ function notify(message: string, title = 'Focusmap AI') {
 // Terminal.app を画面右半分に開いて claude を対話実行
 // ─────────────────────────────────────────────────────────────────────────
 function openTerminalWithClaude(opts: {
+  taskId: string
   skillId?: string | null
   prompt: string
   cwd?: string | null
 }) {
-  const command = opts.prompt
+  const runDir = ensureRunDir(opts.taskId)
+  const settingsPath = writeClaudeHookSettings(opts.taskId, runDir)
+  const command = [
+    'claude',
+    '--settings', shellQuote(settingsPath),
+    '--session-id', shellQuote(opts.taskId),
+    '--dangerously-skip-permissions',
+    ansiCQuote(opts.prompt),
+  ].join(' ')
   const cwd = opts.cwd || ''
+  fs.writeFileSync(path.join(runDir, 'prompt.txt'), opts.prompt, 'utf-8')
+  appendRunEvent(opts.taskId, {
+    event_name: 'TerminalLaunch',
+    run_dir: runDir,
+    hook_settings_path: settingsPath,
+    cwd: cwd || null,
+  })
 
   // AppleScript をファイルに書き出して実行（エスケープ問題を回避）
   const tmpScript = '/tmp/focusmap-open-terminal.scpt'
-  const cdLine = cwd ? `cd \\"${cwd}\\" && ` : ''
+  const commandLine = `${cwd ? `cd ${shellQuote(cwd)} && ` : ''}${command}`
   const scriptContent = `tell application "Finder"
   set _b to bounds of window of desktop
   set screenW to item 3 of _b
@@ -88,7 +170,7 @@ function openTerminalWithClaude(opts: {
 end tell
 tell application "Terminal"
   activate
-  do script "${cdLine}claude --dangerously-skip-permissions \\"${command.replace(/"/g, '')}\\""
+  do script "${escapeAppleScriptString(commandLine)}"
   delay 0.5
   set bounds of front window to {screenW div 2, 25, screenW, screenH}
 end tell`
@@ -136,6 +218,7 @@ function getNextScheduledAt(cronExpr: string, from: Date): Date {
 // claude -p 実行
 // ─────────────────────────────────────────────────────────────────────────
 function runClaude(opts: {
+  taskId: string
   prompt: string
   skillId?: string | null
   cwd?: string | null
@@ -143,9 +226,31 @@ function runClaude(opts: {
   return new Promise((resolve) => {
     // プロンプトをそのまま送信（自然言語でスキルが反応する）
     const fullPrompt = opts.prompt
+    const runDir = ensureRunDir(opts.taskId)
+    const settingsPath = writeClaudeHookSettings(opts.taskId, runDir)
+    const stdoutLogPath = path.join(runDir, 'stdout.log')
+    fs.writeFileSync(path.join(runDir, 'prompt.txt'), fullPrompt, 'utf-8')
+    fs.writeFileSync(stdoutLogPath, '', 'utf-8')
+    fs.writeFileSync(path.join(runDir, 'metadata.json'), `${JSON.stringify({
+      task_id: opts.taskId,
+      mode: 'claude-print',
+      cwd: opts.cwd ?? null,
+      started_at: new Date().toISOString(),
+      hook_settings_path: settingsPath,
+    }, null, 2)}\n`, 'utf-8')
+    appendRunEvent(opts.taskId, {
+      event_name: 'ProcessStart',
+      mode: 'claude-print',
+      run_dir: runDir,
+      stdout_log_path: stdoutLogPath,
+      hook_settings_path: settingsPath,
+      cwd: opts.cwd ?? null,
+    })
 
     const args = [
       '-p', fullPrompt,
+      '--settings', settingsPath,
+      '--session-id', opts.taskId,
       '--dangerously-skip-permissions',
       '--max-budget-usd', '2.00',
       '--max-turns', '10',
@@ -155,6 +260,7 @@ function runClaude(opts: {
     // CLAUDECODE 環境変数を除外（Claude Code 内からの実行時にネスト防止を回避）
     const env = { ...process.env }
     delete env.CLAUDECODE
+    delete env.ANTHROPIC_API_KEY
 
     const proc = spawn('claude', args, {
       timeout: TASK_TIMEOUT_MS,
@@ -166,20 +272,36 @@ function runClaude(opts: {
     let errOutput = ''
 
     proc.stdout.on('data', (data: Buffer) => {
-      output += data.toString()
+      const chunk = data.toString()
+      output += chunk
+      fs.appendFileSync(stdoutLogPath, chunk, 'utf-8')
     })
     proc.stderr.on('data', (data: Buffer) => {
-      errOutput += data.toString()
+      const chunk = data.toString()
+      errOutput += chunk
+      fs.appendFileSync(stdoutLogPath, chunk, 'utf-8')
     })
 
     proc.on('close', (code: number | null) => {
       const exitCode = code ?? 1
+      appendRunEvent(opts.taskId, {
+        event_name: 'ProcessClose',
+        mode: 'claude-print',
+        exit_code: exitCode,
+        stdout_log_path: stdoutLogPath,
+      })
       // stderr も結果に含める（claude -p はログを stderr に出すことがある）
       const fullOutput = output.trim() || errOutput.trim()
       resolve({ output: fullOutput, exitCode })
     })
 
     proc.on('error', (err: Error) => {
+      appendRunEvent(opts.taskId, {
+        event_name: 'ProcessError',
+        mode: 'claude-print',
+        error: err.message,
+        stdout_log_path: stdoutLogPath,
+      })
       resolve({ output: err.message, exitCode: 1 })
     })
   })
@@ -244,10 +366,20 @@ async function launchRemoteControl(opts: {
   cwd: string
   /** Claude セッション一覧表示用のタイトル。省略時は prompt から生成 */
   displayTitle?: string
-}): Promise<{ success: true; url: string; sessionName: string } | { success: false; error: string }> {
+}): Promise<{
+  success: true
+  url: string
+  sessionName: string
+  runDir: string
+  stdoutLogPath: string
+  hookSettingsPath: string
+} | { success: false; error: string }> {
   const sessionName = `memo-${opts.taskId.slice(0, 8)}`
   const logPath = `/tmp/claude-rc-${opts.taskId}.log`
-  const promptPath = `/tmp/claude-prompt-${opts.taskId}.txt`
+  const runDir = ensureRunDir(opts.taskId)
+  const promptPath = path.join(runDir, 'prompt.txt')
+  const stdoutLogPath = path.join(runDir, 'stdout.log')
+  const hookSettingsPath = writeClaudeHookSettings(opts.taskId, runDir)
 
   // cwd 存在確認
   if (!fs.existsSync(opts.cwd)) {
@@ -276,6 +408,30 @@ async function launchRemoteControl(opts: {
   // 既存ログ削除して空ファイル作成（pipe-pane は append しか出来ないため）
   try { fs.unlinkSync(logPath) } catch { /* ignore */ }
   fs.writeFileSync(logPath, '', 'utf-8')
+  fs.writeFileSync(stdoutLogPath, '', 'utf-8')
+  fs.writeFileSync(path.join(runDir, 'metadata.json'), `${JSON.stringify({
+    task_id: opts.taskId,
+    mode: 'claude-remote-control',
+    cwd: opts.cwd,
+    title,
+    tmux_session_name: sessionName,
+    tmp_log_path: logPath,
+    stdout_log_path: stdoutLogPath,
+    prompt_path: promptPath,
+    hook_settings_path: hookSettingsPath,
+    claude_session_id: opts.taskId,
+    started_at: new Date().toISOString(),
+  }, null, 2)}\n`, 'utf-8')
+  appendRunEvent(opts.taskId, {
+    event_name: 'RemoteControlStart',
+    run_dir: runDir,
+    stdout_log_path: stdoutLogPath,
+    tmp_log_path: logPath,
+    hook_settings_path: hookSettingsPath,
+    session_id: opts.taskId,
+    tmux_session_name: sessionName,
+    cwd: opts.cwd,
+  })
 
   // claude を tmux 内で「TTYを保ったまま」起動する。
   // パイプ（| tee）すると非対話と判定されて --print モードになるため、
@@ -285,7 +441,18 @@ async function launchRemoteControl(opts: {
   // プロンプトは ANSI-C quoting ($'...') で渡す → 改行が実際の改行として claude に届く
   // （JSON.stringify だと \n がリテラル2文字として渡されてしまうため）
   const promptQuoted = ansiCQuote(opts.prompt)
-  const inner = `unset ANTHROPIC_API_KEY; unset CLAUDECODE; exec claude --remote-control ${JSON.stringify(title)} --dangerously-skip-permissions ${promptQuoted}`
+  const inner = [
+    'unset ANTHROPIC_API_KEY',
+    'unset CLAUDECODE',
+    [
+      'exec claude',
+      '--remote-control', shellQuote(title),
+      '--settings', shellQuote(hookSettingsPath),
+      '--session-id', shellQuote(opts.taskId),
+      '--dangerously-skip-permissions',
+      promptQuoted,
+    ].join(' '),
+  ].join('; ')
   const bashWrapped = `bash -c ${JSON.stringify(inner)}`
 
   try {
@@ -300,7 +467,7 @@ async function launchRemoteControl(opts: {
   // tmux pipe-pane で stdout/stderr を取り出してログファイルに追記
   try {
     execSync(
-      `tmux pipe-pane -o -t ${JSON.stringify(sessionName)} ${JSON.stringify(`cat >> ${logPath}`)}`,
+      `tmux pipe-pane -o -t ${JSON.stringify(sessionName)} ${JSON.stringify(`tee -a ${shellQuote(stdoutLogPath)} >> ${shellQuote(logPath)}`)}`,
       { stdio: 'ignore' },
     )
   } catch {
@@ -314,6 +481,12 @@ async function launchRemoteControl(opts: {
     if (tmuxSessionExists(sessionName)) {
       try { execSync(`tmux kill-session -t "${sessionName}"`, { stdio: 'ignore' }) } catch { /* ignore */ }
     }
+    appendRunEvent(opts.taskId, {
+      event_name: 'RemoteControlUrlTimeout',
+      run_dir: runDir,
+      stdout_log_path: stdoutLogPath,
+      tmp_log_path: logPath,
+    })
     // ログ末尾をエラーとして返す
     let tail = ''
     try {
@@ -326,10 +499,15 @@ async function launchRemoteControl(opts: {
     }
   }
 
-  // プロンプトファイル削除（positional arg で渡しているので使わないが念のため）
-  try { fs.unlinkSync(promptPath) } catch { /* ignore */ }
+  appendRunEvent(opts.taskId, {
+    event_name: 'RemoteControlUrlReady',
+    run_dir: runDir,
+    stdout_log_path: stdoutLogPath,
+    tmp_log_path: logPath,
+    remote_session_url: url,
+  })
 
-  return { success: true, url, sessionName }
+  return { success: true, url, sessionName, runDir, stdoutLogPath, hookSettingsPath }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -691,25 +869,26 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 
       const updates: Record<string, unknown> = { result: baseResult }
 
-      // 完了判定:
-      //   - codex_app (codex:// URL): threads.archived = 1 でのみ完了判定
+      // 完了候補判定:
+      //   - codex_app (codex:// URL): threads.archived = 1 で完了候補
       //     （codex:// は prefill のみで自動送信されない＝ユーザー操作待ち）
-      //   - codex (JSON-RPC bridge): bridge が turn/completed 受信で
-      //     自前で status='completed' に更新するため、ここでは何もしない
+      //   - codex (JSON-RPC bridge): bridge が turn/completed 受信後に
+      //     awaiting_approval に更新するため、ここでは何もしない
       const isArchived = row.archived === 1
       const isComplete = isArchived && executor !== 'codex'
 
       if (isComplete) {
         const completedIdx = steps.findIndex(s => s.key === 'completed')
-        const completedStep = makeStep('completed', '完了（アーカイブ済）')
+        const completedStep = makeStep('completed', '完了候補（アーカイブ済・確認待ち）')
         if (completedIdx >= 0) steps[completedIdx] = completedStep
         else steps.push(completedStep)
-        updates.status = 'completed'
-        updates.completed_at = new Date().toISOString()
+        updates.status = 'awaiting_approval'
         updates.result = {
           ...baseResult,
           steps,
-          message: `Codex.app セッション完了\n\n${liveLog}`,
+          message: `Codex.app セッションは完了候補です。内容を確認して完了にしてください。\n\n${liveLog}`,
+          session_health: 'stopped',
+          awaiting_approval_at: new Date().toISOString(),
         }
       }
       await supabase
@@ -723,7 +902,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 }
 
 /**
- * tmux セッションがもう存在しない running 状態のRCタスクを completed に更新。
+ * tmux セッションがもう存在しない running 状態のRCタスクを確認待ちに更新。
  * 毎回 main() の冒頭で呼ぶことで、ユーザーが Claude を /exit したり Mac 再起動した場合の
  * 取り残しを掃除する。
  */
@@ -825,15 +1004,19 @@ async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
     if (!task.tmux_session_name) continue
     if (tmuxSessionExists(task.tmux_session_name)) continue
 
-    // セッションが消えていたら completed として記録
-    // executor に応じてログファイルを切替（Claude: claude-rc-*.log / Codex: codex-exec-*.log）
+    // セッションが消えていたら「完了候補」として記録する。
+    // executor に応じてログファイルを切替（Claude: persistent stdout.log 優先 / Codex: codex-exec-*.log）
     const executor = task.executor === 'codex' ? 'codex' : 'claude'
-    const logPath = executor === 'codex'
+    const current = (task.result ?? {}) as { steps?: CodexStep[]; run_dir?: unknown; [k: string]: unknown }
+    const runDir = typeof current.run_dir === 'string' ? current.run_dir : ensureRunDir(task.id)
+    const persistentLogPath = path.join(runDir, 'stdout.log')
+    const tmpLogPath = executor === 'codex'
       ? `/tmp/codex-exec-${task.id}.log`
       : `/tmp/claude-rc-${task.id}.log`
 
     let tail = ''
     try {
+      const logPath = fs.existsSync(persistentLogPath) ? persistentLogPath : tmpLogPath
       if (fs.existsSync(logPath)) {
         const content = fs.readFileSync(logPath, 'utf-8')
         // ANSI エスケープシーケンスを除去して読みやすく
@@ -845,30 +1028,53 @@ async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
     const defaultMessage = executor === 'codex'
       ? 'Codex セッションは終了しました'
       : 'Remote Control セッションは終了しました'
+    appendRunEvent(task.id, {
+      event_name: 'TmuxSessionMissing',
+      executor,
+      tmux_session_name: task.tmux_session_name,
+      run_dir: runDir,
+      stdout_log_path: fs.existsSync(persistentLogPath) ? persistentLogPath : null,
+      tmp_log_path: fs.existsSync(tmpLogPath) ? tmpLogPath : null,
+    })
 
-    // Codex の場合は既存 result (steps/thread_id) を保持しつつ completed step を追加
+    // Codex の場合は既存 result (steps/thread_id) を保持しつつ停止 step を追加
     let mergedResult: Record<string, unknown>
     if (executor === 'codex') {
-      const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
       const steps: CodexStep[] = Array.isArray(current.steps) ? [...current.steps] : []
-      const completedIdx = steps.findIndex(s => s.key === 'completed')
-      const completedStep = makeStep('completed', '完了')
-      if (completedIdx >= 0) steps[completedIdx] = completedStep
-      else steps.push(completedStep)
-      mergedResult = { ...current, executor, steps, live_log: tail, message: tail || defaultMessage }
+      const stoppedIdx = steps.findIndex(s => s.key === 'stopped')
+      const stoppedStep = makeStep('stopped', 'セッション終了（確認待ち）')
+      if (stoppedIdx >= 0) steps[stoppedIdx] = stoppedStep
+      else steps.push(stoppedStep)
+      mergedResult = {
+        ...current,
+        executor,
+        steps,
+        live_log: tail,
+        message: tail || defaultMessage,
+        session_health: 'stopped',
+        awaiting_approval_at: new Date().toISOString(),
+      }
     } else {
-      mergedResult = { message: tail || defaultMessage, executor }
+      mergedResult = {
+        ...current,
+        message: tail || defaultMessage,
+        executor,
+        run_dir: runDir,
+        stdout_log_path: fs.existsSync(persistentLogPath) ? persistentLogPath : undefined,
+        tmp_log_path: fs.existsSync(tmpLogPath) ? tmpLogPath : undefined,
+        session_health: 'stopped',
+        awaiting_approval_at: new Date().toISOString(),
+      }
     }
 
     await supabase
       .from('ai_tasks')
       .update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
+        status: 'awaiting_approval',
         result: mergedResult,
       })
       .eq('id', task.id)
-    console.log(`[task-runner] ${executor} session ended: ${task.id}`)
+    console.log(`[task-runner] ${executor} session ended, awaiting approval: ${task.id}`)
   }
 }
 
@@ -1053,7 +1259,7 @@ async function main() {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
-  // ─── 0. tmux セッションが消えた RC タスクを completed/failed に遷移 ─
+  // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
   await reconcileRemoteControlSessions(supabase)
   await cleanupStaleCodexTasks(supabase)
 
@@ -1305,7 +1511,15 @@ async function main() {
         .update({
           remote_session_url: result.url,
           tmux_session_name: result.sessionName,
-          result: { message: 'Remote Control セッションを起動しました。スマホ/Web から接続できます。' },
+          result: {
+            message: 'Remote Control セッションを起動しました。スマホ/Web から接続できます。',
+            executor: 'claude',
+            run_dir: result.runDir,
+            stdout_log_path: result.stdoutLogPath,
+            hook_settings_path: result.hookSettingsPath,
+            claude_session_id: task.id,
+            session_health: 'active',
+          },
         })
         .eq('id', task.id)
 
@@ -1319,6 +1533,7 @@ async function main() {
       notify(`${shortPrompt} — ターミナルを開きます`, 'Focusmap AI')
 
       openTerminalWithClaude({
+        taskId: task.id,
         skillId: task.skill_id,
         prompt: task.prompt,
         cwd: task.cwd,
@@ -1349,7 +1564,16 @@ async function main() {
       } else {
         await supabase
           .from('ai_tasks')
-          .update({ status: 'completed', completed_at: new Date().toISOString(), result: { message: 'ターミナルで対話実行' } })
+          .update({
+            status: 'awaiting_approval',
+            result: {
+              message: 'ターミナルで対話実行を開始しました。結果を確認して完了にしてください。',
+              executor: 'claude',
+              run_dir: ensureRunDir(task.id),
+              claude_session_id: task.id,
+              session_health: 'active',
+            },
+          })
           .eq('id', task.id)
         console.log(`[task-runner] Terminal opened: ${task.id}`)
       }
@@ -1360,6 +1584,7 @@ async function main() {
     notify(`実行中: ${shortPrompt}`, 'Focusmap AI')
 
     const { output, exitCode } = await runClaude({
+      taskId: task.id,
       prompt: task.prompt,
       skillId: task.skill_id,
       cwd: task.cwd,
@@ -1406,9 +1631,16 @@ async function main() {
         await supabase
           .from('ai_tasks')
           .update({
-            status: 'completed',
-            result: { message: output },
-            completed_at: now,
+            status: 'awaiting_approval',
+            result: {
+              message: output,
+              executor: 'claude',
+              run_dir: ensureRunDir(task.id),
+              stdout_log_path: readRunPath(task.id, 'stdout.log'),
+              claude_session_id: task.id,
+              session_health: 'stopped',
+              awaiting_approval_at: now,
+            },
           })
           .eq('id', task.id)
       }

@@ -10,6 +10,47 @@ export type AiTaskStatus =
   | 'completed'
   | 'failed'
 
+export type AiTaskProgressState =
+  | 'not_started'
+  | 'running'
+  | 'likely_completed'
+  | 'needs_review'
+  | 'blocked'
+  | 'failed'
+  | 'unknown'
+
+export type AiTaskSessionHealth =
+  | 'active'
+  | 'stopped'
+  | 'lost_after_restart'
+  | 'transcript_only'
+  | 'unknown'
+
+export interface AiTaskProgressSummary {
+  state: AiTaskProgressState
+  progress_percent: number
+  summary: string
+  comment?: string
+  current_step: string
+  evidence: string
+  recommended_action: string
+  can_mark_completed: boolean
+  confidence: number
+  checked_at: string
+  source: 'gemini' | 'rule'
+  model?: string
+  tmux_alive?: boolean | null
+  log_chars?: number
+  done_evidence?: string[]
+  remaining_work?: string[]
+  blocked_reason?: string | null
+  last_activity_at?: string | null
+  last_tool?: string | null
+  files_touched?: string[]
+  tests_seen?: string[]
+  session_health?: AiTaskSessionHealth
+}
+
 export interface AiTask {
   id: string
   user_id: string
