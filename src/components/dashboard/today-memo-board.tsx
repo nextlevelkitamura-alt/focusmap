@@ -7,6 +7,7 @@ import type { CalendarEvent } from "@/types/calendar"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { WishlistCard } from "@/components/wishlist/wishlist-card"
 import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+import { useCalendars } from "@/hooks/useCalendars"
 
 declare global {
   interface Window {
@@ -32,11 +33,24 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { calendars } = useCalendars()
 
   const projectById = useMemo(
     () => new Map(projects.map(p => [p.id, p])),
     [projects],
   )
+  const targetCalendar = useMemo(() => {
+    const writableCalendars = calendars.filter(c => c.access_level === "owner" || c.access_level === "writer")
+    return (
+      writableCalendars.find(c => c.selected && c.is_primary) ??
+      writableCalendars.find(c => c.selected) ??
+      writableCalendars.find(c => c.is_primary) ??
+      writableCalendars[0] ??
+      calendars.find(c => c.is_primary) ??
+      calendars[0] ??
+      null
+    )
+  }, [calendars])
 
   const fetchItems = useCallback(async () => {
     try {
@@ -76,11 +90,13 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
       // 楽観更新: カレンダーにも即座に予定枠を表示
       const tempId = `optimistic-memo-${memoId}-${Date.now()}`
       const nowIso = new Date().toISOString()
+      const calendarId = targetCalendar?.google_calendar_id ?? "primary"
+      const calendarColor = targetCalendar?.background_color ?? "#F59E0B"
       const optimisticEvent: CalendarEvent = {
         id: tempId,
         user_id: target.user_id,
-        google_event_id: tempId,
-        calendar_id: "primary",
+        google_event_id: "",
+        calendar_id: calendarId,
         title: target.title,
         description: target.description ?? "",
         start_time: startTime.toISOString(),
@@ -90,6 +106,8 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         synced_at: nowIso,
         created_at: nowIso,
         updated_at: nowIso,
+        background_color: calendarColor,
+        sync_status: "pending",
       }
       window.__focusmapAddOptimisticEvent?.(optimisticEvent)
 
@@ -102,13 +120,18 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
             duration_minutes: durationMinutes,
             title: target.title,
             description: target.description ?? "",
+            calendar_id: calendarId,
           }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) throw new Error(data.error || "カレンダー追加に失敗しました")
-        // 楽観イベントは敢えて削除しない。useCalendarEvents の次回 refetch で
-        // setEvents(全置換) されるとき自動的に本物イベントへ差し替わる。
-        // 先に削除してしまうと refetch 完了までの数秒、何も表示されない時間が生じる。
+        window.__focusmapAddOptimisticEvent?.({
+          ...optimisticEvent,
+          google_event_id: data.google_event_id ?? optimisticEvent.google_event_id,
+          calendar_id: data.calendar_id ?? calendarId,
+          updated_at: new Date().toISOString(),
+          sync_status: "confirmed",
+        })
         invalidateCalendarCache()
         broadcastCalendarSync()
         window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
@@ -126,7 +149,7 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         window.__focusmapMemoDropHandler = undefined
       }
     }
-  }, [items, fetchItems])
+  }, [items, fetchItems, targetCalendar])
 
   // 今日するメモのフィルタ + 並び替え（scheduled_at 昇順、未設定は末尾）
   const todayItems = useMemo(() => {

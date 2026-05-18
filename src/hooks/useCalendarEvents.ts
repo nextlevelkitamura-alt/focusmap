@@ -23,6 +23,7 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes（ゴーストイベント残留を最小化）
+const OPTIMISTIC_EVENT_KEEP_MS = 60 * 1000;
 const inflightRequests = new Map<string, Promise<CalendarEvent[]>>();
 
 // Backoff state for quota errors
@@ -109,6 +110,41 @@ function isQuotaError(error: unknown): boolean {
 function buildEventsListUrl(params: URLSearchParams): string {
   // Browser fetch should stay same-origin (avoid hardcoded base URLs)
   return `/api/calendar/events/list?${params.toString()}`;
+}
+
+function sortEventsByStartTime(events: CalendarEvent[]): CalendarEvent[] {
+  return [...events].sort((a, b) =>
+    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  );
+}
+
+function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): CalendarEvent[] {
+  const next = events.filter(existing => {
+    if (existing.id === event.id) return false;
+    if (event.google_event_id && existing.google_event_id === event.google_event_id) return false;
+    return true;
+  });
+  return sortEventsByStartTime([...next, event]);
+}
+
+function mergeRecentOptimisticEvents(fetchedEvents: CalendarEvent[], previousEvents: CalendarEvent[]): CalendarEvent[] {
+  const now = Date.now();
+  const fetchedKeys = new Set(
+    fetchedEvents.map(event => `${event.calendar_id}::${event.google_event_id || event.id}`)
+  );
+  const survivors = previousEvents.filter(event => {
+    if (event.sync_status !== 'pending' && event.sync_status !== 'confirmed') return false;
+
+    const createdAt = new Date(event.created_at).getTime();
+    if (Number.isFinite(createdAt) && now - createdAt > OPTIMISTIC_EVENT_KEEP_MS) return false;
+
+    const key = `${event.calendar_id}::${event.google_event_id || event.id}`;
+    if (fetchedKeys.has(key)) return false;
+    if (event.google_event_id && fetchedEvents.some(fetched => fetched.google_event_id === event.google_event_id)) return false;
+    return true;
+  });
+
+  return sortEventsByStartTime([...fetchedEvents, ...survivors]);
 }
 
 async function fetchEventsShared(
@@ -283,7 +319,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
         options.calendarIds,
         forceSync
       );
-      setEvents(result);
+      setEvents(prev => mergeRecentOptimisticEvents(result, prev));
       setLastSyncedAt(new Date());
     } catch (err) {
       setError(err as Error);
@@ -363,14 +399,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       if (!optimisticEvent || !isInRangeAndCalendar(optimisticEvent)) return;
 
       setEvents(prev => {
-        const next = prev.filter(existing => {
-          if (existing.id === optimisticEvent.id) return false;
-          if (optimisticEvent.google_event_id && existing.google_event_id === optimisticEvent.google_event_id) return false;
-          return true;
-        });
-        return [...next, optimisticEvent].sort((a, b) =>
-          new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-        );
+        return mergeOptimisticEvent(prev, optimisticEvent);
       });
     };
 
@@ -401,7 +430,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
 
   // Optimistic event: add immediately to UI, then sync will replace with real data
   const addOptimisticEvent = useCallback((event: CalendarEvent) => {
-    setEvents(prev => [...prev, event]);
+    setEvents(prev => mergeOptimisticEvent(prev, event));
   }, []);
 
   const removeOptimisticEvent = useCallback((eventId: string, googleEventId?: string) => {

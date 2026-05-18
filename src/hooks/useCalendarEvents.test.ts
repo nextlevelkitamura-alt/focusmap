@@ -20,6 +20,9 @@ function createMockEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent 
     end_time: '2026-02-18T11:00:00Z',
     is_all_day: false,
     timezone: 'Asia/Tokyo',
+    synced_at: '2026-02-18T09:00:00Z',
+    created_at: '2026-02-18T09:00:00Z',
+    updated_at: '2026-02-18T09:00:00Z',
     ...overrides,
   }
 }
@@ -236,6 +239,92 @@ describe('useCalendarEvents', () => {
       const secondUrl = mockFetch.mock.calls[1][0] as string
       expect(secondUrl).toContain('forceSync=true')
       expect(result.current.events[0].title).toBe('Refreshed')
+    })
+  })
+
+  describe('楽観イベント', () => {
+    test('refetch が一時的に空でも最近の楽観イベントを保持する', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([])
+
+      const { result } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      const optimistic = createMockEvent({
+        id: 'optimistic-memo-1',
+        google_event_id: '',
+        title: 'Pending memo',
+        start_time: '2026-02-18T12:00:00Z',
+        end_time: '2026-02-18T12:30:00Z',
+        sync_status: 'pending',
+        created_at: new Date().toISOString(),
+      })
+
+      act(() => {
+        result.current.addOptimisticEvent(optimistic)
+      })
+
+      expect(result.current.events).toHaveLength(1)
+      expect(result.current.events[0].sync_status).toBe('pending')
+
+      mockFetchSuccess([])
+      await act(async () => {
+        await result.current.syncNow()
+      })
+
+      expect(result.current.events).toHaveLength(1)
+      expect(result.current.events[0].title).toBe('Pending memo')
+    })
+
+    test('同じ楽観イベントを confirmed に更新し、実イベント取得後は置換する', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([])
+
+      const { result } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      const pending = createMockEvent({
+        id: 'optimistic-memo-2',
+        google_event_id: '',
+        title: 'Dropped memo',
+        start_time: '2026-02-18T13:00:00Z',
+        end_time: '2026-02-18T13:30:00Z',
+        sync_status: 'pending',
+        created_at: new Date().toISOString(),
+      })
+
+      act(() => {
+        result.current.addOptimisticEvent(pending)
+        result.current.addOptimisticEvent({
+          ...pending,
+          google_event_id: 'google-event-2',
+          sync_status: 'confirmed',
+        })
+      })
+
+      expect(result.current.events).toHaveLength(1)
+      expect(result.current.events[0].google_event_id).toBe('google-event-2')
+      expect(result.current.events[0].sync_status).toBe('confirmed')
+
+      mockFetchSuccess([createMockEvent({
+        id: 'google-event-2',
+        google_event_id: 'google-event-2',
+        title: 'Fetched memo',
+      })])
+
+      await act(async () => {
+        await result.current.syncNow()
+      })
+
+      expect(result.current.events).toHaveLength(1)
+      expect(result.current.events[0].title).toBe('Fetched memo')
+      expect(result.current.events[0].sync_status).toBeUndefined()
     })
   })
 

@@ -11,7 +11,7 @@ export async function POST(
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { scheduled_at, duration_minutes, title, description } = await request.json()
+  const { scheduled_at, duration_minutes, title, description, calendar_id } = await request.json()
   if (!scheduled_at || !duration_minutes) {
     return NextResponse.json({ error: '日時と所要時間が必要です' }, { status: 400 })
   }
@@ -31,7 +31,10 @@ export async function POST(
 
   const startTime = new Date(scheduled_at)
   const endTime = new Date(startTime.getTime() + duration_minutes * 60 * 1000)
-  const calendarId = settings.default_calendar_id ?? 'primary'
+  const requestedCalendarId = typeof calendar_id === 'string' && calendar_id.trim().length > 0
+    ? calendar_id.trim()
+    : null
+  const calendarId = requestedCalendarId ?? settings.default_calendar_id ?? 'primary'
 
   try {
     const { calendar } = await getCalendarClient(user.id)
@@ -57,7 +60,7 @@ export async function POST(
       return NextResponse.json({ error: updateError.message }, { status: 500 })
     }
 
-    return NextResponse.json({ google_event_id: gcalRes.data.id, item })
+    return NextResponse.json({ google_event_id: gcalRes.data.id, calendar_id: calendarId, item })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Googleカレンダーへの登録に失敗しました'
     return NextResponse.json({ error: message }, { status: 500 })

@@ -992,10 +992,10 @@ export function TodayTimelineCalendar({
                                             currentTime={currentTime}
                                             height={item.height}
                                             isCompleted={item.isCompleted}
-                                            onToggle={onToggleEvent ? () => onToggleEvent(item.id) : undefined}
-                                            onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && onItemTap ? () => onItemTap(item) : undefined}
-                                            onStartTimer={onConvertEventAndStartTimer && item.originalEvent ? () => onConvertEventAndStartTimer(item.originalEvent!) : undefined}
-                                            onToggleExpand={onConvertEventAndExpand && item.originalEvent ? () => onConvertEventAndExpand(item.originalEvent!) : undefined}
+                                            onToggle={onToggleEvent && item.originalEvent?.sync_status !== "pending" ? () => onToggleEvent(item.id) : undefined}
+                                            onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && item.originalEvent?.sync_status !== "pending" && onItemTap ? () => onItemTap(item) : undefined}
+                                            onStartTimer={onConvertEventAndStartTimer && item.originalEvent && item.originalEvent.sync_status !== "pending" ? () => onConvertEventAndStartTimer(item.originalEvent!) : undefined}
+                                            onToggleExpand={onConvertEventAndExpand && item.originalEvent && item.originalEvent.sync_status !== "pending" ? () => onConvertEventAndExpand(item.originalEvent!) : undefined}
                                         />
                                     ) : (
                                         <>
@@ -1112,10 +1112,11 @@ function EventBlock({
     const eventTitleLines = height >= 150 ? 5 : height >= 110 ? 4 : height >= 80 ? 3 : height >= 60 ? 2 : 1
     const isDone = !!isCompleted
 
-    const eventHex = getEventColor(event)
+    const isPendingSync = event.sync_status === "pending"
+    const eventHex = isPendingSync ? "#F59E0B" : getEventColor(event)
     const rgb = hexToRgb(eventHex)
-    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.25)` : undefined
-    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)` : undefined
+    const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${isPendingSync ? 0.12 : 0.25})` : undefined
+    const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${isPendingSync ? 0.18 : 0.35})` : undefined
 
     return (
         <div
@@ -1124,13 +1125,15 @@ function EventBlock({
                 "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isNow && "ring-1",
-                isDone && "opacity-50"
+                isDone && "opacity-50",
+                isPendingSync && "border border-dashed border-amber-400/70"
             )}
             style={{
                 borderLeftColor: eventHex,
                 backgroundColor: isNow ? bgNowRgba : bgRgba,
-                ...(isNow ? { boxShadow: `0 0 0 1px ${eventHex}60` } : {}),
+                ...(isNow && !isPendingSync ? { boxShadow: `0 0 0 1px ${eventHex}60` } : {}),
             }}
+            data-syncing={isPendingSync || undefined}
         >
             {isCompact ? (
                 <div className="flex items-center gap-1.5 h-full">

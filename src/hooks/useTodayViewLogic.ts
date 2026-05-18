@@ -440,7 +440,10 @@ export function useTodayViewLogic({
             const eventKey = `${event.calendar_id || ''}|${event.title.trim().toLowerCase()}|${eventMinute}`
             if (eventLikeTaskKeys.has(eventKey)) continue
 
-            const calendarColor = stableCalendarColorMap.get(event.calendar_id || '')
+            const calendarColor =
+                stableCalendarColorMap.get(event.calendar_id || '') ||
+                event.background_color ||
+                (event.sync_status === 'pending' ? '#F59E0B' : undefined)
             if (!calendarColor) continue
             const block = eventToTimeBlock({ ...event, background_color: calendarColor })
             if (block.startTime.getTime() < today.getTime()) block.startTime = new Date(today)
