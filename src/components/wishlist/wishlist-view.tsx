@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
 import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -663,10 +664,50 @@ export function WishlistView({
     broadcastCalendarSync()
   }
 
-  const openDetail = (item: MemoItem) => {
+  const openDetail = useCallback((item: MemoItem) => {
     setSelectedItem(item)
     setDetailOpen(true)
-  }
+  }, [])
+
+  // D&D: ドロップしたカラムキー（droppableId）からカラム遷移を判定し、更新を投げる
+  const itemById = useMemo(() => new Map(items.map(item => [item.id, item])), [items])
+  const handleDragEnd = useCallback(async (result: DropResult) => {
+    if (!result.destination) return
+    const { source, destination, draggableId } = result
+    if (source.droppableId === destination.droppableId) return // 同一カラム内は何もしない
+
+    const item = itemById.get(draggableId)
+    if (!item) return
+    const to = destination.droppableId as ColumnKey
+
+    // 「予定済み」へのドロップは時刻設定が必要なので、詳細シートを開いて促す
+    if (to === "scheduled") {
+      setIntakeError("予定済みにするには時刻を設定してください。詳細を開きました。")
+      openDetail(item)
+      return
+    }
+
+    let updates: Partial<MemoItem> | null = null
+    if (to === "today") {
+      // unsorted/scheduled/completed → today: is_today=true、completedからの復活は完了解除
+      updates = source.droppableId === "completed"
+        ? { is_completed: false, memo_status: "unsorted", is_today: true }
+        : { is_today: true }
+    } else if (to === "unsorted") {
+      // today → unsorted: is_today=false
+      // scheduled → unsorted: is_today=false（scheduled_at が今日のものは today に残るが仕様）
+      // completed → unsorted: 完了解除
+      updates = source.droppableId === "completed"
+        ? { is_completed: false, memo_status: "unsorted", is_today: false }
+        : { is_today: false }
+    } else if (to === "completed") {
+      updates = { is_completed: true, memo_status: "completed", is_today: false }
+    }
+
+    if (updates) {
+      await handleUpdate(item.id, updates as Record<string, unknown>)
+    }
+  }, [itemById, handleUpdate, openDetail])
 
   if (isLoading) {
     return <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">読み込み中...</div>
@@ -821,9 +862,11 @@ export function WishlistView({
               </Button>
             </div>
           ) : (
+            <DragDropContext onDragEnd={handleDragEnd}>
             <div className="mx-auto overflow-x-auto pb-2">
               <div className="grid min-w-[72rem] max-w-7xl gap-4 lg:grid-cols-5">
                 <MemoSection
+                  columnKey="unsorted"
                   title="未予定"
                   count={unscheduledItems.length}
                   items={unscheduledItems}
@@ -839,6 +882,7 @@ export function WishlistView({
                   listClassName="sm:grid-cols-2"
                 />
                 <MemoSection
+                  columnKey="today"
                   title="今日する"
                   count={todayItems.length}
                   items={todayItems}
@@ -852,6 +896,7 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                 />
                 <MemoSection
+                  columnKey="scheduled"
                   title="予定済み"
                   count={scheduledItems.length}
                   items={scheduledItems}
@@ -865,6 +910,7 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                 />
                 <MemoSection
+                  columnKey="completed"
                   title="完了"
                   count={completedItems.length}
                   items={completedItems}
@@ -879,6 +925,7 @@ export function WishlistView({
                 />
               </div>
             </div>
+            </DragDropContext>
           )}
         </div>
       </div>
@@ -915,6 +962,7 @@ export function WishlistView({
 }
 
 function MemoSection({
+  columnKey,
   title,
   count,
   items,
@@ -929,6 +977,7 @@ function MemoSection({
   getAiTask,
   onOpenCodex,
 }: {
+  columnKey: ColumnKey
   title: string
   count: number
   items: MemoItem[]
@@ -949,27 +998,54 @@ function MemoSection({
         <h2 className="text-sm font-medium">{title}</h2>
         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{count}</span>
       </div>
-      {items.length === 0 ? (
-        <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
-          {emptyText}
-        </div>
-      ) : (
-        <div className={cn("grid gap-3", listClassName)}>
-          {items.map(item => (
-            <WishlistCard
-              key={item.id}
-              item={item}
-              onUpdate={onUpdate}
-              onDelete={onDelete}
-              onClick={() => onOpen(item)}
-              project={item.project_id ? projectById.get(item.project_id) ?? null : null}
-              tagColors={tagColors}
-              aiTask={getAiTask(item.id)}
-              onOpenCodex={() => onOpenCodex(item)}
-            />
-          ))}
-        </div>
-      )}
+      <Droppable droppableId={columnKey}>
+        {(provided, snapshot) => (
+          <div
+            ref={provided.innerRef}
+            {...provided.droppableProps}
+            className={cn(
+              "rounded-lg transition-colors",
+              snapshot.isDraggingOver && "bg-primary/5 ring-1 ring-primary/30",
+            )}
+          >
+            {items.length === 0 ? (
+              <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+                {emptyText}
+              </div>
+            ) : (
+              <div className={cn("grid gap-3", listClassName)}>
+                {items.map((item, index) => (
+                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                    {(dragProvided, dragSnapshot) => (
+                      <div
+                        ref={dragProvided.innerRef}
+                        {...dragProvided.draggableProps}
+                        {...dragProvided.dragHandleProps}
+                        className={cn(
+                          "rounded-lg transition-shadow",
+                          dragSnapshot.isDragging && "opacity-80 shadow-xl ring-2 ring-primary/40",
+                        )}
+                      >
+                        <WishlistCard
+                          item={item}
+                          onUpdate={onUpdate}
+                          onDelete={onDelete}
+                          onClick={() => onOpen(item)}
+                          project={item.project_id ? projectById.get(item.project_id) ?? null : null}
+                          tagColors={tagColors}
+                          aiTask={getAiTask(item.id)}
+                          onOpenCodex={() => onOpenCodex(item)}
+                        />
+                      </div>
+                    )}
+                  </Draggable>
+                ))}
+              </div>
+            )}
+            {provided.placeholder}
+          </div>
+        )}
+      </Droppable>
     </section>
   )
 }
