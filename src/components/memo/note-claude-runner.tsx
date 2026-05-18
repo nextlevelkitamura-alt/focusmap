@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import QRCode from "react-qr-code"
-import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, Circle, XCircle } from "lucide-react"
+import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, Circle, XCircle, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { AiTask } from "@/types/ai-task"
@@ -120,9 +120,10 @@ function CodexStepTimeline({
 interface NoteClaudeRunnerProps {
   noteId: string
   noteContent: string
-  projectId: string | null
-  repoPath: string | null
-  latestTask: AiTask | null
+  // 以下 3 つは Panel／将来の自動実行復活時のために型上残す。Button では現在不使用。
+  projectId?: string | null
+  repoPath?: string | null
+  latestTask?: AiTask | null
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -148,64 +149,43 @@ const ACTIVE_STATUSES = new Set(["pending", "running", "awaiting_approval", "nee
 export function NoteClaudeRunnerButton({
   noteId,
   noteContent,
-  projectId,
-  repoPath,
-  latestTask,
-  onStart,
-}: NoteClaudeRunnerProps & { onStart: () => Promise<void> }) {
-  const [isStarting, setIsStarting] = useState(false)
+  onOpenCodex,
+}: NoteClaudeRunnerProps & { onOpenCodex: () => Promise<void> }) {
+  const [isCopying, setIsCopying] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const isActive = latestTask && ACTIVE_STATUSES.has(latestTask.status)
-  const isRepoConfigured = !!repoPath && repoPath.trim().length > 0
-  const isProjectAssigned = !!projectId
 
   const handleClick = async () => {
     setError(null)
-    setIsStarting(true)
+    setIsCopying(true)
     try {
-      await onStart()
+      await onOpenCodex()
     } catch (e) {
       setError(e instanceof Error ? e.message : "起動に失敗しました")
     } finally {
-      setIsStarting(false)
+      setIsCopying(false)
     }
   }
 
-  const disabled = !isProjectAssigned || !isRepoConfigured || isActive || isStarting
-
-  const title = !isProjectAssigned
-    ? "プロジェクト未設定のため使用できません"
-    : !isRepoConfigured
-      ? "プロジェクトのリポジトリパス未設定（設定→プロジェクトから）"
-      : isActive
-        ? "すでに実行中のタスクがあります"
-        : "このメモを Claude Code で実行"
-
-  // 起動可能なときは強調表示（Claude ブランドカラーのアクセント）
-  const visiblyEnabled = !disabled
-  const isRunningNow = isActive && latestTask?.status === "running"
+  const title = "Codex Web で開く（メモをクリップボードにコピー）"
 
   return (
     <>
       <Button
-        variant={visiblyEnabled ? "outline" : "ghost"}
+        variant="outline"
         size="icon"
         onClick={handleClick}
-        disabled={disabled}
+        disabled={isCopying}
         className={cn(
           "min-h-[44px] min-w-[44px] gap-1",
-          visiblyEnabled && "border-amber-500/60 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 hover:text-amber-700 dark:text-amber-300",
-          isRunningNow && "border-blue-500/60 bg-blue-500/10 text-blue-600 dark:text-blue-300",
-          !isProjectAssigned || !isRepoConfigured ? "text-muted-foreground/40" : "",
+          "border-amber-500/60 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 hover:text-amber-700 dark:text-amber-300",
         )}
         title={title}
         aria-label={title}
       >
-        {isStarting || isRunningNow ? (
+        {isCopying ? (
           <Loader2 className="w-5 h-5 animate-spin" />
         ) : (
-          <Terminal className="w-5 h-5" />
+          <ExternalLink className="w-5 h-5" />
         )}
       </Button>
       {error && (
@@ -213,7 +193,6 @@ export function NoteClaudeRunnerButton({
           {error}
         </div>
       )}
-      {/* noteContent is reserved for future preview tooltip */}
       <span className="hidden">{noteContent.slice(0, 0)}{noteId.slice(0, 0)}</span>
     </>
   )
