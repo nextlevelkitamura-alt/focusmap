@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
 import type { TimeBlock } from "@/lib/time-block"
+import { MEMO_DRAG_MIME } from "@/lib/calendar-constants"
 
 // --- Constants ---
 const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
@@ -179,6 +180,79 @@ export function TodayTimelineCalendar({
     const handleDrop = useCallback((item: DragItem, newStart: Date, newEnd: Date) => {
         onDragDrop?.(item, newStart, newEnd)
     }, [onDragDrop])
+
+    // メモカード（HTML5 native draggable）からのドロップ受信
+    const [memoDragOver, setMemoDragOver] = useState<{ topPx: number; durationMinutes: number; title: string; startTime: Date } | null>(null)
+
+    const isMemoDragEvent = useCallback((e: React.DragEvent): boolean => {
+        if (e.dataTransfer.types.includes(MEMO_DRAG_MIME)) return true
+        if (typeof window !== "undefined" && window.__focusmapMemoDrag) return true
+        return false
+    }, [])
+
+    const extractMemoPayload = useCallback((e: React.DragEvent): { memoId: string; durationMinutes: number; title: string } | null => {
+        const raw = e.dataTransfer.getData(MEMO_DRAG_MIME)
+        if (raw) {
+            try { return JSON.parse(raw) } catch { /* fall through */ }
+        }
+        const plain = e.dataTransfer.getData("text/plain")
+        if (plain.startsWith("__focusmap_memo__")) {
+            try { return JSON.parse(plain.slice("__focusmap_memo__".length)) } catch { /* fall through */ }
+        }
+        return window.__focusmapMemoDrag ?? null
+    }, [])
+
+    const computeSnappedStartFromY = useCallback((clientY: number): Date | null => {
+        const grid = gridRef.current
+        if (!grid) return null
+        const rect = grid.getBoundingClientRect()
+        const scrollTop = grid.scrollTop
+        const yInGrid = clamp(clientY - rect.top + scrollTop, 0, TOTAL_HEIGHT)
+        const rawMinutes = (yInGrid / TOTAL_HEIGHT) * 24 * 60
+        const snapped = clamp(Math.round(rawMinutes / QUICK_CREATE_MINUTES) * QUICK_CREATE_MINUTES, 0, 24 * 60 - QUICK_CREATE_MINUTES)
+        const base = selectedDate ?? new Date()
+        const start = new Date(base)
+        start.setHours(0, 0, 0, 0)
+        start.setMinutes(snapped)
+        return start
+    }, [selectedDate])
+
+    const handleMemoDragOver = useCallback((e: React.DragEvent) => {
+        if (!isMemoDragEvent(e)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = "move"
+        const drag = window.__focusmapMemoDrag
+        const start = computeSnappedStartFromY(e.clientY)
+        if (!drag || !start) return
+        const startMin = start.getHours() * 60 + start.getMinutes()
+        const topPx = (startMin / (24 * 60)) * TOTAL_HEIGHT
+        setMemoDragOver({
+            topPx,
+            durationMinutes: drag.durationMinutes,
+            title: drag.title,
+            startTime: start,
+        })
+    }, [isMemoDragEvent, computeSnappedStartFromY])
+
+    const handleMemoDrop = useCallback((e: React.DragEvent) => {
+        if (!isMemoDragEvent(e)) return
+        e.preventDefault()
+        const drag = extractMemoPayload(e)
+        const start = computeSnappedStartFromY(e.clientY)
+        setMemoDragOver(null)
+        window.__focusmapMemoDrag = null
+        const handler = typeof window !== "undefined" ? window.__focusmapMemoDropHandler : undefined
+        if (handler && drag && start) {
+            void handler(drag.memoId, start, drag.durationMinutes)
+        }
+    }, [isMemoDragEvent, extractMemoPayload, computeSnappedStartFromY])
+
+    // ドラッグ操作終了時にプレビューをクリア（drop されなくても消す）
+    useEffect(() => {
+        const clear = () => setMemoDragOver(null)
+        window.addEventListener("dragend", clear)
+        return () => window.removeEventListener("dragend", clear)
+    }, [])
 
     const { dragState, createItemTouchHandlers } = useTouchDrag({
         gridRef,
@@ -737,6 +811,9 @@ export function TodayTimelineCalendar({
                         onPointerUp={handleGridPointerUp}
                         onPointerCancel={handleGridPointerCancel}
                         onClickCapture={handleGridClickCapture}
+                        onDragOver={handleMemoDragOver}
+                        onDrop={handleMemoDrop}
+                        onDragLeave={() => { /* dragover が連続発火するため drop / dragend でクリア */ }}
                     >
                         {/* Gutter: 右端の余白エリア（予定が重なっていてもここからドラッグで追加可能） */}
                         <div
@@ -744,6 +821,22 @@ export function TodayTimelineCalendar({
                             style={{ right: 0, width: GUTTER_WIDTH }}
                             aria-hidden="true"
                         />
+
+                        {/* メモ D&D プレビュー枠（所要時間分の縦長半透明枠） */}
+                        {memoDragOver && (
+                            <div
+                                className="absolute left-0 right-2 pointer-events-none z-30 rounded-md bg-amber-400/25 border-2 border-dashed border-amber-500/70"
+                                style={{
+                                    top: memoDragOver.topPx,
+                                    height: (memoDragOver.durationMinutes / 60) * HOUR_HEIGHT,
+                                }}
+                            >
+                                <div className="bg-amber-500 text-white text-[11px] px-2 py-0.5 inline-block m-1 rounded-md shadow font-medium">
+                                    {format(memoDragOver.startTime, "HH:mm")}・{memoDragOver.durationMinutes}分
+                                    <span className="ml-1 opacity-90">{memoDragOver.title}</span>
+                                </div>
+                            </div>
+                        )}
                         {/* Hour Grid Lines */}
                         {HOURS.map((hour) => (
                             <div

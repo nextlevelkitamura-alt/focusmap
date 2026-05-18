@@ -987,24 +987,26 @@ export function DashboardClient({
                     "hidden md:flex",
                     (activeView === 'ai' || activeView === 'ideal' || activeView === 'ai-todos' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
                 )}>
-                {/* Toggle Button (Always visible on left top) */}
-                <div className={cn(
-                    "absolute top-4 z-50 hidden md:flex transition-all duration-300 ease-in-out",
-                    isLeftSidebarCollapsed ? "left-4" : "left-[220px]"
-                )}>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={toggleLeftSidebar}
-                        className="h-8 w-8 rounded-full bg-background border shadow-sm hover:bg-muted"
-                    >
-                        {isLeftSidebarCollapsed ? (
-                            <ChevronRight className="h-4 w-4" />
-                        ) : (
-                            <ChevronLeft className="h-4 w-4" />
-                        )}
-                    </Button>
-                </div>
+                {/* Toggle Button (Today タブでは非表示。サイドバーが常に折りたたまれているため不要) */}
+                {activeView !== 'today' && (
+                    <div className={cn(
+                        "absolute top-4 z-50 hidden md:flex transition-all duration-300 ease-in-out",
+                        isLeftSidebarCollapsed ? "left-4" : "left-[220px]"
+                    )}>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={toggleLeftSidebar}
+                            className="h-8 w-8 rounded-full bg-background border shadow-sm hover:bg-muted"
+                        >
+                            {isLeftSidebarCollapsed ? (
+                                <ChevronRight className="h-4 w-4" />
+                            ) : (
+                                <ChevronLeft className="h-4 w-4" />
+                            )}
+                        </Button>
+                    </div>
+                )}
 
                 {/* Pane 1: Left Sidebar */}
                 <div
