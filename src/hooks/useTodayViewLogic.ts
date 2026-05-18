@@ -185,22 +185,6 @@ export function useTodayViewLogic({
         calendarIds: selectedCalendarIds,
     })
 
-    // メモ→カレンダー D&D 用に楽観追加/削除を window 経由で公開
-    // （TodayMemoBoard は別ツリーなので props で渡せない）
-    useEffect(() => {
-        if (typeof window === "undefined") return
-        window.__focusmapAddOptimisticEvent = addOptimisticEvent
-        window.__focusmapRemoveOptimisticEvent = removeOptimisticEvent
-        return () => {
-            if (window.__focusmapAddOptimisticEvent === addOptimisticEvent) {
-                window.__focusmapAddOptimisticEvent = undefined
-            }
-            if (window.__focusmapRemoveOptimisticEvent === removeOptimisticEvent) {
-                window.__focusmapRemoveOptimisticEvent = undefined
-            }
-        }
-    }, [addOptimisticEvent, removeOptimisticEvent])
-
     // selectedDate のイベントだけ抽出
     const fetchedCalendarEvents = useMemo(() => {
         return allFetchedEvents.filter(e => {

@@ -6,15 +6,13 @@ import type { IdealGoalWithItems, Project } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { WishlistCard } from "@/components/wishlist/wishlist-card"
-import { broadcastCalendarSync, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+import {
+  broadcastCalendarSync,
+  invalidateCalendarCache,
+  broadcastCalendarOptimisticEvent,
+  broadcastCalendarOptimisticEventRemoval,
+} from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
-
-declare global {
-  interface Window {
-    __focusmapAddOptimisticEvent?: (event: CalendarEvent) => void
-    __focusmapRemoveOptimisticEvent?: (eventId: string, googleEventId?: string) => void
-  }
-}
 
 type MemoItem = IdealGoalWithItems
 
@@ -109,7 +107,8 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         background_color: calendarColor,
         sync_status: "pending",
       }
-      window.__focusmapAddOptimisticEvent?.(optimisticEvent)
+      // 全 useCalendarEvents インスタンス（DesktopTodayPanel 含む）に即時反映
+      broadcastCalendarOptimisticEvent(optimisticEvent)
 
       try {
         const res = await fetch(`/api/wishlist/${memoId}/calendar`, {
@@ -125,7 +124,8 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) throw new Error(data.error || "カレンダー追加に失敗しました")
-        window.__focusmapAddOptimisticEvent?.({
+        // 本物の google_event_id で再 broadcast → 同じ id の楽観イベントが置き換わる
+        broadcastCalendarOptimisticEvent({
           ...optimisticEvent,
           google_event_id: data.google_event_id ?? optimisticEvent.google_event_id,
           calendar_id: data.calendar_id ?? calendarId,
@@ -138,7 +138,7 @@ export function TodayMemoBoard({ projects }: TodayMemoBoardProps) {
         void fetchItems()
       } catch (e) {
         // ロールバック: 楽観イベント削除＋メモ一覧復元
-        window.__focusmapRemoveOptimisticEvent?.(tempId)
+        broadcastCalendarOptimisticEventRemoval(tempId)
         setItems(prev)
         setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
       }
