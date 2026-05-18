@@ -133,6 +133,22 @@ export function WishlistCard({
     e.dataTransfer.setData("text/plain", `__focusmap_memo__${serialized}`)
     e.dataTransfer.effectAllowed = "move"
     window.__focusmapMemoDrag = payload
+
+    // コンパクトなドラッグゴースト（タイトル + 所要時間の pill）
+    // 既存パターン: center-pane-task-item.tsx
+    const ghost = document.createElement("div")
+    ghost.style.cssText = "position:fixed;top:-9999px;left:0;pointer-events:none;"
+    ghost.className = "px-3 py-1.5 rounded-md shadow-lg text-xs font-medium text-white bg-amber-500 flex items-center gap-1.5 whitespace-nowrap"
+    const safeTitle = (item.title ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] ?? c))
+    ghost.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span>${safeTitle}</span>
+      <span style="opacity:0.85">・${effectiveDuration}分</span>
+    `
+    document.body.appendChild(ghost)
+    e.dataTransfer.setDragImage(ghost, 12, 16)
+    // dragstart 完了後すぐ DOM から除去（ブラウザがゴースト画像を内部キャプチャ済み）
+    setTimeout(() => ghost.remove(), 0)
   }
   const handleNativeDragEnd = () => {
     if (!nativeMemoDrag) return
