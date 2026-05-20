@@ -147,7 +147,7 @@ if [ -f "$PLIST_DST" ]; then
 else
   if [ -f "$PLIST_SRC" ]; then
     # plist 内のパスを現在のプロジェクトディレクトリに合わせる
-    sed "s|/Users/kitamuranaohiro/Private/P dev/focusmap|$PROJECT_DIR|g" "$PLIST_SRC" > /tmp/$PLIST_NAME
+    sed "s|/Users/kitamuranaohiro/Private/focusmap|$PROJECT_DIR|g" "$PLIST_SRC" > /tmp/$PLIST_NAME
 
     # ユーザー名も更新
     CURRENT_USER=$(whoami)

@@ -26,7 +26,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/run-codex-app-server.sh</string>
+    <string>/Users/kitamuranaohiro/Private/focusmap/scripts/run-codex-app-server.sh</string>
   </array>
 
   <!-- 起動失敗時は自動再起動 -->

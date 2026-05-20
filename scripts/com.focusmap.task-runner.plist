@@ -28,7 +28,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/run-task-runner.sh</string>
+    <string>/Users/kitamuranaohiro/Private/focusmap/scripts/run-task-runner.sh</string>
   </array>
 
   <!-- 毎15秒ごとに実行（応答速度優先） -->
@@ -37,7 +37,7 @@
 
   <!-- 作業ディレクトリ -->
   <key>WorkingDirectory</key>
-  <string>/Users/kitamuranaohiro/Private/P dev/focusmap</string>
+  <string>/Users/kitamuranaohiro/Private/focusmap</string>
 
   <!-- 環境変数（.env.local に書かない場合はここで設定） -->
   <!--
@@ -51,10 +51,10 @@
   -->
 
   <key>StandardOutPath</key>
-  <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/task-runner.log</string>
+  <string>/Users/kitamuranaohiro/Private/focusmap/scripts/task-runner.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/kitamuranaohiro/Private/P dev/focusmap/scripts/task-runner.err</string>
+  <string>/Users/kitamuranaohiro/Private/focusmap/scripts/task-runner.err</string>
 
   <!-- Mac 起動時に自動スタート -->
   <key>RunAtLoad</key>

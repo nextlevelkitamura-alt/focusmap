@@ -118,7 +118,7 @@ Macに最初から入っているQuickTime Playerで十分。
 
 各ステージの **直前にやること** → **録画開始** → **画面で何をするか** → **録画停止** → **ファイル名を付けて移動** の流れ。
 
-ファイルの保存先は `/Users/kitamuranaohiro/Private/P dev/focusmap/.claude/worktrees/frosty-elgamal-890b01/docs/oauth-verification-assets/raw/` （絶対パス）
+ファイルの保存先は `/Users/kitamuranaohiro/Private/focusmap/.claude/worktrees/frosty-elgamal-890b01/docs/oauth-verification-assets/raw/` （絶対パス）
 
 ---
 
