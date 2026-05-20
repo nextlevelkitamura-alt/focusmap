@@ -8,6 +8,7 @@ import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { WishlistCard } from "@/components/wishlist/wishlist-card"
 import {
   broadcastCalendarSync,
+  broadcastEventCompletion,
   invalidateCalendarCache,
   broadcastCalendarOptimisticEvent,
   broadcastCalendarOptimisticEventRemoval,
@@ -16,6 +17,21 @@ import { useCalendars } from "@/hooks/useCalendars"
 import { cn } from "@/lib/utils"
 
 type MemoItem = IdealGoalWithItems
+
+function toTokyoDateString(value: string | null | undefined): string {
+  const date = value ? new Date(value) : new Date()
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(safeDate)
+  const year = parts.find(part => part.type === "year")?.value
+  const month = parts.find(part => part.type === "month")?.value
+  const day = parts.find(part => part.type === "day")?.value
+  return year && month && day ? `${year}-${month}-${day}` : safeDate.toISOString().slice(0, 10)
+}
 
 interface TodayMemoBoardProps {
   projects: Project[]
@@ -203,10 +219,42 @@ export function TodayMemoBoard({
   }, [focusedItem, todayItems])
 
   // 楽観更新付き PATCH（wishlist-view と同等の最小版）
+  const syncLinkedCalendarCompletion = useCallback(async (item: MemoItem, isCompleted: boolean) => {
+    if (!item.google_event_id) return
+    const response = await fetch("/api/calendar/events/complete", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        google_event_id: item.google_event_id,
+        calendar_id: targetCalendar?.google_calendar_id ?? "primary",
+        completed_date: toTokyoDateString(item.scheduled_at),
+        start_time: item.scheduled_at ?? new Date().toISOString(),
+        is_completed: isCompleted,
+      }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data.success === false) {
+      throw new Error(data.error || "カレンダー完了状態の更新に失敗しました")
+    }
+  }, [targetCalendar])
+
   const handleUpdate = useCallback(async (id: string, updates: Partial<MemoItem>) => {
     const prev = items
+    const target = items.find(it => it.id === id)
+    const currentCompleted = !!target && (target.is_completed || target.memo_status === "completed")
+    const nextCompleted = typeof updates.is_completed === "boolean" ? updates.is_completed : null
+    const shouldSyncCalendarCompletion =
+      !!target?.google_event_id &&
+      nextCompleted !== null &&
+      nextCompleted !== currentCompleted
+
     setItems(curr => curr.map(it => it.id === id ? { ...it, ...updates, updated_at: new Date().toISOString() } : it))
     try {
+      if (target && shouldSyncCalendarCompletion) {
+        broadcastEventCompletion(target.google_event_id!, nextCompleted!, target.google_event_id!)
+        await syncLinkedCalendarCompletion(target, nextCompleted!)
+      }
+
       const res = await fetch(`/api/wishlist/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -217,13 +265,23 @@ export function TodayMemoBoard({
       if (data.item) {
         setItems(curr => curr.map(it => it.id === id ? (data.item as MemoItem) : it))
       }
+      if (shouldSyncCalendarCompletion) {
+        invalidateCalendarCache()
+        broadcastCalendarSync()
+      }
       // 他画面（メモ画面）にも反映
       window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
     } catch (e) {
+      if (target && shouldSyncCalendarCompletion) {
+        broadcastEventCompletion(target.google_event_id!, currentCompleted, target.google_event_id!)
+        syncLinkedCalendarCompletion(target, currentCompleted).catch(err => {
+          console.warn("[TodayMemoBoard] Failed to rollback linked calendar completion:", err)
+        })
+      }
       setItems(prev)
       setError(e instanceof Error ? e.message : "メモの更新に失敗しました")
     }
-  }, [items])
+  }, [items, syncLinkedCalendarCompletion])
 
   const handleDelete = useCallback(async (id: string) => {
     const prev = items

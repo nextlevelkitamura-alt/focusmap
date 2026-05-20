@@ -52,14 +52,35 @@ export async function PATCH(request: NextRequest) {
     updateQuery = updateQuery.eq('calendar_id', calendar_id);
   }
 
-  const { data: updatedRows, error } = await updateQuery.select('id, calendar_id');
+  const updateResult = await updateQuery.select('id, calendar_id');
+  let updatedRows = updateResult.data;
+  const error = updateResult.error;
 
   if (error) {
     console.error('[events/complete] Update failed:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 
-  const completionCalendarId = calendar_id || updatedRows?.[0]?.calendar_id;
+  // メモ由来の予定は ideal_goals 側に calendar_id を保持していないため、
+  // クライアントが送った calendar_id が現在の保存先とずれることがある。
+  // その場合も google_event_id を正として実レコードを更新する。
+  if (calendar_id && (!updatedRows || updatedRows.length === 0)) {
+    const retry = await supabase
+      .from('calendar_events')
+      .update({ is_completed })
+      .eq('user_id', user.id)
+      .eq('google_event_id', google_event_id)
+      .select('id, calendar_id');
+
+    if (retry.error) {
+      console.error('[events/complete] Retry update failed:', retry.error);
+      return NextResponse.json({ success: false, error: retry.error.message }, { status: 500 });
+    }
+
+    updatedRows = retry.data;
+  }
+
+  const completionCalendarId = updatedRows?.[0]?.calendar_id || calendar_id;
 
   if (is_completed) {
     if (!completionCalendarId) {
@@ -83,16 +104,12 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: completionError.message }, { status: 500 });
     }
   } else {
-    let completionDeleteQuery = supabase
+    const completionDeleteQuery = supabase
       .from('event_completions')
       .delete()
       .eq('user_id', user.id)
       .eq('google_event_id', google_event_id)
       .eq('completed_date', normalizedCompletedDate);
-
-    if (completionCalendarId) {
-      completionDeleteQuery = completionDeleteQuery.eq('calendar_id', completionCalendarId);
-    }
 
     const { error: completionError } = await completionDeleteQuery;
 

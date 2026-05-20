@@ -177,10 +177,10 @@ export function broadcastCalendarOptimisticEventRemoval(eventId: string, googleE
 }
 
 /** イベント完了状態の変更を即時ブロードキャスト（API ラウンドトリップ不要） */
-export function broadcastEventCompletion(eventId: string, isCompleted: boolean) {
+export function broadcastEventCompletion(eventId: string, isCompleted: boolean, googleEventId?: string) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EVENT_COMPLETION_EVENT, {
-      detail: { eventId, isCompleted },
+      detail: { eventId, googleEventId, isCompleted },
     }));
   }
 }

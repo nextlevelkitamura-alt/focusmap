@@ -210,9 +210,13 @@ export function useTodayViewLogic({
     useEffect(() => {
         if (typeof window === 'undefined') return
         const handler = (e: Event) => {
-            const { eventId, isCompleted } = (e as CustomEvent<{ eventId: string; isCompleted: boolean }>).detail
+            const detail = (e as CustomEvent<{ eventId?: string; googleEventId?: string; isCompleted: boolean }>).detail
+            const { eventId, googleEventId, isCompleted } = detail
+            const ids = new Set([eventId, googleEventId].filter((id): id is string => !!id))
+            if (typeof isCompleted !== 'boolean') return
+            if (ids.size === 0) return
             setLocalCalendarEvents(prev => prev.map(ev =>
-                ev.id === eventId ? { ...ev, is_completed: isCompleted } : ev
+                ids.has(ev.id) || ids.has(ev.google_event_id) ? { ...ev, is_completed: isCompleted } : ev
             ))
         }
         window.addEventListener(EVENT_COMPLETION_EVENT, handler)
