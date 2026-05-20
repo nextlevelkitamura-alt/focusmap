@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import {
   StickyNote, Send, Loader2,
   Sparkles, Mic, Square, Calendar, Map, Trash2,
-  FolderOpen, ChevronRight, ChevronDown, Check, X, ImagePlus,
+  FolderOpen, ChevronRight, ChevronDown, Check, X, ImagePlus, CheckCircle2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -104,6 +104,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null)
   const [editingProjectNoteId, setEditingProjectNoteId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [showArchivedNotes, setShowArchivedNotes] = useState(false)
 
   // インライン提案
   const [proposal, setProposal] = useState<InlineProposal | null>(null)
@@ -244,6 +245,7 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
 
   // フィルタリング
   const filteredNotes = notes.filter(note => {
+    if (!showArchivedNotes && note.status === 'archived') return false
     if (!selectedProjectId) return true
     if (selectedProjectId === "__unassigned__") return !note.project_id
     return note.project_id === selectedProjectId
@@ -663,6 +665,16 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
               </div>
             </PopoverContent>
           </Popover>
+
+          <Button
+            variant={showArchivedNotes ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setShowArchivedNotes(prev => !prev)}
+            className="h-8 gap-1.5 text-xs shrink-0"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            使用済み
+          </Button>
         </div>
       </div>
 
@@ -1145,10 +1157,10 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
           <div className="text-center text-muted-foreground py-8">
             <StickyNote className="w-12 h-12 mx-auto mb-2 opacity-30" />
             <p className="text-sm">
-              {notes.length === 0 ? "まだメモがありません" : "該当するメモがありません"}
+              {notes.length === 0 ? "まだメモがありません" : "該当する未使用メモがありません"}
             </p>
             <p className="text-xs mt-1">
-              {notes.length === 0 ? "テキストまたは音声でメモを入力してみましょう" : "プロジェクトフィルタを変更してみてください"}
+              {notes.length === 0 ? "テキストまたは音声でメモを入力してみましょう" : "フィルタまたは使用済み表示を変更してみてください"}
             </p>
           </div>
         ) : (
@@ -1191,6 +1203,11 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
                       {note.ai_analysis && (
                         <span className="text-xs px-1.5 py-0.5 bg-primary/10 text-primary rounded">
                           <Sparkles className="w-3 h-3 inline mr-0.5" />分析済
+                        </span>
+                      )}
+                      {note.status === 'archived' && (
+                        <span className="text-xs px-1.5 py-0.5 bg-muted text-muted-foreground rounded">
+                          利用済み
                         </span>
                       )}
 

@@ -1,0 +1,30 @@
+# Focusmap API Docs for LLMs
+
+Focusmap is an AI-managed dashboard. This LLM entrypoint documents the SNS note workflow used to turn Focusmap notes into social post ideas and spreadsheet/posting workflow inputs.
+
+## Recommended Reading Order
+
+- [SNS notes full guide](/llms-full.txt): Agent-readable operational guide for the SNS投稿 note workflow.
+- [OpenAPI spec](/openapi.json): Machine-readable API contract for `/api/v1/notes`.
+
+## Core Workflow
+
+1. Read unused SNS notes:
+   `GET /api/v1/notes?project_title=SNS投稿&status=pending&limit=50`
+2. Use each note as source material for post drafts, spreadsheet analysis, or posting ledger inputs.
+3. Mark notes that were actually used:
+   `PATCH /api/v1/notes` with `{ "id": "note-id", "used": true }`
+
+## Auth
+
+Use a Bearer API key.
+
+- `notes:read`: required to read notes.
+- `notes:write`: required to create notes or mark notes used.
+
+## Important Semantics
+
+- `status=pending` means unused source material.
+- `used=true` maps to `status=archived`.
+- `archived` means "used as SNS source material"; it does not mean deleted.
+- `used=false` restores a note to `status=pending`.
