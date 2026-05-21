@@ -2,7 +2,6 @@ import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { MindmapDraftSchema, type MindmapDraftNode } from '@/lib/ai/memo-to-mindmap'
-import { createProjectContextFolder } from '@/lib/ai/context/create-project-context'
 
 // POST /api/ai/memo-to-mindmap/commit — ドラフトを tasks ツリーとして保存し、メモを紐付ける
 export async function POST(request: Request) {
@@ -71,10 +70,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: projectError?.message || 'プロジェクト作成に失敗しました' }, { status: 500 })
       }
       projectId = newProject.id
-      // AIコンテキストフォルダを自動作成（失敗してもコミットは成功扱い）
-      createProjectContextFolder(supabase, user.id, projectId, projectTitle).catch(err => {
-        console.error('[memo-to-mindmap/commit] context folder 作成失敗:', err)
-      })
     }
 
     // --- ドラフト → tasks 行へ変換 ---

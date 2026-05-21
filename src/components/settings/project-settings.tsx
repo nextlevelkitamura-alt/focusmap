@@ -1,12 +1,13 @@
 "use client"
 
 import { useMemo, useState, type ReactNode } from "react"
-import { ChevronDown, FolderKanban, Layers, Loader2, Pipette, Tags, Terminal } from "lucide-react"
+import { ChevronDown, FileText, FolderKanban, Layers, Loader2, Pipette, Tags, Terminal } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useTagColors } from "@/hooks/useTagColors"
 import { COLOR_PRESETS, DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
 import { RepoPicker } from "./repo-picker"
 import { ScanSettingsSection } from "./scan-settings-section"
+import { ProjectContextChatDialog } from "@/components/projects/project-context-chat-dialog"
 
 interface ProjectSettingsProps {
   initialProjects: Project[]
@@ -17,6 +18,7 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
   const [projects, setProjects] = useState(initialProjects)
   const [spaces, setSpaces] = useState(initialSpaces)
   const [savingKey, setSavingKey] = useState<string | null>(null)
+  const [descProject, setDescProject] = useState<Project | null>(null)
   const { tags, tagColors, isLoadingTags, saveTagColor } = useTagColors()
 
   const sortedProjects = useMemo(() => [...projects].sort((a, b) => a.title.localeCompare(b.title, "ja")), [projects])
@@ -155,7 +157,54 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
       </p>
     </div>
 
+    <div id="project-descriptions">
+      <h3 className="px-4 pt-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+        <FileText className="h-3 w-3" />
+        プロジェクトの説明
+      </h3>
+      {sortedProjects.length === 0 ? (
+        <div className="mx-1 rounded-2xl bg-card flex min-h-[64px] items-center justify-center text-sm text-muted-foreground">
+          プロジェクトがありません
+        </div>
+      ) : (
+        <div className="mx-1 rounded-2xl bg-card overflow-hidden divide-y divide-border/40">
+          {sortedProjects.map(project => (
+            <button
+              key={project.id}
+              onClick={() => setDescProject(project)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate">{project.title}</div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {project.description?.trim() || "説明がありません — タップして追加"}
+                </div>
+              </div>
+              <ChevronDown className="h-4 w-4 -rotate-90 text-muted-foreground shrink-0" />
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="px-5 pt-1.5 text-[11px] text-muted-foreground leading-4">
+        AIがプロジェクトを理解し、メモを正しく振り分けるための説明です。チャットで伝えると育ちます。
+      </p>
+    </div>
+
     <ScanSettingsSection />
+
+    {descProject && (
+      <ProjectContextChatDialog
+        open={!!descProject}
+        projectId={descProject.id}
+        projectTitle={descProject.title}
+        initialDescription={descProject.description ?? ""}
+        onClose={() => setDescProject(null)}
+        onUpdated={(description) => {
+          setProjects(prev => prev.map(p => p.id === descProject.id ? { ...p, description } : p))
+          setDescProject(prev => prev ? { ...prev, description } : prev)
+        }}
+      />
+    )}
     </div>
   )
 }
