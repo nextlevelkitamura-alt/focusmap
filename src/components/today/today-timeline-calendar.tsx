@@ -12,6 +12,7 @@ import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
 import type { TimeBlock } from "@/lib/time-block"
 import { MEMO_DRAG_MIME } from "@/lib/calendar-constants"
+import { calculateTodayTimelineLayout } from "@/lib/today-timeline-layout"
 
 // --- Constants ---
 const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
@@ -437,47 +438,12 @@ export function TodayTimelineCalendar({
         return d.getTime() === today.getTime()
     }, [currentTime, selectedDate])
 
-    // Calculate event layout (handle overlapping)
+    // Calculate item layout (handle overlapping)
     const layoutItems = useMemo(() => {
-        const items = timelineItems.map(item => {
-            const top = getTopPx(item.startTime)
-            let height = getHeightPx(item.startTime, item.endTime)
-            // 24:00（TOTAL_HEIGHT）を超えないようにクランプ
-            if (top + height > TOTAL_HEIGHT) {
-                height = Math.max(TOTAL_HEIGHT - top, HOUR_HEIGHT * 0.4)
-            }
-            return { ...item, top, height }
+        return calculateTodayTimelineLayout(timelineItems, {
+            totalHeight: TOTAL_HEIGHT,
+            minHeight: HOUR_HEIGHT * 0.4,
         })
-
-        // Simple overlap detection: assign columns
-        const result: (typeof items[number] & { column: number; totalColumns: number })[] = []
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i]
-            const itemEnd = item.top + item.height
-
-            // Find overlapping items already placed
-            const overlapping = result.filter(r => {
-                const rEnd = r.top + r.height
-                return r.top < itemEnd && rEnd > item.top
-            })
-
-            const usedColumns = new Set(overlapping.map(r => r.column))
-            let column = 0
-            while (usedColumns.has(column)) column++
-
-            result.push({ ...item, column, totalColumns: 1 })
-
-            // Update totalColumns for all overlapping
-            const group = [...overlapping, { ...item, column, totalColumns: 1 }]
-            const maxCol = Math.max(...group.map(g => g.column)) + 1
-            for (const r of result) {
-                if (group.some(g => g === r || (g.source === r.source && g.id === r.id))) {
-                    r.totalColumns = maxCol
-                }
-            }
-        }
-
-        return result
     }, [timelineItems])
 
     // 日付をまたぐアイテムは today-view.tsx 側でクランプ済み
@@ -1131,7 +1097,7 @@ function EventBlock({
         <div
             onClick={onTap}
             className={cn(
-                "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+                "h-full min-w-0 rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isNow && "ring-1",
                 isDone && "opacity-50",
@@ -1145,7 +1111,7 @@ function EventBlock({
             data-syncing={isPendingSync || undefined}
         >
             {isCompact ? (
-                <div className="flex items-center gap-1.5 h-full">
+                <div className="flex items-center gap-1.5 h-full min-w-0">
                     {onToggle && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onToggle() }}
@@ -1160,7 +1126,7 @@ function EventBlock({
                         </button>
                     )}
                     <span className={cn(
-                        "text-[11px] font-medium truncate flex-1",
+                        "text-[11px] font-medium truncate flex-1 min-w-0 max-w-full",
                         isDone ? "line-through text-muted-foreground" : "text-foreground"
                     )}>
                         {event.title}
@@ -1188,7 +1154,7 @@ function EventBlock({
                 </div>
             ) : (
                 <>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 min-w-0">
                         {onToggle && (
                             <button
                                 onClick={(e) => { e.stopPropagation(); onToggle() }}
@@ -1204,13 +1170,16 @@ function EventBlock({
                         )}
                         <span
                             className={cn(
-                                "text-[11px] font-medium leading-tight break-words flex-1",
+                                "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
                                 isDone ? "line-through text-muted-foreground" : "text-foreground",
                                 eventTitleLines === 1
                                     ? "truncate"
                                     : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal"
                             )}
-                            style={eventTitleLines > 1 ? { WebkitLineClamp: eventTitleLines } : undefined}
+                            style={{
+                                overflowWrap: "anywhere",
+                                ...(eventTitleLines > 1 ? { WebkitLineClamp: eventTitleLines } : {}),
+                            }}
                         >
                             {event.title}
                         </span>
@@ -1319,7 +1288,7 @@ function TaskBlock({
             data-syncing={isSyncing || undefined}
             data-sync-failed={isSyncFailed || undefined}
             className={cn(
-                "h-full rounded-md border-l-3 px-2 py-1 overflow-hidden transition-all duration-300 ease-out",
+                "h-full min-w-0 rounded-md border-l-3 px-2 py-1 overflow-hidden transition-all duration-300 ease-out",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isRunning && "ring-1",
                 isDone && !isRunning && "opacity-40",
@@ -1329,7 +1298,7 @@ function TaskBlock({
             style={finalStyle}
         >
             {isCompact ? (
-                <div className="flex items-center gap-1.5 h-full">
+                <div className="flex items-center gap-1.5 h-full min-w-0">
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
                         aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
@@ -1342,7 +1311,7 @@ function TaskBlock({
                         )}
                     </button>
                     <span className={cn(
-                        "text-[11px] font-medium truncate",
+                        "text-[11px] font-medium truncate flex-1 min-w-0 max-w-full",
                         isDone ? "line-through text-muted-foreground" : "text-foreground"
                     )}>
                         {task.title}
@@ -1403,13 +1372,16 @@ function TaskBlock({
                             </button>
                             <span
                                 className={cn(
-                                    "text-[11px] font-medium leading-tight break-words",
+                                    "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
                                     titleLines === 1
                                         ? "truncate"
                                         : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
                                     isDone ? "line-through text-muted-foreground" : "text-foreground"
                                 )}
-                                style={titleLines > 1 ? { WebkitLineClamp: titleLines } : undefined}
+                                style={{
+                                    overflowWrap: "anywhere",
+                                    ...(titleLines > 1 ? { WebkitLineClamp: titleLines } : {}),
+                                }}
                             >
                                 {task.title}
                             </span>
