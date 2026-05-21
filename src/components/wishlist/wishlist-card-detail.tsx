@@ -180,6 +180,7 @@ export function WishlistCardDetail({
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const draftSourceIdRef = useRef<string | null>(null)
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
   const categoryOptions = useMemo(() => {
@@ -197,12 +198,22 @@ export function WishlistCardDetail({
     setImages((attachments ?? []).filter((attachment: MemoImage) => attachment.file_type?.startsWith("image/")))
   }, [item?.id, open])
 
+  const itemId = item?.id ?? null
+  const itemTitle = item?.title ?? ""
+  const itemDescription = item?.description ?? ""
+
   useEffect(() => {
-    if (!item || !open) return
-    setDraftTitle(item.title)
-    setDraftDescription(item.description ?? "")
+    if (!open || !itemId) {
+      draftSourceIdRef.current = null
+      return
+    }
+    if (draftSourceIdRef.current === itemId) return
+
+    draftSourceIdRef.current = itemId
+    setDraftTitle(itemTitle)
+    setDraftDescription(itemDescription)
     setSaveError(null)
-  }, [item, open])
+  }, [itemId, itemTitle, itemDescription, open])
 
   useEffect(() => {
     loadImages()
