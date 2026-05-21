@@ -1,8 +1,7 @@
 import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
-import { SettingsHeader } from "@/components/settings/settings-header"
+import { SettingsShell } from "@/components/settings/settings-shell"
 import { CalendarSettings } from "@/components/dashboard/calendar-settings"
-import { NotificationSettings } from "@/components/notifications"
 
 export default async function IntegrationsSettingsPage() {
   const supabase = await createClient()
@@ -10,16 +9,14 @@ export default async function IntegrationsSettingsPage() {
   if (!user) redirect('/login')
 
   return (
-    <div className="flex-1 overflow-y-auto bg-background pb-12">
-      <SettingsHeader title="連携" />
-      <div className="space-y-6 pt-4">
-        <section id="calendar" className="scroll-mt-20">
-          <CalendarSettings />
-        </section>
-        <section id="notifications" className="scroll-mt-20">
-          <NotificationSettings />
-        </section>
-      </div>
-    </div>
+    <SettingsShell
+      title="連携"
+      description="今はGoogleカレンダーを中心に、連携アカウントと取り込み対象をまとめて管理します。"
+      className="max-w-[1120px]"
+    >
+      <section id="calendar" className="scroll-mt-20">
+        <CalendarSettings />
+      </section>
+    </SettingsShell>
   )
 }

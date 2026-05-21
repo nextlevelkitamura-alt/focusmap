@@ -172,15 +172,15 @@ export function ContextManager({ onBack }: ContextManagerProps) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      <div className="flex flex-1 items-center justify-center bg-[#111111] p-8">
+        <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-[#111111] p-8">
         <p className="text-sm text-destructive">{error}</p>
         <Button variant="outline" size="sm" onClick={loadData}>再読み込み</Button>
       </div>
@@ -190,10 +190,10 @@ export function ContextManager({ onBack }: ContextManagerProps) {
   const availableDocTypes = createDialog?.folderType === 'project' ? PROJECT_DOC_TYPES : PERSONAL_DOC_TYPES
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col bg-[#111111] text-zinc-100">
       {/* 新規ドキュメント作成ダイアログ */}
       <Dialog open={!!createDialog} onOpenChange={(open) => !open && setCreateDialog(null)}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="border-white/10 bg-[#202020] text-zinc-100 sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>ドキュメントを追加</DialogTitle>
           </DialogHeader>
@@ -220,7 +220,7 @@ export function ContextManager({ onBack }: ContextManagerProps) {
                 value={newDocTitle}
                 onChange={(e) => setNewDocTitle(e.target.value)}
                 placeholder={DOCUMENT_TYPE_LABELS[newDocType]}
-                className="w-full text-sm border rounded-md px-3 py-2 bg-background outline-none focus:ring-2 focus:ring-ring/50"
+                className="w-full rounded-md border border-white/10 bg-[#171717] px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:ring-2 focus:ring-blue-400/50"
                 onKeyDown={(e) => e.key === 'Enter' && handleConfirmCreate()}
               />
             </div>
@@ -235,59 +235,73 @@ export function ContextManager({ onBack }: ContextManagerProps) {
       </Dialog>
 
       {/* ヘッダー */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b">
-        <button onClick={onBack ?? (() => router.back())} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="w-4 h-4" />
+      <div className="flex min-h-16 items-center gap-3 border-b border-white/10 px-4 py-3 md:px-6">
+        <button onClick={onBack ?? (() => router.push('/dashboard/settings/ai'))} className="flex min-h-10 items-center gap-2 rounded-md text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+          <ArrowLeft className="h-4 w-4" />
+          <span className="hidden sm:inline">AI設定へ戻る</span>
         </button>
-        <Brain className="w-5 h-5 text-primary" />
-        <h2 className="text-lg font-semibold">コンテキスト管理</h2>
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-400/10 text-violet-200">
+          <Brain className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-zinc-50">AIコンテキスト管理</h2>
+          <p className="hidden text-xs text-zinc-500 sm:block">AIに渡す自分・プロジェクト情報を編集します</p>
+        </div>
       </div>
 
       {/* メインコンテンツ */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden p-4 md:p-6">
         {/* 左ペイン: フォルダツリー（デスクトップ常時表示、モバイルはエディタ非表示時） */}
-        <div className={`w-full md:w-64 md:border-r md:block ${mobileShowEditor ? 'hidden' : 'block'}`}>
-          <ScrollArea className="h-full">
-            <ContextFolderTree
-              folders={folders}
-              selectedDocId={selectedDoc?.id ?? null}
-              onSelectDocument={handleSelectDocument}
-              onCreateDocument={handleCreateDocument}
-            />
-          </ScrollArea>
-        </div>
-
-        {/* 右ペイン: ドキュメントエディタ */}
-        <div className={`flex-1 md:block ${mobileShowEditor ? 'block' : 'hidden md:block'}`}>
-          {selectedDoc ? (
-            <ContextDocumentEditor
-              key={selectedDoc.id}
-              document={selectedDoc}
-              onBack={handleBack}
-              onSave={handleSave}
-              onDelete={handleDelete}
-              onReview={handleReview}
-            />
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-6 gap-4 max-w-sm mx-auto">
-              <Brain className="w-12 h-12 opacity-20" />
-              <div className="text-center space-y-2">
-                <p className="text-sm font-medium text-foreground">
-                  AIがあなたを理解するための情報を管理
-                </p>
-                <p className="text-xs leading-relaxed">
-                  左のファイルを選択して、自分のことやプロジェクトの情報を入力してください。
-                  AIはここに保存された情報をもとに、あなたに合った提案をします。
-                </p>
-              </div>
-              <div className="bg-muted/50 rounded-lg p-3 text-xs space-y-1.5 w-full">
-                <p className="font-medium text-foreground">まずはここから:</p>
-                <p>1. 「性格・ライフスタイル」に働き方や生活リズムを記入</p>
-                <p>2. 「今の状況」に最近の状況や悩みを記入</p>
-                <p>3. AIチャットで話すだけでも自動的に学習します</p>
-              </div>
+        <div className="grid h-full gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <div className={`min-h-0 overflow-hidden rounded-xl border border-white/10 bg-[#202020] lg:block ${mobileShowEditor ? 'hidden' : 'block'}`}>
+            <div className="border-b border-white/10 px-4 py-3">
+              <p className="text-sm font-semibold text-zinc-100">フォルダ</p>
+              <p className="mt-1 text-xs text-zinc-500">自分の情報とプロジェクト情報</p>
             </div>
-          )}
+            <ScrollArea className="h-[calc(100%-57px)]">
+              <ContextFolderTree
+                folders={folders}
+                selectedDocId={selectedDoc?.id ?? null}
+                onSelectDocument={handleSelectDocument}
+                onCreateDocument={handleCreateDocument}
+              />
+            </ScrollArea>
+          </div>
+
+          {/* 右ペイン: ドキュメントエディタ */}
+          <div className={`min-h-0 overflow-hidden rounded-xl border border-white/10 bg-[#202020] lg:block ${mobileShowEditor ? 'block' : 'hidden lg:block'}`}>
+            {selectedDoc ? (
+              <ContextDocumentEditor
+                key={selectedDoc.id}
+                document={selectedDoc}
+                onBack={handleBack}
+                onSave={handleSave}
+                onDelete={handleDelete}
+                onReview={handleReview}
+              />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-5 p-6 text-zinc-500">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-400/10 text-violet-200">
+                  <Brain className="h-7 w-7" />
+                </div>
+                <div className="max-w-md space-y-2 text-center">
+                  <p className="text-sm font-medium text-zinc-100">
+                    AIがあなたを理解するための情報を管理
+                  </p>
+                  <p className="text-xs leading-6 text-zinc-500">
+                    左のファイルを選択して、自分のことやプロジェクトの情報を入力してください。
+                    AIはここに保存された情報をもとに、あなたに合った提案をします。
+                  </p>
+                </div>
+                <div className="w-full max-w-md rounded-xl border border-white/10 bg-[#171717] p-4 text-xs leading-5 text-zinc-400">
+                  <p className="font-medium text-zinc-100">まずはここから</p>
+                  <p className="mt-2">1. 「性格・ライフスタイル」に働き方や生活リズムを記入</p>
+                  <p>2. 「今の状況」に最近の状況や悩みを記入</p>
+                  <p>3. AIチャットで話すだけでも自動的に学習します</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

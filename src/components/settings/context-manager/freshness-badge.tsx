@@ -30,7 +30,7 @@ export function FreshnessBadge({ status, daysSinceUpdate, compact }: FreshnessBa
     <span className={`flex items-center gap-1.5 text-xs ${config.textColor}`}>
       <span className={`w-2 h-2 rounded-full ${config.dot}`} />
       <span>{config.label}</span>
-      <span className="text-muted-foreground">
+      <span className="text-zinc-500">
         {daysSinceUpdate === 0 ? '今日更新' : `${daysSinceUpdate}日前`}
       </span>
     </span>

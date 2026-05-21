@@ -1,6 +1,6 @@
 import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
-import { SettingsHeader } from "@/components/settings/settings-header"
+import { SettingsShell } from "@/components/settings/settings-shell"
 import { ProjectSettings } from "@/components/settings/project-settings"
 
 export default async function ProjectsSettingsPage() {
@@ -14,14 +14,15 @@ export default async function ProjectsSettingsPage() {
   ])
 
   return (
-    <div className="flex-1 overflow-y-auto bg-background pb-12">
-      <SettingsHeader title="プロジェクトとリポジトリ" />
-      <div className="pt-4">
-        <ProjectSettings
-          initialProjects={projectsResult.data ?? []}
-          initialSpaces={spacesResult.data ?? []}
-        />
-      </div>
-    </div>
+    <SettingsShell
+      title="プロジェクト"
+      description="プロジェクト、タグ、リポジトリ、ローカル実行設定をまとめて管理します。"
+      className="max-w-[1120px]"
+    >
+      <ProjectSettings
+        initialProjects={projectsResult.data ?? []}
+        initialSpaces={spacesResult.data ?? []}
+      />
+    </SettingsShell>
   )
 }

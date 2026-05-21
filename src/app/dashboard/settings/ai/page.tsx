@@ -1,6 +1,6 @@
 import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
-import { SettingsHeader } from "@/components/settings/settings-header"
+import { SettingsShell } from "@/components/settings/settings-shell"
 import { AiModelSettings } from "@/components/settings/ai-model-settings"
 import { AiContextSettings } from "@/components/settings/ai-context-settings"
 
@@ -10,9 +10,12 @@ export default async function AiSettingsPage() {
   if (!user) redirect('/login')
 
   return (
-    <div className="flex-1 overflow-y-auto bg-background pb-12">
-      <SettingsHeader title="AI" />
-      <div className="space-y-6 pt-4">
+    <SettingsShell
+      title="AI"
+      description="モデル選択と、AIが判断に使うコンテキストを同じ画面で確認できます。"
+      className="max-w-[1120px]"
+    >
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
         <section id="ai-model" className="scroll-mt-20">
           <AiModelSettings />
         </section>
@@ -20,6 +23,6 @@ export default async function AiSettingsPage() {
           <AiContextSettings />
         </section>
       </div>
-    </div>
+    </SettingsShell>
   )
 }

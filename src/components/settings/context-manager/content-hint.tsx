@@ -51,12 +51,12 @@ export function ContentHint({ documentType }: ContentHintProps) {
   const hints = HINTS[documentType] || HINTS.note
 
   return (
-    <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground">
-      <div className="flex items-center gap-1.5 mb-2 font-medium">
-        <Lightbulb className="w-3.5 h-3.5" />
+    <div className="rounded-xl border border-white/10 bg-[#171717] p-4 text-xs text-zinc-500">
+      <div className="mb-2 flex items-center gap-1.5 font-medium text-zinc-300">
+        <Lightbulb className="h-3.5 w-3.5 text-amber-300" />
         こんな内容を書くとAIが活用できます
       </div>
-      <ul className="space-y-0.5 ml-5 list-disc">
+      <ul className="ml-5 list-disc space-y-1">
         {hints.map((hint) => (
           <li key={hint}>{hint}</li>
         ))}

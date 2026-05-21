@@ -3,10 +3,9 @@
 import { useEffect, useState } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Settings2, Mail } from "lucide-react"
+import { Calendar, Check, AlertTriangle, RefreshCw, Link2, Unlink, Download, Mail, CheckCircle2 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -40,6 +39,22 @@ const IMPORT_PERIOD_OPTIONS = [
 const STORAGE_KEY_AUTO_IMPORT = 'shikumika_auto_import_enabled'
 const STORAGE_KEY_IMPORT_PERIOD = 'shikumika_import_period_days'
 
+function GoogleCalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+      <path fill="#fff" d="M8 9.5h32a3 3 0 0 1 3 3V40a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V12.5a3 3 0 0 1 3-3Z" />
+      <path fill="#1a73e8" d="M8 5h32a3 3 0 0 1 3 3v9H5V8a3 3 0 0 1 3-3Z" />
+      <path fill="#ea4335" d="M5 17h10V43H8a3 3 0 0 1-3-3V17Z" />
+      <path fill="#fbbc04" d="M33 17h10v23a3 3 0 0 1-3 3h-7V17Z" />
+      <path fill="#34a853" d="M15 35h18v8H15z" />
+      <path fill="#1a73e8" d="M15 17h18v18H15z" opacity=".08" />
+      <text x="24" y="31" textAnchor="middle" fontSize="14" fontWeight="700" fill="#3c4043" fontFamily="Arial, sans-serif">
+        31
+      </text>
+    </svg>
+  )
+}
+
 export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   const [status, setStatus] = useState<CalendarStatus>({
     isConnected: false,
@@ -53,14 +68,15 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   // New settings (localStorage for now)
   const [autoImportEnabled, setAutoImportEnabled] = useState(true)
   const [importPeriod, setImportPeriod] = useState('30')
-  const [showCalendarSelect, setShowCalendarSelect] = useState(false)
 
   // カレンダー選択はDB側 `selected` を正規ストアにし、useCalendars を信頼の源にする。
   // 旧localStorage管理は実際の予定取得に何の影響もない死コードだったため廃止。
   const {
     calendars,
     isLoading: calendarsLoading,
+    fetchCalendars,
     toggleCalendar,
+    toggleAll,
   } = useCalendars()
 
   useEffect(() => {
@@ -134,18 +150,15 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   const handleManualSync = async () => {
     setIsSyncing(true)
     try {
-      // Trigger calendar event refetch
-      const response = await fetch('/api/calendar/sync', { method: 'POST' })
-      if (response.ok) {
-        await response.json()
-        setStatus(prev => ({ ...prev, lastSyncedAt: new Date().toISOString() }))
-      }
+      await Promise.all([fetchStatus(), fetchCalendars(true)])
     } catch (error) {
-      console.error('Manual sync error:', error)
+      console.error('Calendar refresh error:', error)
     } finally {
       setIsSyncing(false)
     }
   }
+
+  const selectedCalendarCount = calendars.filter(calendar => calendar.selected).length
 
   const handleAutoImportToggle = (enabled: boolean) => {
     setAutoImportEnabled(enabled)
@@ -207,168 +220,167 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   // Full mode (for settings page)
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <RefreshCw className="w-4 h-4 animate-spin" />
-            読み込み中...
-          </div>
-        </CardContent>
-      </Card>
+      <div className="rounded-xl border border-white/10 bg-[#202020] p-6">
+        <div className="flex min-h-28 items-center justify-center gap-2 text-sm text-zinc-400">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          読み込み中...
+        </div>
+      </div>
     )
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Calendar className="h-5 w-5" />
-          カレンダー連携
-        </CardTitle>
-        <CardDescription>
-          Googleカレンダーとの連携設定を管理できます
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* 接続状態 */}
-        <div className="flex items-center justify-between rounded-lg border p-4">
-          <div className="flex items-center gap-3">
-            {status.isConnected && !status.tokenExpired ? (
-              <Check className="h-5 w-5 text-green-500" />
-            ) : status.isConnected && status.tokenExpired ? (
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
-            ) : (
-              <Unlink className="h-5 w-5 text-muted-foreground" />
-            )}
-            <div>
-              <p className="text-sm font-medium">Google カレンダー</p>
-              <p className="text-xs text-muted-foreground">
-                {!status.isConnected && '未連携'}
-                {status.isConnected && !status.tokenExpired && '連携中'}
-                {status.isConnected && status.tokenExpired && 'トークンが期限切れです。再連携してください'}
-              </p>
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#202020]">
+        <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+          <div className="flex min-h-[220px] flex-col justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <GoogleCalendarIcon className="h-14 w-14 shrink-0 rounded-xl shadow-sm" />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-semibold text-zinc-50">Google Calendar</h2>
+                  <span className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
+                    status.isConnected && !status.tokenExpired
+                      ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200"
+                      : status.tokenExpired
+                        ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
+                        : "border-white/10 bg-white/[0.04] text-zinc-400"
+                  )}>
+                    {status.isConnected && !status.tokenExpired ? <CheckCircle2 className="h-3 w-3" /> : <Unlink className="h-3 w-3" />}
+                    {!status.isConnected && '未連携'}
+                    {status.isConnected && !status.tokenExpired && '連携中'}
+                    {status.isConnected && status.tokenExpired && '再連携が必要'}
+                  </span>
+                </div>
+                <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-400">
+                  予定をTodayに表示し、選択したカレンダーのイベントをタスクとして取り込めます。
+                </p>
+              </div>
             </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {status.isConnected && !status.tokenExpired && (
+                <Button
+                  onClick={handleManualSync}
+                  size="sm"
+                  variant="outline"
+                  disabled={isSyncing}
+                  className="border-white/10 bg-white/[0.04] text-zinc-100 hover:bg-white/[0.08]"
+                >
+                  <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+                  更新
+                </Button>
+              )}
+              {!status.isConnected ? (
+                <Button onClick={handleConnect} size="sm" className="bg-blue-500 text-white hover:bg-blue-400">
+                  <Link2 className="h-4 w-4" />
+                  Googleカレンダーと連携
+                </Button>
+              ) : status.tokenExpired ? (
+                <Button onClick={handleConnect} size="sm" className="bg-amber-500 text-zinc-950 hover:bg-amber-400">
+                  <RefreshCw className="h-4 w-4" />
+                  Googleで再連携
+                </Button>
+              ) : null}
+            </div>
+
+            {status.lastSyncedAt && (
+              <p className="text-xs text-zinc-500">
+                最終同期: {format(new Date(status.lastSyncedAt), 'yyyy/MM/dd HH:mm', { locale: ja })}
+              </p>
+            )}
           </div>
 
-          {/* アクションボタン */}
-          <div className="flex items-center gap-2">
-            {status.isConnected && !status.tokenExpired && (
-              <Button
-                onClick={handleManualSync}
-                size="sm"
-                variant="outline"
-                disabled={isSyncing}
-              >
-                <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
-              </Button>
-            )}
-            {!status.isConnected ? (
-              <Button onClick={handleConnect} size="sm">
-                <Link2 className="h-4 w-4 mr-2" />
-                連携する
-              </Button>
-            ) : status.tokenExpired ? (
-              <Button onClick={handleConnect} size="sm" variant="outline" className="text-amber-600 border-amber-300 hover:bg-amber-50">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                再連携
-              </Button>
+          <div className="rounded-xl border border-white/10 bg-[#171717] p-4">
+            <p className="text-xs font-medium text-zinc-500">連携アカウント</p>
+            {status.isConnected ? (
+              <div className="mt-4 flex flex-col gap-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  {status.linkedAccount?.picture ? (
+                    <Image
+                      src={status.linkedAccount.picture}
+                      alt="Google account avatar"
+                      width={48}
+                      height={48}
+                      className="h-12 w-12 rounded-full border border-white/10 object-cover"
+                      referrerPolicy="no-referrer"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-zinc-100">
+                      {(status.linkedAccount?.name || status.linkedAccount?.email || "G").charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-zinc-100">
+                      {status.linkedAccount?.name || 'Googleアカウント'}
+                    </p>
+                    {status.linkedAccount?.email ? (
+                      <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-zinc-500">
+                        <Mail className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{status.linkedAccount.email}</span>
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-zinc-500">アカウント情報を取得中です</p>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  onClick={handleDisconnect}
+                  size="sm"
+                  variant="outline"
+                  className="w-full border-red-400/25 bg-red-400/10 text-red-200 hover:bg-red-400/15 hover:text-red-100"
+                >
+                  <Unlink className="h-4 w-4" />
+                  Googleカレンダーの連携を解除
+                </Button>
+              </div>
             ) : (
-              <Button
-                onClick={handleDisconnect}
-                size="sm"
-                variant="outline"
-                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Unlink className="h-4 w-4 mr-2" />
-                連携解除
-              </Button>
+              <div className="mt-4 rounded-lg border border-dashed border-white/10 p-4">
+                <p className="text-sm font-medium text-zinc-200">未連携です</p>
+                <p className="mt-2 text-xs leading-5 text-zinc-500">
+                  Googleアカウントを接続すると、予定表示とイベント取り込みを使えます。
+                </p>
+              </div>
             )}
           </div>
         </div>
+      </section>
 
-        {status.isConnected && (
-          <div className="rounded-lg border bg-muted/20 p-3">
-            <p className="text-xs font-medium text-muted-foreground mb-2">連携アカウント</p>
-            <div className="flex items-center gap-3">
-              {status.linkedAccount?.picture ? (
-                <Image
-                  src={status.linkedAccount.picture}
-                  alt="Google account avatar"
-                  width={40}
-                  height={40}
-                  className="h-10 w-10 rounded-full border object-cover"
-                  referrerPolicy="no-referrer"
-                  unoptimized
-                />
-              ) : (
-                <div className="h-10 w-10 rounded-full border bg-background flex items-center justify-center text-sm font-semibold">
-                  {(status.linkedAccount?.name || status.linkedAccount?.email || "G").charAt(0).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate">
-                  {status.linkedAccount?.name || 'Googleアカウント'}
-                </p>
-                {status.linkedAccount?.email ? (
-                  <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
-                    <Mail className="h-3 w-3 shrink-0" />
-                    <span>{status.linkedAccount.email}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    アカウント情報を取得中です
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 最終同期時刻 */}
-        {status.lastSyncedAt && (
-          <p className="text-xs text-muted-foreground px-1">
-            最終同期: {format(new Date(status.lastSyncedAt), 'yyyy/MM/dd HH:mm', { locale: ja })}
+      {status.isConnected && status.tokenExpired && (
+        <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 p-4">
+          <p className="text-sm text-amber-100">
+            Googleカレンダーのアクセストークンが期限切れです。再連携してください。
           </p>
-        )}
+        </div>
+      )}
 
-        {/* トークン期限切れ時の警告 */}
-        {status.isConnected && status.tokenExpired && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3">
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              Googleカレンダーのアクセストークンが期限切れになりました。
-              「再連携」ボタンからGoogleアカウントに再ログインしてください。
-            </p>
-          </div>
-        )}
-
-        {/* 自動取り込み設定（連携中のみ表示） */}
-        {status.isConnected && !status.tokenExpired && (
-          <div className="pt-4 border-t space-y-4">
-            <div className="flex items-center gap-2">
-              <Download className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium">自動取り込み</span>
-            </div>
-
-            {/* ON/OFF */}
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <p className="text-sm">イベントをタスクとして取り込む</p>
-                <p className="text-xs text-muted-foreground">
-                  カレンダーの予定を自動的にタスク化します
-                </p>
+      {status.isConnected && !status.tokenExpired && (
+        <section className="grid gap-5 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]">
+          <div className="rounded-xl border border-white/10 bg-[#202020] p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-400/10 text-blue-200">
+                  <Download className="h-4 w-4" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-100">イベント取り込み</h2>
+                  <p className="mt-1 text-xs leading-5 text-zinc-500">Googleカレンダーの予定をタスクとして取り込みます。</p>
+                </div>
               </div>
               <Switch
                 checked={autoImportEnabled}
                 onCheckedChange={handleAutoImportToggle}
+                className="data-[state=checked]:bg-blue-500"
               />
             </div>
 
-            {/* 取り込み期間 */}
-            {autoImportEnabled && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm">取り込み期間</span>
-                <Select value={importPeriod} onValueChange={handlePeriodChange}>
-                  <SelectTrigger className="w-28">
+            <div className={cn("mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-1", !autoImportEnabled && "opacity-50")}>
+              <div className="rounded-lg border border-white/10 bg-[#171717] p-4">
+                <p className="text-xs text-zinc-500">取り込み期間</p>
+                <Select value={importPeriod} onValueChange={handlePeriodChange} disabled={!autoImportEnabled}>
+                  <SelectTrigger className="mt-3 h-9 w-full border-0 bg-white/[0.07] text-zinc-100 shadow-none focus:ring-blue-400">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -380,71 +392,96 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
                   </SelectContent>
                 </Select>
               </div>
-            )}
 
-            {/* カレンダー選択 */}
-            {autoImportEnabled && (calendarsLoading || calendars.length > 0) && (
-              <div className="space-y-2">
-                <button
-                  onClick={() => setShowCalendarSelect(!showCalendarSelect)}
-                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-                >
-                  <Settings2 className="w-4 h-4" />
-                  取り込むカレンダーを選択
-                  <span className="text-xs">
-                    ({calendarsLoading
-                      ? '読み込み中…'
-                      : `${calendars.filter(c => c.selected).length} / ${calendars.length}件`})
-                  </span>
-                </button>
-
-                {showCalendarSelect && (
-                  <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
-                    {calendarsLoading ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                        カレンダー一覧を読み込み中…
-                      </div>
-                    ) : (
-                      calendars.map(cal => (
-                        <label
-                          key={cal.id}
-                          className="flex items-center gap-2 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={cal.selected}
-                            onChange={(e) => {
-                              toggleCalendar(cal.id, e.target.checked).catch(err => {
-                                console.error('Failed to toggle calendar:', err)
-                              })
-                            }}
-                            className="rounded border-gray-300"
-                          />
-                          <div
-                            className="w-3 h-3 rounded shrink-0"
-                            style={{ backgroundColor: cal.background_color || cal.color || '#039BE5' }}
-                          />
-                          <span className="text-sm truncate">
-                            {cal.name}
-                            {cal.is_primary && (
-                              <span className="ml-1 text-[10px] text-muted-foreground">(プライマリ)</span>
-                            )}
-                          </span>
-                        </label>
-                      ))
-                    )}
-                    <p className="text-[10px] text-muted-foreground pt-1">
-                      ※ チェックを外したカレンダーの予定はTodayタイムラインに表示されません
-                    </p>
-                  </div>
-                )}
+              <div className="rounded-lg border border-white/10 bg-[#171717] p-4">
+                <p className="text-xs text-zinc-500">取り込み対象</p>
+                <p className="mt-3 text-2xl font-semibold text-zinc-100">
+                  {calendarsLoading ? '-' : selectedCalendarCount}
+                  <span className="ml-1 text-sm font-normal text-zinc-500">/ {calendars.length}件</span>
+                </p>
               </div>
-            )}
+            </div>
           </div>
-        )}
-      </CardContent>
-    </Card>
+
+          <div className={cn("rounded-xl border border-white/10 bg-[#202020] p-5", !autoImportEnabled && "opacity-60")}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-100">取り込むカレンダー</h2>
+                <p className="mt-1 text-xs leading-5 text-zinc-500">チェックを外したカレンダーの予定はTodayタイムラインに表示されません。</p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={!autoImportEnabled || calendarsLoading || calendars.length === 0}
+                  onClick={() => toggleAll(true)}
+                  className="border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
+                >
+                  全選択
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={!autoImportEnabled || calendarsLoading || calendars.length === 0}
+                  onClick={() => toggleAll(false)}
+                  className="border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
+                >
+                  全解除
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              {calendarsLoading ? (
+                <div className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-white/10 bg-[#171717] text-xs text-zinc-500">
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  カレンダー一覧を読み込み中...
+                </div>
+              ) : calendars.length === 0 ? (
+                <div className="rounded-lg border border-white/10 bg-[#171717] p-4 text-xs text-zinc-500">
+                  取り込めるカレンダーがまだありません。
+                </div>
+              ) : (
+                <div className="grid gap-2 lg:grid-cols-2">
+                  {calendars.map(cal => (
+                    <label
+                      key={cal.id}
+                      className={cn(
+                        "flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border border-white/10 bg-[#171717] px-3 py-2 transition hover:bg-white/[0.05]",
+                        !autoImportEnabled && "pointer-events-none"
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={cal.selected}
+                        disabled={!autoImportEnabled}
+                        onChange={(e) => {
+                          toggleCalendar(cal.id, e.target.checked).catch(err => {
+                            console.error('Failed to toggle calendar:', err)
+                          })
+                        }}
+                        className="h-4 w-4 rounded border-zinc-600 bg-zinc-900 accent-blue-500"
+                      />
+                      <div
+                        className="h-3 w-3 shrink-0 rounded-full"
+                        style={{ backgroundColor: cal.background_color || cal.color || '#039BE5' }}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-sm text-zinc-200">
+                        {cal.name}
+                      </span>
+                      {cal.is_primary && (
+                        <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-zinc-400">メイン</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
   )
 }
-

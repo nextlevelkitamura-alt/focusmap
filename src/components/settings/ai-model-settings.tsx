@@ -85,33 +85,33 @@ export function AiModelSettings() {
   }
 
   return (
-    <Card>
+    <Card className="border-white/10 bg-[#202020] text-zinc-100 shadow-none">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Bot className="h-5 w-5" />
+          <Bot className="h-5 w-5 text-blue-300" />
           AIモデル
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-zinc-500">
           思考メモの整理に使うモデルを選びます。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {isLoading ? (
-          <div className="flex min-h-11 items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex min-h-11 items-center gap-2 text-sm text-zinc-500">
             <Loader2 className="h-4 w-4 animate-spin" />
             読み込み中...
           </div>
         ) : (
           <>
-            <div className="rounded-lg border bg-muted/20 p-3">
+            <div className="rounded-xl border border-white/10 bg-[#171717] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">{isCustom ? "カスタムモデル" : selectedModel?.label}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="text-sm font-medium text-zinc-100">{isCustom ? "カスタムモデル" : selectedModel?.label}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
                     {isCustom ? "GeminiまたはOpenCode Go互換のモデルIDを直接指定します。" : selectedModel?.note}
                   </p>
                 </div>
-                <span className="rounded-full border bg-background px-2 py-1 text-xs text-muted-foreground">
+                <span className="max-w-[220px] truncate rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-xs text-zinc-400">
                   {effectiveModel || "未設定"}
                 </span>
               </div>
@@ -132,20 +132,20 @@ export function AiModelSettings() {
                     }}
                     className={`min-h-[76px] rounded-lg border p-3 text-left transition-colors ${
                       selected
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-background hover:bg-muted/40"
+                        ? "border-blue-400/40 bg-blue-400/10"
+                        : "border-white/10 bg-[#171717] hover:bg-white/[0.05]"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium">{option.label}</span>
+                          <span className="truncate text-sm font-medium text-zinc-100">{option.label}</span>
                           {option.badge === "高速" && <Zap className="h-3.5 w-3.5 text-amber-500" />}
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">{option.note}</p>
+                        <p className="mt-1 text-xs text-zinc-500">{option.note}</p>
                       </div>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
-                        selected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        selected ? "bg-blue-500 text-white" : "bg-white/[0.06] text-zinc-500"
                       }`}>
                         {selected ? <Check className="inline h-3 w-3" /> : option.badge}
                       </span>
@@ -162,17 +162,17 @@ export function AiModelSettings() {
                 }}
                 className={`min-h-[76px] rounded-lg border p-3 text-left transition-colors ${
                   selectedValue === "custom"
-                    ? "border-primary bg-primary/10"
-                    : "border-border bg-background hover:bg-muted/40"
+                    ? "border-blue-400/40 bg-blue-400/10"
+                    : "border-white/10 bg-[#171717] hover:bg-white/[0.05]"
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <span className="text-sm font-medium">カスタム</span>
-                    <p className="mt-1 text-xs text-muted-foreground">一覧にないモデルIDを使う</p>
+                    <span className="text-sm font-medium text-zinc-100">カスタム</span>
+                    <p className="mt-1 text-xs text-zinc-500">一覧にないモデルIDを使う</p>
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-[11px] ${
-                    selectedValue === "custom" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                    selectedValue === "custom" ? "bg-blue-500 text-white" : "bg-white/[0.06] text-zinc-500"
                   }`}>
                     {selectedValue === "custom" ? <Check className="inline h-3 w-3" /> : "ID指定"}
                   </span>
@@ -185,21 +185,21 @@ export function AiModelSettings() {
                 value={customModel}
                 onChange={e => setCustomModel(e.target.value)}
                 placeholder="例: gemini-2.5-flash-lite"
-                className="min-h-[44px]"
+                className="min-h-[44px] border-white/10 bg-[#171717] text-zinc-100 placeholder:text-zinc-600"
               />
             )}
 
-            <div className="flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-muted-foreground">
-                現在: <code className="rounded bg-muted px-1 py-0.5">{effectiveModel || "未設定"}</code>
+            <div className="flex flex-col gap-3 border-t border-white/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-zinc-500">
+                現在: <code className="rounded bg-white/[0.06] px-1 py-0.5 text-zinc-300">{effectiveModel || "未設定"}</code>
               </p>
-              <Button onClick={() => save()} disabled={isSaving || !effectiveModel} className="min-h-[44px]">
+              <Button onClick={() => save()} disabled={isSaving || !effectiveModel} className="min-h-[44px] bg-blue-500 text-white hover:bg-blue-400">
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isCustom ? "カスタムを保存" : "保存"}
               </Button>
             </div>
 
-            {message && <p className="text-xs text-muted-foreground">{message}</p>}
+            {message && <p className="text-xs text-zinc-500">{message}</p>}
           </>
         )}
       </CardContent>
