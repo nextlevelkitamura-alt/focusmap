@@ -5,6 +5,7 @@
  * 将来: APIキー追加で OpenAI / Anthropic に切替可能
  */
 import { google } from '@ai-sdk/google'
+import { deepseek } from '@ai-sdk/deepseek'
 import type { AgentId } from '../agents/index'
 
 // 将来追加:
@@ -12,6 +13,7 @@ import type { AgentId } from '../agents/index'
 // import { anthropic } from '@ai-sdk/anthropic'
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
+export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
 
 export interface SkillModelConfig {
   maxTokens: number
@@ -113,4 +115,26 @@ export function getModelForAgent(_agentId: AgentId) {
  */
 export function getConfigForAgent(agentId: AgentId): AgentModelConfig {
   return AGENT_MODEL_MAP[agentId] ?? { maxTokens: 1000, temperature: 0.7 }
+}
+
+// ============================================================
+// メモ→マインドマップ変換用プロバイダー（デュアル構成）
+// ============================================================
+
+export type MemoMindmapMode = 'quick' | 'deep'
+
+/**
+ * メモ→マインドマップ変換のモデルを返す。
+ * - quick: Gemini Flash-Lite（高速・最安。通常のメモ整理）
+ * - deep : DeepSeek V4（論理再構成が重い時）。DEEPSEEK_API_KEY 未設定なら quick へフォールバック
+ *
+ * 戻り値の modelName はログ（ai_usage）と原価推定に使う。
+ */
+export function getModelForMemoMindmap(mode: MemoMindmapMode) {
+  if (mode === 'deep' && process.env.DEEPSEEK_API_KEY) {
+    const modelName = process.env.DEEPSEEK_MODEL || DEFAULT_DEEPSEEK_MODEL
+    return { model: deepseek(modelName), modelName }
+  }
+  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  return { model: google(modelName), modelName }
 }

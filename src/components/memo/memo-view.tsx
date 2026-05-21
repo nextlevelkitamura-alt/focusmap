@@ -5,6 +5,7 @@ import {
   StickyNote, Send, Loader2,
   Sparkles, Mic, Square, Calendar, Map, Trash2,
   FolderOpen, ChevronRight, ChevronDown, Check, X, ImagePlus, CheckCircle2,
+  Network,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -21,6 +22,7 @@ import type { Project, Space } from "@/types/database"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useNoteAiTasks } from "@/hooks/useNoteAiTasks"
 import { NoteClaudeRunnerButton, NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
+import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 
 // インライン提案の状態
 interface InlineProposal {
@@ -105,6 +107,11 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
   const [editingProjectNoteId, setEditingProjectNoteId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [showArchivedNotes, setShowArchivedNotes] = useState(false)
+
+  // メモ→マインドマップ: 複数選択モード
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set())
+  const [showMindmapDialog, setShowMindmapDialog] = useState(false)
 
   // インライン提案
   const [proposal, setProposal] = useState<InlineProposal | null>(null)
@@ -531,6 +538,28 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
     [handleSave]
   )
 
+  const toggleNoteSelection = useCallback((noteId: string) => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev)
+      if (next.has(noteId)) next.delete(noteId)
+      else next.add(noteId)
+      return next
+    })
+  }, [])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedNoteIds(new Set())
+  }, [])
+
+  // 選択メモが単一プロジェクトに属する場合、そのIDを追記先の初期値にする
+  const selectedNotesProjectId = (() => {
+    const ids = new Set(
+      notes.filter(n => selectedNoteIds.has(n.id)).map(n => n.project_id)
+    )
+    return ids.size === 1 && !ids.has(null) ? ([...ids][0] as string) : null
+  })()
+
   return (
     <div className={cn("flex flex-col h-full bg-background", className)}>
       {/* Header + Project Filter (Popover) */}
@@ -666,15 +695,26 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
             </PopoverContent>
           </Popover>
 
-          <Button
-            variant={showArchivedNotes ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => setShowArchivedNotes(prev => !prev)}
-            className="h-8 gap-1.5 text-xs shrink-0"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            使用済み
-          </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              variant={selectMode ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <Network className="w-3.5 h-3.5" />
+              {selectMode ? "選択解除" : "マップ化"}
+            </Button>
+            <Button
+              variant={showArchivedNotes ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setShowArchivedNotes(prev => !prev)}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              使用済み
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1171,7 +1211,32 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
           <div className="columns-1 sm:columns-2 lg:columns-3 gap-2">
             {filteredNotes.map((note) => (
               <div key={note.id} className="mb-2 break-inside-avoid">
-              <Card className="p-3 hover:bg-muted/50 transition-colors group">
+              <Card
+                className={cn(
+                  "p-3 transition-colors group relative",
+                  selectMode ? "cursor-pointer" : "hover:bg-muted/50",
+                  selectMode && selectedNoteIds.has(note.id) && "ring-2 ring-primary",
+                )}
+              >
+                {selectMode && (
+                  <>
+                    <button
+                      onClick={() => toggleNoteSelection(note.id)}
+                      className="absolute inset-0 z-10 rounded-xl"
+                      aria-label="メモを選択"
+                    />
+                    <div
+                      className={cn(
+                        "absolute top-2 right-2 z-20 w-5 h-5 rounded-full border flex items-center justify-center pointer-events-none",
+                        selectedNoteIds.has(note.id)
+                          ? "bg-primary border-primary text-primary-foreground"
+                          : "bg-background border-muted-foreground/40",
+                      )}
+                    >
+                      {selectedNoteIds.has(note.id) && <Check className="w-3 h-3" />}
+                    </div>
+                  </>
+                )}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <NoteContentCollapsible text={note.content} />
@@ -1318,6 +1383,42 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
           </div>
         </div>
       )}
+
+      {/* 選択モード: マインドマップ化バー */}
+      {selectMode && selectedNoteIds.size > 0 && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50">
+          <Button
+            onClick={() => setShowMindmapDialog(true)}
+            className="gap-1.5 rounded-full shadow-lg h-11 px-5"
+          >
+            <Network className="w-4 h-4" />
+            {selectedNoteIds.size}件をマインドマップ化
+          </Button>
+        </div>
+      )}
+
+      {/* メモ→マインドマップ ダイアログ */}
+      <MemoToMindmapDialog
+        open={showMindmapDialog}
+        noteIds={[...selectedNoteIds]}
+        projects={projects.map(p => ({ id: p.id, title: p.title }))}
+        spaces={spaces.map(s => ({ id: s.id, title: s.title }))}
+        defaultSpaceId={selectedSpaceId}
+        defaultProjectId={selectedNotesProjectId}
+        onClose={() => setShowMindmapDialog(false)}
+        onSuccess={(projectId) => {
+          setShowMindmapDialog(false)
+          exitSelectMode()
+          setNotes(prev =>
+            prev.map(n =>
+              selectedNoteIds.has(n.id)
+                ? { ...n, status: "processed" as const, project_id: projectId }
+                : n,
+            ),
+          )
+          showToast("success", "マインドマップを作成しました")
+        }}
+      />
     </div>
   )
 }
