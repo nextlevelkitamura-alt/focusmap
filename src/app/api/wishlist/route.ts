@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const spaceId = request.nextUrl.searchParams.get('space_id')
+  const projectId = request.nextUrl.searchParams.get('project_id')
 
   let query = supabase
     .from('ideal_goals')
@@ -16,7 +17,11 @@ export async function GET(request: NextRequest) {
     .order('display_order', { ascending: true })
     .order('created_at', { referencedTable: 'ideal_items', ascending: true })
 
-  if (spaceId === '__unassigned__') {
+  if (projectId === '__unassigned__') {
+    query = query.eq('user_id', user.id).is('project_id', null)
+  } else if (projectId) {
+    query = query.eq('user_id', user.id).eq('project_id', projectId)
+  } else if (spaceId === '__unassigned__') {
     query = query.eq('user_id', user.id).is('project_id', null)
   } else if (spaceId) {
     const { data: projects, error: projectError } = await supabase
@@ -44,19 +49,39 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json()
   const {
+    id,
     title,
     project_id,
     description,
+    cover_image_url,
+    cover_image_path,
     category,
+    color,
+    status,
+    display_order,
+    duration_months,
+    start_date,
+    target_date,
+    total_daily_minutes,
+    cost_total,
+    cost_monthly,
+    ai_summary,
     scheduled_at,
     duration_minutes,
+    google_event_id,
+    is_completed,
+    is_today,
     tags,
     memo_status,
     ai_source_payload,
+    created_at,
+    updated_at,
+    ideal_items,
     subtask_suggestions,
   } = body
 
-  if (!title?.trim()) return NextResponse.json({ error: 'タイトルは必須です' }, { status: 400 })
+  const trimmedTitle = typeof title === 'string' ? title.trim() : ''
+  if (!trimmedTitle) return NextResponse.json({ error: 'タイトルは必須です' }, { status: 400 })
 
   if (project_id) {
     const { error: projectError } = await supabase
@@ -77,21 +102,36 @@ export async function POST(request: NextRequest) {
     .eq('user_id', user.id)
     .in('status', ['wishlist', 'memo'])
 
-  const insertPayload = {
+  const insertPayload: Record<string, unknown> = {
     user_id: user.id,
-    title: title.trim(),
+    title: trimmedTitle,
     project_id: project_id || null,
     description: description ?? null,
+    cover_image_url: cover_image_url ?? null,
+    cover_image_path: cover_image_path ?? null,
     category: category ?? null,
     scheduled_at: scheduled_at ?? null,
     duration_minutes: duration_minutes ?? null,
+    google_event_id: google_event_id ?? null,
     tags: Array.isArray(tags) ? tags : [],
     memo_status: memo_status ?? (scheduled_at ? 'time_candidates' : 'unsorted'),
     ai_source_payload: ai_source_payload ?? null,
-    status: 'memo',
-    color: '#6366f1',
-    display_order: (count ?? 0) + 1,
+    status: status ?? 'memo',
+    color: color ?? '#6366f1',
+    display_order: typeof display_order === 'number' ? display_order : (count ?? 0) + 1,
+    duration_months: duration_months ?? null,
+    start_date: start_date ?? null,
+    target_date: target_date ?? null,
+    total_daily_minutes: typeof total_daily_minutes === 'number' ? total_daily_minutes : 0,
+    cost_total: cost_total ?? null,
+    cost_monthly: cost_monthly ?? null,
+    ai_summary: ai_summary ?? null,
+    is_completed: is_completed ?? false,
+    is_today: is_today ?? false,
   }
+  if (typeof id === 'string') insertPayload.id = id
+  if (typeof created_at === 'string') insertPayload.created_at = created_at
+  if (typeof updated_at === 'string') insertPayload.updated_at = updated_at
 
   const { data, error } = await supabase
     .from('ideal_goals')
@@ -109,20 +149,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    const fallbackPayload: Omit<typeof insertPayload, 'ai_source_payload'> = {
-      user_id: insertPayload.user_id,
-      title: insertPayload.title,
-      project_id: insertPayload.project_id,
-      description: insertPayload.description,
-      category: insertPayload.category,
-      scheduled_at: insertPayload.scheduled_at,
-      duration_minutes: insertPayload.duration_minutes,
-      tags: insertPayload.tags,
-      memo_status: insertPayload.memo_status,
-      status: insertPayload.status,
-      color: insertPayload.color,
-      display_order: insertPayload.display_order,
-    }
+    const fallbackPayload = { ...insertPayload }
+    delete fallbackPayload.ai_source_payload
     const retry = await supabase
       .from('ideal_goals')
       .insert(fallbackPayload)
@@ -133,7 +161,60 @@ export async function POST(request: NextRequest) {
     savedItem = retry.data
   }
 
-  if (savedItem?.id && Array.isArray(subtask_suggestions) && subtask_suggestions.length > 0) {
+  if (savedItem?.id && Array.isArray(ideal_items) && ideal_items.length > 0) {
+    const rows = ideal_items
+      .filter((item: { title?: string }) => item?.title?.trim())
+      .map((item: {
+        id?: string
+        title: string
+        item_type?: string
+        frequency_type?: string
+        frequency_value?: number
+        session_minutes?: number
+        daily_minutes?: number
+        item_cost?: number | null
+        cost_type?: string | null
+        is_done?: boolean
+        linked_task_id?: string | null
+        linked_habit_id?: string | null
+        display_order?: number
+        description?: string | null
+        scheduled_date?: string | null
+        reference_url?: string | null
+        thumbnail_url?: string | null
+        thumbnail_path?: string | null
+        parent_item_id?: string | null
+        created_at?: string
+        updated_at?: string
+      }, index: number) => ({
+        ...(typeof item.id === 'string' ? { id: item.id } : {}),
+        ideal_id: savedItem.id,
+        user_id: user.id,
+        title: item.title.trim(),
+        item_type: item.item_type ?? 'task',
+        frequency_type: item.frequency_type ?? 'once',
+        frequency_value: item.frequency_value ?? 1,
+        session_minutes: item.session_minutes ?? 0,
+        daily_minutes: item.daily_minutes ?? 0,
+        item_cost: item.item_cost ?? null,
+        cost_type: item.cost_type ?? null,
+        is_done: item.is_done ?? false,
+        linked_task_id: item.linked_task_id ?? null,
+        linked_habit_id: item.linked_habit_id ?? null,
+        display_order: item.display_order ?? index,
+        description: item.description ?? null,
+        scheduled_date: item.scheduled_date ?? null,
+        reference_url: item.reference_url ?? null,
+        thumbnail_url: item.thumbnail_url ?? null,
+        thumbnail_path: item.thumbnail_path ?? null,
+        parent_item_id: item.parent_item_id ?? null,
+        ...(typeof item.created_at === 'string' ? { created_at: item.created_at } : {}),
+        ...(typeof item.updated_at === 'string' ? { updated_at: item.updated_at } : {}),
+      }))
+    if (rows.length > 0) {
+      await supabase.from('ideal_items').insert(rows)
+    }
+  } else if (savedItem?.id && Array.isArray(subtask_suggestions) && subtask_suggestions.length > 0) {
     const rows = subtask_suggestions
       .filter((sub: { title?: string }) => sub?.title?.trim())
       .slice(0, 8)

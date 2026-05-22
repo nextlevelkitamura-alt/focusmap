@@ -102,7 +102,6 @@ export function WishlistCard({
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!window.confirm(`「${item.title}」を削除しますか？`)) return
     setIsDeleting(true)
     await onDelete(item.id)
   }
@@ -352,6 +351,8 @@ export function WishlistCard({
             className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
             onClick={handleDelete}
             disabled={isDeleting}
+            title="削除"
+            aria-label="削除"
           >
             <Trash2 className="h-4 w-4" />
           </Button>

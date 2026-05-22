@@ -76,6 +76,27 @@ describe('WishlistCard', () => {
     })
   })
 
+  test('削除ボタンは確認ダイアログなしで削除する', async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined)
+    const confirmSpy = vi.spyOn(window, 'confirm')
+
+    render(
+      <WishlistCard
+        item={createMemoItem({ title: 'Delete memo' })}
+        onUpdate={vi.fn()}
+        onDelete={onDelete}
+        onClick={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTitle('削除'))
+
+    await waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith('memo-1')
+    })
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
   test('今日に予定済みのカードは今日する解除として扱う', async () => {
     const onToggleToday = vi.fn().mockResolvedValue(undefined)
     const scheduledAt = new Date()

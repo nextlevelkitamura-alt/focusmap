@@ -21,6 +21,7 @@ import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useTagColors } from "@/hooks/useTagColors"
 import { useCalendars } from "@/hooks/useCalendars"
+import { useUndoRedo } from "@/hooks/useUndoRedo"
 import {
   broadcastCalendarOptimisticEvent,
   broadcastCalendarOptimisticEventRemoval,
@@ -226,6 +227,45 @@ function combineDateTime(dateValue: string, timeValue: string) {
   return date.toISOString()
 }
 
+function buildMemoUpdatePayload(item: MemoItem): Record<string, unknown> {
+  return {
+    title: item.title,
+    project_id: item.project_id,
+    description: item.description,
+    cover_image_url: item.cover_image_url,
+    cover_image_path: item.cover_image_path,
+    category: item.category,
+    color: item.color,
+    status: item.status,
+    display_order: item.display_order,
+    duration_months: item.duration_months,
+    start_date: item.start_date,
+    target_date: item.target_date,
+    total_daily_minutes: item.total_daily_minutes,
+    cost_total: item.cost_total,
+    cost_monthly: item.cost_monthly,
+    ai_summary: item.ai_summary,
+    scheduled_at: item.scheduled_at,
+    duration_minutes: item.duration_minutes,
+    google_event_id: item.google_event_id,
+    is_completed: item.is_completed,
+    is_today: item.is_today,
+    tags: item.tags ?? [],
+    memo_status: item.memo_status,
+    ai_source_payload: item.ai_source_payload,
+  }
+}
+
+function buildMemoCreatePayload(item: MemoItem): Record<string, unknown> {
+  return {
+    ...buildMemoUpdatePayload(item),
+    id: item.id,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    ideal_items: item.ideal_items ?? [],
+  }
+}
+
 export function WishlistView({
   projects = [],
   selectedProjectId = null,
@@ -264,6 +304,7 @@ export function WishlistView({
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { calendars } = useCalendars()
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
+  const { pushAction } = useUndoRedo()
 
   // メモから AI エージェント（Claude / Codex）を起動
   // title/description は source_ideal_goal_id から task-runner が再取得する。
@@ -530,8 +571,49 @@ export function WishlistView({
     return tracked
   }, [])
 
+  const patchMemoItem = useCallback(async (id: string, updates: Record<string, unknown>) => {
+    const res = await fetch(`/api/wishlist/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    })
+    const data = await res.json()
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "メモの更新に失敗しました")
+    }
+    if (!data.item) {
+      throw new Error("更新結果を取得できませんでした")
+    }
+    return data.item as MemoItem
+  }, [])
+
+  const restoreMemoItem = useCallback(async (item: MemoItem) => {
+    const res = await fetch("/api/wishlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildMemoCreatePayload(item)),
+    })
+    const data = await res.json()
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "メモの復元に失敗しました")
+    }
+    if (!data.item) {
+      throw new Error("復元結果を取得できませんでした")
+    }
+    return data.item as MemoItem
+  }, [])
+
+  const removeMemoItemFromServer = useCallback(async (id: string) => {
+    const res = await fetch(`/api/wishlist/${id}`, { method: "DELETE" })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || "メモの削除に失敗しました")
+    }
+  }, [])
+
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
+      const previousItem = items.find(item => item.id === id) ?? null
       const updateVersion = (itemUpdateVersions.current.get(id) ?? 0) + 1
       itemUpdateVersions.current.set(id, updateVersion)
       const isLatestUpdate = () => itemUpdateVersions.current.get(id) === updateVersion
@@ -547,24 +629,29 @@ export function WishlistView({
       setIntakeError(null)
       await enqueueItemSave(id, async () => {
         try {
-          const res = await fetch(`/api/wishlist/${id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(updates),
-          })
-          const data = await res.json()
-          if (!res.ok || data.error) {
-            throw new Error(data.error || "メモの更新に失敗しました")
-          }
-          if (!data.item) {
-            throw new Error("更新結果を取得できませんでした")
-          }
+          const item = await patchMemoItem(id, updates)
           if (!isLatestUpdate()) return
-          const item = data.item as MemoItem
           setItems(prev => prev.map(existing => existing.id === id ? item : existing))
           setSelectedItem(prev => prev?.id === id ? item : prev)
           if ("category" in updates || "tags" in updates) {
             await refreshTags()
+          }
+          if (previousItem) {
+            pushAction({
+              description: `「${previousItem.title}」を変更`,
+              undo: async () => {
+                const restored = await patchMemoItem(id, buildMemoUpdatePayload(previousItem))
+                setItems(prev => prev.map(existing => existing.id === id ? restored : existing))
+                setSelectedItem(prev => prev?.id === id ? restored : prev)
+                if ("category" in updates || "tags" in updates) await refreshTags()
+              },
+              redo: async () => {
+                const redone = await patchMemoItem(id, buildMemoUpdatePayload(item))
+                setItems(prev => prev.map(existing => existing.id === id ? redone : existing))
+                setSelectedItem(prev => prev?.id === id ? redone : prev)
+                if ("category" in updates || "tags" in updates) await refreshTags()
+              },
+            })
           }
         } catch (err) {
           if (isLatestUpdate()) {
@@ -578,13 +665,56 @@ export function WishlistView({
       return
     }
     await fetchItems()
-  }, [enqueueItemSave, fetchItems, items, refreshTags, selectedItem])
+  }, [enqueueItemSave, fetchItems, items, patchMemoItem, pushAction, refreshTags, selectedItem])
 
   const handleDelete = useCallback(async (id: string) => {
+    const deletedItem = items.find(item => item.id === id)
+    if (!deletedItem) return
+    const deletedIndex = items.findIndex(item => item.id === id)
+    const previousSelectedItem = selectedItem
     setItems(prev => prev.filter(item => item.id !== id))
     if (selectedItem?.id === id) setDetailOpen(false)
-    await fetch(`/api/wishlist/${id}`, { method: "DELETE" })
-  }, [selectedItem])
+    setIntakeError(null)
+    try {
+      await removeMemoItemFromServer(id)
+      pushAction({
+        description: `「${deletedItem.title}」を削除`,
+        undo: async () => {
+          const restored = await restoreMemoItem(deletedItem)
+          setItems(prev => {
+            if (prev.some(item => item.id === restored.id)) return prev
+            const next = [...prev]
+            next.splice(Math.min(deletedIndex, next.length), 0, restored)
+            return next
+          })
+          if (previousSelectedItem?.id === id) {
+            setSelectedItem(restored)
+            setDetailOpen(true)
+          }
+          await refreshTags()
+        },
+        redo: async () => {
+          setItems(prev => prev.filter(item => item.id !== id))
+          setSelectedItem(prev => prev?.id === id ? null : prev)
+          setDetailOpen(prev => previousSelectedItem?.id === id ? false : prev)
+          await removeMemoItemFromServer(id)
+        },
+      })
+      await refreshTags()
+    } catch (err) {
+      setItems(prev => {
+        if (prev.some(item => item.id === deletedItem.id)) return prev
+        const next = [...prev]
+        next.splice(Math.min(deletedIndex, next.length), 0, deletedItem)
+        return next
+      })
+      if (previousSelectedItem?.id === id) {
+        setSelectedItem(previousSelectedItem)
+        setDetailOpen(true)
+      }
+      setIntakeError(err instanceof Error ? err.message : "メモの削除に失敗しました")
+    }
+  }, [items, pushAction, refreshTags, removeMemoItemFromServer, restoreMemoItem, selectedItem])
 
   const handleCreate = async () => {
     setIntakeError(null)
@@ -615,6 +745,23 @@ export function WishlistView({
       setTagFilter("all")
       await refreshTags()
       setDetailOpen(true)
+      pushAction({
+        description: `「${item.title}」を追加`,
+        undo: async () => {
+          setItems(prev => prev.filter(existing => existing.id !== item.id))
+          setSelectedItem(prev => prev?.id === item.id ? null : prev)
+          setDetailOpen(false)
+          await removeMemoItemFromServer(item.id)
+          await refreshTags()
+        },
+        redo: async () => {
+          const restored = await restoreMemoItem(item)
+          setItems(prev => prev.some(existing => existing.id === restored.id) ? prev : [restored, ...prev])
+          setSelectedItem(restored)
+          setDetailOpen(true)
+          await refreshTags()
+        },
+      })
     } catch (err) {
       setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
     }
