@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
 import { TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles, Square } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -274,6 +274,7 @@ export function WishlistView({
   isCalendarSplitVisible = false,
   onToggleCalendarSplit,
   compactComposer = false,
+  mindmapMemoFocus = null,
 }: {
   projects?: Project[]
   selectedProjectId?: string | null
@@ -282,6 +283,7 @@ export function WishlistView({
   isCalendarSplitVisible?: boolean
   onToggleCalendarSplit?: () => void
   compactComposer?: boolean
+  mindmapMemoFocus?: { taskId: string; requestKey: number } | null
 }) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -301,6 +303,13 @@ export function WishlistView({
   const [filterOpen, setFilterOpen] = useState(false)
   const [isCheckingVisibleAi, setIsCheckingVisibleAi] = useState(false)
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
+  const [linkedMemoFocus, setLinkedMemoFocus] = useState<{
+    taskId: string
+    taskTitle: string
+    items: MemoItem[]
+    isLoading: boolean
+    error: string | null
+  } | null>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
@@ -472,15 +481,24 @@ export function WishlistView({
 
   const projectById = useMemo(() => new Map(projects.map(project => [project.id, project])), [projects])
 
+  const linkedMemoIds = useMemo(() => {
+    if (!linkedMemoFocus) return null
+    return new Set(linkedMemoFocus.items.map(item => item.id))
+  }, [linkedMemoFocus])
+
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    const sourceItems = linkedMemoIds
+      ? items.filter(item => linkedMemoIds.has(item.id))
+      : items
+    if (linkedMemoIds) return sourceItems
+    return sourceItems.filter(item => {
       if (selectedProjectId && item.project_id !== selectedProjectId) return false
       const status = getStatus(item)
       if (statusFilter !== "all" && status !== statusFilter) return false
       if (tagFilter !== "all" && item.category !== tagFilter && !(item.tags ?? []).includes(tagFilter)) return false
       return true
     })
-  }, [items, selectedProjectId, statusFilter, tagFilter])
+  }, [items, linkedMemoIds, selectedProjectId, statusFilter, tagFilter])
 
   const visibleAiTaskIds = useMemo(() => {
     const ids = new Set<string>()
@@ -1159,6 +1177,58 @@ export function WishlistView({
     setDetailOpen(true)
   }, [])
 
+  useEffect(() => {
+    if (!mindmapMemoFocus) return
+    const focus = mindmapMemoFocus
+    let cancelled = false
+    setLinkedMemoFocus({
+      taskId: focus.taskId,
+      taskTitle: "",
+      items: [],
+      isLoading: true,
+      error: null,
+    })
+
+    async function loadLinkedMemos() {
+      try {
+        const res = await fetch(`/api/mindmap/memo-links?task_id=${encodeURIComponent(focus.taskId)}`, {
+          cache: "no-store",
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data?.error || "関連メモの取得に失敗しました")
+        const linkedItems = Array.isArray(data.items) ? data.items as MemoItem[] : []
+        if (cancelled) return
+        setItems(prev => {
+          const byId = new Map(prev.map(item => [item.id, item]))
+          for (const item of linkedItems) byId.set(item.id, item)
+          return [...byId.values()]
+        })
+        setLinkedMemoFocus({
+          taskId: focus.taskId,
+          taskTitle: typeof data.task?.title === "string" ? data.task.title : "",
+          items: linkedItems,
+          isLoading: false,
+          error: null,
+        })
+        if (linkedItems[0]) openDetail(linkedItems[0])
+      } catch (err) {
+        if (cancelled) return
+        setLinkedMemoFocus({
+          taskId: focus.taskId,
+          taskTitle: "",
+          items: [],
+          isLoading: false,
+          error: err instanceof Error ? err.message : "関連メモの取得に失敗しました",
+        })
+      }
+    }
+
+    void loadLinkedMemos()
+    return () => {
+      cancelled = true
+    }
+  }, [mindmapMemoFocus, openDetail])
+
   // D&D: ドロップしたカラムキー（droppableId）からカラム遷移を判定し、更新を投げる
   const itemById = useMemo(() => new Map(items.map(item => [item.id, item])), [items])
   const handleDragEnd = useCallback(async (result: DropResult) => {
@@ -1441,13 +1511,66 @@ export function WishlistView({
 
       <div className="flex-1 overflow-hidden">
         <div className="h-full overflow-y-auto px-4 py-4 pb-24 md:px-6">
-          {filteredItems.length === 0 ? (
-            <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-              <p>メモはまだありません</p>
-              <Button variant="outline" onClick={handleCreate} className="min-h-[44px]">
-                <Plus className="mr-1 h-4 w-4" /> 追加
-              </Button>
+          {linkedMemoFocus && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">
+                  {linkedMemoFocus.taskTitle ? `「${linkedMemoFocus.taskTitle}」の関連メモ` : "関連メモ"}
+                </div>
+                <div className="text-muted-foreground">
+                  {linkedMemoFocus.isLoading
+                    ? "読み込み中..."
+                    : linkedMemoFocus.error
+                      ? linkedMemoFocus.error
+                      : `${linkedMemoFocus.items.length}件`}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => setLinkedMemoFocus(null)}
+                aria-label="関連メモ表示を閉じる"
+                title="関連メモ表示を閉じる"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
+          )}
+          {linkedMemoFocus?.isLoading ? (
+            <div className="flex min-h-[30vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              関連メモを読み込み中...
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+              <p>{linkedMemoFocus ? "このノードに紐付くメモはありません" : "メモはまだありません"}</p>
+              {!linkedMemoFocus && (
+                <Button variant="outline" onClick={handleCreate} className="min-h-[44px]">
+                  <Plus className="mr-1 h-4 w-4" /> 追加
+                </Button>
+              )}
+            </div>
+          ) : linkedMemoFocus ? (
+            <DragDropContext onDragEnd={handleDragEnd}>
+              <div className="mx-auto max-w-2xl">
+                <MemoSection
+                  columnKey="unsorted"
+                  title="関連メモ"
+                  count={filteredItems.length}
+                  items={filteredItems}
+                  emptyText="関連メモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
+                  nativeMemoDrag={isCalendarSplitVisible}
+                />
+              </div>
+            </DragDropContext>
           ) : (
             <DragDropContext onDragEnd={handleDragEnd}>
             <div className="mx-auto overflow-x-auto pb-2">

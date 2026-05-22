@@ -151,6 +151,7 @@ export function DashboardClient({
     }, [setActiveView, updateTodaySubView])
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
+    const [mindmapMemoFocus, setMindmapMemoFocus] = useState<{ taskId: string; requestKey: number } | null>(null)
     const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
     const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
     const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
@@ -168,6 +169,11 @@ export function DashboardClient({
             if (next) setIsCalendarSplitOpen(false)
             return next
         })
+    }, [])
+    const openMindmapLinkedMemos = useCallback((taskId: string) => {
+        setIsCalendarSplitOpen(false)
+        setIsMemoSplitOpen(true)
+        setMindmapMemoFocus({ taskId, requestKey: Date.now() })
     }, [])
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
@@ -853,6 +859,11 @@ export function DashboardClient({
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+                const target = e.target as HTMLElement | null
+                const tagName = target?.tagName?.toLowerCase()
+                if (target?.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+                    return
+                }
                 e.preventDefault()
                 if (e.shiftKey) {
                     // Cmd+Shift+Z = Redo
@@ -1301,6 +1312,7 @@ export function DashboardClient({
                                     onOpenTodayMemoSchedule={openTodayMemoSchedule}
                                     isCalendarSplitVisible={false}
                                     compactComposer
+                                    mindmapMemoFocus={mindmapMemoFocus}
                                 />
                             </div>
                             <div className="min-w-0 flex-1 overflow-hidden">
@@ -1320,6 +1332,7 @@ export function DashboardClient({
                                     onRefreshCalendar={handleRefreshCalendar}
                                     onAddOptimisticEvent={handleAddOptimisticEvent}
                                     onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                                    onOpenLinkedMemos={openMindmapLinkedMemos}
                                 />
                             </div>
                         </div>
@@ -1340,6 +1353,7 @@ export function DashboardClient({
                             onRefreshCalendar={handleRefreshCalendar}
                             onAddOptimisticEvent={handleAddOptimisticEvent}
                             onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                            onOpenLinkedMemos={openMindmapLinkedMemos}
                         />
                     )}
                     </div>

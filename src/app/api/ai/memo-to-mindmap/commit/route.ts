@@ -32,6 +32,7 @@ export async function POST(request: Request) {
 
     // --- 保存先プロジェクトを解決 ---
     let projectId: string
+    let createdProject = false
 
     if (target.type === 'existing') {
       const { data: project } = await supabase
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: projectError?.message || 'プロジェクト作成に失敗しました' }, { status: 500 })
       }
       projectId = newProject.id
+      createdProject = true
     }
 
     // --- ドラフト → tasks 行へ変換 ---
@@ -143,10 +145,17 @@ export async function POST(request: Request) {
 
     // --- メモを紐付け（task_id / project_id / status） ---
     const taskIdByNoteId = new Map<string, string>()
+    const taskTitleByNoteId = new Map<string, string>()
+    const taskLinksByNoteId = new Map<string, Array<{ task_id: string; task_title: string }>>()
     for (const node of draft.nodes) {
       const realId = realIdByTempId.get(node.tempId)!
+      const title = node.title.trim() || '無題'
       for (const noteId of node.sourceNoteIds) {
         if (!taskIdByNoteId.has(noteId)) taskIdByNoteId.set(noteId, realId)
+        if (!taskTitleByNoteId.has(noteId)) taskTitleByNoteId.set(noteId, title)
+        const links = taskLinksByNoteId.get(noteId) || []
+        links.push({ task_id: realId, task_title: title })
+        taskLinksByNoteId.set(noteId, links)
       }
     }
     const allNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
@@ -161,19 +170,80 @@ export async function POST(request: Request) {
               status: 'processed',
             })
             .eq('id', noteId)
-            .eq('user_id', user.id),
+          .eq('user_id', user.id),
         ),
       )
+    } else if (allNoteIds.length > 0) {
+      const linkedAt = new Date().toISOString()
+      const { data: memos, error: memoFetchError } = await supabase
+        .from('ideal_goals')
+        .select('id, ai_source_payload')
+        .in('id', allNoteIds)
+        .eq('user_id', user.id)
+
+      if (memoFetchError) {
+        console.error('[memo-to-mindmap/commit] メモリンク取得失敗:', memoFetchError)
+      } else {
+        await Promise.all(
+          (memos || []).map(memo => {
+            const payload = normalizePayload(memo.ai_source_payload)
+            const existingLinks = Array.isArray(payload.mindmap_links) ? payload.mindmap_links : []
+            const newLinks = (taskLinksByNoteId.get(memo.id) || []).map(link => ({
+              ...link,
+              project_id: projectId,
+              linked_at: linkedAt,
+              source: 'memo_to_mindmap',
+            }))
+            const newTaskIds = new Set(newLinks.map(link => link.task_id))
+            const nextLinks = [
+              ...existingLinks.filter(link => !isTaskLinkInSet(link, newTaskIds)),
+              ...newLinks,
+            ]
+            return supabase
+              .from('ideal_goals')
+              .update({
+                ai_source_payload: {
+                  ...payload,
+                  mindmap_links: nextLinks,
+                },
+                updated_at: linkedAt,
+              })
+              .eq('id', memo.id)
+              .eq('user_id', user.id)
+          }),
+        )
+      }
     }
 
     const rootTaskIds = draft.nodes
       .filter(n => effectiveParent(n) === null)
       .map(n => realIdByTempId.get(n.tempId)!)
 
-    return NextResponse.json({ projectId, rootTaskIds, taskCount: insertRows.length })
+    return NextResponse.json({
+      projectId,
+      createdProject,
+      rootTaskIds,
+      taskIds: insertRows.map(row => row.id),
+      taskCount: insertRows.length,
+    })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[memo-to-mindmap/commit] error:', msg, error)
     return NextResponse.json({ error: 'マインドマップの保存に失敗しました' }, { status: 500 })
   }
+}
+
+function normalizePayload(payload: unknown): Record<string, unknown> {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    return { ...(payload as Record<string, unknown>) }
+  }
+  if (payload == null) return {}
+  return { previous_payload: payload }
+}
+
+function isTaskLinkInSet(link: unknown, taskIds: Set<string>): boolean {
+  return !!link &&
+    typeof link === 'object' &&
+    typeof (link as { task_id?: unknown }).task_id === 'string' &&
+    taskIds.has((link as { task_id: string }).task_id)
 }

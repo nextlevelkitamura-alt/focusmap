@@ -108,6 +108,7 @@ type TaskNodeData = {
     onUpdateCalendar?: (calendarId: string | null) => void;
     onUpdateMemo?: (memo: string | null) => void;
     onRegisterSchedule?: (params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<void>;
+    onOpenLinkedMemos?: () => void;
 };
 
 type HabitSettingsPanelData = {
@@ -1064,7 +1065,10 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         <button
                             type="button"
                             className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                data?.onOpenLinkedMemos?.();
+                            }}
                             title="タスク詳細設定"
                         >
                             <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
@@ -1591,9 +1595,10 @@ interface MindMapProps {
     onRefreshCalendar?: () => Promise<void>
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
+    onOpenLinkedMemos?: (taskId: string) => void
 }
 
-function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent }: MindMapProps) {
+function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, onReorderGroup, onUpdateProject, onCreateTask, onUpdateTask, onDeleteTask, onBulkDelete, onReorderTask, onRefreshCalendar, onAddOptimisticEvent, onRemoveOptimisticEvent, onOpenLinkedMemos }: MindMapProps) {
     const reactFlow = useReactFlow();
     const projectId = project?.id ?? '';
     const USER_ACTION_WINDOW_MS = 800;
@@ -2710,10 +2715,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onToggleCollapse: () => cbs.toggleTaskCollapse(taskId),
                     onDragStart: (tid: string, title: string) => cbs.startDrag(tid, title),
                     onDragEnd: () => cbs.endDrag(),
+                    onOpenLinkedMemos: () => onOpenLinkedMemos?.(taskId),
                 },
             };
         });
-    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget, handleResizeNode, isNarrow]);
+    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget, handleResizeNode, isNarrow, onOpenLinkedMemos]);
 
     // Sync computed static layout to controllable local state
     useEffect(() => {

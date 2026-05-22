@@ -33,6 +33,7 @@ interface CenterPaneProps {
     onRefreshCalendar?: () => Promise<void>
     onAddOptimisticEvent?: (event: import('@/types/calendar').CalendarEvent) => void
     onRemoveOptimisticEvent?: (eventId: string) => void
+    onOpenLinkedMemos?: (taskId: string) => void
     isTaskListVisible?: boolean
 }
 
@@ -52,6 +53,7 @@ export function CenterPane({
     onRefreshCalendar,
     onAddOptimisticEvent,
     onRemoveOptimisticEvent,
+    onOpenLinkedMemos,
     isTaskListVisible = false,
 }: CenterPaneProps) {
     // Splitter State
@@ -82,7 +84,7 @@ export function CenterPane({
     const [showDragHint, setShowDragHint] = useState(true)
     useEffect(() => {
         const dismissed = localStorage.getItem('drag-hint-dismissed')
-        if (dismissed) setShowDragHint(false)
+        if (dismissed) queueMicrotask(() => setShowDragHint(false))
     }, [])
 
     const handleDismissHint = useCallback(() => {
@@ -215,6 +217,7 @@ export function CenterPane({
                         onRefreshCalendar={onRefreshCalendar}
                         onAddOptimisticEvent={onAddOptimisticEvent}
                         onRemoveOptimisticEvent={onRemoveOptimisticEvent}
+                        onOpenLinkedMemos={onOpenLinkedMemos}
                     />
                     <Button
                         variant="outline"
@@ -247,6 +250,9 @@ export function CenterPane({
                             onReorderTask={onReorderTask}
                             onReorderGroup={onReorderGroup}
                             onRefreshCalendar={onRefreshCalendar}
+                            onAddOptimisticEvent={onAddOptimisticEvent}
+                            onRemoveOptimisticEvent={onRemoveOptimisticEvent}
+                            onOpenLinkedMemos={onOpenLinkedMemos}
                         />
                         <Button
                             variant="ghost"
@@ -464,7 +470,7 @@ export function CenterPane({
                                                                 className="h-4 w-4 text-zinc-500 hover:text-red-400 transition-colors"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation()
-                                                                    onUpdateTask?.(group.id, { priority: undefined as any })
+                                                                    onUpdateTask?.(group.id, { priority: null })
                                                                 }}
                                                                 title="優先度を削除"
                                                             >

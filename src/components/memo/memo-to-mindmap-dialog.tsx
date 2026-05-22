@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { MindmapDraft, MindmapDraftNode } from "@/lib/ai/memo-to-mindmap"
+import { useUndoRedo } from "@/hooks/useUndoRedo"
 
 type Mode = "quick" | "deep"
 type Step = "config" | "generating" | "preview" | "committing"
@@ -55,6 +56,7 @@ export function MemoToMindmapDialog({
 
   const [target, setTarget] = useState<string>(defaultProjectId || NEW_PROJECT)
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || spaces[0]?.id || "")
+  const { pushAction } = useUndoRedo()
 
   const reset = useCallback(() => {
     setStep("config")
@@ -178,25 +180,62 @@ export function MemoToMindmapDialog({
         target === NEW_PROJECT
           ? { type: "new", projectTitle: projectTitle.trim(), spaceId }
           : { type: "existing", projectId: target }
+      const draftPayload = { projectTitle: projectTitle.trim() || "新しいマインドマップ", nodes }
 
       const res = await fetch("/api/ai/memo-to-mindmap/commit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          draft: { projectTitle: projectTitle.trim() || "新しいマインドマップ", nodes },
+          draft: draftPayload,
           target: targetPayload,
           source,
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || "保存に失敗しました")
+      let currentProjectId = String(data.projectId)
+      let currentTaskIds = Array.isArray(data.taskIds) ? data.taskIds.filter((id: unknown): id is string => typeof id === "string") : []
+      let currentCreatedProject = data.createdProject === true
+      pushAction({
+        description: "メモをマインドマップに整理",
+        undo: async () => {
+          if (currentTaskIds.length === 0) return
+          const undoRes = await fetch("/api/ai/memo-to-mindmap/undo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              taskIds: currentTaskIds,
+              projectId: currentProjectId,
+              deleteProjectIfEmpty: currentCreatedProject,
+            }),
+          })
+          if (!undoRes.ok) {
+            const undoData = await undoRes.json().catch(() => ({}))
+            throw new Error(undoData?.error || "取り消しに失敗しました")
+          }
+          onSuccess(currentProjectId)
+        },
+        redo: async () => {
+          const redoRes = await fetch("/api/ai/memo-to-mindmap/commit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ draft: draftPayload, target: targetPayload, source }),
+          })
+          const redoData = await redoRes.json()
+          if (!redoRes.ok) throw new Error(redoData?.error || "やり直しに失敗しました")
+          currentProjectId = String(redoData.projectId)
+          currentTaskIds = Array.isArray(redoData.taskIds) ? redoData.taskIds.filter((id: unknown): id is string => typeof id === "string") : []
+          currentCreatedProject = redoData.createdProject === true
+          onSuccess(currentProjectId)
+        },
+      })
       reset()
       onSuccess(data.projectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存に失敗しました")
       setStep("preview")
     }
-  }, [nodes, source, target, projectTitle, spaceId, reset, onSuccess])
+  }, [nodes, source, target, projectTitle, spaceId, reset, onSuccess, pushAction])
 
   const canCreateNew = spaces.length > 0
   const newProjectInvalid = target === NEW_PROJECT && (!canCreateNew || !spaceId || !projectTitle.trim())
