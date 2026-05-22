@@ -2,6 +2,7 @@ const AI_BASE_URL = (process.env.EXTERNAL_AI_API_BASE_URL ?? 'https://api.moonsh
 const AI_API_KEY  = process.env.EXTERNAL_AI_API_KEY ?? process.env.OPENCODE_GO_API_KEY ?? process.env.MOONSHOT_API_KEY ?? ''
 const AI_MODEL    = process.env.EXTERNAL_AI_MODEL ?? 'kimi-k2.6'
 const DISABLE_KIMI_THINKING = process.env.EXTERNAL_AI_DISABLE_THINKING !== 'false'
+const ALLOW_EXTERNAL_AI_IN_PRODUCTION = process.env.ALLOW_EXTERNAL_AI_IN_PRODUCTION === 'true'
 
 type Message = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -43,10 +44,17 @@ function chatCompletionsUrl() {
     : `${AI_BASE_URL}/chat/completions`
 }
 
+function assertExternalAiAllowed() {
+  if (process.env.NODE_ENV === 'production' && !ALLOW_EXTERNAL_AI_IN_PRODUCTION) {
+    throw new Error('External non-Google AI providers are disabled in production.')
+  }
+}
+
 export async function chatCompletion(
   messages: Message[],
   opts?: { temperature?: number; max_tokens?: number; model?: string }
 ): Promise<string> {
+  assertExternalAiAllowed()
   if (!AI_API_KEY) throw new Error('EXTERNAL_AI_API_KEY が設定されていません')
 
   const model = opts?.model || AI_MODEL
@@ -113,6 +121,7 @@ export async function chatCompletionWithTools(
   tools: ToolDef[],
   opts?: { temperature?: number; max_tokens?: number; model?: string; tool_choice?: 'auto' | 'none' | 'required' }
 ): Promise<ChatResult> {
+  assertExternalAiAllowed()
   if (!AI_API_KEY) throw new Error('EXTERNAL_AI_API_KEY が設定されていません')
 
   const model = opts?.model || AI_MODEL

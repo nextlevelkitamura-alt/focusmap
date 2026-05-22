@@ -2,18 +2,36 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { upsertMemoTags } from '@/lib/memo-tags-server'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data, error } = await supabase
+  const spaceId = request.nextUrl.searchParams.get('space_id')
+
+  let query = supabase
     .from('ideal_goals')
     .select('*, ideal_items(*)')
-    .eq('user_id', user.id)
     .in('status', ['wishlist', 'memo'])
     .order('display_order', { ascending: true })
     .order('created_at', { referencedTable: 'ideal_items', ascending: true })
+
+  if (spaceId === '__unassigned__') {
+    query = query.eq('user_id', user.id).is('project_id', null)
+  } else if (spaceId) {
+    const { data: projects, error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('space_id', spaceId)
+    if (projectError) return NextResponse.json({ error: projectError.message }, { status: 500 })
+    const ids = (projects ?? []).map(p => p.id)
+    if (ids.length === 0) return NextResponse.json({ items: [] })
+    query = query.in('project_id', ids)
+  } else {
+    query = query.eq('user_id', user.id)
+  }
+
+  const { data, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ items: data })

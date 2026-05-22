@@ -44,12 +44,76 @@ export interface Database {
                     created_at?: string
                 }
             }
+            space_members: {
+                Row: {
+                    id: string
+                    space_id: string
+                    user_id: string
+                    role: 'owner' | 'editor' | 'commenter' | 'viewer'
+                    invited_by: string | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    space_id: string
+                    user_id: string
+                    role?: 'owner' | 'editor' | 'commenter' | 'viewer'
+                    invited_by?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    space_id?: string
+                    user_id?: string
+                    role?: 'owner' | 'editor' | 'commenter' | 'viewer'
+                    invited_by?: string | null
+                    updated_at?: string
+                }
+            }
+            space_invites: {
+                Row: {
+                    id: string
+                    space_id: string
+                    email: string
+                    role: 'owner' | 'editor' | 'commenter' | 'viewer'
+                    token: string
+                    invited_by: string
+                    accepted_by: string | null
+                    accepted_at: string | null
+                    expires_at: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    space_id: string
+                    email: string
+                    role?: 'owner' | 'editor' | 'commenter' | 'viewer'
+                    token?: string
+                    invited_by: string
+                    accepted_by?: string | null
+                    accepted_at?: string | null
+                    expires_at?: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    space_id?: string
+                    email?: string
+                    role?: 'owner' | 'editor' | 'commenter' | 'viewer'
+                    accepted_by?: string | null
+                    accepted_at?: string | null
+                    expires_at?: string
+                }
+            }
             projects: {
                 Row: {
                     id: string
                     user_id: string
                     space_id: string
                     title: string
+                    description: string
                     purpose: string | null
                     category_tag: string | null
                     priority: number
@@ -63,6 +127,7 @@ export interface Database {
                     user_id: string
                     space_id: string
                     title: string
+                    description?: string
                     purpose?: string | null
                     category_tag?: string | null
                     priority?: number
@@ -76,6 +141,7 @@ export interface Database {
                     user_id?: string
                     space_id?: string
                     title?: string
+                    description?: string
                     purpose?: string | null
                     category_tag?: string | null
                     priority?: number
@@ -635,6 +701,244 @@ export interface Database {
                     updated_at?: string
                 }
             }
+            ai_task_packages: {
+                Row: {
+                    id: string
+                    user_id: string
+                    space_id: string | null
+                    title: string
+                    prompt_template: string
+                    executor: 'claude' | 'codex' | 'codex_app'
+                    schedule: Json
+                    required_repo_key: string | null
+                    required_secret_names: string[]
+                    input_schema: Json
+                    default_visibility: 'private' | 'space'
+                    is_active: boolean
+                    current_version_id: string | null
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    space_id?: string | null
+                    title: string
+                    prompt_template: string
+                    executor?: 'claude' | 'codex' | 'codex_app'
+                    schedule?: Json
+                    required_repo_key?: string | null
+                    required_secret_names?: string[]
+                    input_schema?: Json
+                    default_visibility?: 'private' | 'space'
+                    is_active?: boolean
+                    current_version_id?: string | null
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    space_id?: string | null
+                    title?: string
+                    prompt_template?: string
+                    executor?: 'claude' | 'codex' | 'codex_app'
+                    schedule?: Json
+                    required_repo_key?: string | null
+                    required_secret_names?: string[]
+                    input_schema?: Json
+                    default_visibility?: 'private' | 'space'
+                    is_active?: boolean
+                    current_version_id?: string | null
+                    updated_at?: string
+                }
+            }
+            ai_task_package_versions: {
+                Row: {
+                    id: string
+                    package_id: string
+                    user_id: string
+                    version: string
+                    manifest: Json
+                    source_kind: 'git' | 'local_repo_key' | 'inline'
+                    repo_url: string | null
+                    git_ref: string | null
+                    git_commit_sha: string | null
+                    package_path: string
+                    content_sha256: string | null
+                    changelog: string | null
+                    published_at: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    package_id: string
+                    user_id: string
+                    version: string
+                    manifest?: Json
+                    source_kind?: 'git' | 'local_repo_key' | 'inline'
+                    repo_url?: string | null
+                    git_ref?: string | null
+                    git_commit_sha?: string | null
+                    package_path?: string
+                    content_sha256?: string | null
+                    changelog?: string | null
+                    published_at?: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    package_id?: string
+                    user_id?: string
+                    version?: string
+                    manifest?: Json
+                    source_kind?: 'git' | 'local_repo_key' | 'inline'
+                    repo_url?: string | null
+                    git_ref?: string | null
+                    git_commit_sha?: string | null
+                    package_path?: string
+                    content_sha256?: string | null
+                    changelog?: string | null
+                    published_at?: string
+                }
+            }
+            ai_package_permissions: {
+                Row: {
+                    id: string
+                    package_id: string
+                    user_id: string
+                    role: 'owner' | 'editor' | 'viewer'
+                    granted_by: string | null
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    package_id: string
+                    user_id: string
+                    role?: 'owner' | 'editor' | 'viewer'
+                    granted_by?: string | null
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    package_id?: string
+                    user_id?: string
+                    role?: 'owner' | 'editor' | 'viewer'
+                    granted_by?: string | null
+                }
+            }
+            ai_runner_package_cache: {
+                Row: {
+                    runner_id: string
+                    package_id: string
+                    version_id: string
+                    local_path: string | null
+                    source_ref: string | null
+                    git_commit_sha: string | null
+                    content_sha256: string | null
+                    sync_status: 'missing' | 'sync_requested' | 'syncing' | 'ready' | 'failed'
+                    sync_requested_at: string | null
+                    synced_at: string | null
+                    last_error: string | null
+                    metadata: Json
+                    updated_at: string
+                }
+                Insert: {
+                    runner_id: string
+                    package_id: string
+                    version_id: string
+                    local_path?: string | null
+                    source_ref?: string | null
+                    git_commit_sha?: string | null
+                    content_sha256?: string | null
+                    sync_status?: 'missing' | 'sync_requested' | 'syncing' | 'ready' | 'failed'
+                    sync_requested_at?: string | null
+                    synced_at?: string | null
+                    last_error?: string | null
+                    metadata?: Json
+                    updated_at?: string
+                }
+                Update: {
+                    runner_id?: string
+                    package_id?: string
+                    version_id?: string
+                    local_path?: string | null
+                    source_ref?: string | null
+                    git_commit_sha?: string | null
+                    content_sha256?: string | null
+                    sync_status?: 'missing' | 'sync_requested' | 'syncing' | 'ready' | 'failed'
+                    sync_requested_at?: string | null
+                    synced_at?: string | null
+                    last_error?: string | null
+                    metadata?: Json
+                    updated_at?: string
+                }
+            }
+            ai_runners: {
+                Row: {
+                    id: string
+                    user_id: string
+                    hostname: string
+                    display_name: string | null
+                    executors: string[]
+                    available_repo_keys: string[]
+                    available_secret_names: string[]
+                    repo_paths: Json
+                    metadata: Json
+                    last_heartbeat_at: string
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    hostname: string
+                    display_name?: string | null
+                    executors?: string[]
+                    available_repo_keys?: string[]
+                    available_secret_names?: string[]
+                    repo_paths?: Json
+                    metadata?: Json
+                    last_heartbeat_at?: string
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    hostname?: string
+                    display_name?: string | null
+                    executors?: string[]
+                    available_repo_keys?: string[]
+                    available_secret_names?: string[]
+                    repo_paths?: Json
+                    metadata?: Json
+                    last_heartbeat_at?: string
+                    updated_at?: string
+                }
+            }
+            ai_runner_spaces: {
+                Row: {
+                    runner_id: string
+                    space_id: string
+                    enabled: boolean
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    runner_id: string
+                    space_id: string
+                    enabled?: boolean
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    runner_id?: string
+                    space_id?: string
+                    enabled?: boolean
+                    updated_at?: string
+                }
+            }
             api_keys: {
                 Row: {
                     id: string
@@ -1175,6 +1479,13 @@ export type ProjectUpdate = Database['public']['Tables']['projects']['Update']
 export type Space = Database['public']['Tables']['spaces']['Row']
 export type SpaceInsert = Database['public']['Tables']['spaces']['Insert']
 export type SpaceUpdate = Database['public']['Tables']['spaces']['Update']
+export type SpaceMember = Database['public']['Tables']['space_members']['Row']
+export type SpaceInvite = Database['public']['Tables']['space_invites']['Row']
+export type AiTaskPackage = Database['public']['Tables']['ai_task_packages']['Row']
+export type AiTaskPackageVersion = Database['public']['Tables']['ai_task_package_versions']['Row']
+export type AiRunnerPackageCache = Database['public']['Tables']['ai_runner_package_cache']['Row']
+export type AiRunner = Database['public']['Tables']['ai_runners']['Row']
+export type AiRunnerSpace = Database['public']['Tables']['ai_runner_spaces']['Row']
 
 export type MemoTag = Database['public']['Tables']['memo_tags']['Row']
 export type MemoTagInsert = Database['public']['Tables']['memo_tags']['Insert']

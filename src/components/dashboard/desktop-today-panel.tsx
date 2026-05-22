@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { Task, Project, IdealGoalWithItems } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, Inbox, Trash2
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2
 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -62,7 +62,6 @@ export function DesktopTodayPanel({
         estimatedTime: number
         calendarId: string | null
     } | null>(null)
-    const [activeTab, setActiveTab] = useState<'today' | 'inbox'>('today')
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -103,7 +102,6 @@ export function DesktopTodayPanel({
         isEditModalOpen,
         isToday,
         onCreateSubTask: logicOnCreateSubTask,
-        openTaskEditModal,
         projectNameMap,
         scheduleNotification,
         scrollPositionRef,
@@ -121,7 +119,6 @@ export function DesktopTodayPanel({
         toggleCompletion,
         toggleEventCompletion,
         toggleTask,
-        unscheduledTasks,
         writableCalendars,
     } = logic
 
@@ -189,7 +186,7 @@ export function DesktopTodayPanel({
         }
         : null
     const effectiveTimelineMode = calendarScrollRequestKey != null ? 'calendar' : timelineMode
-    const showSideTaskForm = !!(isTaskFormOpen && onCreateQuickTask && activeTab === 'today' && effectiveTimelineMode === 'calendar')
+    const showSideTaskForm = !!(isTaskFormOpen && onCreateQuickTask && effectiveTimelineMode === 'calendar')
     const showBottomTaskForm = !!(isTaskFormOpen && onCreateQuickTask && !showSideTaskForm)
 
     return (
@@ -264,37 +261,8 @@ export function DesktopTodayPanel({
                 </div>
             </div>
 
-            <div className="flex-shrink-0 border-b border-border/20 px-3 py-1.5 bg-background/70">
-                <div className="inline-flex items-center rounded-md bg-muted p-0.5 gap-0.5">
-                    <button
-                        onClick={() => setActiveTab('today')}
-                        className={cn(
-                            "px-2.5 py-1 text-xs rounded transition-colors",
-                            activeTab === 'today'
-                                ? "bg-background text-foreground shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        Today
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('inbox')}
-                        className={cn(
-                            "px-2.5 py-1 text-xs rounded transition-colors flex items-center gap-1",
-                            activeTab === 'inbox'
-                                ? "bg-background text-foreground shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        <Inbox className="w-3.5 h-3.5" />
-                        Inbox
-                        <span className="text-[10px] tabular-nums">({unscheduledTasks.length})</span>
-                    </button>
-                </div>
-            </div>
-
             {/* ② Collapsible mini-calendar */}
-            {activeTab === 'today' && calendarOpen && (
+            {calendarOpen && (
                 <div ref={calendarAreaRef} className="flex-shrink-0 border-b border-border/30 px-3 py-2 bg-background/60 animate-in slide-in-from-top-2 duration-200">
                     <SimpleCalendar
                         selected={selectedDate}
@@ -307,7 +275,7 @@ export function DesktopTodayPanel({
             )}
 
             {/* ③ Habit Bar */}
-            {activeTab === 'today' && habitsLoading ? (
+            {habitsLoading ? (
                 <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-3 py-1.5">
                     <div className="flex items-center gap-1.5 mb-1.5">
                         <Target className="w-3 h-3 text-primary/40 flex-shrink-0" />
@@ -323,7 +291,7 @@ export function DesktopTodayPanel({
                         ))}
                     </div>
                 </div>
-            ) : activeTab === 'today' && dateHabits.length > 0 ? (
+            ) : dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b border-border/30 bg-background/40">
                     <div className="px-3 py-1.5">
                         <button
@@ -509,7 +477,7 @@ export function DesktopTodayPanel({
             ) : null}
 
             {/* ④ 理想の今日の進捗 */}
-            {activeTab === 'today' && todaySummary && todaySummary.totalCount > 0 && (
+            {todaySummary && todaySummary.totalCount > 0 && (
                 <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-3 py-1.5">
                     <div className="flex items-center gap-1.5 mb-1">
                         <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />
@@ -564,10 +532,8 @@ export function DesktopTodayPanel({
                 {/* Schedule summary */}
                 <div className="flex-shrink-0 px-3 py-1 border-b border-border/20">
                     <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
-                        {activeTab === 'today' && eventsLoading ? (
+                        {eventsLoading ? (
                             <><Loader2 className="w-3 h-3 animate-spin" /><span>取得中...</span></>
-                        ) : activeTab === 'inbox' ? (
-                            <>{unscheduledTasks.length}件の未スケジュール</>
                         ) : (
                             <>
                                 {displayItems.length}件のスケジュール
@@ -577,45 +543,6 @@ export function DesktopTodayPanel({
                     </p>
                 </div>
                 <div className="relative flex-1 min-h-0">
-                    {activeTab === 'inbox' ? (
-                        <div className="h-full overflow-y-auto no-scrollbar px-3 py-2">
-                            {unscheduledTasks.length === 0 ? (
-                                <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                                    Inbox は空です
-                                </div>
-                            ) : (
-                                <div className="space-y-1.5">
-                                    {unscheduledTasks.map(task => (
-                                        <div
-                                            key={task.id}
-                                            role="button"
-                                            tabIndex={0}
-                                            onClick={() => openTaskEditModal(task.id)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter' || e.key === ' ') {
-                                                    e.preventDefault()
-                                                    openTaskEditModal(task.id)
-                                                }
-                                            }}
-                                            className="w-full text-left flex items-center justify-between gap-2 px-2 py-2 rounded-md border border-border/50 bg-background/60 hover:bg-muted/40 transition-colors"
-                                        >
-                                            <span className="text-sm truncate flex-1">{task.title}</span>
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handleDeleteTask(task.id)
-                                                }}
-                                                className="p-1 rounded-md text-muted-foreground/70 hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0"
-                                                aria-label={`${task.title}を削除`}
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    ) : (
                     <div className={cn("h-full min-h-0 flex flex-col transition-all duration-200", showSideTaskForm && "pl-[352px]")}>
                 {/* Calendar Events Error */}
                 {eventsError && calendars.length > 0 && (
@@ -688,7 +615,6 @@ export function DesktopTodayPanel({
                     </div>
                 )}
                     </div>
-                    )}
 
                     {showSideTaskForm && onCreateQuickTask && (
                         <div className="absolute inset-y-0 left-0 z-20 w-[352px] border-r border-border/30 bg-background/95">

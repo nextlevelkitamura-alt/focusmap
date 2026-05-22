@@ -24,7 +24,6 @@ export function useNoteAiTasks() {
       const { data } = await supabase
         .from('ai_tasks')
         .select('*')
-        .eq('user_id', user.id)
         .not('source_note_id', 'is', null)
         .order('created_at', { ascending: false })
         .limit(200)

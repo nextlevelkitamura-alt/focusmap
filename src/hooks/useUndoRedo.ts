@@ -3,6 +3,9 @@
 import { useCallback, useRef } from 'react'
 
 const MAX_STACK_SIZE = 50
+const globalUndoStack: UndoableAction[] = []
+const globalRedoStack: UndoableAction[] = []
+let isGlobalUndoRedoing = false
 
 export interface UndoableAction {
     description: string
@@ -20,13 +23,12 @@ export interface UseUndoRedoReturn {
 }
 
 export function useUndoRedo(): UseUndoRedoReturn {
-    const undoStackRef = useRef<UndoableAction[]>([])
-    const redoStackRef = useRef<UndoableAction[]>([])
-    const isUndoRedoingRef = useRef(false)
+    const undoStackRef = useRef(globalUndoStack)
+    const redoStackRef = useRef(globalRedoStack)
 
     const pushAction = useCallback((action: UndoableAction) => {
         // undo/redo実行中に発生した操作は記録しない（再帰防止）
-        if (isUndoRedoingRef.current) return
+        if (isGlobalUndoRedoing) return
 
         undoStackRef.current.push(action)
         // スタック上限を超えたら古いものを削除
@@ -34,14 +36,14 @@ export function useUndoRedo(): UseUndoRedoReturn {
             undoStackRef.current.shift()
         }
         // 新しいアクション実行時はredoスタックをクリア
-        redoStackRef.current = []
+        redoStackRef.current.length = 0
     }, [])
 
     const undo = useCallback(async (): Promise<string | null> => {
         const action = undoStackRef.current.pop()
         if (!action) return null
 
-        isUndoRedoingRef.current = true
+        isGlobalUndoRedoing = true
         try {
             await action.undo()
             redoStackRef.current.push(action)
@@ -50,7 +52,7 @@ export function useUndoRedo(): UseUndoRedoReturn {
             console.error('[UndoRedo] undo failed:', e)
             return null
         } finally {
-            isUndoRedoingRef.current = false
+            isGlobalUndoRedoing = false
         }
     }, [])
 
@@ -58,7 +60,7 @@ export function useUndoRedo(): UseUndoRedoReturn {
         const action = redoStackRef.current.pop()
         if (!action) return null
 
-        isUndoRedoingRef.current = true
+        isGlobalUndoRedoing = true
         try {
             await action.redo()
             undoStackRef.current.push(action)
@@ -67,7 +69,7 @@ export function useUndoRedo(): UseUndoRedoReturn {
             console.error('[UndoRedo] redo failed:', e)
             return null
         } finally {
-            isUndoRedoingRef.current = false
+            isGlobalUndoRedoing = false
         }
     }, [])
 
@@ -75,8 +77,8 @@ export function useUndoRedo(): UseUndoRedoReturn {
     const canRedo = useCallback(() => redoStackRef.current.length > 0, [])
 
     const clear = useCallback(() => {
-        undoStackRef.current = []
-        redoStackRef.current = []
+        undoStackRef.current.length = 0
+        redoStackRef.current.length = 0
     }, [])
 
     return { pushAction, undo, redo, canUndo, canRedo, clear }

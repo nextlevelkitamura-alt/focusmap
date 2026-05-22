@@ -168,7 +168,6 @@ export async function POST(
     .from("ai_tasks")
     .select("id, prompt, status, error, result, executor, started_at, completed_at, created_at, remote_session_url, tmux_session_name, codex_thread_id, cwd")
     .eq("id", id)
-    .eq("user_id", user.id)
     .maybeSingle()
 
   if (error) {
@@ -200,7 +199,6 @@ export async function POST(
     .from("ai_tasks")
     .update(updates)
     .eq("id", id)
-    .eq("user_id", user.id)
     .select()
     .single()
 

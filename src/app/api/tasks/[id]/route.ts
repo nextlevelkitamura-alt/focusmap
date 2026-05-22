@@ -221,17 +221,37 @@ export async function PATCH(
       );
     }
 
-    // タスクを更新
-    const { data: updatedTask, error: updateError } = await supabase
-      .from('tasks')
-      .update({
-        ...body,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', taskId)
-      .eq('user_id', user.id)
-      .select()
-      .single();
+    const updatePayload = {
+      ...body,
+      updated_at: new Date().toISOString()
+    };
+
+    let updatedTask;
+    let updateError;
+
+    if (body.status !== undefined && task.source === 'google_event' && task.google_event_id) {
+      const result = await supabase
+        .from('tasks')
+        .update(updatePayload)
+        .eq('user_id', user.id)
+        .eq('google_event_id', task.google_event_id)
+        .is('deleted_at', null)
+        .select();
+
+      updateError = result.error;
+      updatedTask = result.data?.find(row => row.id === taskId) ?? result.data?.[0] ?? null;
+    } else {
+      const result = await supabase
+        .from('tasks')
+        .update(updatePayload)
+        .eq('id', taskId)
+        .eq('user_id', user.id)
+        .select()
+        .single();
+
+      updateError = result.error;
+      updatedTask = result.data;
+    }
 
     if (updateError) {
       console.error('[tasks/[id] PATCH] Failed to update task:', updateError);

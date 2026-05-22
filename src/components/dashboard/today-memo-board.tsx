@@ -35,6 +35,7 @@ function toTokyoDateString(value: string | null | undefined): string {
 
 interface TodayMemoBoardProps {
   projects: Project[]
+  selectedSpaceId?: string | null
   scheduleFocusMemoId?: string | null
   scheduleFocusRequestKey?: number | null
   onClearScheduleFocus?: () => void
@@ -49,6 +50,7 @@ interface TodayMemoBoardProps {
  */
 export function TodayMemoBoard({
   projects,
+  selectedSpaceId = null,
   scheduleFocusMemoId = null,
   scheduleFocusRequestKey = null,
   onClearScheduleFocus,
@@ -77,7 +79,9 @@ export function TodayMemoBoard({
 
   const fetchItems = useCallback(async () => {
     try {
-      const res = await fetch("/api/wishlist")
+      const params = new URLSearchParams()
+      if (selectedSpaceId) params.set("space_id", selectedSpaceId)
+      const res = await fetch(`/api/wishlist${params.size ? `?${params.toString()}` : ""}`)
       if (!res.ok) throw new Error(`取得失敗 (${res.status})`)
       const data = await res.json()
       setItems((data.items ?? []) as MemoItem[])
@@ -87,7 +91,7 @@ export function TodayMemoBoard({
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [selectedSpaceId])
 
   useEffect(() => { void fetchItems() }, [fetchItems])
 

@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
   Square, CheckSquare, ChevronLeft, ChevronRight, Plus,
-  ChevronDown, ChevronUp, Clock, Calendar as CalendarIcon,
+  ChevronDown, ChevronUp, Calendar as CalendarIcon,
   Loader2, Bot, CheckCircle2, AlertCircle,
   Trash2, CalendarClock, RefreshCw,
 } from 'lucide-react'
@@ -18,7 +18,6 @@ import { useScheduledTasks } from '@/hooks/useScheduledTasks'
 import type { AiTask, AiTaskStatus } from '@/types/ai-task'
 import { AiTaskApprovalCard } from './ai-task-approval-card'
 import { AuthStatusBar } from './auth-status-bar'
-import { SetupGuideBanner } from './setup-guide-banner'
 import { YarukotoTaskRow } from './yarukoto-task-row'
 import { isTaskSyncing } from '@/lib/task-sync-state'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -28,7 +27,6 @@ import { useClickOutside } from '@/hooks/useClickOutside'
 type BoardItem =
   | { kind: 'event'; data: CalendarEvent; sortTime: number }
   | { kind: 'task';  data: Task;          sortTime: number }
-  | { kind: 'ai';    data: AiTask;        sortTime: number }
 
 interface TodayTaskBoardProps {
   allTasks: Task[]
@@ -45,11 +43,6 @@ interface TodayTaskBoardProps {
   }) => Promise<void>
   onDeleteTask?: (taskId: string) => Promise<void>
   syncFailedIds?: Set<string>
-}
-
-function formatScheduledTime(scheduledAt: string | null): string | null {
-  if (!scheduledAt) return null
-  return format(new Date(scheduledAt), 'H:mm')
 }
 
 function formatTimeRange(start: string, end: string): string {
@@ -87,13 +80,8 @@ export function TodayTaskBoard({
 }: TodayTaskBoardProps) {
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [isAdding, setIsAdding] = useState(false)
-  const [showCompleted, setShowCompleted] = useState(true)
-  const [chatInput, setChatInput] = useState('')
-  const [isSending, setIsSending] = useState(false)
   const [showAiLog, setShowAiLog] = useState(false)
-
-  // 壁打ちセクションのタブ
-  const [chatTab, setChatTab] = useState<'chat' | 'scheduled'>('chat')
+  const showAiExecutionControls = false
 
   // スケジュール設定フォーム（編集モード対応）
   const [editingTask, setEditingTask] = useState<AiTask | null>(null)
@@ -130,15 +118,11 @@ export function TodayTaskBoard({
     if (selectedRepo) localStorage.setItem('focusmap-schedule-repo', selectedRepo)
   }, [selectedRepo])
 
-  const { tasks: aiTasks, sendPrompt, approve, reject, requestRevision, addTaskOptimistic, deleteTask: deleteAiTask, toggleComplete: toggleAiComplete, refresh: refreshAiTasks } = useAiTasks({ limit: 20 })
+  const { tasks: aiTasks, approve, reject, requestRevision, addTaskOptimistic, refresh: refreshAiTasks } = useAiTasks({ limit: 20 })
   const { tasks: scheduledTasks, isLoading: scheduledLoading, deleteTask: deleteScheduledTask, refresh: refreshScheduled } = useScheduledTasks()
 
   const pendingApprovalTasks = useMemo(
     () => aiTasks.filter(t => t.status === 'awaiting_approval'),
-    [aiTasks]
-  )
-  const runningAiTasks = useMemo(
-    () => aiTasks.filter(t => t.status === 'running' || t.status === 'pending'),
     [aiTasks]
   )
   const logAiTasks = useMemo(
@@ -152,33 +136,6 @@ export function TodayTaskBoard({
     projects,
     onDeleteTask,
   })
-
-  // 選択日のAIスケジュール（ワンタイム + 定期タスクのcronマッチ）
-  const todayAiSchedule = useMemo(() => {
-    const sel = logic.selectedDate
-    const dayStart = new Date(sel.getFullYear(), sel.getMonth(), sel.getDate())
-    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
-
-    // ワンタイムタスク: scheduled_atが選択日内
-    const oneTime = aiTasks.filter(t => {
-      if (!t.scheduled_at || t.recurrence_cron) return false
-      const d = new Date(t.scheduled_at)
-      return d >= dayStart && d < dayEnd
-    })
-
-    // 定期タスク: cronの曜日が選択日にマッチ
-    const seenIds = new Set(oneTime.map(t => t.id))
-    const recurring = scheduledTasks.filter(t => {
-      if (!t.recurrence_cron || seenIds.has(t.id)) return false
-      return cronMatchesDate(t.recurrence_cron, sel)
-    })
-
-    return [...oneTime, ...recurring].sort((a, b) => {
-      const timeA = a.scheduled_at ? new Date(a.scheduled_at).getTime() : cronToSortTime(a.recurrence_cron, sel)
-      const timeB = b.scheduled_at ? new Date(b.scheduled_at).getTime() : cronToSortTime(b.recurrence_cron, sel)
-      return timeA - timeB
-    })
-  }, [aiTasks, scheduledTasks, logic.selectedDate])
 
   const { boardItems, doneCount, eventCount, todoCount } = useMemo(() => {
     const allToday = [
@@ -211,18 +168,11 @@ export function TodayTaskBoard({
     const items: BoardItem[] = [
       ...events.map(e => ({ kind: 'event' as const, data: e, sortTime: new Date(e.start_time).getTime() })),
       ...rootTasks.map(t => ({ kind: 'task' as const, data: t, sortTime: t.scheduled_at ? new Date(t.scheduled_at).getTime() : Infinity })),
-      ...todayAiSchedule.map(a => ({
-        kind: 'ai' as const,
-        data: a,
-        sortTime: a.recurrence_cron
-          ? cronToSortTime(a.recurrence_cron, logic.selectedDate)
-          : a.scheduled_at ? new Date(a.scheduled_at).getTime() : Infinity,
-      })),
     ]
     items.sort((a, b) => a.sortTime - b.sortTime)
 
     return { boardItems: items, doneCount, eventCount: events.length, todoCount: unique.length - doneCount }
-  }, [logic.todayScheduledTasks, logic.unscheduledTasks, logic.calendarEvents, logic.today, logic.tomorrow, allTasks, todayAiSchedule])
+  }, [logic.todayScheduledTasks, logic.unscheduledTasks, logic.calendarEvents, logic.today, logic.tomorrow, allTasks])
 
   const projectNameMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -256,27 +206,6 @@ export function TodayTaskBoard({
       handleAddTask()
     }
   }, [handleAddTask])
-
-  const handleSendChat = useCallback(async () => {
-    const prompt = chatInput.trim()
-    if (!prompt) return
-    setIsSending(true)
-    try {
-      await sendPrompt(prompt)
-      setChatInput('')
-    } catch {
-      // エラーはAIログに表示される
-    } finally {
-      setIsSending(false)
-    }
-  }, [chatInput, sendPrompt])
-
-  const handleChatKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      handleSendChat()
-    }
-  }, [handleSendChat])
 
   // 定期タスクの編集を開始
   const handleEditScheduledTask = useCallback((task: AiTask) => {
@@ -429,7 +358,7 @@ export function TodayTaskBoard({
       {/* <SetupGuideBanner /> */}
 
       {/* 承認待ちAIタスク（スクロール外固定） */}
-      {pendingApprovalTasks.length > 0 && (
+      {showAiExecutionControls && pendingApprovalTasks.length > 0 && (
         <div className="flex-shrink-0 px-4 py-3 border-b bg-amber-50/30 dark:bg-amber-950/20 space-y-2 max-h-80 overflow-y-auto">
           <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse inline-block" />
@@ -451,7 +380,7 @@ export function TodayTaskBoard({
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-4 py-4 space-y-5 pb-10">
 
-          {/* やること（予定・タスク・AIスケジュール統合） */}
+          {/* やること（人間の予定・タスクのみ） */}
           <section>
             <h2 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
               <span>やること</span>
@@ -494,27 +423,6 @@ export function TodayTaskBoard({
                         <span className={cn("text-sm truncate", isDone && "line-through text-muted-foreground")}>{event.title}</span>
                       </button>
                     </div>
-                  )
-                }
-                if (item.kind === 'ai') {
-                  const aiTask = item.data
-                  const time = aiTask.recurrence_cron
-                    ? (() => { const p = aiTask.recurrence_cron!.trim().split(/\s+/); return `${p[1]?.padStart(2,'0')}:${p[0]?.padStart(2,'0')}` })()
-                    : aiTask.scheduled_at ? format(new Date(aiTask.scheduled_at), 'HH:mm') : ''
-                  // 単発: status が completed で完了扱い
-                  // 繰り返し: 今日の completed_at があれば「今日分は完了」
-                  const selDayStart = new Date(logic.selectedDate.getFullYear(), logic.selectedDate.getMonth(), logic.selectedDate.getDate())
-                  const selDayEnd = new Date(selDayStart.getTime() + 24 * 60 * 60 * 1000)
-                  const completedToday = aiTask.completed_at
-                    ? (() => { const d = new Date(aiTask.completed_at); return d >= selDayStart && d < selDayEnd })()
-                    : false
-                  const isDone = aiTask.recurrence_cron
-                    ? completedToday
-                    : aiTask.status === 'completed'
-                  const isFailed = aiTask.status === 'failed'
-                  const isRunning = aiTask.status === 'running'
-                  return (
-                    <AiScheduleRow key={`ai-${aiTask.id}`} task={aiTask} time={time} isDone={isDone} isFailed={isFailed} isRunning={isRunning} onCancel={reject} onDelete={deleteAiTask} onToggle={toggleAiComplete} />
                   )
                 }
                 const task = item.data
@@ -584,6 +492,7 @@ export function TodayTaskBoard({
           )}
 
           {/* 定期タスク */}
+          {showAiExecutionControls && (
           <section ref={scheduleFormRef}>
             <div className="flex items-center gap-1.5 mb-2 text-xs font-medium text-muted-foreground">
               <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
@@ -913,9 +822,10 @@ export function TodayTaskBoard({
               </div>
             )}
           </section>
+          )}
 
           {/* AI実行ログ（完了・失敗、デフォルト折りたたみ） */}
-          {logAiTasks.length > 0 && (
+          {showAiExecutionControls && logAiTasks.length > 0 && (
             <section>
               <button
                 onClick={() => setShowAiLog(prev => !prev)}
@@ -942,33 +852,6 @@ export function TodayTaskBoard({
       </ScrollArea>
     </div>
   )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cronマッチング
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** cron式の曜日が指定日にマッチするか判定 */
-function cronMatchesDate(cron: string, date: Date): boolean {
-  const parts = cron.trim().split(/\s+/)
-  if (parts.length !== 5) return false
-  const dow = parts[4]
-  if (dow === '*') return true // 毎日
-  // カンマ区切り対応 (例: "1,3,5")
-  const days = dow.split(',').map(Number)
-  return days.includes(date.getDay())
-}
-
-/** cron式の時刻をその日のsortTime（ms）に変換 */
-function cronToSortTime(cron: string | null, date: Date): number {
-  if (!cron) return Infinity
-  const parts = cron.trim().split(/\s+/)
-  if (parts.length !== 5) return Infinity
-  const [min, hour] = parts
-  const h = parseInt(hour)
-  const m = parseInt(min)
-  if (isNaN(h) || isNaN(m)) return Infinity
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), h, m).getTime()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1109,131 +992,6 @@ function ScheduledTaskList({
           </button>
         </div>
       ))}
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// AIスケジュール行（カレンダー予定と同じスタイル）
-// ─────────────────────────────────────────────────────────────────────────────
-function AiScheduleRow({ task, time, isDone, isFailed, isRunning, onCancel, onDelete, onToggle }: {
-  task: AiTask
-  time: string
-  isDone: boolean
-  isFailed: boolean
-  isRunning: boolean
-  onCancel: (id: string) => Promise<unknown>
-  onDelete?: (id: string) => Promise<void>
-  onToggle?: (task: AiTask) => Promise<void>
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const [cancelling, setCancelling] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [toggling, setToggling] = useState(false)
-  const isPending = task.status === 'pending'
-
-  const resultText = task.result
-    ? typeof task.result === 'object' && 'message' in task.result
-      ? String((task.result as { message: unknown }).message).slice(0, 500)
-      : JSON.stringify(task.result).replace(/[<>]/g, '').slice(0, 500)
-    : null
-
-  const handleCancel = async () => {
-    setCancelling(true)
-    try { await onCancel(task.id) } finally { setCancelling(false) }
-  }
-
-  const handleDelete = async () => {
-    if (!onDelete) return
-    setDeleting(true)
-    try { await onDelete(task.id) } finally { setDeleting(false) }
-  }
-
-  const handleToggle = async () => {
-    if (!onToggle || isRunning) return
-    setToggling(true)
-    try { await onToggle(task) } finally { setToggling(false) }
-  }
-
-  return (
-    <div>
-      <div
-        className="group w-full flex items-center gap-3 py-2.5 px-3 rounded-lg border transition-colors text-left bg-purple-50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-900/30"
-      >
-        {/* 左側ゴミ箱 */}
-        {onDelete && (
-          <button
-            onClick={(e) => { e.stopPropagation(); handleDelete() }}
-            disabled={deleting}
-            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0 disabled:opacity-40"
-          >
-            {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-          </button>
-        )}
-
-        {/* チェックボックス（手動トグル可能、running中は操作不可） */}
-        {isRunning ? (
-          <Loader2 className="w-4 h-4 text-purple-500 shrink-0 animate-spin" />
-        ) : (
-          <button
-            onClick={(e) => { e.stopPropagation(); handleToggle() }}
-            disabled={toggling}
-            className="shrink-0 disabled:opacity-40"
-          >
-            {toggling
-              ? <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
-              : (isDone || isFailed)
-                ? <CheckSquare className="w-4 h-4 text-purple-500" />
-                : <Square className="w-4 h-4 text-purple-400" />
-            }
-          </button>
-        )}
-
-        {/* 時刻（左側） */}
-        <span className="text-xs text-purple-600 dark:text-purple-400 tabular-nums shrink-0 w-[90px]">
-          {time}
-        </span>
-
-        {/* タスク名（クリックで結果展開） */}
-        <button
-          onClick={() => resultText && setExpanded(p => !p)}
-          className="flex-1 min-w-0 text-left"
-        >
-          <span className={cn('text-sm truncate', (isDone || isFailed) && 'line-through text-muted-foreground')}>
-            {task.skill_id && <span className="text-purple-500/70 font-medium">/{task.skill_id} </span>}
-            {task.prompt}
-          </span>
-        </button>
-
-        {/* キャンセル（pending / running のみ） */}
-        {(isPending || isRunning) && (
-          <span
-            onClick={(e) => { e.stopPropagation(); handleCancel() }}
-            className="text-[11px] text-muted-foreground/40 hover:text-red-500 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
-          >
-            {cancelling ? <Loader2 className="w-3 h-3 animate-spin" /> : '×'}
-          </span>
-        )}
-
-        {/* 結果あり表示 */}
-        {resultText && (
-          <button onClick={() => setExpanded(p => !p)} className="text-muted-foreground/30">
-            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-        )}
-      </div>
-
-      {/* エラー */}
-      {isFailed && task.error && (
-        <p className="text-xs text-red-500/70 mt-1 ml-10 line-clamp-2">{task.error}</p>
-      )}
-
-      {/* 結果展開 */}
-      {expanded && resultText && (
-        <pre className="mt-1 ml-10 text-xs bg-background/80 rounded-lg p-2.5 overflow-x-auto max-h-40 overflow-y-auto border border-border/30 whitespace-pre-wrap">
-          {resultText}
-        </pre>
-      )}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { CalendarEvent } from '@/types/calendar'
 import { Task, TaskSource } from '@/types/database'
 
@@ -22,6 +22,7 @@ export interface UseEventImportReturn {
 }
 
 const EMPTY_RESULT: ImportResult = { inserted: 0, updated: 0, softDeleted: 0, skipped: 0, tasks: [] }
+const inFlightImports = new Map<string, Promise<ImportResult>>()
 
 // --- Utility functions ---
 
@@ -59,6 +60,13 @@ export function mapEventToTask(event: CalendarEvent, userId: string): Partial<Ta
   }
 }
 
+function getImportKey(events: CalendarEvent[]): string {
+  return events
+    .map(e => `${e.calendar_id}:${e.google_event_id}:${e.start_time}:${e.end_time}`)
+    .sort()
+    .join('|')
+}
+
 // --- Hook ---
 
 export function useEventImport(): UseEventImportReturn {
@@ -75,10 +83,14 @@ export function useEventImport(): UseEventImportReturn {
       return EMPTY_RESULT
     }
 
+    const importKey = getImportKey(filtered)
+    const inFlight = inFlightImports.get(importKey)
+    if (inFlight) return inFlight
+
     setIsImporting(true)
     setError(null)
 
-    try {
+    const request = (async (): Promise<ImportResult> => {
       const payload = {
         events: filtered.map(e => ({
           google_event_id: e.google_event_id,
@@ -110,11 +122,20 @@ export function useEventImport(): UseEventImportReturn {
         ...data.result,
         tasks: (data.result.tasks || []) as Task[],
       } as ImportResult
+    })()
+
+    inFlightImports.set(importKey, request)
+
+    try {
+      return await request
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error')
       setError(error)
       throw error
     } finally {
+      if (inFlightImports.get(importKey) === request) {
+        inFlightImports.delete(importKey)
+      }
       setIsImporting(false)
     }
   }, [])

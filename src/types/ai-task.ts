@@ -2,6 +2,8 @@
 
 export type AiTaskApprovalType = 'auto' | 'confirm' | 'interactive'
 
+export type AiTaskRunVisibility = 'private' | 'space'
+
 export type AiTaskStatus =
   | 'pending'
   | 'running'
@@ -54,6 +56,17 @@ export interface AiTaskProgressSummary {
 export interface AiTask {
   id: string
   user_id: string
+  /** Shared Space this execution belongs to. Null means legacy/private/unassigned. */
+  space_id: string | null
+  /** AI execution package used to create this task. */
+  package_id: string | null
+  /** Immutable package version used for this execution. */
+  package_version_id: string | null
+  /** Runner that claimed this execution for local processing. */
+  claimed_runner_id: string | null
+  claim_expires_at: string | null
+  run_visibility: AiTaskRunVisibility
+  package_snapshot: Record<string, unknown> | null
   prompt: string
   skill_id: string | null
   approval_type: AiTaskApprovalType

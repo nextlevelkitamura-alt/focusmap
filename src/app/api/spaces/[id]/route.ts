@@ -1,6 +1,8 @@
 import { createClient } from "@/utils/supabase/server"
 import { NextResponse } from "next/server"
 
+const SPACE_UPDATE_FIELDS = ["title", "description", "status", "default_calendar_id", "icon", "color"] as const
+
 export async function PATCH(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -15,12 +17,19 @@ export async function PATCH(
 
         const { id } = await params
         const body = await request.json()
+        const updates: Record<string, unknown> = {}
+        for (const field of SPACE_UPDATE_FIELDS) {
+            if (body[field] !== undefined) updates[field] = body[field]
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return NextResponse.json({ error: "No updates provided" }, { status: 400 })
+        }
 
         const { data, error } = await supabase
             .from("spaces")
-            .update(body)
+            .update(updates)
             .eq("id", id)
-            .eq("user_id", user.id)
             .select()
             .single()
 
@@ -56,7 +65,6 @@ export async function DELETE(
             .from("spaces")
             .delete()
             .eq("id", id)
-            .eq("user_id", user.id)
 
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 })

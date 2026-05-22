@@ -3,10 +3,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { LeftSidebar } from "@/components/dashboard/left-sidebar"
 import { CenterPane } from "@/components/dashboard/center-pane"
+import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { RightSidebar, RightSidebarRef } from "@/components/dashboard/right-sidebar"
 import { Header } from "@/components/layout/header"
 import { Database, Task, Project, Space } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
+import { useUndoRedo } from "@/hooks/useUndoRedo"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
@@ -30,8 +32,10 @@ import { IdealView } from "@/components/ideal/ideal-view"
 import { WishlistView } from "@/components/wishlist/wishlist-view"
 import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
 import { TodayTaskBoard } from "@/components/today/today-task-board"
+import { AiExecutionTimeline } from "@/components/today/ai-execution-timeline"
 import { TodayMemoBoard } from "@/components/dashboard/today-memo-board"
 import { TodayDateProvider } from "@/contexts/TodayDateContext"
+import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -112,8 +116,8 @@ export function DashboardClient({
     // Scheduling panel open state
     const [isSchedulingOpen, setIsSchedulingOpen] = useState(false)
 
-    // Today タブのサブビュー: 'memo' = 今日するメモ + D&D / 'timeline' = 従来のタスクボード
-    const [todaySubView, setTodaySubView] = useState<'memo' | 'timeline'>('memo')
+    // Today タブのサブビュー: 'memo' = 今日するメモ + D&D / 'timeline' = 従来のタスクボード / 'ai' = AI実行
+    const [todaySubView, setTodaySubView] = useState<'memo' | 'timeline' | 'ai'>('memo')
     const [todaySelectedDate, setTodaySelectedDate] = useState<Date>(() => {
         const d = new Date(); d.setHours(0, 0, 0, 0); return d
     })
@@ -124,11 +128,11 @@ export function DashboardClient({
     const todayMemoScheduleRequestRef = useRef(0)
     useEffect(() => {
         const saved = typeof window !== "undefined" ? window.localStorage.getItem('focusmap:today-sub-view') : null
-        if (saved === 'memo' || saved === 'timeline') {
+        if (saved === 'memo' || saved === 'timeline' || saved === 'ai') {
             queueMicrotask(() => setTodaySubView(saved))
         }
     }, [])
-    const updateTodaySubView = useCallback((v: 'memo' | 'timeline') => {
+    const updateTodaySubView = useCallback((v: 'memo' | 'timeline' | 'ai') => {
         setTodaySubView(v)
         if (typeof window !== "undefined") window.localStorage.setItem('focusmap:today-sub-view', v)
     }, [])
@@ -223,6 +227,7 @@ export function DashboardClient({
             setSyncErrorToast({ type: 'error', message })
         }, []),
     })
+    const { pushAction } = useUndoRedo()
 
     // ビュー切り替え時にマインドマップのタスクを再取得
     useEffect(() => {
@@ -331,6 +336,7 @@ export function DashboardClient({
     // Googleカレンダー同期に失敗した楽観タスク ID（うっすら表示を解除する）
     const [syncFailedIds, setSyncFailedIds] = useState<Set<string>>(new Set())
     const syncTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+    const cancelledQuickTaskIdsRef = useRef<Set<string>>(new Set())
     useEffect(() => {
         return () => {
             for (const t of syncTimeoutsRef.current.values()) clearTimeout(t)
@@ -469,6 +475,80 @@ export function DashboardClient({
             syncTimeoutsRef.current.set(optimisticId, handle)
         }
 
+        pushAction({
+            description: `「${taskData.title}」を作成`,
+            undo: async () => {
+                cancelledQuickTaskIdsRef.current.add(optimisticId)
+                clearSyncFailed()
+                setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                setTaskOverrides(prev => {
+                    const next = { ...prev }
+                    delete next[optimisticId]
+                    return next
+                })
+                broadcastCalendarOptimisticEventRemoval(`optimistic-${optimisticId}`)
+                await fetch(`/api/tasks/${optimisticId}`, { method: 'DELETE' }).catch(err => {
+                    console.warn('[QuickTask] Undo delete failed:', err)
+                })
+            },
+            redo: async () => {
+                cancelledQuickTaskIdsRef.current.delete(optimisticId)
+                if (showOnTimeline) {
+                    setQuickTasks(prev => prev.some(t => t.id === optimisticId) ? prev : [...prev, optimisticTask])
+                    if (taskData.calendar_id && taskData.scheduled_at) {
+                        handleCalendarEventCreated({
+                            id: optimisticId,
+                            title: taskData.title,
+                            scheduled_at: taskData.scheduled_at,
+                            estimated_time: taskData.estimated_time,
+                            calendar_id: taskData.calendar_id,
+                        })
+                    }
+                }
+                const res = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: optimisticId,
+                        project_id: taskData.project_id,
+                        parent_task_id: null,
+                        title: taskData.title,
+                        scheduled_at: taskData.scheduled_at,
+                        estimated_time: taskData.estimated_time,
+                        calendar_id: taskData.calendar_id,
+                        priority: taskData.priority,
+                        memo: taskData.memo ?? null,
+                    }),
+                })
+                if (!res.ok) throw new Error('Failed to recreate task')
+                if (taskData.scheduled_at && taskData.estimated_time > 0 && taskData.calendar_id) {
+                    const syncRes = await fetch('/api/calendar/sync-task', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            taskId: optimisticId,
+                            scheduled_at: taskData.scheduled_at,
+                            estimated_time: taskData.estimated_time,
+                            calendar_id: taskData.calendar_id,
+                            reminders: taskData.reminders,
+                        }),
+                    })
+                    if (syncRes.ok) {
+                        const syncData = await syncRes.json().catch(() => null)
+                        if (syncData?.googleEventId) {
+                            setQuickTasks(prev => prev.map(t =>
+                                t.id === optimisticId
+                                    ? { ...t, google_event_id: syncData.googleEventId }
+                                    : t
+                            ))
+                            clearSyncFailed()
+                            handleCalendarEventCreated()
+                        }
+                    }
+                }
+            },
+        })
+
         // バックグラウンドで API 保存 + カレンダー同期（await しない）
         ;(async () => {
             try {
@@ -492,6 +572,14 @@ export function DashboardClient({
                     if (showOnTimeline) setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
                     clearSyncFailed()
                     setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
+                    return
+                }
+
+                if (cancelledQuickTaskIdsRef.current.has(optimisticId)) {
+                    await fetch(`/api/tasks/${optimisticId}`, { method: 'DELETE' }).catch(err => {
+                        console.warn('[QuickTask] Cancel cleanup failed:', err)
+                    })
+                    clearSyncFailed()
                     return
                 }
 
@@ -567,7 +655,7 @@ export function DashboardClient({
                 setQuickTaskToast({ type: 'error', message: 'タスクの作成に失敗しました' })
             }
         })()
-    }, [userId, handleCalendarEventCreated])
+    }, [userId, handleCalendarEventCreated, pushAction])
 
     // タスク更新ラッパー：DB保存 + ローカルstate即時反映（タイマー・編集等）
     const handleUpdateTaskWithQuickSync = useCallback(async (taskId: string, updates: Partial<Task>) => {
@@ -613,7 +701,7 @@ export function DashboardClient({
         for (const qt of quickTasks) {
             if (!existingIds.has(qt.id)) merged.push(qt)
         }
-        return merged
+        return dedupeGoogleEventTasks(merged)
     }, [initialTasks, currentTasks, currentGroups, quickTasks, taskOverrides])
 
     // Save daily timer for habit child tasks
@@ -696,12 +784,34 @@ export function DashboardClient({
             if (!res.ok) {
                 console.error('[SubTask] Create failed:', await res.text())
                 setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                return
             }
+            pushAction({
+                description: `「${title}」を作成`,
+                undo: async () => {
+                    setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
+                    await fetch(`/api/tasks/${optimisticId}`, { method: 'DELETE' })
+                },
+                redo: async () => {
+                    setQuickTasks(prev => prev.some(t => t.id === optimisticId) ? prev : [...prev, optimisticTask])
+                    const redoRes = await fetch('/api/tasks', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            id: optimisticId,
+                            parent_task_id: parentTaskId,
+                            project_id: parentTask?.project_id ?? null,
+                            title,
+                        }),
+                    })
+                    if (!redoRes.ok) throw new Error('Failed to recreate sub task')
+                },
+            })
         } catch (err) {
             console.error('[SubTask] Create error:', err)
             setQuickTasks(prev => prev.filter(t => t.id !== optimisticId))
         }
-    }, [allTasksMerged, userId])
+    }, [allTasksMerged, userId, pushAction])
 
     // handleCreateQuickTask から参照できるようにrefを更新
     useEffect(() => {
@@ -729,7 +839,7 @@ export function DashboardClient({
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
                 e.preventDefault()
                 if (e.shiftKey) {
                     // Cmd+Shift+Z = Redo
@@ -967,6 +1077,7 @@ export function DashboardClient({
                         <WishlistView
                             projects={projects}
                             selectedProjectId={selectedProjectId}
+                            selectedSpaceId={selectedSpaceId}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={false}
                             onToggleCalendarSplit={toggleCalendarSplit}
@@ -1048,9 +1159,13 @@ export function DashboardClient({
                     <LeftSidebar
                         spaces={spaces}
                         selectedSpaceId={selectedSpaceId}
-                        projects={filteredProjects}
+                        projects={projects}
                         selectedProjectId={selectedProjectId}
+                        onSelectSpace={setSelectedSpaceId}
                         onSelectProject={setSelectedProjectId}
+                        onCreateSpace={handleCreateSpace}
+                        onUpdateSpace={handleUpdateSpace}
+                        onDeleteSpace={handleDeleteSpace}
                         onCreateProject={handleCreateProject}
                         onUpdateProject={handleUpdateProject}
                         onDeleteProject={handleDeleteProject}
@@ -1058,7 +1173,16 @@ export function DashboardClient({
                 </div>
 
                 {/* Pane 2: Center (TodayTaskBoard / MindMap / Habits) */}
-                <div className="flex-1 min-w-0 overflow-hidden h-full w-full" style={{ minWidth: 0 }}>
+                <div className="flex-1 min-w-0 overflow-hidden h-full w-full flex flex-col" style={{ minWidth: 0 }}>
+                    <SpaceProjectSwitcher
+                        spaces={spaces}
+                        projects={projects}
+                        selectedSpaceId={selectedSpaceId}
+                        selectedProjectId={selectedProjectId}
+                        onSelectSpace={setSelectedSpaceId}
+                        onSelectProject={setSelectedProjectId}
+                    />
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     {activeView === 'habits' ? (
                         <HabitsView onUpdateTask={updateTask} />
                     ) : activeView === 'today' ? (
@@ -1089,17 +1213,30 @@ export function DashboardClient({
                                     >
                                         タイムライン
                                     </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => updateTodaySubView('ai')}
+                                        className={cn(
+                                            "min-h-[28px] rounded px-3 py-1 transition-colors",
+                                            todaySubView === 'ai'
+                                                ? "bg-background text-foreground shadow-sm"
+                                                : "text-muted-foreground hover:text-foreground",
+                                        )}
+                                    >
+                                        AI実行
+                                    </button>
                                 </div>
                             </div>
                             <div className="flex-1 min-h-0 overflow-hidden">
                                 {todaySubView === 'memo' ? (
                                     <TodayMemoBoard
                                         projects={projects}
+                                        selectedSpaceId={selectedSpaceId}
                                         scheduleFocusMemoId={todayMemoScheduleFocus?.memoId ?? null}
                                         scheduleFocusRequestKey={todayMemoScheduleFocus?.requestKey ?? null}
                                         onClearScheduleFocus={() => setTodayMemoScheduleFocus(null)}
                                     />
-                                ) : (
+                                ) : todaySubView === 'timeline' ? (
                                     <TodayTaskBoard
                                         allTasks={allTasksMerged}
                                         onUpdateTask={handleUpdateTaskWithQuickSync}
@@ -1108,6 +1245,14 @@ export function DashboardClient({
                                         onDeleteTask={handleDeleteTaskFromToday}
                                         syncFailedIds={syncFailedIds}
                                     />
+                                ) : (
+                                    <AiExecutionTimeline
+                                        selectedDate={todaySelectedDate}
+                                        showDateControls
+                                        onDateChange={setTodaySelectedDate}
+                                        selectedSpaceId={selectedSpaceId}
+                                        spaces={spaces}
+                                    />
                                 )}
                             </div>
                         </div>
@@ -1115,6 +1260,7 @@ export function DashboardClient({
                         <WishlistView
                             projects={projects}
                             selectedProjectId={selectedProjectId}
+                            selectedSpaceId={selectedSpaceId}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={isCalendarPanelVisible}
                             onToggleCalendarSplit={toggleCalendarSplit}
@@ -1139,6 +1285,7 @@ export function DashboardClient({
                             isTaskListVisible={isTaskListVisible}
                         />
                     )}
+                    </div>
                 </div>
 
                 {/* Right Resize Handle */}

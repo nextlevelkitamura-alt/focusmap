@@ -10,6 +10,7 @@ import { useEventImport } from "@/hooks/useEventImport"
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync"
 import { useTimer } from "@/contexts/TimerContext"
 import { useNotificationScheduler } from "@/hooks/useNotificationScheduler"
+import { useUndoRedo } from "@/hooks/useUndoRedo"
 import { DragItem } from "@/hooks/useTouchDrag"
 import { taskToTimeBlock, eventToTimeBlock, type TimeBlock } from "@/lib/time-block"
 import { type QuickTaskData } from "@/components/today/quick-task-fab"
@@ -17,6 +18,7 @@ import { type EditTarget } from "@/components/today/mobile-event-edit-modal"
 import { isSameDay, format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { useTodayDateContext } from "@/contexts/TodayDateContext"
+import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
 
 // --- Types ---
 
@@ -56,6 +58,7 @@ export function useTodayViewLogic({
     const { importEvents, isImporting } = useEventImport()
     const timer = useTimer()
     const { scheduleNotification, cancelNotifications } = useNotificationScheduler()
+    const { pushAction } = useUndoRedo()
     const [localTasks, setLocalTasks] = useState<Task[]>(allTasks)
     const [timelineMode, setTimelineMode] = useState<'calendar' | 'cards'>('calendar')
     const [habitsExpanded, setHabitsExpanded] = useState(false)
@@ -88,6 +91,11 @@ export function useTodayViewLogic({
             return next
         })
     }, [allTasks])
+
+    const visibleTasks = useMemo(
+        () => dedupeGoogleEventTasks(localTasks),
+        [localTasks]
+    )
 
     // Shared date context (desktop: sync both panels; mobile: null → use local state)
     const dateCtx = useTodayDateContext()
@@ -270,18 +278,110 @@ export function useTodayViewLogic({
     )
     const calendarReauthUrl = (eventsError as (Error & { reauthUrl?: string }) | null)?.reauthUrl || '/api/calendar/connect'
 
+    const patchCalendarEvent = useCallback(async (event: CalendarEvent, updates: {
+        title: string
+        start_time: string
+        end_time: string
+        googleEventId: string
+        calendarId: string
+        reminders?: number[]
+        description?: string
+    }) => {
+        const durationMinutes = Math.max(
+            1,
+            Math.round((new Date(updates.end_time).getTime() - new Date(updates.start_time).getTime()) / 60000)
+        )
+
+        setLocalCalendarEvents(prev => prev.map(e =>
+            e.id === event.id
+                ? {
+                    ...e,
+                    title: updates.title,
+                    start_time: updates.start_time,
+                    end_time: updates.end_time,
+                    reminders: updates.reminders,
+                    ...(updates.description !== undefined ? { description: updates.description } : {}),
+                }
+                : e
+        ))
+        setLocalTasks(prev => prev.map(task =>
+            task.google_event_id === updates.googleEventId
+                ? {
+                    ...task,
+                    title: updates.title,
+                    scheduled_at: updates.start_time,
+                    estimated_time: durationMinutes,
+                    calendar_id: updates.calendarId || task.calendar_id,
+                }
+                : task
+        ))
+
+        const res = await fetch(`/api/calendar/events/${event.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: updates.title,
+                start_time: updates.start_time,
+                end_time: updates.end_time,
+                googleEventId: updates.googleEventId,
+                calendarId: updates.calendarId,
+                reminders: updates.reminders,
+                ...(updates.description !== undefined ? { description: updates.description } : {}),
+            }),
+        })
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error(data.error?.message || 'Failed to update event')
+        }
+        invalidateCalendarCache()
+        broadcastCalendarSync()
+    }, [])
+
+    const setCalendarEventCompletion = useCallback(async (event: CalendarEvent, isCompleted: boolean) => {
+        setLocalCalendarEvents(prev => prev.map(e =>
+            e.id === event.id ? { ...e, is_completed: isCompleted } : e
+        ))
+        broadcastEventCompletion(event.id, isCompleted, event.google_event_id)
+
+        if (event.google_event_id) {
+            const response = await fetch('/api/calendar/events/complete', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    google_event_id: event.google_event_id,
+                    calendar_id: event.calendar_id,
+                    completed_date: formatDateString(new Date(event.start_time)),
+                    start_time: event.start_time,
+                    is_completed: isCompleted,
+                }),
+            })
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}))
+                throw new Error(errData.error || `HTTP ${response.status}`)
+            }
+        } else {
+            const supabase = (await import('@/utils/supabase/client')).createClient()
+            const { error } = await supabase
+                .from('calendar_events')
+                .update({ is_completed: isCompleted })
+                .eq('id', event.id)
+            if (error) throw error
+        }
+        invalidateCalendarCache()
+    }, [])
+
     // Habit task IDs
     const habitGroupIds = useMemo(() => {
         const ids = new Set<string>()
-        for (const t of localTasks) {
+        for (const t of visibleTasks) {
             if (t.is_habit) ids.add(t.id)
         }
         return ids
-    }, [localTasks])
+    }, [visibleTasks])
 
     // Today's scheduled tasks
     const todayScheduledTasks = useMemo(() => {
-        const filtered = localTasks.filter(t => {
+        const filtered = visibleTasks.filter(t => {
             if (t.deleted_at) return false
             if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
@@ -296,11 +396,11 @@ export function useTodayViewLogic({
             seenGoogleEventIds.add(t.google_event_id)
             return true
         })
-    }, [localTasks, habitGroupIds, today, tomorrow])
+    }, [visibleTasks, habitGroupIds, today, tomorrow])
 
     // Overflow tasks
     const overflowTasks = useMemo(() => {
-        const filtered = localTasks.filter(t => {
+        const filtered = visibleTasks.filter(t => {
             if (t.deleted_at) return false
             if (t.is_group) return false
             if (habitGroupIds.has(t.parent_task_id ?? '')) return false
@@ -318,11 +418,11 @@ export function useTodayViewLogic({
             seenGoogleEventIds.add(t.google_event_id)
             return true
         })
-    }, [localTasks, habitGroupIds, previousDay, today])
+    }, [visibleTasks, habitGroupIds, previousDay, today])
 
     // Unscheduled tasks
     const unscheduledTasks = useMemo(() =>
-        localTasks.filter(t =>
+        visibleTasks.filter(t =>
             !t.deleted_at &&
             !t.scheduled_at &&
             !t.project_id &&
@@ -330,14 +430,14 @@ export function useTodayViewLogic({
             !t.is_habit &&
             t.status !== 'done'
         ),
-        [localTasks]
+        [visibleTasks]
     )
 
     // 親タスク ID → 子タスク配列 のマップ（やることカラムでサブタスクを
     // 親の下にインデント展開するために使用）
     const childTasksByParentId = useMemo(() => {
         const map = new Map<string, Task[]>()
-        for (const t of localTasks) {
+        for (const t of visibleTasks) {
             if (t.deleted_at) continue
             if (t.is_group) continue
             if (!t.parent_task_id) continue
@@ -350,7 +450,7 @@ export function useTodayViewLogic({
             map.set(k, arr)
         }
         return map
-    }, [localTasks])
+    }, [visibleTasks])
 
     // Project name map
     const projectNameMap = useMemo(() => {
@@ -387,7 +487,7 @@ export function useTodayViewLogic({
     // Child tasks grouped by parent
     const childTasksMap = useMemo(() => {
         const map = new Map<string, Task[]>()
-        for (const task of localTasks) {
+        for (const task of visibleTasks) {
             if (task.parent_task_id && !task.is_habit) {
                 const children = map.get(task.parent_task_id) || []
                 children.push(task)
@@ -395,7 +495,7 @@ export function useTodayViewLogic({
             }
         }
         return map
-    }, [localTasks])
+    }, [visibleTasks])
 
     // Merge calendar events + scheduled tasks into timeline
     const allTasksWithGoogleEvent = useMemo(() =>
@@ -487,6 +587,9 @@ export function useTodayViewLogic({
 
     // Toggle task completion
     const toggleTask = useCallback(async (taskId: string) => {
+        const task = localTasks.find(t => t.id === taskId)
+        if (!task) return
+        const previousStatus = task.status
         let newStatus: string = 'done'
         setLocalTasks(prev => {
             const task = prev.find(t => t.id === taskId)
@@ -497,7 +600,18 @@ export function useTodayViewLogic({
             )
         })
         await onUpdateTask(taskId, { status: newStatus })
-    }, [onUpdateTask])
+        pushAction({
+            description: `「${task.title}」の完了状態を変更`,
+            undo: async () => {
+                setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: previousStatus } : t))
+                await onUpdateTask(taskId, { status: previousStatus })
+            },
+            redo: async () => {
+                setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
+                await onUpdateTask(taskId, { status: newStatus })
+            },
+        })
+    }, [localTasks, onUpdateTask, pushAction])
 
     // Toggle calendar event completion
     const toggleEventCompletion = useCallback(async (eventId: string) => {
@@ -547,9 +661,17 @@ export function useTodayViewLogic({
                     .eq('id', eventId)
                 if (error) throw error
             }
-            // キャッシュ無効化（次回取得時に最新データを使う）
             console.log('[toggleEventCompletion] DB update succeeded')
             invalidateCalendarCache()
+            pushAction({
+                description: `「${targetEvent.title}」の完了状態を変更`,
+                undo: async () => {
+                    await setCalendarEventCompletion(targetEvent, !!targetEvent.is_completed)
+                },
+                redo: async () => {
+                    await setCalendarEventCompletion(targetEvent, newCompleted)
+                },
+            })
         } catch (err) {
             console.error('[toggleEventCompletion] Failed:', err)
             setLocalCalendarEvents(prev => prev.map(e =>
@@ -558,7 +680,7 @@ export function useTodayViewLogic({
             // 失敗時はロールバックも即時通知
             broadcastEventCompletion(eventId, !newCompleted)
         }
-    }, [localCalendarEvents])
+    }, [localCalendarEvents, pushAction, setCalendarEventCompletion])
 
     // Toggle child task
     const toggleChildTask = useCallback(async (
@@ -571,8 +693,20 @@ export function useTodayViewLogic({
         } else {
             const newStatus = currentStatus === 'done' ? 'todo' : 'done'
             await onUpdateTask(taskId, { status: newStatus })
+            const task = localTasks.find(t => t.id === taskId)
+            pushAction({
+                description: `「${task?.title ?? 'サブタスク'}」の完了状態を変更`,
+                undo: async () => {
+                    setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: currentStatus } : t))
+                    await onUpdateTask(taskId, { status: currentStatus })
+                },
+                redo: async () => {
+                    setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
+                    await onUpdateTask(taskId, { status: newStatus })
+                },
+            })
         }
-    }, [onUpdateTask, toggleChildTaskCompletion])
+    }, [localTasks, onUpdateTask, pushAction, toggleChildTaskCompletion])
 
     // Handle item tap (open edit modal with prefetched reminders)
     const handleItemTap = useCallback((item: TimeBlock) => {
@@ -750,6 +884,37 @@ export function useTodayViewLogic({
             throw err
         }
 
+        if (task && Object.keys(taskUpdates).length > 0) {
+            const undoUpdates: Partial<Task> = {}
+            for (const key of Object.keys(taskUpdates) as Array<keyof Task>) {
+                undoUpdates[key] = task[key] as never
+            }
+            const redoUpdates = taskUpdates as Partial<Task>
+            pushAction({
+                description: `「${task.title}」を編集`,
+                undo: async () => {
+                    setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...undoUpdates } : t))
+                    await onUpdateTask(taskId, undoUpdates)
+                    if (task.google_event_id && undoUpdates.scheduled_at) {
+                        const duration = undoUpdates.estimated_time ?? task.estimated_time ?? 30
+                        const start = new Date(undoUpdates.scheduled_at)
+                        const end = new Date(start.getTime() + duration * 60 * 1000)
+                        broadcastCalendarEventTimeUpdate(task.google_event_id, start.toISOString(), end.toISOString())
+                    }
+                },
+                redo: async () => {
+                    setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...redoUpdates } : t))
+                    await onUpdateTask(taskId, redoUpdates)
+                    if (task.google_event_id && redoUpdates.scheduled_at) {
+                        const duration = redoUpdates.estimated_time ?? task.estimated_time ?? 30
+                        const start = new Date(redoUpdates.scheduled_at)
+                        const end = new Date(start.getTime() + duration * 60 * 1000)
+                        broadcastCalendarEventTimeUpdate(task.google_event_id, start.toISOString(), end.toISOString())
+                    }
+                },
+            })
+        }
+
         if (reminders !== undefined) {
             if (task?.google_event_id && task?.calendar_id) {
                 fetch('/api/calendar/sync-task', {
@@ -767,7 +932,7 @@ export function useTodayViewLogic({
                 })
             }
         }
-    }, [onUpdateTask, localTasks])
+    }, [onUpdateTask, localTasks, pushAction])
 
     // Save event
     const handleSaveEvent = useCallback(async (eventId: string, updates: {
@@ -775,6 +940,7 @@ export function useTodayViewLogic({
     }) => {
         const previousEvents = localCalendarEvents
         const previousTasks = localTasks
+        const previousEvent = localCalendarEvents.find(e => e.id === eventId)
         const durationMinutes = Math.max(
             1,
             Math.round((new Date(updates.end_time).getTime() - new Date(updates.start_time).getTime()) / 60000)
@@ -829,13 +995,34 @@ export function useTodayViewLogic({
             }
             invalidateCalendarCache()
             broadcastCalendarSync()
+            if (previousEvent) {
+                const undoUpdates = {
+                    title: previousEvent.title,
+                    start_time: previousEvent.start_time,
+                    end_time: previousEvent.end_time,
+                    googleEventId: previousEvent.google_event_id,
+                    calendarId: previousEvent.calendar_id,
+                    reminders: previousEvent.reminders,
+                    description: previousEvent.description,
+                }
+                const redoUpdates = updates
+                pushAction({
+                    description: `「${previousEvent.title}」の予定を編集`,
+                    undo: async () => {
+                        await patchCalendarEvent(previousEvent, undoUpdates)
+                    },
+                    redo: async () => {
+                        await patchCalendarEvent(previousEvent, redoUpdates)
+                    },
+                })
+            }
         } catch (err) {
             console.error('[useTodayViewLogic] Failed to update event, rolling back:', err)
             setLocalCalendarEvents(previousEvents)
             setLocalTasks(previousTasks)
             throw err
         }
-    }, [localCalendarEvents, localTasks])
+    }, [localCalendarEvents, localTasks, patchCalendarEvent, pushAction])
 
     // Delete task
     const handleDeleteTask = useCallback(async (taskId: string) => {
@@ -861,13 +1048,79 @@ export function useTodayViewLogic({
 
             invalidateCalendarCache()
             broadcastCalendarSync()
+            if (taskToDelete) {
+                pushAction({
+                    description: `「${taskToDelete.title}」を削除`,
+                    undo: async () => {
+                        const restoredTask = taskToDelete.google_event_id
+                            ? { ...taskToDelete, google_event_id: null, calendar_event_id: null }
+                            : taskToDelete
+                        setPendingDeleteTaskIds(prev => prev.filter(id => id !== taskId))
+                        setLocalTasks(prev => prev.some(t => t.id === taskId) ? prev : [...prev, restoredTask])
+
+                        const createRes = await fetch('/api/tasks', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(restoredTask),
+                        })
+                        if (!createRes.ok) throw new Error('Failed to restore task')
+
+                        await onUpdateTask(taskId, {
+                            title: taskToDelete.title,
+                            status: taskToDelete.status,
+                            stage: taskToDelete.stage,
+                            scheduled_at: taskToDelete.scheduled_at,
+                            estimated_time: taskToDelete.estimated_time,
+                            calendar_id: taskToDelete.calendar_id,
+                            priority: taskToDelete.priority,
+                            memo: taskToDelete.memo,
+                        })
+
+                        if (taskToDelete.google_event_id && taskToDelete.scheduled_at && taskToDelete.calendar_id && taskToDelete.estimated_time > 0) {
+                            const syncRes = await fetch('/api/calendar/sync-task', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    taskId,
+                                    scheduled_at: taskToDelete.scheduled_at,
+                                    estimated_time: taskToDelete.estimated_time,
+                                    calendar_id: taskToDelete.calendar_id,
+                                }),
+                            })
+                            if (syncRes.ok) {
+                                const data = await syncRes.json().catch(() => null)
+                                if (data?.googleEventId) {
+                                    setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, google_event_id: data.googleEventId } : t))
+                                }
+                            }
+                        }
+                        invalidateCalendarCache()
+                        broadcastCalendarSync()
+                    },
+                    redo: async () => {
+                        setPendingDeleteTaskIds(prev => prev.includes(taskId) ? prev : [...prev, taskId])
+                        setLocalTasks(prev => prev.filter(t => t.id !== taskId))
+                        if (taskToDelete.google_event_id) {
+                            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== taskToDelete.google_event_id))
+                        }
+                        if (onDeleteTaskProp) {
+                            await onDeleteTaskProp(taskId)
+                        } else {
+                            const res = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                            if (!res.ok) throw new Error('Failed to delete task')
+                        }
+                        invalidateCalendarCache()
+                        broadcastCalendarSync()
+                    },
+                })
+            }
         } catch (err) {
             console.error('[useTodayViewLogic] Failed to delete task:', err)
             setLocalTasks(previousTasks)
             setLocalCalendarEvents(previousEvents)
             setPendingDeleteTaskIds(prev => prev.filter(id => id !== taskId))
         }
-    }, [onDeleteTaskProp, localTasks, localCalendarEvents])
+    }, [onDeleteTaskProp, localTasks, localCalendarEvents, onUpdateTask, pushAction])
 
     // Convert calendar event to Focusmap task (for timer/subtask support)
     const handleConvertEventToTask = useCallback(async (event: CalendarEvent): Promise<Task | null> => {
@@ -932,13 +1185,29 @@ export function useTodayViewLogic({
             }
             const { task } = await res.json()
             setLocalTasks(prev => prev.map(t => t.id === tempId ? task : t))
+            pushAction({
+                description: `「${event.title}」をタスク化`,
+                undo: async () => {
+                    setLocalTasks(prev => prev.filter(t => t.id !== tempId))
+                    await fetch(`/api/tasks/${tempId}`, { method: 'DELETE' })
+                },
+                redo: async () => {
+                    setLocalTasks(prev => prev.some(t => t.id === tempId) ? prev : [...prev, task as Task])
+                    const createRes = await fetch('/api/tasks', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(task),
+                    })
+                    if (!createRes.ok) throw new Error('Failed to recreate task')
+                },
+            })
             return task as Task
         } catch (err) {
             console.error('[useTodayViewLogic] handleConvertEventToTask failed:', err)
             setLocalTasks(prev => prev.filter(t => t.id !== tempId))
             return null
         }
-    }, [])
+    }, [pushAction])
 
     const handleEventStartTimer = useCallback(async (event: CalendarEvent) => {
         const task = await handleConvertEventToTask(event)
@@ -958,11 +1227,11 @@ export function useTodayViewLogic({
     const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
         const previousEvents = localCalendarEvents
         const previousTasks = localTasks
+        const eventToDelete = localCalendarEvents.find(e => e.id === eventId || e.google_event_id === googleEventId)
 
         // 同じ google_event_id を持つタスク（source 不問）の id を全て収集
-        const linkedTaskIds = localTasks
-            .filter(t => t.google_event_id === googleEventId)
-            .map(t => t.id)
+        const linkedTasks = localTasks.filter(t => t.google_event_id === googleEventId)
+        const linkedTaskIds = linkedTasks.map(t => t.id)
 
         removeOptimisticEvent(eventId, googleEventId)
         setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== googleEventId && e.id !== eventId))
@@ -999,6 +1268,90 @@ export function useTodayViewLogic({
                 }
                 // refetchは呼ばず、楽観的削除済みのため不要（再フェッチするとサーバーからイベントが復元されてしまう）
                 invalidateCalendarCache()
+                if (eventToDelete) {
+                    let currentEvent = eventToDelete
+                    pushAction({
+                        description: `「${eventToDelete.title}」を削除`,
+                        undo: async () => {
+                            const createRes = await fetch(`/api/calendar/events/${eventToDelete.id}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    ...eventToDelete,
+                                    calendarId,
+                                    reminders: eventToDelete.reminders,
+                                }),
+                            })
+                            if (!createRes.ok) throw new Error('Failed to restore event')
+                            const data = await createRes.json()
+                            currentEvent = data.event || {
+                                ...eventToDelete,
+                                google_event_id: data.googleEventId,
+                                calendar_id: calendarId,
+                            }
+
+                            setLocalCalendarEvents(prev => {
+                                const next = prev.filter(e => e.id !== currentEvent.id && e.google_event_id !== currentEvent.google_event_id)
+                                return [...next, currentEvent].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                            })
+
+                            if (linkedTasks.length > 0) {
+                                setPendingDeleteTaskIds(prev => prev.filter(id => !linkedTaskIds.includes(id)))
+                                for (const task of linkedTasks) {
+                                    const restoredTask = {
+                                        ...task,
+                                        google_event_id: currentEvent.google_event_id,
+                                        calendar_id: currentEvent.calendar_id,
+                                    }
+                                    setLocalTasks(prev => prev.some(t => t.id === task.id) ? prev.map(t => t.id === task.id ? restoredTask : t) : [...prev, restoredTask])
+                                    const taskRes = await fetch('/api/tasks', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(restoredTask),
+                                    })
+                                    if (!taskRes.ok) throw new Error('Failed to restore linked task')
+                                    await onUpdateTask(task.id, {
+                                        title: task.title,
+                                        status: task.status,
+                                        stage: task.stage,
+                                        scheduled_at: task.scheduled_at,
+                                        estimated_time: task.estimated_time,
+                                        calendar_id: currentEvent.calendar_id,
+                                        priority: task.priority,
+                                        memo: task.memo,
+                                        google_event_id: currentEvent.google_event_id,
+                                    })
+                                }
+                            }
+                            invalidateCalendarCache()
+                            broadcastCalendarSync()
+                        },
+                        redo: async () => {
+                            removeOptimisticEvent(currentEvent.id, currentEvent.google_event_id)
+                            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== currentEvent.google_event_id && e.id !== currentEvent.id))
+                            setLocalTasks(prev => prev.filter(t => !linkedTaskIds.includes(t.id)))
+                            if (linkedTaskIds.length > 0) {
+                                setPendingDeleteTaskIds(prev => {
+                                    const next = new Set(prev)
+                                    for (const id of linkedTaskIds) next.add(id)
+                                    return Array.from(next)
+                                })
+                            }
+                            const deleteRes = await fetch(`/api/calendar/events/${currentEvent.id}?googleEventId=${encodeURIComponent(currentEvent.google_event_id)}&calendarId=${encodeURIComponent(currentEvent.calendar_id)}`, {
+                                method: 'DELETE',
+                            })
+                            if (!deleteRes.ok) throw new Error('Failed to delete event')
+                            for (const taskId of linkedTaskIds) {
+                                if (onDeleteTaskProp) {
+                                    await onDeleteTaskProp(taskId)
+                                } else {
+                                    await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                                }
+                            }
+                            invalidateCalendarCache()
+                        },
+                    })
+                }
             })
             .catch(err => {
                 console.error('[useTodayViewLogic] Failed to delete event:', err)
@@ -1008,7 +1361,7 @@ export function useTodayViewLogic({
                 invalidateCalendarCache()
                 broadcastCalendarSync()
             })
-    }, [removeOptimisticEvent, localCalendarEvents, localTasks, onDeleteTaskProp])
+    }, [removeOptimisticEvent, localCalendarEvents, localTasks, onDeleteTaskProp, onUpdateTask, pushAction])
 
     // Writable calendars
     const writableCalendars = useMemo(() =>
@@ -1026,9 +1379,10 @@ export function useTodayViewLogic({
     const handleDragDrop = useCallback(async (item: DragItem, newStartTime: Date, newEndTime: Date) => {
         const previousTasks = localTasks
         const previousEvents = localCalendarEvents
+        const draggedTask = item.type === 'task' ? localTasks.find(t => t.id === item.id) : null
+        const draggedEvent = item.type === 'event' ? calendarEvents.find(e => e.id === item.id) : null
 
         if (item.type === 'task') {
-            const task = localTasks.find(t => t.id === item.id)
             setLocalTasks(prev => prev.map(t =>
                 t.id === item.id
                     ? {
@@ -1055,8 +1409,8 @@ export function useTodayViewLogic({
                         : prev.originalTask,
                 }
             })
-            if (task?.google_event_id) {
-                broadcastCalendarEventTimeUpdate(task.google_event_id, newStartTime.toISOString(), newEndTime.toISOString())
+            if (draggedTask?.google_event_id) {
+                broadcastCalendarEventTimeUpdate(draggedTask.google_event_id, newStartTime.toISOString(), newEndTime.toISOString())
             }
         } else {
             // 全パネルに即時ブロードキャスト（楽観UI）
@@ -1103,6 +1457,72 @@ export function useTodayViewLogic({
                     broadcastCalendarSync()
                 }
             }
+            if (item.type === 'task' && draggedTask) {
+                const previousStart = draggedTask.scheduled_at
+                const previousEstimated = draggedTask.estimated_time
+                const nextEstimated = Math.round((newEndTime.getTime() - newStartTime.getTime()) / 60000)
+                pushAction({
+                    description: `「${draggedTask.title}」の時間を変更`,
+                    undo: async () => {
+                        setLocalTasks(prev => prev.map(t => t.id === item.id ? { ...t, scheduled_at: previousStart, estimated_time: previousEstimated } : t))
+                        await onUpdateTask(item.id, { scheduled_at: previousStart, estimated_time: previousEstimated })
+                        if (draggedTask.google_event_id && previousStart) {
+                            const start = new Date(previousStart)
+                            const end = new Date(start.getTime() + (previousEstimated || 30) * 60 * 1000)
+                            broadcastCalendarEventTimeUpdate(draggedTask.google_event_id, start.toISOString(), end.toISOString())
+                        }
+                    },
+                    redo: async () => {
+                        setLocalTasks(prev => prev.map(t => t.id === item.id ? { ...t, scheduled_at: newStartTime.toISOString(), estimated_time: nextEstimated } : t))
+                        await onUpdateTask(item.id, { scheduled_at: newStartTime.toISOString(), estimated_time: nextEstimated })
+                        if (draggedTask.google_event_id) {
+                            broadcastCalendarEventTimeUpdate(draggedTask.google_event_id, newStartTime.toISOString(), newEndTime.toISOString())
+                        }
+                    },
+                })
+            } else if (item.type === 'event' && draggedEvent) {
+                const nextUpdates = {
+                    title: draggedEvent.title,
+                    start_time: newStartTime.toISOString(),
+                    end_time: newEndTime.toISOString(),
+                    googleEventId: draggedEvent.google_event_id,
+                    calendarId: draggedEvent.calendar_id,
+                    reminders: draggedEvent.reminders,
+                    description: draggedEvent.description,
+                }
+                const previousUpdates = {
+                    title: draggedEvent.title,
+                    start_time: draggedEvent.start_time,
+                    end_time: draggedEvent.end_time,
+                    googleEventId: draggedEvent.google_event_id,
+                    calendarId: draggedEvent.calendar_id,
+                    reminders: draggedEvent.reminders,
+                    description: draggedEvent.description,
+                }
+                pushAction({
+                    description: `「${draggedEvent.title}」の時間を変更`,
+                    undo: async () => {
+                        if (draggedEvent.task_id) {
+                            const duration = Math.max(1, Math.round((new Date(draggedEvent.end_time).getTime() - new Date(draggedEvent.start_time).getTime()) / 60000))
+                            setLocalTasks(prev => prev.map(t => t.id === draggedEvent.task_id ? { ...t, scheduled_at: draggedEvent.start_time, estimated_time: duration } : t))
+                            await onUpdateTask(draggedEvent.task_id, { scheduled_at: draggedEvent.start_time, estimated_time: duration })
+                            broadcastCalendarEventTimeUpdate(item.id, draggedEvent.start_time, draggedEvent.end_time)
+                        } else {
+                            await patchCalendarEvent(draggedEvent, previousUpdates)
+                        }
+                    },
+                    redo: async () => {
+                        if (draggedEvent.task_id) {
+                            const duration = Math.max(1, Math.round((newEndTime.getTime() - newStartTime.getTime()) / 60000))
+                            setLocalTasks(prev => prev.map(t => t.id === draggedEvent.task_id ? { ...t, scheduled_at: newStartTime.toISOString(), estimated_time: duration } : t))
+                            await onUpdateTask(draggedEvent.task_id, { scheduled_at: newStartTime.toISOString(), estimated_time: duration })
+                            broadcastCalendarEventTimeUpdate(item.id, newStartTime.toISOString(), newEndTime.toISOString())
+                        } else {
+                            await patchCalendarEvent(draggedEvent, nextUpdates)
+                        }
+                    },
+                })
+            }
             setSyncState('done')
             setTimeout(() => setSyncState('idle'), 1500)
         } catch (err) {
@@ -1119,7 +1539,7 @@ export function useTodayViewLogic({
             }
             setSyncState('idle')
         }
-    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask])
+    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask, patchCalendarEvent, pushAction])
 
     // Date header
     const dateFmt = format(today, 'M月d日(E)', { locale: ja })

@@ -11,12 +11,14 @@
  * 環境変数（.env.local または shell export）:
  *   NEXT_PUBLIC_SUPABASE_URL    — Supabase プロジェクト URL
  *   SUPABASE_SERVICE_ROLE_KEY  — サービスロールキー
+ *   FOCUSMAP_RUNNER_USER_ID    — このPCで実行を許可するFocusmapユーザーID
+ *   FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER=true — runner未設定時の旧全体取得を明示許可
  *
  * launchd から毎分起動される（~/Library/LaunchAgents/com.focusmap.task-runner.plist）
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { execSync } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -51,7 +53,163 @@ const TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10分
 const PAUSE_FILE = path.resolve(__dirname, 'task-runner.paused')
 const SUPABASE_RESTRICTED_PATTERN = /exceed_cached_egress_quota|Service for this project is restricted/i
 const FOCUSMAP_RUNS_DIR = path.join(os.homedir(), '.focusmap', 'ai-runs')
+const PACKAGE_CACHE_DIR = path.join(os.homedir(), '.focusmap', 'ai-packages')
 const CLAUDE_HOOK_SCRIPT = path.resolve(__dirname, 'focusmap-claude-hook.mjs')
+const STAFF_STATUS_SCHEDULE_SKILL_ID = 'staff-status-schedule'
+const STAFF_STATUS_DIR = '/Users/kitamuranaohiro/Private/仕事/scripts/staff-status'
+const STAFF_STATUS_TIMEOUT_MS = 30 * 60 * 1000
+const PACKAGE_TASK_TIMEOUT_MS = 30 * 60 * 1000
+const STAFF_STATUS_RETRY_BASE_MS = 5 * 60 * 1000
+const STAFF_STATUS_RETRY_MAX_MS = 30 * 60 * 1000
+const STAFF_STATUS_STALE_RUNNING_MS = 45 * 60 * 1000
+const STAFF_STATUS_INTERACTIVE_LATE_LIMIT_MS = 15 * 60 * 1000
+const LOCAL_USER_ID_FILE = path.join(os.homedir(), '.config', 'life-manager', 'focusmap-user-id')
+
+type StaffStatusDueTask = {
+  id: string
+  user_id: string
+  prompt: string
+  skill_id: string | null
+  approval_type: string | null
+  scheduled_at: string | null
+  recurrence_cron: string | null
+  cwd: string | null
+  completed_at: string | null
+  source_note_id: string | null
+  source_ideal_goal_id: string | null
+  executor: 'claude' | 'codex' | 'codex_app' | null
+  space_id?: string | null
+  package_id?: string | null
+  package_version_id?: string | null
+  package_snapshot?: Record<string, unknown> | null
+  claimed_runner_id?: string | null
+  claim_expires_at?: string | null
+  run_visibility?: 'private' | 'space' | null
+  result?: Record<string, unknown> | null
+}
+
+type AiRunner = {
+  id: string
+  user_id: string
+  hostname: string
+  executors: string[]
+  available_repo_keys: string[]
+  available_secret_names: string[]
+  repo_paths: Record<string, string>
+}
+
+type SchemaCapabilities = {
+  hasAiRunnerTables: boolean
+  hasSharedAiTaskColumns: boolean
+  hasAiPackageVersioning: boolean
+}
+
+let schemaCapabilities: SchemaCapabilities = {
+  hasAiRunnerTables: true,
+  hasSharedAiTaskColumns: true,
+  hasAiPackageVersioning: true,
+}
+
+function isMissingSchemaError(error: { message?: string; code?: string } | null | undefined): boolean {
+  const message = error?.message ?? ''
+  return error?.code === '42703' ||
+    error?.code === '42P01' ||
+    /Could not find (the table|.*column)|column .* does not exist|relation .* does not exist/i.test(message)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function detectSchemaCapabilities(supabase: any): Promise<SchemaCapabilities> {
+  const runnerCheck = await supabase
+    .from('ai_runners')
+    .select('id')
+    .limit(1)
+
+  const taskColumnCheck = await supabase
+    .from('ai_tasks')
+    .select('space_id, claimed_runner_id, claim_expires_at, run_visibility, package_snapshot, package_version_id')
+    .limit(1)
+
+  const packageVersionCheck = await supabase
+    .from('ai_runner_package_cache')
+    .select('runner_id, package_id, version_id')
+    .limit(1)
+
+  return {
+    hasAiRunnerTables: !isMissingSchemaError(runnerCheck.error),
+    hasSharedAiTaskColumns: !isMissingSchemaError(taskColumnCheck.error),
+    hasAiPackageVersioning: !isMissingSchemaError(taskColumnCheck.error) && !isMissingSchemaError(packageVersionCheck.error),
+  }
+}
+
+function releaseClaimFields(): Record<string, null> {
+  return schemaCapabilities.hasSharedAiTaskColumns
+    ? { claimed_runner_id: null, claim_expires_at: null }
+    : {}
+}
+
+function asResultRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function nextStaffStatusRetry(task: StaffStatusDueTask): { retryAt: string; retryCount: number; retryDelayMinutes: number } {
+  const previous = asResultRecord(task.result)
+  const rawCount = previous.retry_count
+  const previousCount = typeof rawCount === 'number' && Number.isFinite(rawCount)
+    ? rawCount
+    : 0
+  const retryCount = previousCount + 1
+  const delayMs = Math.min(STAFF_STATUS_RETRY_MAX_MS, STAFF_STATUS_RETRY_BASE_MS * retryCount)
+  return {
+    retryAt: new Date(Date.now() + delayMs).toISOString(),
+    retryCount,
+    retryDelayMinutes: Math.round(delayMs / 60_000),
+  }
+}
+
+function isInteractiveStaffStatusTarget(target: string): boolean {
+  const normalized = target.toLowerCase()
+  return target.includes('morning') ||
+    target.includes('朝の状況') ||
+    target.includes('朝の作戦') ||
+    target.includes('経理') ||
+    target.includes('交通費') ||
+    normalized.includes('claim')
+}
+
+function isAutoRecoverableStaffStatusTarget(target: string): boolean {
+  if (isInteractiveStaffStatusTarget(target)) return false
+  return target.includes('エントリー処理') ||
+    target.includes('確定者') ||
+    target.includes('当日案内') ||
+    target.includes('対面予定登録') ||
+    target.includes('翌日カレンダー') ||
+    target.includes('翌日対面') ||
+    target.includes('register-next-day') ||
+    target.toLowerCase().includes('meet') ||
+    target.includes('リンク発行') ||
+    target.includes('面談リンク') ||
+    target.includes('架電')
+}
+
+function isInteractiveStaffStatusTooLate(task: StaffStatusDueTask): boolean {
+  if (!isInteractiveStaffStatusTarget(task.prompt) || !task.scheduled_at) return false
+  const scheduledMs = new Date(task.scheduled_at).getTime()
+  if (!Number.isFinite(scheduledMs)) return false
+  return Date.now() - scheduledMs > STAFF_STATUS_INTERACTIVE_LATE_LIMIT_MS
+}
+
+function nextScheduleForTask(task: StaffStatusDueTask): string {
+  if (task.recurrence_cron) {
+    try {
+      return getNextScheduledAt(task.recurrence_cron, new Date()).toISOString()
+    } catch {
+      return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    }
+  }
+  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+}
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -212,6 +370,223 @@ function getNextScheduledAt(cronExpr: string, from: Date): Date {
   }
 
   throw new Error(`Could not compute next run for cron: ${cronExpr}`)
+}
+
+function isBeforeJstCutoff(hour: number, minute: number): boolean {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date())
+  const currentHour = Number(parts.find(part => part.type === 'hour')?.value ?? '0')
+  const currentMinute = Number(parts.find(part => part.type === 'minute')?.value ?? '0')
+  return currentHour * 60 + currentMinute < hour * 60 + minute
+}
+
+function runStaffStatusScheduleTarget(taskId: string, target: string): { output: string; exitCode: number } {
+  const runDir = ensureRunDir(taskId)
+  const stdoutLogPath = path.join(runDir, 'stdout.log')
+  fs.writeFileSync(path.join(runDir, 'prompt.txt'), target, 'utf-8')
+  fs.writeFileSync(path.join(runDir, 'metadata.json'), `${JSON.stringify({
+    task_id: taskId,
+    mode: STAFF_STATUS_SCHEDULE_SKILL_ID,
+    target,
+    cwd: STAFF_STATUS_DIR,
+    started_at: new Date().toISOString(),
+  }, null, 2)}\n`, 'utf-8')
+
+  appendRunEvent(taskId, {
+    event_name: 'ProcessStart',
+    mode: STAFF_STATUS_SCHEDULE_SKILL_ID,
+    target,
+    cwd: STAFF_STATUS_DIR,
+    stdout_log_path: stdoutLogPath,
+  })
+
+  const result = spawnSync('npx', ['tsx', 'src/entry-schedule.ts', '--target', target], {
+    cwd: STAFF_STATUS_DIR,
+    encoding: 'utf-8',
+    timeout: STAFF_STATUS_TIMEOUT_MS,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+  })
+  const output = `${result.stdout || ''}${result.stderr || ''}${result.error ? `\n${result.error.message}` : ''}`
+  fs.writeFileSync(stdoutLogPath, output, 'utf-8')
+  appendRunEvent(taskId, {
+    event_name: 'ProcessExit',
+    mode: STAFF_STATUS_SCHEDULE_SKILL_ID,
+    target,
+    exit_code: result.status ?? 1,
+  })
+
+  return { output, exitCode: result.status ?? 1 }
+}
+
+async function insertStaffStatusRunHistory(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any, any, any, any, any>,
+  task: StaffStatusDueTask,
+  opts: {
+    status: 'completed' | 'failed'
+    startedAt: string
+    completedAt: string
+    output: string
+    error?: string | null
+    note?: string
+  },
+): Promise<string | null> {
+  const result: Record<string, unknown> = {
+    message: opts.output.slice(0, 12000),
+    last_run: opts.completedAt,
+    scheduled_run_at: task.scheduled_at,
+    parent_task_id: task.id,
+    imported_from: 'focusmap-task-runner',
+    executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+  }
+  if (opts.output.length > 12000) result.truncated = true
+  if (opts.note) result.note = opts.note
+
+  const { data, error } = await supabase
+    .from('ai_tasks')
+    .insert({
+      user_id: task.user_id,
+      prompt: task.prompt,
+      skill_id: STAFF_STATUS_SCHEDULE_SKILL_ID,
+      approval_type: task.approval_type ?? 'auto',
+      status: opts.status,
+      result,
+      error: opts.error ? opts.error.slice(0, 1000) : null,
+      parent_task_id: task.id,
+      started_at: opts.startedAt,
+      completed_at: opts.completedAt,
+      scheduled_at: task.scheduled_at,
+      recurrence_cron: null,
+      cwd: task.cwd ?? STAFF_STATUS_DIR,
+      executor: task.executor ?? 'claude',
+      ...(schemaCapabilities.hasSharedAiTaskColumns ? {
+        space_id: task.space_id ?? null,
+        package_id: task.package_id ?? null,
+        ...(schemaCapabilities.hasAiPackageVersioning ? {
+          package_version_id: task.package_version_id ?? null,
+        } : {}),
+        package_snapshot: task.package_snapshot ?? null,
+        run_visibility: task.run_visibility ?? (task.space_id ? 'space' : 'private'),
+        claimed_runner_id: task.claimed_runner_id ?? null,
+      } : {}),
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error(`[task-runner] Staff-status history insert failed: ${task.id}`, error.message)
+    return null
+  }
+  return data?.id ?? null
+}
+
+async function recoverStaleStaffStatusTasks(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any, any, any, any, any>,
+): Promise<void> {
+  if (!schemaCapabilities.hasSharedAiTaskColumns) return
+
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const staleCutoff = new Date(now.getTime() - STAFF_STATUS_STALE_RUNNING_MS).toISOString()
+
+  const { error: clearExpiredClaimError } = await supabase
+    .from('ai_tasks')
+    .update(releaseClaimFields())
+    .eq('status', 'pending')
+    .lt('claim_expires_at', nowIso)
+
+  if (clearExpiredClaimError && !isMissingSchemaError(clearExpiredClaimError)) {
+    console.error('[task-runner] Failed to clear expired runner reservations:', clearExpiredClaimError.message)
+  }
+
+  const { data: staleTasks, error } = await supabase
+    .from('ai_tasks')
+    .select('id, prompt, scheduled_at, recurrence_cron, result, started_at')
+    .eq('skill_id', STAFF_STATUS_SCHEDULE_SKILL_ID)
+    .eq('status', 'running')
+    .lt('started_at', staleCutoff)
+    .limit(20)
+
+  if (error) {
+    if (!isMissingSchemaError(error)) {
+      console.error('[task-runner] Failed to scan stale staff-status tasks:', error.message)
+    }
+    return
+  }
+
+  for (const staleTask of (staleTasks ?? []) as Array<{
+    id: string
+    prompt: string
+    scheduled_at: string | null
+    recurrence_cron: string | null
+    result: Record<string, unknown> | null
+    started_at: string | null
+  }>) {
+    const previous = asResultRecord(staleTask.result)
+    const recoverCount = typeof previous.recover_count === 'number' ? previous.recover_count + 1 : 1
+
+    if (!isAutoRecoverableStaffStatusTarget(staleTask.prompt)) {
+      const nextAt = nextScheduleForTask(staleTask as unknown as StaffStatusDueTask)
+      const { error: skipError } = await supabase
+        .from('ai_tasks')
+        .update({
+          status: staleTask.recurrence_cron ? 'pending' : 'completed',
+          scheduled_at: staleTask.recurrence_cron ? nextAt : staleTask.scheduled_at,
+          completed_at: nowIso,
+          started_at: null,
+          error: null,
+          ...releaseClaimFields(),
+          result: {
+            ...previous,
+            last_run_status: 'skipped_stale_interactive',
+            skipped_at: nowIso,
+            stale_started_at: staleTask.started_at,
+            next_scheduled_at: staleTask.recurrence_cron ? nextAt : null,
+            executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+          },
+        })
+        .eq('id', staleTask.id)
+        .eq('status', 'running')
+
+      if (skipError) {
+        console.error(`[task-runner] Failed to skip stale interactive staff-status task: ${staleTask.id}`, skipError.message)
+      } else {
+        console.log(`[task-runner] Skipped stale interactive staff-status task: ${staleTask.id}`)
+      }
+      continue
+    }
+
+    const { error: updateError } = await supabase
+      .from('ai_tasks')
+      .update({
+        status: 'pending',
+        scheduled_at: nowIso,
+        started_at: null,
+        error: `stale staff-status run recovered after ${Math.round(STAFF_STATUS_STALE_RUNNING_MS / 60_000)} minutes`,
+        ...releaseClaimFields(),
+        result: {
+          ...previous,
+          last_run_status: 'stale_recovered',
+          recovered_at: nowIso,
+          stale_started_at: staleTask.started_at,
+          recover_count: recoverCount,
+          executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+        },
+      })
+      .eq('id', staleTask.id)
+      .eq('status', 'running')
+
+    if (updateError) {
+      console.error(`[task-runner] Failed to recover stale staff-status task: ${staleTask.id}`, updateError.message)
+    } else {
+      console.log(`[task-runner] Recovered stale staff-status task: ${staleTask.id}`)
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1240,6 +1615,612 @@ async function scanAndSync(supabase: any, hostname: string): Promise<void> {
   }
 }
 
+function readLocalRunnerUserId(): string | null {
+  if (process.env.FOCUSMAP_RUNNER_USER_ID) return process.env.FOCUSMAP_RUNNER_USER_ID.trim()
+  try {
+    if (fs.existsSync(LOCAL_USER_ID_FILE)) {
+      const value = fs.readFileSync(LOCAL_USER_ID_FILE, 'utf-8').trim()
+      return value || null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function commandExists(command: string): boolean {
+  try {
+    const result = spawnSync('which', [command], { stdio: 'ignore' })
+    return result.status === 0
+  } catch {
+    return false
+  }
+}
+
+function detectExecutors(): string[] {
+  const executors: string[] = []
+  if (commandExists('claude')) executors.push('claude')
+  if (commandExists('codex')) executors.push('codex', 'codex_app')
+  return executors.length > 0 ? executors : ['claude']
+}
+
+function detectSecretNames(): string[] {
+  const suffixes = ['_API_KEY', '_TOKEN', '_SECRET', '_CREDENTIALS']
+  return Object.keys(process.env)
+    .filter(key => suffixes.some(suffix => key.endsWith(suffix)))
+    .sort()
+}
+
+function normalizeRepoKey(value: string): string {
+  return value.trim()
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function buildRepoAvailability(supabase: any, userId: string, hostname: string): Promise<{
+  keys: string[]
+  paths: Record<string, string>
+}> {
+  const { data } = await supabase
+    .from('available_repos')
+    .select('absolute_path, display_name')
+    .eq('user_id', userId)
+    .eq('hostname', hostname)
+
+  const keys = new Set<string>()
+  const paths: Record<string, string> = {}
+  for (const repo of (data ?? []) as Array<{ absolute_path: string; display_name: string }>) {
+    const absolutePath = normalizeRepoKey(repo.absolute_path)
+    const displayName = normalizeRepoKey(repo.display_name)
+    if (absolutePath) {
+      keys.add(absolutePath)
+      paths[absolutePath] = repo.absolute_path
+    }
+    if (displayName) {
+      keys.add(displayName)
+      paths[displayName] = repo.absolute_path
+    }
+  }
+  return { keys: [...keys], paths }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function ensureRunnerSpaceOptIns(supabase: any, runnerId: string, userId: string): Promise<void> {
+  const editableSpaceIds = new Set<string>()
+
+  const { data: ownedSpaces } = await supabase
+    .from('spaces')
+    .select('id')
+    .eq('user_id', userId)
+  for (const space of (ownedSpaces ?? []) as Array<{ id: string }>) editableSpaceIds.add(space.id)
+
+  const { data: memberSpaces } = await supabase
+    .from('space_members')
+    .select('space_id, role')
+    .eq('user_id', userId)
+    .in('role', ['owner', 'editor'])
+  for (const member of (memberSpaces ?? []) as Array<{ space_id: string }>) editableSpaceIds.add(member.space_id)
+
+  if (editableSpaceIds.size === 0) return
+  const rows = [...editableSpaceIds].map(spaceId => ({
+    runner_id: runnerId,
+    space_id: spaceId,
+    enabled: true,
+  }))
+  const { error } = await supabase
+    .from('ai_runner_spaces')
+    .upsert(rows, { onConflict: 'runner_id,space_id' })
+  if (error) console.error('[runner] space opt-in upsert failed:', error.message)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function heartbeatRunner(supabase: any, hostname: string): Promise<AiRunner | null> {
+  const userId = readLocalRunnerUserId()
+  if (!userId) {
+    console.warn(`[runner] No local runner user id. Set FOCUSMAP_RUNNER_USER_ID or ${LOCAL_USER_ID_FILE}`)
+    return null
+  }
+
+  const repoAvailability = await buildRepoAvailability(supabase, userId, hostname)
+  const executors = detectExecutors()
+  const nowIso = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('ai_runners')
+    .upsert({
+      user_id: userId,
+      hostname,
+      display_name: hostname,
+      executors,
+      available_repo_keys: repoAvailability.keys,
+      available_secret_names: detectSecretNames(),
+      repo_paths: repoAvailability.paths,
+      metadata: {
+        platform: process.platform,
+        pid: process.pid,
+        focusmap_path: path.resolve(__dirname, '..'),
+      },
+      last_heartbeat_at: nowIso,
+      updated_at: nowIso,
+    }, { onConflict: 'user_id,hostname' })
+    .select('id, user_id, hostname, executors, available_repo_keys, available_secret_names, repo_paths')
+    .single()
+
+  if (error) {
+    console.error('[runner] heartbeat failed:', error.message)
+    return null
+  }
+
+  await ensureRunnerSpaceOptIns(supabase, data.id, userId)
+  return {
+    id: data.id,
+    user_id: data.user_id,
+    hostname: data.hostname,
+    executors: data.executors ?? [],
+    available_repo_keys: data.available_repo_keys ?? [],
+    available_secret_names: data.available_secret_names ?? [],
+    repo_paths: (data.repo_paths ?? {}) as Record<string, string>,
+  }
+}
+
+function requiredRepoKeyFromTask(task: StaffStatusDueTask): string | null {
+  const snapshot = task.package_snapshot
+  const value = snapshot && typeof snapshot === 'object'
+    ? snapshot.required_repo_key
+    : null
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function withRunnerResolvedCwd(task: StaffStatusDueTask, runner: AiRunner): StaffStatusDueTask {
+  if (task.cwd) return task
+  const repoKey = requiredRepoKeyFromTask(task)
+  if (!repoKey) return task
+  const cwd = runner.repo_paths[repoKey]
+  return cwd ? { ...task, cwd } : task
+}
+
+type AiPackageRow = {
+  id: string
+  title: string
+  space_id: string | null
+  required_repo_key: string | null
+  current_version_id: string | null
+}
+
+type AiPackageVersionRow = {
+  id: string
+  package_id: string
+  version: string
+  manifest: Record<string, unknown> | null
+  source_kind: 'git' | 'local_repo_key' | 'inline'
+  repo_url: string | null
+  git_ref: string | null
+  git_commit_sha: string | null
+  package_path: string | null
+  content_sha256: string | null
+}
+
+type AiRunnerPackageCacheRow = {
+  runner_id: string
+  package_id: string
+  version_id: string
+  local_path: string | null
+  sync_status: 'missing' | 'sync_requested' | 'syncing' | 'ready' | 'failed'
+}
+
+type PackageExecutionPlan = {
+  cwd: string
+  command: string | null
+  runtime: 'command' | 'claude'
+  versionLabel: string | null
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'package'
+}
+
+function stringFrom(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function packageManifest(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function resolvePackageSubdir(baseDir: string, packagePath: string | null | undefined): string {
+  const safePackagePath = packagePath && packagePath.trim() ? packagePath.trim() : '.'
+  if (path.isAbsolute(safePackagePath)) {
+    throw new Error(`package_path must be relative: ${safePackagePath}`)
+  }
+  const base = path.resolve(baseDir)
+  const resolved = path.resolve(base, safePackagePath)
+  if (resolved !== base && !resolved.startsWith(`${base}${path.sep}`)) {
+    throw new Error(`package_path escapes package root: ${safePackagePath}`)
+  }
+  return resolved
+}
+
+function runProcess(command: string, args: string[], cwd?: string, timeoutMs = 10 * 60 * 1000): { output: string; exitCode: number } {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: 'utf-8',
+    timeout: timeoutMs,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+  })
+  const output = `${result.stdout || ''}${result.stderr || ''}${result.error ? `\n${result.error.message}` : ''}`
+  return { output, exitCode: result.status ?? (result.error ? 1 : 0) }
+}
+
+function runShellCommand(command: string, cwd: string, timeoutMs = 10 * 60 * 1000): { output: string; exitCode: number } {
+  return runProcess('/bin/bash', ['-lc', command], cwd, timeoutMs)
+}
+
+function gitHead(cwd: string): string | null {
+  const result = runProcess('git', ['rev-parse', 'HEAD'], cwd, 30_000)
+  return result.exitCode === 0 ? result.output.trim() : null
+}
+
+function syncGitPackage(version: AiPackageVersionRow): { localPath: string; gitCommitSha: string | null; sourceRef: string | null } {
+  if (!version.repo_url) throw new Error('repo_url is required for git packages')
+  const checkoutDir = path.join(
+    PACKAGE_CACHE_DIR,
+    safePathSegment(version.package_id),
+    safePathSegment(version.id),
+  )
+  fs.mkdirSync(path.dirname(checkoutDir), { recursive: true })
+
+  if (!fs.existsSync(path.join(checkoutDir, '.git'))) {
+    if (fs.existsSync(checkoutDir)) fs.rmSync(checkoutDir, { recursive: true, force: true })
+    const clone = runProcess('git', ['clone', '--filter=blob:none', '--depth=1', version.repo_url, checkoutDir], undefined, 15 * 60 * 1000)
+    if (clone.exitCode !== 0) throw new Error(clone.output.slice(0, 2000) || 'git clone failed')
+  } else {
+    const fetchOrigin = runProcess('git', ['fetch', '--depth=1', 'origin'], checkoutDir, 10 * 60 * 1000)
+    if (fetchOrigin.exitCode !== 0) throw new Error(fetchOrigin.output.slice(0, 2000) || 'git fetch failed')
+  }
+
+  if (version.git_ref) {
+    const fetchRef = runProcess('git', ['fetch', '--depth=1', 'origin', version.git_ref], checkoutDir, 10 * 60 * 1000)
+    if (fetchRef.exitCode !== 0) throw new Error(fetchRef.output.slice(0, 2000) || `git fetch ${version.git_ref} failed`)
+    const checkout = runProcess('git', ['checkout', '--force', 'FETCH_HEAD'], checkoutDir, 60_000)
+    if (checkout.exitCode !== 0) throw new Error(checkout.output.slice(0, 2000) || `git checkout ${version.git_ref} failed`)
+  } else {
+    const pull = runProcess('git', ['pull', '--ff-only', '--depth=1'], checkoutDir, 10 * 60 * 1000)
+    if (pull.exitCode !== 0) throw new Error(pull.output.slice(0, 2000) || 'git pull failed')
+  }
+
+  const localPath = resolvePackageSubdir(checkoutDir, version.package_path)
+  if (!fs.existsSync(localPath)) throw new Error(`package_path not found after sync: ${localPath}`)
+  return { localPath, gitCommitSha: gitHead(checkoutDir), sourceRef: version.git_ref ?? version.repo_url }
+}
+
+function syncLocalRepoPackage(pkg: AiPackageRow, version: AiPackageVersionRow, runner: AiRunner): { localPath: string; gitCommitSha: string | null; sourceRef: string | null } {
+  const manifest = packageManifest(version.manifest)
+  const repoKey = stringFrom(manifest.repo_key) ?? pkg.required_repo_key
+  if (!repoKey) throw new Error('repo_key or required_repo_key is required for local_repo_key packages')
+  const repoPath = runner.repo_paths[repoKey]
+  if (!repoPath) throw new Error(`repo not available on this runner: ${repoKey}`)
+  const localPath = resolvePackageSubdir(repoPath, version.package_path)
+  if (!fs.existsSync(localPath)) throw new Error(`package_path not found in local repo: ${localPath}`)
+  return { localPath, gitCommitSha: gitHead(repoPath), sourceRef: repoKey }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function upsertPackageCache(supabase: any, row: Record<string, unknown>): Promise<void> {
+  const { error } = await supabase
+    .from('ai_runner_package_cache')
+    .upsert({
+      ...row,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'runner_id,package_id' })
+  if (error && !isMissingSchemaError(error)) {
+    console.error('[package-sync] cache upsert failed:', error.message)
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function syncRunnerPackageVersions(supabase: any, runner: AiRunner): Promise<void> {
+  if (!schemaCapabilities.hasAiPackageVersioning) return
+
+  const { data: runnerSpaces, error: spacesError } = await supabase
+    .from('ai_runner_spaces')
+    .select('space_id')
+    .eq('runner_id', runner.id)
+    .eq('enabled', true)
+
+  if (spacesError) {
+    if (!isMissingSchemaError(spacesError)) console.error('[package-sync] runner spaces query failed:', spacesError.message)
+    return
+  }
+
+  const spaceIds = (runnerSpaces ?? []).map((row: { space_id: string }) => row.space_id).filter(Boolean)
+  const packageMap = new Map<string, AiPackageRow>()
+
+  const ownPackages = await supabase
+    .from('ai_task_packages')
+    .select('id, title, space_id, required_repo_key, current_version_id')
+    .eq('user_id', runner.user_id)
+    .eq('is_active', true)
+    .not('current_version_id', 'is', null)
+
+  if (ownPackages.error) {
+    if (!isMissingSchemaError(ownPackages.error)) console.error('[package-sync] own packages query failed:', ownPackages.error.message)
+    return
+  }
+  for (const pkg of (ownPackages.data ?? []) as AiPackageRow[]) packageMap.set(pkg.id, pkg)
+
+  if (spaceIds.length > 0) {
+    const spacePackages = await supabase
+      .from('ai_task_packages')
+      .select('id, title, space_id, required_repo_key, current_version_id')
+      .in('space_id', spaceIds)
+      .eq('is_active', true)
+      .not('current_version_id', 'is', null)
+
+    if (spacePackages.error) {
+      if (!isMissingSchemaError(spacePackages.error)) console.error('[package-sync] space packages query failed:', spacePackages.error.message)
+      return
+    }
+    for (const pkg of (spacePackages.data ?? []) as AiPackageRow[]) packageMap.set(pkg.id, pkg)
+  }
+
+  const packages = [...packageMap.values()].filter(pkg => pkg.current_version_id)
+  if (packages.length === 0) return
+
+  const versionIds = packages.map(pkg => pkg.current_version_id).filter((id): id is string => !!id)
+  const { data: versions, error: versionsError } = await supabase
+    .from('ai_task_package_versions')
+    .select('id, package_id, version, manifest, source_kind, repo_url, git_ref, git_commit_sha, package_path, content_sha256')
+    .in('id', versionIds)
+
+  if (versionsError) {
+    if (!isMissingSchemaError(versionsError)) console.error('[package-sync] versions query failed:', versionsError.message)
+    return
+  }
+  const versionRows = (versions ?? []) as AiPackageVersionRow[]
+  const versionById = new Map<string, AiPackageVersionRow>(versionRows.map(version => [version.id, version]))
+
+  const { data: caches, error: cachesError } = await supabase
+    .from('ai_runner_package_cache')
+    .select('runner_id, package_id, version_id, local_path, sync_status')
+    .eq('runner_id', runner.id)
+    .in('package_id', packages.map(pkg => pkg.id))
+
+  if (cachesError) {
+    if (!isMissingSchemaError(cachesError)) console.error('[package-sync] caches query failed:', cachesError.message)
+    return
+  }
+  const cacheRows = (caches ?? []) as AiRunnerPackageCacheRow[]
+  const cacheByPackageId = new Map<string, AiRunnerPackageCacheRow>(cacheRows.map(cache => [cache.package_id, cache]))
+
+  for (const pkg of packages) {
+    const version = pkg.current_version_id ? versionById.get(pkg.current_version_id) : null
+    if (!version) continue
+    const cache = cacheByPackageId.get(pkg.id)
+    const isReady = cache?.version_id === version.id &&
+      cache.sync_status === 'ready' &&
+      !!cache.local_path &&
+      fs.existsSync(cache.local_path)
+    if (isReady) continue
+
+    await upsertPackageCache(supabase, {
+      runner_id: runner.id,
+      package_id: pkg.id,
+      version_id: version.id,
+      sync_status: 'syncing',
+      sync_requested_at: cache?.sync_status === 'sync_requested' ? new Date().toISOString() : cache?.sync_status ? null : new Date().toISOString(),
+      last_error: null,
+    })
+
+    try {
+      const synced = version.source_kind === 'git'
+        ? syncGitPackage(version)
+        : syncLocalRepoPackage(pkg, version, runner)
+      const manifest = packageManifest(version.manifest)
+      const installCommand = stringFrom(manifest.install_command)
+      if (installCommand) {
+        const install = runShellCommand(installCommand, synced.localPath, PACKAGE_TASK_TIMEOUT_MS)
+        if (install.exitCode !== 0) throw new Error(install.output.slice(0, 2000) || 'install_command failed')
+      }
+      await upsertPackageCache(supabase, {
+        runner_id: runner.id,
+        package_id: pkg.id,
+        version_id: version.id,
+        local_path: synced.localPath,
+        source_ref: synced.sourceRef,
+        git_commit_sha: synced.gitCommitSha,
+        content_sha256: version.content_sha256,
+        sync_status: 'ready',
+        synced_at: new Date().toISOString(),
+        last_error: null,
+        metadata: {
+          package_title: pkg.title,
+          package_version: version.version,
+          source_kind: version.source_kind,
+        },
+      })
+      console.log(`[package-sync] ready: ${pkg.title} ${version.version} → ${synced.localPath}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await upsertPackageCache(supabase, {
+        runner_id: runner.id,
+        package_id: pkg.id,
+        version_id: version.id,
+        sync_status: 'failed',
+        last_error: message.slice(0, 2000),
+      })
+      console.error(`[package-sync] failed: ${pkg.title} ${version.version}:`, message)
+    }
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resolvePackageExecution(supabase: any, task: StaffStatusDueTask, runner: AiRunner): Promise<PackageExecutionPlan> {
+  if (!task.package_id || !task.package_version_id) {
+    throw new Error('package_id and package_version_id are required')
+  }
+  const { data: cache, error: cacheError } = await supabase
+    .from('ai_runner_package_cache')
+    .select('local_path, sync_status, version_id')
+    .eq('runner_id', runner.id)
+    .eq('package_id', task.package_id)
+    .eq('version_id', task.package_version_id)
+    .maybeSingle()
+
+  if (cacheError) throw new Error(cacheError.message)
+  if (!cache || cache.sync_status !== 'ready' || !cache.local_path) {
+    throw new Error('package is not synced on this runner yet')
+  }
+  if (!fs.existsSync(cache.local_path)) {
+    throw new Error(`synced package path not found: ${cache.local_path}`)
+  }
+
+  const snapshot = packageManifest(task.package_snapshot)
+  const snapshotVersion = packageManifest(snapshot.version)
+  let manifest = packageManifest(snapshotVersion.manifest)
+  let versionLabel = stringFrom(snapshotVersion.version) ?? stringFrom(snapshot.package_version)
+
+  if (Object.keys(manifest).length === 0 || !versionLabel) {
+    const { data: version } = await supabase
+      .from('ai_task_package_versions')
+      .select('version, manifest')
+      .eq('id', task.package_version_id)
+      .maybeSingle()
+    manifest = packageManifest(version?.manifest)
+    versionLabel = versionLabel ?? stringFrom(version?.version)
+  }
+
+  const command = stringFrom(manifest.run_command) ?? stringFrom(manifest.command)
+  const runtimeValue = stringFrom(manifest.runtime)
+  const runtime: 'command' | 'claude' = command
+    ? 'command'
+    : runtimeValue === 'claude' || task.executor === 'claude'
+      ? 'claude'
+      : 'command'
+
+  if (runtime === 'command' && !command) {
+    throw new Error('package manifest requires command or run_command')
+  }
+
+  return {
+    cwd: cache.local_path,
+    command,
+    runtime,
+    versionLabel,
+  }
+}
+
+function runPackageCommand(opts: {
+  taskId: string
+  prompt: string
+  cwd: string
+  command: string
+  packageId: string
+  packageVersionId: string
+}): Promise<{ output: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    const runDir = ensureRunDir(opts.taskId)
+    const stdoutLogPath = path.join(runDir, 'stdout.log')
+    fs.writeFileSync(path.join(runDir, 'prompt.txt'), opts.prompt, 'utf-8')
+    fs.writeFileSync(stdoutLogPath, '', 'utf-8')
+    fs.writeFileSync(path.join(runDir, 'metadata.json'), `${JSON.stringify({
+      task_id: opts.taskId,
+      mode: 'ai-package-command',
+      cwd: opts.cwd,
+      command: opts.command,
+      package_id: opts.packageId,
+      package_version_id: opts.packageVersionId,
+      started_at: new Date().toISOString(),
+    }, null, 2)}\n`, 'utf-8')
+    appendRunEvent(opts.taskId, {
+      event_name: 'ProcessStart',
+      mode: 'ai-package-command',
+      run_dir: runDir,
+      stdout_log_path: stdoutLogPath,
+      cwd: opts.cwd,
+      package_id: opts.packageId,
+      package_version_id: opts.packageVersionId,
+    })
+
+    const env = {
+      ...process.env,
+      FOCUSMAP_TASK_ID: opts.taskId,
+      FOCUSMAP_TASK_PROMPT: opts.prompt,
+      FOCUSMAP_PACKAGE_ID: opts.packageId,
+      FOCUSMAP_PACKAGE_VERSION_ID: opts.packageVersionId,
+    }
+
+    const proc = spawn('/bin/bash', ['-lc', opts.command], {
+      cwd: opts.cwd,
+      env,
+      timeout: PACKAGE_TASK_TIMEOUT_MS,
+    })
+
+    let output = ''
+    let errOutput = ''
+    proc.stdout.on('data', (data: Buffer) => {
+      const chunk = data.toString()
+      output += chunk
+      fs.appendFileSync(stdoutLogPath, chunk, 'utf-8')
+    })
+    proc.stderr.on('data', (data: Buffer) => {
+      const chunk = data.toString()
+      errOutput += chunk
+      fs.appendFileSync(stdoutLogPath, chunk, 'utf-8')
+    })
+    proc.on('close', (code: number | null) => {
+      const exitCode = code ?? 1
+      appendRunEvent(opts.taskId, {
+        event_name: 'ProcessClose',
+        mode: 'ai-package-command',
+        exit_code: exitCode,
+        stdout_log_path: stdoutLogPath,
+      })
+      resolve({ output: `${output}${errOutput}`.trim(), exitCode })
+    })
+    proc.on('error', (error: Error) => {
+      appendRunEvent(opts.taskId, {
+        event_name: 'ProcessError',
+        mode: 'ai-package-command',
+        error: error.message,
+        stdout_log_path: stdoutLogPath,
+      })
+      resolve({ output: error.message, exitCode: 1 })
+    })
+  })
+}
+
+function nextPackageRetry(task: StaffStatusDueTask): { retryAt: string; retryCount: number; retryDelayMinutes: number } {
+  const previous = asResultRecord(task.result)
+  const rawCount = previous.retry_count
+  const previousCount = typeof rawCount === 'number' && Number.isFinite(rawCount) ? rawCount : 0
+  const retryCount = previousCount + 1
+  const delayMs = Math.min(30 * 60 * 1000, 5 * 60 * 1000 * retryCount)
+  return {
+    retryAt: new Date(Date.now() + delayMs).toISOString(),
+    retryCount,
+    retryDelayMinutes: Math.round(delayMs / 60_000),
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function claimDueTasksWithRunner(supabase: any, runner: AiRunner, limit = 5): Promise<StaffStatusDueTask[]> {
+  const tasks: StaffStatusDueTask[] = []
+  for (let i = 0; i < limit; i++) {
+    const { data, error } = await supabase.rpc('claim_ai_task_for_runner', {
+      p_runner_id: runner.id,
+      p_claim_ttl_seconds: 300,
+    })
+    if (error) {
+      console.error('[runner] claim failed:', error.message)
+      break
+    }
+    const task = Array.isArray(data) ? data[0] : data
+    if (!task) break
+    tasks.push(withRunnerResolvedCwd(task as StaffStatusDueTask, runner))
+  }
+  return tasks
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // メイン処理
 // ─────────────────────────────────────────────────────────────────────────
@@ -1258,6 +2239,7 @@ async function main() {
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+  schemaCapabilities = await detectSchemaCapabilities(supabase)
 
   // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
   await reconcileRemoteControlSessions(supabase)
@@ -1269,9 +2251,16 @@ async function main() {
   // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
   await syncCodexAppThreads(supabase)
 
+  // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
+  await recoverStaleStaffStatusTasks(supabase)
+
   // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
   const hostname = os.hostname()
   try {
+    const localRunnerUserId = readLocalRunnerUserId()
+    if (localRunnerUserId) {
+      await ensureDefaultScanSettings(supabase, localRunnerUserId, hostname)
+    }
     // ai_tasks を持つユーザーで scan_settings 未作成の人にデフォルトを入れる
     const { data: activeUsers } = await supabase
       .from('ai_tasks')
@@ -1288,64 +2277,456 @@ async function main() {
     console.error('[task-runner] repo scan error:', e instanceof Error ? e.message : e)
   }
 
-  // ─── 1. due なタスクを取得 ───────────────────────────────────────────
-  const { data: rawDueTasks, error } = await supabase
-    .from('ai_tasks')
-    .select('id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, source_note_id, source_ideal_goal_id, executor')
-    .eq('status', 'pending')
-    .not('scheduled_at', 'is', null)
-    .lte('scheduled_at', new Date().toISOString())
-    .order('scheduled_at', { ascending: true })
-    .limit(10)
+  // ─── 1. runner heartbeat → due task を atomic claim ─────────────────
+  let dueTasks: StaffStatusDueTask[] = []
+  const runner = schemaCapabilities.hasAiRunnerTables && schemaCapabilities.hasSharedAiTaskColumns
+    ? await heartbeatRunner(supabase, hostname)
+    : null
+  if (runner) {
+    await syncRunnerPackageVersions(supabase, runner)
+    dueTasks = await claimDueTasksWithRunner(supabase, runner, 5)
+  } else if (
+    schemaCapabilities.hasAiRunnerTables &&
+    schemaCapabilities.hasSharedAiTaskColumns &&
+    process.env.FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER !== 'true'
+  ) {
+    console.log('[task-runner] Runner is not configured; skipping AI execution claims')
+  } else {
+    // Legacy fallback while the shared runner migration has not been applied, or when explicitly allowed.
+    const selectColumns = [
+      'id, user_id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, result',
+      'source_note_id, source_ideal_goal_id, executor',
+      schemaCapabilities.hasSharedAiTaskColumns
+        ? `space_id, package_id, package_snapshot, claimed_runner_id, claim_expires_at, run_visibility${schemaCapabilities.hasAiPackageVersioning ? ', package_version_id' : ''}`
+        : '',
+    ].filter(Boolean).join(', ')
+    const { data: rawDueTasks, error } = await supabase
+      .from('ai_tasks')
+      .select(selectColumns)
+      .eq('status', 'pending')
+      .not('scheduled_at', 'is', null)
+      .lte('scheduled_at', new Date().toISOString())
+      .order('scheduled_at', { ascending: true })
+      .limit(5)
 
-  if (error) {
-    console.error('[task-runner] DB error:', error.message)
-    if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
-      fs.writeFileSync(
-        PAUSE_FILE,
-        [
-          `Paused at ${new Date().toISOString()}`,
-          `Reason: ${error.message}`,
-          'Remove this file after the Supabase project restriction is lifted.',
-          '',
-        ].join('\n'),
-        'utf-8',
-      )
-      console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
+    if (error) {
+      console.error('[task-runner] DB error:', error.message)
+      if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
+        fs.writeFileSync(
+          PAUSE_FILE,
+          [
+            `Paused at ${new Date().toISOString()}`,
+            `Reason: ${error.message}`,
+            'Remove this file after the Supabase project restriction is lifted.',
+            '',
+          ].join('\n'),
+          'utf-8',
+        )
+        console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
+      }
+      process.exit(1)
     }
-    process.exit(1)
-  }
 
-  // ユーザーが UI で「今日分完了」をチェックした繰り返しタスクはスキップ
-  // completed_at が当日（ローカル時刻）以降なら今日分実行済みとみなす
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
-  const dueTasks = (rawDueTasks || []).filter(t => {
-    if (!t.recurrence_cron) return true
-    if (!t.completed_at) return true
-    return new Date(t.completed_at) < todayStart
-  }).slice(0, 5)
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+    dueTasks = ((rawDueTasks || []) as unknown as StaffStatusDueTask[]).filter(t => {
+      if (!t.recurrence_cron) return true
+      if (!t.completed_at) return true
+      return new Date(t.completed_at) < todayStart
+    })
+  }
 
   if (!dueTasks || dueTasks.length === 0) {
     console.log('[task-runner] No due tasks at', new Date().toISOString())
     process.exit(0)
   }
 
-  console.log(`[task-runner] ${dueTasks.length} due task(s) found`)
+  console.log(`[task-runner] ${dueTasks.length} due task(s) found${runner ? ` for runner ${runner.hostname}` : ''}`)
 
   // ─── 2. タスクを順次実行 ──────────────────────────────────────────────
   for (const task of dueTasks) {
     const shortPrompt = String(task.prompt).slice(0, 40)
+    const startedAt = new Date().toISOString()
     console.log(`[task-runner] Starting: ${task.id} "${shortPrompt}"`)
 
-    // status → running
-    const { error: updateErr } = await supabase
+    if (task.skill_id === STAFF_STATUS_SCHEDULE_SKILL_ID && isInteractiveStaffStatusTooLate(task)) {
+      const skippedAt = new Date().toISOString()
+      const nextAt = nextScheduleForTask(task)
+      await supabase
+        .from('ai_tasks')
+        .update({
+          status: task.recurrence_cron ? 'pending' : 'completed',
+          scheduled_at: task.recurrence_cron ? nextAt : task.scheduled_at,
+          completed_at: skippedAt,
+          started_at: null,
+          error: null,
+          ...releaseClaimFields(),
+          result: {
+            ...asResultRecord(task.result),
+            last_run_status: 'skipped_stale_interactive',
+            skipped_at: skippedAt,
+            scheduled_run_at: task.scheduled_at,
+            next_scheduled_at: task.recurrence_cron ? nextAt : null,
+            skip_reason: 'interactive staff-status target was too old to auto-open',
+            executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+          },
+        })
+        .eq('id', task.id)
+      console.log(`[task-runner] Skipped stale interactive staff-status task: ${task.id} → ${task.recurrence_cron ? nextAt : 'completed'}`)
+      continue
+    }
+
+    if (runner && task.claimed_runner_id && task.claimed_runner_id !== runner.id) {
+      console.log(`[task-runner] Skipping task reserved by another runner: ${task.id}`)
+      continue
+    }
+
+    // status → running. The runner selection is already decided before this point;
+    // keep this update simple so the script body is not blocked by REST filter quirks.
+    const markRunningQuery = supabase
       .from('ai_tasks')
-      .update({ status: 'running', started_at: new Date().toISOString() })
+      .update({ status: 'running', started_at: startedAt })
       .eq('id', task.id)
       .eq('status', 'pending') // 楽観的ロック
 
+    const { data: claimedTask, error: updateErr } = await markRunningQuery
+      .select('id')
+      .maybeSingle()
+
     if (updateErr) {
       console.error(`[task-runner] Failed to mark running: ${task.id}`, updateErr.message)
+      continue
+    }
+    if (!claimedTask) {
+      console.log(`[task-runner] Skipping already-claimed task: ${task.id}`)
+      continue
+    }
+
+    if (task.package_id && task.package_version_id) {
+      if (!runner) {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'pending',
+            scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+            started_at: null,
+            error: 'No configured runner is available for this package task',
+            ...releaseClaimFields(),
+          })
+          .eq('id', task.id)
+        console.error(`[task-runner] Package task has no runner: ${task.id}`)
+        continue
+      }
+
+      let plan: PackageExecutionPlan
+      try {
+        plan = await resolvePackageExecution(supabase, task, runner)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'pending',
+            scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+            started_at: null,
+            error: message.slice(0, 1000),
+            ...releaseClaimFields(),
+            result: {
+              ...asResultRecord(task.result),
+              last_run_status: 'waiting_for_package_sync',
+              package_id: task.package_id,
+              package_version_id: task.package_version_id,
+              retry_reason: message,
+            },
+          })
+          .eq('id', task.id)
+        console.error(`[task-runner] Package not ready; retry queued: ${task.id}: ${message}`)
+        continue
+      }
+
+      notify(`パッケージ実行中: ${shortPrompt}`, 'Focusmap AI')
+      const result = plan.runtime === 'command' && plan.command
+        ? await runPackageCommand({
+          taskId: task.id,
+          prompt: task.prompt,
+          cwd: plan.cwd,
+          command: plan.command,
+          packageId: task.package_id,
+          packageVersionId: task.package_version_id,
+        })
+        : await runClaude({
+          taskId: task.id,
+          prompt: task.prompt,
+          skillId: task.skill_id,
+          cwd: plan.cwd,
+        })
+
+      const completedAt = new Date().toISOString()
+      if (result.exitCode !== 0) {
+        const { retryAt, retryCount, retryDelayMinutes } = nextPackageRetry(task)
+        const errMsg = result.output.slice(0, 1000) || 'AI package command failed'
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'pending',
+            scheduled_at: retryAt,
+            started_at: null,
+            completed_at: null,
+            error: errMsg,
+            ...releaseClaimFields(),
+            result: {
+              ...asResultRecord(task.result),
+              message: result.output.slice(0, 4000),
+              last_run: completedAt,
+              last_run_status: 'failed_retrying',
+              retry_count: retryCount,
+              retry_delay_minutes: retryDelayMinutes,
+              next_retry_at: retryAt,
+              package_id: task.package_id,
+              package_version_id: task.package_version_id,
+              package_version: plan.versionLabel,
+              local_path: plan.cwd,
+              executor: 'ai_package',
+            },
+          })
+          .eq('id', task.id)
+        notify(`再試行予定: ${shortPrompt}`, 'Focusmap AI')
+        console.error(`[task-runner] Package failed; retrying: ${task.id} (exit ${result.exitCode}) → ${retryAt}`)
+        continue
+      }
+
+      if (task.recurrence_cron) {
+        let nextAt: string
+        try {
+          nextAt = getNextScheduledAt(task.recurrence_cron, new Date()).toISOString()
+        } catch (error) {
+          console.error(`[task-runner] package cron parse error: ${error}`)
+          nextAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        }
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'pending',
+            result: {
+              message: result.output.slice(0, 12000),
+              last_run: completedAt,
+              last_run_status: 'completed',
+              package_id: task.package_id,
+              package_version_id: task.package_version_id,
+              package_version: plan.versionLabel,
+              local_path: plan.cwd,
+              stdout_log_path: readRunPath(task.id, 'stdout.log'),
+              executor: 'ai_package',
+            },
+            error: null,
+            completed_at: completedAt,
+            scheduled_at: nextAt,
+            started_at: null,
+            ...releaseClaimFields(),
+          })
+          .eq('id', task.id)
+        notify(`完了: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Package rescheduled: ${task.id} → ${nextAt}`)
+      } else {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'completed',
+            result: {
+              message: result.output.slice(0, 12000),
+              last_run: completedAt,
+              last_run_status: 'completed',
+              package_id: task.package_id,
+              package_version_id: task.package_version_id,
+              package_version: plan.versionLabel,
+              local_path: plan.cwd,
+              stdout_log_path: readRunPath(task.id, 'stdout.log'),
+              executor: 'ai_package',
+            },
+            error: null,
+            completed_at: completedAt,
+            ...releaseClaimFields(),
+          })
+          .eq('id', task.id)
+        notify(`完了: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Package done: ${task.id}`)
+      }
+      continue
+    }
+
+    if (task.skill_id === STAFF_STATUS_SCHEDULE_SKILL_ID) {
+      const staffTask = task as StaffStatusDueTask
+      const { output, exitCode } = runStaffStatusScheduleTarget(task.id, task.prompt)
+      const completedAt = new Date().toISOString()
+      const isCallGateRetry = exitCode === 2 && task.prompt.includes('架電') && isBeforeJstCutoff(11, 30)
+
+      if (isCallGateRetry) {
+        const retryAt = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'pending',
+            error: null,
+            scheduled_at: retryAt,
+            started_at: null,
+            ...releaseClaimFields(),
+            result: {
+              message: output.slice(0, 4000),
+              last_run: completedAt,
+              retry_reason: '架電ゲート未成立のため5分後に再判定',
+              executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+            },
+          })
+          .eq('id', task.id)
+        console.log(`[task-runner] Staff-status gate retry: ${task.id} → ${retryAt}`)
+        continue
+      }
+
+      if (exitCode !== 0) {
+        const isCallGateSkipped = exitCode === 2 && task.prompt.includes('架電')
+        const historyStatus = isCallGateSkipped ? 'completed' : 'failed'
+        const note = isCallGateSkipped ? '架電ゲート未成立のため当日分を終了' : undefined
+        const errorMessage = isCallGateSkipped ? null : (output.slice(0, 1000) || `staff-status target failed: ${task.prompt}`)
+
+        if (!isCallGateSkipped) {
+          const { retryAt, retryCount, retryDelayMinutes } = nextStaffStatusRetry(staffTask)
+          const previousResult = asResultRecord(staffTask.result)
+          await supabase
+            .from('ai_tasks')
+            .update({
+              status: 'pending',
+              error: errorMessage,
+              scheduled_at: retryAt,
+              started_at: null,
+              completed_at: null,
+              ...releaseClaimFields(),
+              result: {
+                ...previousResult,
+                message: output.slice(0, 4000),
+                last_run: completedAt,
+                last_run_status: 'failed_retrying',
+                retry_count: retryCount,
+                retry_reason: 'staff-status target failed; retrying until success',
+                retry_delay_minutes: retryDelayMinutes,
+                next_retry_at: retryAt,
+                executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+              },
+            })
+            .eq('id', task.id)
+          notify(`再試行予定: ${shortPrompt}`, 'Focusmap AI')
+          console.error(`[task-runner] Staff-status failed; retrying: ${task.id} (exit ${exitCode}) → ${retryAt}`)
+          continue
+        }
+
+        if (task.recurrence_cron) {
+          let nextAt: string
+          try {
+            nextAt = getNextScheduledAt(task.recurrence_cron, new Date()).toISOString()
+          } catch {
+            nextAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+          }
+          const historyTaskId = await insertStaffStatusRunHistory(supabase, staffTask, {
+            status: historyStatus,
+            startedAt,
+            completedAt,
+            output,
+            error: errorMessage,
+            note,
+          })
+          await supabase
+            .from('ai_tasks')
+            .update({
+              status: 'pending',
+              error: null,
+              completed_at: completedAt,
+              scheduled_at: nextAt,
+              started_at: null,
+              ...releaseClaimFields(),
+              result: {
+                message: output.slice(0, 4000),
+                last_run: completedAt,
+                last_history_task_id: historyTaskId,
+                last_run_status: historyStatus,
+                note,
+                executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+              },
+            })
+            .eq('id', task.id)
+          notify(`${historyStatus === 'completed' ? '完了' : '失敗'}: ${shortPrompt}`, 'Focusmap AI')
+          console.error(`[task-runner] Staff-status ${historyStatus}: ${task.id} (exit ${exitCode}) → ${nextAt}`)
+          continue
+        }
+
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: historyStatus,
+            error: errorMessage,
+            completed_at: completedAt,
+            ...releaseClaimFields(),
+            result: {
+              message: output.slice(0, 4000),
+              last_run: completedAt,
+              note,
+              executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+            },
+          })
+          .eq('id', task.id)
+        notify(`${historyStatus === 'completed' ? '完了' : '失敗'}: ${shortPrompt}`, 'Focusmap AI')
+        console.error(`[task-runner] Staff-status ${historyStatus}: ${task.id} (exit ${exitCode})`)
+        continue
+      }
+
+      if (task.recurrence_cron) {
+        let nextAt: string
+        try {
+          nextAt = getNextScheduledAt(task.recurrence_cron, new Date()).toISOString()
+        } catch {
+          nextAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        }
+        const historyTaskId = await insertStaffStatusRunHistory(supabase, staffTask, {
+          status: 'completed',
+          startedAt,
+          completedAt,
+          output,
+        })
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'pending',
+            error: null,
+            result: {
+              message: output.slice(0, 4000),
+              last_run: completedAt,
+              last_history_task_id: historyTaskId,
+              last_run_status: 'completed',
+              executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+            },
+            completed_at: completedAt,
+            scheduled_at: nextAt,
+            started_at: null,
+            ...releaseClaimFields(),
+          })
+          .eq('id', task.id)
+        notify(`完了: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Staff-status rescheduled: ${task.id} → ${nextAt}`)
+      } else {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'completed',
+            error: null,
+            result: {
+              message: output.slice(0, 4000),
+              last_run: completedAt,
+              executor: STAFF_STATUS_SCHEDULE_SKILL_ID,
+            },
+            completed_at: completedAt,
+            ...releaseClaimFields(),
+          })
+          .eq('id', task.id)
+        notify(`完了: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Staff-status done: ${task.id}`)
+      }
       continue
     }
 
@@ -1558,6 +2939,7 @@ async function main() {
             completed_at: now,
             scheduled_at: nextAt,
             started_at: null,
+            ...releaseClaimFields(),
           })
           .eq('id', task.id)
         console.log(`[task-runner] Terminal opened & rescheduled: ${task.id} → next at ${nextAt}`)
@@ -1623,6 +3005,7 @@ async function main() {
             completed_at: now,
             scheduled_at: nextAt,
             started_at: null,
+            ...releaseClaimFields(),
           })
           .eq('id', task.id)
 

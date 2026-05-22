@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 
 // GET /api/ai-tasks/:id — 単一AIタスク取得
 export async function GET(
@@ -15,7 +16,6 @@ export async function GET(
     .from('ai_tasks')
     .select('*')
     .eq('id', id)
-    .eq('user_id', user.id)
     .single()
 
   if (error) {
@@ -36,7 +36,33 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { status, result, error: taskError, prompt, scheduled_at, recurrence_cron, cwd, approval_type, completed_at } = body
+  const {
+    status,
+    result,
+    error: taskError,
+    prompt,
+    scheduled_at,
+    recurrence_cron,
+    cwd,
+    approval_type,
+    completed_at,
+    started_at,
+    executor,
+    skill_id,
+    space_id,
+    run_visibility,
+  } = body
+
+  const { data: existingTask } = await supabase
+    .from('ai_tasks')
+    .select('user_id, space_id, run_visibility')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (!existingTask) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+  const ownsTask = existingTask.user_id === user.id
 
   const updates: Record<string, unknown> = {}
 
@@ -61,6 +87,32 @@ export async function PATCH(
   if (recurrence_cron !== undefined) updates.recurrence_cron = recurrence_cron
   if (cwd !== undefined) updates.cwd = cwd
   if (approval_type !== undefined) updates.approval_type = approval_type
+  if (started_at !== undefined) updates.started_at = started_at
+  if (skill_id !== undefined) updates.skill_id = skill_id
+  if (space_id !== undefined) {
+    if (!ownsTask && (space_id === null || space_id === '')) {
+      return NextResponse.json({ error: 'Only the task owner can remove a run from its space' }, { status: 403 })
+    }
+    const resolved = await resolveAiTaskSpaceId(supabase, user.id, {
+      space_id: typeof space_id === 'string' ? space_id : null,
+    })
+    if (resolved.error) {
+      return NextResponse.json({ error: resolved.error }, { status: 403 })
+    }
+    updates.space_id = resolved.spaceId
+  }
+  if (run_visibility !== undefined) {
+    updates.run_visibility = normalizeVisibility(run_visibility)
+    if (!ownsTask && updates.run_visibility === 'private') {
+      return NextResponse.json({ error: 'Only the task owner can make a shared run private' }, { status: 403 })
+    }
+  }
+  if (executor !== undefined) {
+    if (!['claude', 'codex', 'codex_app'].includes(executor)) {
+      return NextResponse.json({ error: 'Invalid executor' }, { status: 400 })
+    }
+    updates.executor = executor
+  }
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No updates provided' }, { status: 400 })
@@ -70,7 +122,6 @@ export async function PATCH(
     .from('ai_tasks')
     .update(updates)
     .eq('id', id)
-    .eq('user_id', user.id)
     .select()
     .single()
 
@@ -95,7 +146,6 @@ export async function DELETE(
     .from('ai_tasks')
     .delete()
     .eq('id', id)
-    .eq('user_id', user.id)
 
   if (error) {
     console.error('[ai-tasks/id DELETE]', error.message)

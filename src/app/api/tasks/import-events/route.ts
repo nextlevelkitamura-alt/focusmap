@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
+import { createHash } from 'crypto'
 import { createClient } from '@/utils/supabase/server'
+import { pickPreferredGoogleEventTask } from '@/lib/google-event-task-dedupe'
 
 interface EventPayload {
   google_event_id: string
@@ -30,6 +31,25 @@ export interface ImportEventsResponse {
 
 const RECENTLY_UPDATED_THRESHOLD_MS = 5 * 60 * 1000 // 5分
 
+function createStableGoogleEventTaskId(userId: string, googleEventId: string): string {
+  const chars = createHash('sha256')
+    .update(`${userId}:${googleEventId}`)
+    .digest('hex')
+    .slice(0, 32)
+    .split('')
+
+  chars[12] = '5'
+  chars[16] = ((parseInt(chars[16], 16) & 0x3) | 0x8).toString(16)
+
+  return [
+    chars.slice(0, 8).join(''),
+    chars.slice(8, 12).join(''),
+    chars.slice(12, 16).join(''),
+    chars.slice(16, 20).join(''),
+    chars.slice(20, 32).join(''),
+  ].join('-')
+}
+
 /**
  * カレンダーイベントをタスクとして取り込む
  * POST /api/tasks/import-events
@@ -57,8 +77,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
       )
     }
 
+    const dedupedEvents = [...new Map(events.map(event => [event.google_event_id, event])).values()]
+    const incomingIds = new Set(dedupedEvents.map(e => e.google_event_id))
+    const incomingCalendarIds = new Set(dedupedEvents.map(e => e.calendar_id).filter(Boolean))
+    const incomingStartTimes = dedupedEvents
+      .map(e => new Date(e.start_time).getTime())
+      .filter(time => !Number.isNaN(time))
+    const incomingEndTimes = dedupedEvents
+      .map(e => new Date(e.end_time).getTime())
+      .filter(time => !Number.isNaN(time))
+    const importScopeStart = incomingStartTimes.length > 0 ? Math.min(...incomingStartTimes) : null
+    const importScopeEnd = incomingEndTimes.length > 0 ? Math.max(...incomingEndTimes) : null
+
     // 空配列の場合は即成功
-    if (events.length === 0) {
+    if (dedupedEvents.length === 0) {
       return NextResponse.json({
         success: true,
         result: { inserted: 0, updated: 0, softDeleted: 0, skipped: 0 },
@@ -68,7 +100,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
     // 1. 既存の取り込み済みタスクを取得（削除済みも含む — 復活させるため）
     const { data: allExistingTasks, error: selectError } = await supabase
       .from('tasks')
-      .select('id, google_event_id, google_event_fingerprint, updated_at, deleted_at')
+      .select('id, google_event_id, google_event_fingerprint, status, source, calendar_id, scheduled_at, updated_at, created_at, deleted_at')
       .eq('user_id', user.id)
       .eq('source', 'google_event')
 
@@ -82,15 +114,53 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
 
     // アクティブなタスク（deleted_at = null）
     const activeTasks = (allExistingTasks || []).filter(t => !t.deleted_at)
+    const isInImportScope = (task: { calendar_id?: string | null; scheduled_at?: string | null }) => {
+      if (importScopeStart == null || importScopeEnd == null) return false
+      if (!task.calendar_id || !incomingCalendarIds.has(task.calendar_id)) return false
+      if (!task.scheduled_at) return false
+      const scheduledAt = new Date(task.scheduled_at).getTime()
+      return !Number.isNaN(scheduledAt) && scheduledAt >= importScopeStart && scheduledAt < importScopeEnd
+    }
+
+    const activeTasksToReconcile = activeTasks.filter(task =>
+      incomingIds.has(task.google_event_id) || isInImportScope(task)
+    )
+
+    const activeTasksByGoogleEventId = new Map<string, typeof activeTasks>()
+    for (const task of activeTasksToReconcile) {
+      if (!task.google_event_id) continue
+      const tasksForEvent = activeTasksByGoogleEventId.get(task.google_event_id) ?? []
+      tasksForEvent.push(task)
+      activeTasksByGoogleEventId.set(task.google_event_id, tasksForEvent)
+    }
+
+    const canonicalActiveTasks: typeof activeTasks = []
+    const duplicateActiveTaskIds: string[] = []
+    for (const tasksForEvent of activeTasksByGoogleEventId.values()) {
+      const preferred = pickPreferredGoogleEventTask(tasksForEvent)
+      if (!preferred) continue
+      canonicalActiveTasks.push(preferred)
+      for (const task of tasksForEvent) {
+        if (task.id !== preferred.id) duplicateActiveTaskIds.push(task.id)
+      }
+    }
+
     // 削除済みタスク（復活候補）
+    const deletedTasksByGoogleEventId = new Map<string, typeof activeTasks>()
+    for (const task of (allExistingTasks || []).filter(t => t.deleted_at && t.google_event_id)) {
+      const tasksForEvent = deletedTasksByGoogleEventId.get(task.google_event_id) ?? []
+      tasksForEvent.push(task)
+      deletedTasksByGoogleEventId.set(task.google_event_id, tasksForEvent)
+    }
     const deletedTaskMap = new Map(
-      (allExistingTasks || []).filter(t => t.deleted_at).map(t => [t.google_event_id, t])
+      [...deletedTasksByGoogleEventId.entries()]
+        .map(([googleEventId, tasksForEvent]) => [googleEventId, pickPreferredGoogleEventTask(tasksForEvent)])
+        .filter((entry): entry is [string, NonNullable<(typeof activeTasks)[number]>] => !!entry[1])
     )
 
     const existingMap = new Map(
-      activeTasks.map(t => [t.google_event_id, t])
+      canonicalActiveTasks.map(t => [t.google_event_id, t])
     )
-    const incomingIds = new Set(events.map(e => e.google_event_id))
 
     let inserted = 0
     let updated = 0
@@ -100,7 +170,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
     // 2. 各イベントを処理: INSERT or UPDATE or SKIP
     const toUpsert: Array<Record<string, unknown>> = []
 
-    for (const event of events) {
+    for (const event of dedupedEvents) {
       const existing = existingMap.get(event.google_event_id)
 
       if (existing) {
@@ -156,9 +226,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
           })
           updated++
         } else {
-          // 完全新規 → INSERT（id を明示的に生成して upsert の null id を防ぐ）
+          // 完全新規 → INSERT（同時 import でも同じ予定は同じ id に収束させる）
           toUpsert.push({
-            id: randomUUID(),
+            id: createStableGoogleEventTaskId(user.id, event.google_event_id),
             user_id: user.id,
             title: event.title,
             google_event_id: event.google_event_id,
@@ -186,21 +256,62 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
         .select()
 
       if (upsertError) {
-        console.error('[import-events] Upsert error:', upsertError)
-        return NextResponse.json(
-          { success: false, error: { code: 'DB_ERROR', message: upsertError.message } },
-          { status: 500 }
-        )
+        if (upsertError.code === '23505') {
+          console.warn('[import-events] Concurrent import hit unique google_event_id constraint; keeping existing task rows')
+        } else {
+          console.error('[import-events] Upsert error:', upsertError)
+          return NextResponse.json(
+            { success: false, error: { code: 'DB_ERROR', message: upsertError.message } },
+            { status: 500 }
+          )
+        }
+      } else {
+        upsertedTasks = upsertData || []
       }
-      upsertedTasks = upsertData || []
     }
 
-    // 3. ソフトデリート: アクティブなタスクのうち incoming にないもの
-    const orphanIds = activeTasks
-      .filter(t => !incomingIds.has(t.google_event_id))
+    // 3. ソフトデリート: アクティブなタスクのうち incoming にないもの + 重複行
+    const orphanIds = activeTasksToReconcile
+      .filter(t => isInImportScope(t) && !incomingIds.has(t.google_event_id))
       .map(t => t.id)
+    const softDeleteIds = new Set([...orphanIds, ...duplicateActiveTaskIds])
 
-    if (orphanIds.length > 0) {
+    // 同時 import が select 後に重複行を作った場合も、このリクエストの完了時点で畳み込む。
+    const { data: postUpsertActiveTasks, error: postUpsertSelectError } = await supabase
+      .from('tasks')
+      .select('id, google_event_id, google_event_fingerprint, status, source, calendar_id, scheduled_at, updated_at, created_at, deleted_at')
+      .eq('user_id', user.id)
+      .eq('source', 'google_event')
+      .in('google_event_id', [...incomingIds])
+      .is('deleted_at', null)
+
+    if (postUpsertSelectError) {
+      console.error('[import-events] Post-upsert select error:', postUpsertSelectError)
+      return NextResponse.json(
+        { success: false, error: { code: 'DB_ERROR', message: postUpsertSelectError.message } },
+        { status: 500 }
+      )
+    }
+
+    const postUpsertTasksByGoogleEventId = new Map<string, typeof activeTasks>()
+    for (const task of postUpsertActiveTasks || []) {
+      if (!task.google_event_id) continue
+      const tasksForEvent = postUpsertTasksByGoogleEventId.get(task.google_event_id) ?? []
+      tasksForEvent.push(task)
+      postUpsertTasksByGoogleEventId.set(task.google_event_id, tasksForEvent)
+    }
+
+    for (const tasksForEvent of postUpsertTasksByGoogleEventId.values()) {
+      if (tasksForEvent.length < 2) continue
+      const preferred = pickPreferredGoogleEventTask(tasksForEvent)
+      if (!preferred) continue
+      for (const task of tasksForEvent) {
+        if (task.id !== preferred.id) softDeleteIds.add(task.id)
+      }
+    }
+
+    const uniqueSoftDeleteIds = [...softDeleteIds]
+    if (uniqueSoftDeleteIds.length > 0) {
       const { error: deleteError } = await supabase
         .from('tasks')
         .update({
@@ -209,7 +320,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
           last_started_at: null,
         })
         .eq('user_id', user.id)
-        .in('id', orphanIds)
+        .in('id', uniqueSoftDeleteIds)
 
       if (deleteError) {
         return NextResponse.json(
@@ -217,7 +328,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ImportEve
           { status: 500 }
         )
       }
-      softDeleted = orphanIds.length
+      softDeleted = uniqueSoftDeleteIds.length
     }
 
     return NextResponse.json({

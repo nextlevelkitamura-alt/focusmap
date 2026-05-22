@@ -229,12 +229,14 @@ function combineDateTime(dateValue: string, timeValue: string) {
 export function WishlistView({
   projects = [],
   selectedProjectId = null,
+  selectedSpaceId = null,
   onOpenTodayMemoSchedule,
   isCalendarSplitVisible = false,
   onToggleCalendarSplit,
 }: {
   projects?: Project[]
   selectedProjectId?: string | null
+  selectedSpaceId?: string | null
   onOpenTodayMemoSchedule?: (payload: { memoId: string; date: Date }) => void
   isCalendarSplitVisible?: boolean
   onToggleCalendarSplit?: () => void
@@ -344,10 +346,12 @@ export function WishlistView({
   }, [analyzeStartedAt, isAnalyzing])
 
   const fetchItems = useCallback(async () => {
-    const res = await fetch("/api/wishlist")
+    const params = new URLSearchParams()
+    if (selectedSpaceId) params.set("space_id", selectedSpaceId)
+    const res = await fetch(`/api/wishlist${params.size ? `?${params.toString()}` : ""}`)
     const { items } = await res.json()
     setItems(items ?? [])
-  }, [])
+  }, [selectedSpaceId])
 
   useEffect(() => {
     fetchItems().finally(() => setIsLoading(false))

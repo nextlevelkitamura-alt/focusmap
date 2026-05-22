@@ -4,4 +4,7 @@
 # npm global の claude (2.1.142+) を優先するため。Remote Control 機能は 2.1.51+。
 export PATH="$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 cd "/Users/kitamuranaohiro/Private/focusmap"
-exec /usr/local/bin/npx ts-node --esm scripts/task-runner.ts
+if [ -x "./node_modules/.bin/tsx" ]; then
+  exec ./node_modules/.bin/tsx scripts/task-runner.ts
+fi
+exec /usr/local/bin/npx --yes tsx scripts/task-runner.ts

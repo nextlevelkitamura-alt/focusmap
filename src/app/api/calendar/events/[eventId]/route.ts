@@ -110,6 +110,155 @@ export async function GET(
 }
 
 /**
+ * カレンダーイベントを作成
+ * POST /api/calendar/events/[eventId]
+ */
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ eventId: string }> }
+) {
+  const { eventId } = await params;
+  const supabase = await createClient();
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json(
+      { success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } },
+      { status: 401 }
+    );
+  }
+
+  try {
+    const body = await request.json();
+    const {
+      calendarId = 'primary',
+      title,
+      description,
+      location,
+      start_time,
+      end_time,
+      is_all_day = false,
+      timezone = 'Asia/Tokyo',
+      reminders,
+    } = body;
+
+    if (!title || !start_time || !end_time) {
+      return NextResponse.json(
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'title, start_time and end_time are required' } },
+        { status: 400 }
+      );
+    }
+
+    const { calendar } = await getCalendarClient(user.id);
+    const googleEvent: Record<string, unknown> = {
+      summary: title,
+      description: description || undefined,
+      location: location || undefined,
+      start: {
+        dateTime: new Date(start_time).toISOString(),
+        timeZone: timezone,
+      },
+      end: {
+        dateTime: new Date(end_time).toISOString(),
+        timeZone: timezone,
+      },
+    };
+
+    if (reminders !== undefined) {
+      googleEvent.reminders = Array.isArray(reminders) && reminders.length > 0
+        ? {
+            useDefault: false,
+            overrides: reminders.map((minutes: number) => ({ method: 'popup', minutes })),
+          }
+        : { useDefault: false, overrides: [] };
+    }
+
+    const created = await calendar.events.insert({
+      calendarId,
+      requestBody: googleEvent,
+    });
+    const googleEventId = created.data.id;
+    if (!googleEventId) {
+      throw new Error('Google Calendar did not return an event id');
+    }
+
+    const eventPayload: Record<string, unknown> = {
+      user_id: user.id,
+      google_event_id: googleEventId,
+      calendar_id: calendarId,
+      title,
+      description: description || null,
+      location: location || null,
+      start_time,
+      end_time,
+      is_all_day,
+      timezone,
+      recurrence: body.recurrence || null,
+      recurring_event_id: body.recurring_event_id || null,
+      color: body.color || null,
+      background_color: body.background_color || null,
+      google_created_at: created.data.created || new Date().toISOString(),
+      google_updated_at: created.data.updated || new Date().toISOString(),
+      synced_at: new Date().toISOString(),
+      reminders: Array.isArray(reminders) ? reminders : null,
+      is_completed: body.is_completed ?? false,
+    };
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(eventId)) {
+      eventPayload.id = eventId;
+    }
+
+    const { data: event, error: dbError } = await supabase
+      .from('calendar_events')
+      .upsert(eventPayload)
+      .select()
+      .single();
+
+    if (dbError) {
+      try {
+        await calendar.events.delete({ calendarId, eventId: googleEventId });
+      } catch (cleanupError) {
+        console.error('[events/create] Cleanup deletion failed:', cleanupError);
+      }
+      throw dbError;
+    }
+
+    return NextResponse.json({
+      success: true,
+      event,
+      googleEventId,
+    });
+  } catch (error: unknown) {
+    console.error('[events/create] Error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const authError = classifyCalendarAuthError(errorMessage);
+    if (authError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: authError.code,
+            message: authError.message
+          }
+        },
+        { status: authError.status }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'API_ERROR',
+          message: errorMessage || 'Failed to create event'
+        }
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
  * カレンダーイベントを削除
  * DELETE /api/calendar/events/[eventId]
  *

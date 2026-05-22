@@ -24,7 +24,6 @@ export function useMemoAiTasks() {
       const { data } = await supabase
         .from('ai_tasks')
         .select('*')
-        .eq('user_id', user.id)
         .or('source_note_id.not.is.null,source_ideal_goal_id.not.is.null')
         .order('created_at', { ascending: false })
         .limit(200)

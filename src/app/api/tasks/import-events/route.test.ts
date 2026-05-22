@@ -71,23 +71,23 @@ beforeEach(() => {
   setUpsertResult({ data: [], error: null })
   setUpdateResult({ error: null })
 
+  const selectBuilder = {
+    eq: vi.fn(() => selectBuilder),
+    in: vi.fn(() => selectBuilder),
+    is: vi.fn(() => Promise.resolve(getSelectResult())),
+    then: vi.fn((resolve, reject) => Promise.resolve(getSelectResult()).then(resolve, reject)),
+  }
+
+  const updateBuilder = {
+    eq: vi.fn(() => updateBuilder),
+    in: vi.fn(() => Promise.resolve(getUpdateResult())),
+  }
+
   // Default mock: tasks テーブル操作
   mockFrom.mockImplementation(() => ({
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          is: () => Promise.resolve(getSelectResult()),
-        }),
-        is: () => Promise.resolve(getSelectResult()),
-      }),
-    }),
+    select: () => selectBuilder,
     upsert: () => ({ select: () => Promise.resolve(getUpsertResult()) }),
-    update: () => ({
-      eq: () => ({
-        in: () => Promise.resolve(getUpdateResult()),
-      }),
-      in: () => Promise.resolve(getUpdateResult()),
-    }),
+    update: () => updateBuilder,
   }))
 })
 
@@ -218,6 +218,8 @@ describe('POST /api/tasks/import-events', () => {
       data: [{
         id: 'task-orphan',
         google_event_id: 'gevt-deleted',
+        calendar_id: 'cal-1',
+        scheduled_at: '2026-02-20T10:30:00Z',
         google_event_fingerprint: 'fp',
         updated_at: '2026-02-20T08:00:00Z',
         deleted_at: null,
@@ -233,6 +235,31 @@ describe('POST /api/tasks/import-events', () => {
     expect(res.status).toBe(200)
     expect(json.success).toBe(true)
     expect(json.result.softDeleted).toBeGreaterThanOrEqual(1)
+  })
+
+  test('今回の取得範囲外の既存タスクはソフトデリートしない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: mockUser }, error: null })
+    setSelectResult({
+      data: [{
+        id: 'task-outside-scope',
+        google_event_id: 'gevt-outside',
+        calendar_id: 'cal-1',
+        scheduled_at: '2026-03-20T10:00:00Z',
+        google_event_fingerprint: 'fp',
+        updated_at: '2026-02-20T08:00:00Z',
+        deleted_at: null,
+      }],
+      error: null,
+    })
+
+    const res = await POST(postReq({
+      events: [createEventPayload({ google_event_id: 'gevt-new' })],
+    }) as any)
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.success).toBe(true)
+    expect(json.result.softDeleted).toBe(0)
   })
 
   test('events フィールドがない場合は 400 を返す', async () => {

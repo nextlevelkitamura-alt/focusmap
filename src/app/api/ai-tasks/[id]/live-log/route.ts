@@ -23,7 +23,6 @@ export async function GET(
     .from("ai_tasks")
     .select("id, executor, status")
     .eq("id", id)
-    .eq("user_id", user.id)
     .maybeSingle()
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 })
 
@@ -32,7 +31,6 @@ export async function GET(
     .from("ai_tasks")
     .select("result")
     .eq("id", id)
-    .eq("user_id", user.id)
     .maybeSingle()
 
   const result = (full?.result ?? {}) as { live_log?: string; message?: string }

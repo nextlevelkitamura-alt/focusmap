@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { AiTask } from '@/types/ai-task'
 
-export function useScheduledTasks() {
+export function useScheduledTasks(spaceId: string | null = null) {
   const [tasks, setTasks] = useState<AiTask[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -12,7 +12,9 @@ export function useScheduledTasks() {
     setIsLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/ai-tasks?scheduled=true&limit=50')
+      const params = new URLSearchParams({ scheduled: 'true', limit: '50' })
+      if (spaceId) params.set('space_id', spaceId)
+      const res = await fetch(`/api/ai-tasks?${params.toString()}`)
       if (!res.ok) throw new Error('Failed to fetch scheduled tasks')
       const data: AiTask[] = await res.json()
       setTasks(data)
@@ -21,7 +23,7 @@ export function useScheduledTasks() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [spaceId])
 
   useEffect(() => {
     fetchTasks()

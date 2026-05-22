@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 
 // cronのバリデーション（5フィールド形式）
 function isValidCron(expr: string): boolean {
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, executor } = body as {
+  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, executor, space_id, run_visibility } = body as {
     prompt?: string
     skill_id?: string
     scheduled_at?: string
@@ -36,6 +37,8 @@ export async function POST(req: NextRequest) {
     source_note_id?: string
     source_ideal_goal_id?: string
     executor?: 'claude' | 'codex' | 'codex_app'
+    space_id?: string
+    run_visibility?: string
   }
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -68,7 +71,6 @@ export async function POST(req: NextRequest) {
       .from('ai_tasks')
       .select('id, status')
       .eq(dupeColumn, dupeValue)
-      .eq('user_id', user.id)
       .in('status', ['pending', 'running'])
       .limit(1)
       .maybeSingle()
@@ -85,10 +87,20 @@ export async function POST(req: NextRequest) {
     executor === 'codex' ? 'codex' :
     'claude'
 
+  const resolvedSpace = await resolveAiTaskSpaceId(supabase, user.id, {
+    space_id: space_id || null,
+    source_note_id: source_note_id || null,
+    source_ideal_goal_id: source_ideal_goal_id || null,
+  })
+  if (resolvedSpace.error) {
+    return NextResponse.json({ error: resolvedSpace.error }, { status: 403 })
+  }
+
   const { data, error } = await supabase
     .from('ai_tasks')
     .insert({
       user_id: user.id,
+      space_id: resolvedSpace.spaceId,
       prompt: prompt.trim(),
       skill_id: skill_id || null,
       approval_type: resolvedApprovalType,
@@ -99,6 +111,7 @@ export async function POST(req: NextRequest) {
       source_note_id: source_note_id || null,
       source_ideal_goal_id: source_ideal_goal_id || null,
       executor: resolvedExecutor,
+      run_visibility: normalizeVisibility(run_visibility, resolvedSpace.spaceId ? 'space' : 'private'),
     })
     .select()
     .single()

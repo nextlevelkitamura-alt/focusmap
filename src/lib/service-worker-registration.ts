@@ -22,8 +22,15 @@ export function register() {
   window.addEventListener('load', () => {
     const swUrl = '/service-worker.js';
 
+    let refreshing = false;
+    window.navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
     window.navigator.serviceWorker
-      .register(swUrl)
+      .register(swUrl, { updateViaCache: 'none' })
       .then((registration) => {
 
         // Check for updates periodically
@@ -32,11 +39,13 @@ export function register() {
           if (newWorker) {
             newWorker.addEventListener('statechange', () => {
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                // New service worker is available
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
               }
             });
           }
         });
+
+        registration.update();
 
         // Poll for service worker updates (every hour)
         setInterval(() => {

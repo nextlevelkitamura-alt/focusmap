@@ -31,6 +31,14 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: error.message }, { status: 500 })
         }
 
+        await supabase
+            .from("space_members")
+            .upsert({
+                space_id: data.id,
+                user_id: user.id,
+                role: "owner",
+            }, { onConflict: "space_id,user_id" })
+
         return NextResponse.json(data)
     } catch (error) {
         console.error("[API] POST /api/spaces error:", error)

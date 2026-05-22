@@ -7,9 +7,17 @@ import type { AiTask } from '@/types/ai-task'
 interface UseAiTasksOptions {
   /** 最大取得件数（デフォルト: 20） */
   limit?: number
+  /** null/undefined means all visible spaces. */
+  spaceId?: string | null
 }
 
-export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
+function matchesSpaceFilter(task: AiTask, spaceId: string | null | undefined) {
+  if (!spaceId) return true
+  if (spaceId === '__unassigned__') return !task.space_id
+  return task.space_id === spaceId
+}
+
+export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {}) {
   const [tasks, setTasks] = useState<AiTask[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
@@ -17,7 +25,9 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
   // 初回読み込み
   const fetchTasks = useCallback(async () => {
     try {
-      const res = await fetch(`/api/ai-tasks?limit=${limit}`)
+      const params = new URLSearchParams({ limit: String(limit) })
+      if (spaceId) params.set('space_id', spaceId)
+      const res = await fetch(`/api/ai-tasks?${params.toString()}`)
       if (!res.ok) throw new Error('Failed to fetch ai_tasks')
       const data: AiTask[] = await res.json()
       setTasks(data)
@@ -27,7 +37,7 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     } finally {
       setIsLoading(false)
     }
-  }, [limit])
+  }, [limit, spaceId])
 
   useEffect(() => {
     fetchTasks()
@@ -49,10 +59,16 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
         (payload) => {
           if (payload.eventType === 'INSERT') {
             const newTask = payload.new as AiTask
+            if (!matchesSpaceFilter(newTask, spaceId)) return
             setTasks(prev => [newTask, ...prev].slice(0, limit))
           } else if (payload.eventType === 'UPDATE') {
             const updated = payload.new as AiTask
-            setTasks(prev => prev.map(t => t.id === updated.id ? updated : t))
+            setTasks(prev => {
+              if (!matchesSpaceFilter(updated, spaceId)) return prev.filter(t => t.id !== updated.id)
+              return prev.some(t => t.id === updated.id)
+                ? prev.map(t => t.id === updated.id ? updated : t)
+                : [updated, ...prev].slice(0, limit)
+            })
           } else if (payload.eventType === 'DELETE') {
             const deleted = payload.old as { id: string }
             setTasks(prev => prev.filter(t => t.id !== deleted.id))
@@ -64,13 +80,14 @@ export function useAiTasks({ limit = 20 }: UseAiTasksOptions = {}) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [limit])
+  }, [limit, spaceId])
 
   // 壁打ち送信
   const sendPrompt = useCallback(async (prompt: string, options?: {
     skill_id?: string
     approval_type?: string
     parent_task_id?: string
+    space_id?: string | null
   }) => {
     const res = await fetch('/api/ai-tasks', {
       method: 'POST',

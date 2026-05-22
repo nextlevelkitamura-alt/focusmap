@@ -64,6 +64,14 @@ for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
   }
 
   if (key === 'NEXTAUTH_URL' || key === 'GOOGLE_REDIRECT_URI') continue;
+  if ([
+    'EXTERNAL_AI_API_KEY',
+    'EXTERNAL_AI_API_BASE_URL',
+    'EXTERNAL_AI_MODEL',
+    'EXTERNAL_AI_DISABLE_THINKING',
+    'OPENCODE_GO_API_KEY',
+    'MOONSHOT_API_KEY',
+  ].includes(key)) continue;
   env[key] = value;
 }
 
