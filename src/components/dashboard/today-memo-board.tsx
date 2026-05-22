@@ -374,7 +374,7 @@ export function TodayMemoBoard({
             <p className="text-xs">メモ画面で Sun ボタンを押すか、メモを今日カラムにドラッグしてください。</p>
           </div>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
             {visibleItems.map(item => {
               const isFocused = item.id === scheduleFocusMemoId
               return (

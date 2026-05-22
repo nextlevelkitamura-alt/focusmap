@@ -593,7 +593,7 @@ export function CalendarDayView({
                                     height: `${heightPercent}%`,
                                     left: `calc((100% - ${GUTTER_WIDTH}px) * ${layout.left / 100})`,
                                     width: `calc((100% - ${GUTTER_WIDTH}px) * ${layout.width / 100})`,
-                                    zIndex: 20,
+                                    zIndex: 20 + layout.column,
                                     padding: '1px 1px 1px 2px' // Google Calendar風のマージン
                                 }}
                                 onMouseDown={(e) => handleMouseDown(e, event)}

@@ -5,6 +5,7 @@ export interface EventPosition {
     height: number; // Percentage height
     left: number; // Percentage from left (0-100)
     width: number; // Percentage width
+    column: number; // Column index within the cluster (for z-index ordering)
 }
 
 /**
@@ -77,7 +78,11 @@ export function calculateEventLayout(events: CalendarEvent[]): Record<string, Ev
 
         // Assign Layout
         const totalColumns = clusterColumns.length;
-        const width = 100 / totalColumns;
+        // 3つ以上重なると等幅では細くなり読みづらいため、各イベント幅を50%確保し、
+        // 残り50%の範囲に左位置をずらして重ねて配置する（Google カレンダー風）。
+        const useOverlap = totalColumns >= 3;
+        const width = useOverlap ? 50 : 100 / totalColumns;
+        const leftStep = useOverlap ? 50 / (totalColumns - 1) : width;
 
         for (let i = 0; i < totalColumns; i++) {
             for (const event of clusterColumns[i]) {
@@ -93,8 +98,9 @@ export function calculateEventLayout(events: CalendarEvent[]): Record<string, Ev
                 positions[event.id] = {
                     top,
                     height,
-                    left: i * width,
-                    width: width // Simple equal width
+                    left: i * leftStep,
+                    width,
+                    column: i
                 };
             }
         }

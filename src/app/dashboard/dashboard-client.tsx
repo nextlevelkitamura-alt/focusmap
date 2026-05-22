@@ -870,9 +870,9 @@ export function DashboardClient({
     }, [activeView, isViewReady])
     const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
         if (typeof window !== 'undefined') {
-            return Math.max(320, Math.floor(window.innerWidth * 0.38))
+            return Math.max(320, Math.floor(window.innerWidth * 0.5))
         }
-        return 480
+        return 640
     })
     const isDraggingRightRef = useRef(false)
     const dragStartXRef = useRef(0)

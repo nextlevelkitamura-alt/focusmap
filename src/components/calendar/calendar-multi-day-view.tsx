@@ -306,7 +306,7 @@ export function CalendarMultiDayView({
                                                         height: `${position.height}%`,
                                                         left: `calc((100% - ${GUTTER_WIDTH}px) * ${position.left / 100})`,
                                                         width: `calc((100% - ${GUTTER_WIDTH}px) * ${position.width / 100})`,
-                                                        zIndex: 20
+                                                        zIndex: 20 + position.column
                                                     }}
                                                 >
                                                     <CalendarEventCard
