@@ -5,27 +5,48 @@ const {
   mockGetUser,
   mockDeleteFromCalendar,
   mockSyncToCalendar,
+  mockCalendarEventsUpdate,
+  mockEventCompletionsUpsert,
+  mockEventCompletionsDelete,
   getSelectResult,
   getUpdateResult,
   getDeleteResult,
+  getCalendarEventsUpdateResult,
+  getEventCompletionsUpsertResult,
+  getEventCompletionsDeleteResult,
   setSelectResult,
   setUpdateResult,
   setDeleteResult,
+  setCalendarEventsUpdateResult,
+  setEventCompletionsUpsertResult,
+  setEventCompletionsDeleteResult,
 } = vi.hoisted(() => {
   let _selectResult: { data: unknown; error: unknown } = { data: null, error: null }
   let _updateResult: { data: unknown; error: unknown } = { data: null, error: null }
   let _deleteResult: { error: unknown } = { error: null }
+  let _calendarEventsUpdateResult: { data: unknown; error: unknown } = { data: [], error: null }
+  let _eventCompletionsUpsertResult: { error: unknown } = { error: null }
+  let _eventCompletionsDeleteResult: { error: unknown } = { error: null }
 
   return {
     mockGetUser: vi.fn(),
     mockDeleteFromCalendar: vi.fn(),
     mockSyncToCalendar: vi.fn(),
+    mockCalendarEventsUpdate: vi.fn(),
+    mockEventCompletionsUpsert: vi.fn(),
+    mockEventCompletionsDelete: vi.fn(),
     getSelectResult: () => _selectResult,
     getUpdateResult: () => _updateResult,
     getDeleteResult: () => _deleteResult,
+    getCalendarEventsUpdateResult: () => _calendarEventsUpdateResult,
+    getEventCompletionsUpsertResult: () => _eventCompletionsUpsertResult,
+    getEventCompletionsDeleteResult: () => _eventCompletionsDeleteResult,
     setSelectResult: (v: typeof _selectResult) => { _selectResult = v },
     setUpdateResult: (v: typeof _updateResult) => { _updateResult = v },
     setDeleteResult: (v: typeof _deleteResult) => { _deleteResult = v },
+    setCalendarEventsUpdateResult: (v: typeof _calendarEventsUpdateResult) => { _calendarEventsUpdateResult = v },
+    setEventCompletionsUpsertResult: (v: typeof _eventCompletionsUpsertResult) => { _eventCompletionsUpsertResult = v },
+    setEventCompletionsDeleteResult: (v: typeof _eventCompletionsDeleteResult) => { _eventCompletionsDeleteResult = v },
   }
 })
 
@@ -34,6 +55,14 @@ vi.mock('@/utils/supabase/server', () => ({
     Promise.resolve({
       auth: { getUser: mockGetUser },
       from: (table: string) => {
+        const createTaskUpdateSelectResult = () => ({
+          single: () => Promise.resolve(getUpdateResult()),
+          then: (
+            resolve: (value: ReturnType<typeof getUpdateResult>) => unknown,
+            reject?: (reason: unknown) => unknown
+          ) => Promise.resolve(getUpdateResult()).then(resolve, reject),
+        })
+
         if (table === 'tasks') {
           return {
             // GET / DELETE の最初のタスク取得: .select().eq().eq().single()
@@ -51,15 +80,52 @@ vi.mock('@/utils/supabase/server', () => ({
               }),
             }),
             // PATCH: .update().eq().eq().select().single()
-            update: () => ({
-              eq: () => ({
-                eq: () => ({
-                  select: () => ({
-                    single: () => Promise.resolve(getUpdateResult()),
-                  }),
-                }),
-              }),
+            update: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.is = () => builder
+              builder.select = createTaskUpdateSelectResult
+              return builder
+            },
+          }
+        }
+        if (table === 'calendar_events') {
+          return {
+            update: mockCalendarEventsUpdate.mockImplementation(() => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.select = () => Promise.resolve(getCalendarEventsUpdateResult())
+              return builder
             }),
+          }
+        }
+        if (table === 'event_completions') {
+          return {
+            upsert: mockEventCompletionsUpsert.mockImplementation(() =>
+              Promise.resolve(getEventCompletionsUpsertResult())
+            ),
+            delete: mockEventCompletionsDelete.mockImplementation(() => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.then = (
+                resolve: (value: ReturnType<typeof getEventCompletionsDeleteResult>) => unknown,
+                reject?: (reason: unknown) => unknown
+              ) => Promise.resolve(getEventCompletionsDeleteResult()).then(resolve, reject)
+              return builder
+            }),
+          }
+        }
+        if (table === 'ideal_goals') {
+          return {
+            update: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.then = (
+                resolve: (value: { error: null }) => unknown,
+                reject?: (reason: unknown) => unknown
+              ) => Promise.resolve({ error: null }).then(resolve, reject)
+              return builder
+            },
           }
         }
         return {}
@@ -110,6 +176,9 @@ beforeEach(() => {
   setSelectResult({ data: { ...baseTask }, error: null })
   setUpdateResult({ data: { ...baseTask }, error: null })
   setDeleteResult({ error: null })
+  setCalendarEventsUpdateResult({ data: [{ id: 'event-row-1', calendar_id: 'cal@gmail.com' }], error: null })
+  setEventCompletionsUpsertResult({ error: null })
+  setEventCompletionsDeleteResult({ error: null })
   mockDeleteFromCalendar.mockResolvedValue(undefined)
   mockSyncToCalendar.mockResolvedValue({ googleEventId: 'gevt-updated' })
 })
@@ -315,6 +384,49 @@ describe('PATCH /api/tasks/[id]', () => {
 
       expect(res.status).toBe(200)
       expect(mockSyncToCalendar).not.toHaveBeenCalled()
+    })
+
+    test('google_event_id ありで完了にするとイベント完了記録も保存する', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setSelectResult({
+        data: {
+          ...baseTask,
+          source: 'google_event',
+          google_event_id: 'gevt-1',
+          calendar_id: 'cal@gmail.com',
+          scheduled_at: '2026-02-19T14:00:00Z',
+        },
+        error: null,
+      })
+      setUpdateResult({
+        data: [{
+          ...baseTask,
+          source: 'google_event',
+          status: 'done',
+          google_event_id: 'gevt-1',
+          calendar_id: 'cal@gmail.com',
+          scheduled_at: '2026-02-19T14:00:00Z',
+        }],
+        error: null,
+      })
+
+      const res = await PATCH(
+        makeRequest('PATCH', 'task-1', { status: 'done' }),
+        mockParams('task-1')
+      )
+      const json = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(mockCalendarEventsUpdate).toHaveBeenCalledWith({ is_completed: true })
+      expect(mockEventCompletionsUpsert).toHaveBeenCalledWith({
+        user_id: 'user-1',
+        google_event_id: 'gevt-1',
+        calendar_id: 'cal@gmail.com',
+        completed_date: '2026-02-19',
+      }, {
+        onConflict: 'user_id,google_event_id,completed_date',
+      })
     })
 
     test('カレンダー更新失敗してもタスク更新は成功', async () => {

@@ -590,24 +590,49 @@ export function useTodayViewLogic({
         const task = localTasks.find(t => t.id === taskId)
         if (!task) return
         const previousStatus = task.status
-        let newStatus: string = 'done'
-        setLocalTasks(prev => {
-            const task = prev.find(t => t.id === taskId)
-            if (!task) return prev
-            newStatus = task.status === 'done' ? 'todo' : 'done'
-            return prev.map(t =>
-                t.id === taskId ? { ...t, status: newStatus } : t
-            )
-        })
-        await onUpdateTask(taskId, { status: newStatus })
+        const newStatus = task.status === 'done' ? 'todo' : 'done'
+        const isSameCompletionTarget = (candidate: Task) =>
+            candidate.id === taskId ||
+            (!!task.google_event_id && candidate.google_event_id === task.google_event_id)
+        const applyStatus = (status: string) => {
+            setLocalTasks(prev => prev.map(t =>
+                isSameCompletionTarget(t) ? { ...t, status } : t
+            ))
+        }
+
+        applyStatus(newStatus)
+        if (task.google_event_id) {
+            broadcastEventCompletion(task.calendar_event_id || task.google_event_id, newStatus === 'done', task.google_event_id)
+        }
+
+        try {
+            await onUpdateTask(taskId, { status: newStatus })
+            if (task.google_event_id) {
+                invalidateCalendarCache()
+            }
+        } catch (err) {
+            applyStatus(previousStatus)
+            if (task.google_event_id) {
+                broadcastEventCompletion(task.calendar_event_id || task.google_event_id, previousStatus === 'done', task.google_event_id)
+            }
+            throw err
+        }
         pushAction({
             description: `「${task.title}」の完了状態を変更`,
             undo: async () => {
-                setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: previousStatus } : t))
+                applyStatus(previousStatus)
+                if (task.google_event_id) {
+                    broadcastEventCompletion(task.calendar_event_id || task.google_event_id, previousStatus === 'done', task.google_event_id)
+                    invalidateCalendarCache()
+                }
                 await onUpdateTask(taskId, { status: previousStatus })
             },
             redo: async () => {
-                setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
+                applyStatus(newStatus)
+                if (task.google_event_id) {
+                    broadcastEventCompletion(task.calendar_event_id || task.google_event_id, newStatus === 'done', task.google_event_id)
+                    invalidateCalendarCache()
+                }
                 await onUpdateTask(taskId, { status: newStatus })
             },
         })

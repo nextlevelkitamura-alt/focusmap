@@ -6,6 +6,131 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+function normalizeTokyoDateString(value: unknown): string | null {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = typeof value === 'string' || value instanceof Date
+    ? new Date(value)
+    : new Date();
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const year = parts.find(part => part.type === 'year')?.value;
+  const month = parts.find(part => part.type === 'month')?.value;
+  const day = parts.find(part => part.type === 'day')?.value;
+
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+async function syncGoogleEventCompletionForTask(
+  supabase: SupabaseServerClient,
+  userId: string,
+  task: {
+    google_event_id: string | null;
+    calendar_id: string | null;
+    scheduled_at: string | null;
+    status: string;
+  }
+) {
+  if (!task.google_event_id) return;
+
+  const isCompleted = task.status === 'done';
+  const completedDate = normalizeTokyoDateString(task.scheduled_at);
+  if (!completedDate) {
+    console.warn('[tasks/[id] PATCH] Skip event completion sync: invalid scheduled_at', {
+      taskGoogleEventId: task.google_event_id,
+      scheduledAt: task.scheduled_at,
+    });
+    return;
+  }
+
+  let updateQuery = supabase
+    .from('calendar_events')
+    .update({ is_completed: isCompleted })
+    .eq('user_id', userId)
+    .eq('google_event_id', task.google_event_id);
+
+  if (task.calendar_id) {
+    updateQuery = updateQuery.eq('calendar_id', task.calendar_id);
+  }
+
+  const updateResult = await updateQuery.select('id, calendar_id');
+  let updatedRows = updateResult.data;
+
+  if (updateResult.error) {
+    console.error('[tasks/[id] PATCH] Failed to sync calendar_events completion:', updateResult.error);
+    return;
+  }
+
+  if (task.calendar_id && (!updatedRows || updatedRows.length === 0)) {
+    const retry = await supabase
+      .from('calendar_events')
+      .update({ is_completed: isCompleted })
+      .eq('user_id', userId)
+      .eq('google_event_id', task.google_event_id)
+      .select('id, calendar_id');
+
+    if (retry.error) {
+      console.error('[tasks/[id] PATCH] Failed to retry calendar_events completion sync:', retry.error);
+      return;
+    }
+
+    updatedRows = retry.data;
+  }
+
+  const calendarId = updatedRows?.[0]?.calendar_id || task.calendar_id;
+
+  if (isCompleted) {
+    if (!calendarId) {
+      console.warn('[tasks/[id] PATCH] Skip event completion sidecar: missing calendar_id', {
+        google_event_id: task.google_event_id,
+        completedDate,
+      });
+      return;
+    }
+
+    const { error } = await supabase
+      .from('event_completions')
+      .upsert({
+        user_id: userId,
+        google_event_id: task.google_event_id,
+        calendar_id: calendarId,
+        completed_date: completedDate,
+      }, {
+        onConflict: 'user_id,google_event_id,completed_date',
+      });
+
+    if (error) {
+      console.error('[tasks/[id] PATCH] Failed to upsert event completion sidecar:', error);
+    }
+    return;
+  }
+
+  const { error } = await supabase
+    .from('event_completions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('google_event_id', task.google_event_id)
+    .eq('completed_date', completedDate);
+
+  if (error) {
+    console.error('[tasks/[id] PATCH] Failed to delete event completion sidecar:', error);
+  }
+}
+
 /**
  * タスクを取得
  * GET /api/tasks/[id]
@@ -270,6 +395,15 @@ export async function PATCH(
     // Googleカレンダーイベントも更新（存在する場合）
     if (task.google_event_id && updatedTask) {
       try {
+        if (body.status !== undefined) {
+          await syncGoogleEventCompletionForTask(supabase, user.id, {
+            google_event_id: task.google_event_id,
+            calendar_id: updatedTask.calendar_id ?? task.calendar_id,
+            scheduled_at: updatedTask.scheduled_at ?? task.scheduled_at,
+            status: updatedTask.status ?? body.status,
+          });
+        }
+
         // タイトル、予定時刻、推定時間が変更された場合のみカレンダーも更新
         const shouldUpdateCalendar =
           body.title !== undefined ||
