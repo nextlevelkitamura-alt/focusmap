@@ -150,23 +150,7 @@ export async function POST(request: Request) {
       }
     }
     const allNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
-    if (source === 'wishlist') {
-      await Promise.all(
-        allNoteIds.map(noteId =>
-          supabase
-            .from('ideal_goals')
-            .update({
-              project_id: projectId,
-              memo_status: 'completed',
-              is_completed: true,
-              is_today: false,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', noteId)
-            .eq('user_id', user.id),
-        ),
-      )
-    } else {
+    if (source === 'notes') {
       await Promise.all(
         allNoteIds.map(noteId =>
           supabase
