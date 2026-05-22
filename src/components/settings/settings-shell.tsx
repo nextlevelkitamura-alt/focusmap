@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
-import { ArrowLeft, Bot, Calendar, FolderKanban, KeyRound, Palette, Settings } from "lucide-react"
+import { ArrowLeft, Bot, Calendar, ChevronLeft, FolderKanban, KeyRound, Palette, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SettingsNavItem {
@@ -31,11 +31,12 @@ interface SettingsShellProps {
 
 export function SettingsShell({ title, description, children, className }: SettingsShellProps) {
   const pathname = usePathname()
+  const isRootSettings = pathname === "/dashboard/settings"
 
   return (
-    <div className="min-h-full flex-1 bg-[#101010] text-zinc-100">
-      <div className="mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-[1500px] flex-col md:flex-row">
-        <aside className="border-b border-white/[0.08] bg-[#2f2f2f] md:w-[300px] md:shrink-0 md:border-b-0 md:border-r md:border-white/[0.08]">
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-black text-zinc-100 md:bg-[#101010]">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col md:flex-row">
+        <aside className="hidden border-white/[0.08] bg-[#2f2f2f] md:block md:w-[300px] md:shrink-0 md:border-r">
           <div className="px-4 pb-3 pt-4 md:px-5 md:pb-6 md:pt-7">
             <Link
               href="/dashboard"
@@ -70,11 +71,20 @@ export function SettingsShell({ title, description, children, className }: Setti
           </nav>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-y-auto bg-[#111111] px-4 pb-12 pt-8 sm:px-8 md:px-12 md:pt-14 lg:px-20">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-black px-4 pb-[calc(7rem+env(safe-area-inset-bottom,0px))] pt-5 sm:px-6 md:bg-[#111111] md:px-12 md:pb-12 md:pt-14 lg:px-20">
           <div className={cn("mx-auto w-full max-w-[1040px]", className)}>
-            <header className="mb-9">
-              <h1 className="text-xl font-semibold tracking-normal text-zinc-50">{title}</h1>
-              {description && <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">{description}</p>}
+            <header className="mb-6 md:mb-9">
+              {!isRootSettings && (
+                <Link
+                  href="/dashboard/settings"
+                  className="-ml-2 mb-2 inline-flex min-h-10 items-center gap-0.5 rounded-md px-1 text-[17px] text-blue-400 active:opacity-60 md:hidden"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                  設定
+                </Link>
+              )}
+              <h1 className="text-[34px] font-bold leading-tight tracking-normal text-zinc-50 md:text-xl md:font-semibold">{title}</h1>
+              {description && <p className="mt-2 hidden max-w-3xl text-sm leading-6 text-zinc-500 md:block">{description}</p>}
             </header>
             {children}
           </div>

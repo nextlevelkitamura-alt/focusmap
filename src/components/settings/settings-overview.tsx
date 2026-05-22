@@ -2,15 +2,16 @@
 
 import Link from "next/link"
 import type { LucideIcon } from "lucide-react"
-import { Bot, Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles } from "lucide-react"
+import { Bot, Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound } from "lucide-react"
 import { SettingsShell } from "@/components/settings/settings-shell"
+import { cn } from "@/lib/utils"
 
 interface OverviewItem {
   href: string
   title: string
   description: string
   icon: LucideIcon
-  accent: string
+  iconClass: string
 }
 
 const PRIMARY_ITEMS: OverviewItem[] = [
@@ -19,58 +20,82 @@ const PRIMARY_ITEMS: OverviewItem[] = [
     title: "AI",
     description: "モデル選択と、AIに渡す自分・プロジェクト情報を管理",
     icon: Bot,
-    accent: "from-violet-500/25 to-blue-500/10 text-violet-200",
+    iconClass: "bg-violet-500 text-white",
   },
   {
     href: "/dashboard/settings/integrations",
     title: "Googleカレンダー",
     description: "連携アカウント、取り込み期間、取り込むカレンダーを設定",
     icon: Calendar,
-    accent: "from-blue-500/25 to-emerald-500/10 text-blue-200",
+    iconClass: "bg-blue-500 text-white",
   },
   {
     href: "/dashboard/settings/projects",
     title: "プロジェクト",
     description: "プロジェクト色、リポジトリ、ローカル実行先を整理",
     icon: FolderKanban,
-    accent: "from-amber-500/25 to-orange-500/10 text-amber-200",
+    iconClass: "bg-orange-500 text-white",
   },
 ]
 
 const SECONDARY_ITEMS: OverviewItem[] = [
   {
+    href: "/dashboard/settings/spaces",
+    title: "スペース共有",
+    description: "メンバー招待と権限",
+    icon: UsersRound,
+    iconClass: "bg-emerald-500 text-white",
+  },
+  {
     href: "/dashboard/settings/access",
     title: "アクセス",
     description: "APIキーとアカウント",
     icon: KeyRound,
-    accent: "from-zinc-500/20 to-zinc-500/5 text-zinc-200",
+    iconClass: "bg-zinc-500 text-white",
   },
   {
     href: "/dashboard/settings/appearance",
     title: "外観",
     description: "テーマと表示",
     icon: Palette,
-    accent: "from-pink-500/20 to-sky-500/5 text-pink-200",
+    iconClass: "bg-pink-500 text-white",
   },
 ]
 
-function SettingsLinkCard({ item, compact = false }: { item: OverviewItem; compact?: boolean }) {
+function SettingsListSection({ title, items }: { title: string; items: OverviewItem[] }) {
+  return (
+    <section className="space-y-2">
+      <h2 className="px-4 text-[13px] font-medium text-zinc-500">{title}</h2>
+      <div className="overflow-hidden rounded-xl bg-[#1c1c1e]">
+        {items.map((item, index) => (
+          <SettingsListRow
+            key={item.href}
+            item={item}
+            showDivider={index < items.length - 1}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function SettingsListRow({ item, showDivider }: { item: OverviewItem; showDivider: boolean }) {
   const Icon = item.icon
 
   return (
     <Link
       href={item.href}
-      className="group flex min-h-[132px] flex-col justify-between rounded-xl border border-white/10 bg-[#202020] p-5 transition hover:border-white/20 hover:bg-[#262626] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+      className="group flex min-h-[58px] items-center gap-3 px-4 transition active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:hover:bg-white/[0.04]"
     >
-      <div className="flex items-start justify-between gap-4">
-        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${item.accent}`}>
-          <Icon className="h-5 w-5" />
-        </span>
-        <ChevronRight className="h-4 w-4 shrink-0 text-zinc-600 transition group-hover:translate-x-0.5 group-hover:text-zinc-300" />
-      </div>
-      <div className={compact ? "mt-5" : "mt-8"}>
-        <h2 className="text-sm font-semibold text-zinc-50">{item.title}</h2>
-        <p className="mt-2 text-xs leading-5 text-zinc-400">{item.description}</p>
+      <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", item.iconClass)}>
+        <Icon className="h-4.5 w-4.5" />
+      </span>
+      <div className={cn("flex min-w-0 flex-1 items-center gap-3 py-2.5", showDivider && "border-b border-white/[0.08]")}>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[17px] leading-5 text-zinc-50">{item.title}</div>
+          <div className="mt-0.5 truncate text-[12px] leading-4 text-zinc-500">{item.description}</div>
+        </div>
+        <ChevronRight className="h-4.5 w-4.5 shrink-0 text-zinc-600 transition group-hover:translate-x-0.5 group-hover:text-zinc-400" />
       </div>
     </Link>
   )
@@ -81,23 +106,28 @@ export function SettingsOverview() {
     <SettingsShell
       title="設定"
       description="実際に使う設定だけを置いています。細かい調整は各カテゴリから行えます。"
+      className="max-w-[720px]"
     >
-      <section>
-        <div className="mb-5 flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-blue-300" />
-          <h2 className="text-sm font-semibold text-zinc-100">よく使う設定</h2>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-3">
-          {PRIMARY_ITEMS.map(item => <SettingsLinkCard key={item.href} item={item} />)}
-        </div>
-      </section>
+      <div className="space-y-7">
+        <Link
+          href="/dashboard/settings/ai"
+          className="flex min-h-[76px] items-center gap-3 rounded-xl bg-[#1c1c1e] px-4 transition active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:hover:bg-white/[0.04]"
+        >
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-zinc-800 text-zinc-100">
+            <Sparkles className="h-5 w-5 text-blue-300" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[17px] font-semibold text-zinc-50">Focusmap</div>
+            <div className="mt-0.5 truncate text-[13px] text-zinc-500">AIと予定をまとめて管理</div>
+          </div>
+          <ChevronRight className="h-4.5 w-4.5 shrink-0 text-zinc-600" />
+        </Link>
 
-      <section className="mt-10">
-        <h2 className="mb-5 text-sm font-semibold text-zinc-100">その他</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {SECONDARY_ITEMS.map(item => <SettingsLinkCard key={item.href} item={item} compact />)}
+        <div className="space-y-7">
+          <SettingsListSection title="よく使う設定" items={PRIMARY_ITEMS} />
+          <SettingsListSection title="その他" items={SECONDARY_ITEMS} />
         </div>
-      </section>
+      </div>
     </SettingsShell>
   )
 }

@@ -222,7 +222,6 @@ describe('POST /api/calendar/sync-task', () => {
       mockGetUser.mockResolvedValue({ data: { user: mockUser } })
 
       const res = await POST(postReq({ ...validPostBody, estimated_time: -1 }))
-      const json = await res.json()
 
       expect(res.status).toBe(400)
     })
@@ -489,7 +488,7 @@ describe('DELETE /api/calendar/sync-task', () => {
       expect(res.status).toBe(404)
     })
 
-    test('タスク更新エラー → 500', async () => {
+    test('タスク更新エラーでも Google Calendar 削除済みなら部分的成功を返す', async () => {
       mockGetUser.mockResolvedValue({ data: { user: mockUser } })
       setTaskSelectResult({
         data: { ...baseTask, google_event_id: 'gevt-123' },
@@ -500,8 +499,10 @@ describe('DELETE /api/calendar/sync-task', () => {
       const res = await DELETE(deleteReq(validDeleteBody))
       const json = await res.json()
 
-      expect(res.status).toBe(500)
-      expect(json.error).toContain('Failed to update task')
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(json.warning).toContain('Event deleted from Google Calendar')
+      expect(json.dbError).toBe('Update failed')
     })
 
     test('deleteTaskFromCalendar が例外をスロー → 500', async () => {

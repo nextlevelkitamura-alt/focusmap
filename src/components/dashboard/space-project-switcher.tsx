@@ -17,7 +17,9 @@ interface SpaceProjectSwitcherProps {
   selectedSpaceId: string | null
   selectedProjectId: string | null
   onSelectSpace: (id: string | null) => void
-  onSelectProject: (id: string) => void
+  onSelectProject: (id: string | null) => void
+  showAllProjectsOption?: boolean
+  className?: string
 }
 
 function isArchived(p: Project) {
@@ -35,6 +37,8 @@ export function SpaceProjectSwitcher({
   selectedProjectId,
   onSelectSpace,
   onSelectProject,
+  showAllProjectsOption = false,
+  className,
 }: SpaceProjectSwitcherProps) {
   const [open, setOpen] = useState(false)
 
@@ -49,7 +53,7 @@ export function SpaceProjectSwitcher({
   }
 
   return (
-    <div className="shrink-0 border-b bg-background px-2 py-1">
+    <div className={cn("shrink-0 border-b bg-background px-2 py-1", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button className="flex items-center gap-1.5 max-w-full rounded-md px-2 py-1 text-sm hover:bg-muted transition-colors">
@@ -58,17 +62,39 @@ export function SpaceProjectSwitcher({
               style={{ backgroundColor: normalizeColor(currentSpace?.color, DEFAULT_SPACE_COLOR) }}
             />
             <span className="text-muted-foreground truncate max-w-[140px]">
-              {currentSpace?.title ?? "スペース"}
+              {currentSpace?.title ?? "全体"}
             </span>
             <ChevronRight className="w-3 h-3 text-muted-foreground/50 shrink-0" />
             <span className="font-medium truncate max-w-[200px]">
-              {currentProject?.title ?? "プロジェクト未選択"}
+              {currentProject?.title ?? (showAllProjectsOption ? "全プロジェクト" : "プロジェクト未選択")}
             </span>
             <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-72 p-1.5" align="start" sideOffset={4}>
           <div className="max-h-[60vh] overflow-y-auto">
+            {showAllProjectsOption && (
+              <button
+                onClick={() => {
+                  onSelectSpace(null)
+                  onSelectProject(null)
+                  setOpen(false)
+                }}
+                className={cn(
+                  "mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                  selectedSpaceId === null && selectedProjectId === null
+                    ? "bg-primary/10 text-primary"
+                    : "hover:bg-muted/50",
+                )}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: DEFAULT_SPACE_COLOR }}
+                />
+                <span className="min-w-0 flex-1 truncate">全体 / 全プロジェクト</span>
+                {selectedSpaceId === null && selectedProjectId === null && <Check className="w-3.5 h-3.5 shrink-0" />}
+              </button>
+            )}
             {spaces.length === 0 && (
               <div className="px-2 py-3 text-sm text-muted-foreground text-center">
                 スペースがありません
@@ -83,14 +109,24 @@ export function SpaceProjectSwitcher({
                   <button
                     onClick={() => {
                       onSelectSpace(space.id)
+                      if (showAllProjectsOption) {
+                        onSelectProject(null)
+                        setOpen(false)
+                      }
                     }}
-                    className="flex items-center gap-1.5 w-full px-1.5 py-1 rounded text-left hover:bg-muted/60 transition-colors"
+                    className={cn(
+                      "flex items-center gap-1.5 w-full px-1.5 py-1 rounded text-left hover:bg-muted/60 transition-colors",
+                      showAllProjectsOption && selectedSpaceId === space.id && selectedProjectId === null && "bg-primary/10 text-primary",
+                    )}
                   >
                     <span
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
                     />
-                    <span className="text-sm font-semibold truncate">{space.title}</span>
+                    <span className="text-sm font-semibold truncate flex-1">{space.title}</span>
+                    {showAllProjectsOption && selectedSpaceId === space.id && selectedProjectId === null && (
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                    )}
                   </button>
                   {spaceProjects.map(p => {
                     const active = p.id === selectedProjectId

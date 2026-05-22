@@ -80,6 +80,10 @@ export function DashboardClient({
         else localStorage.removeItem('focusmap:lastProjectId')
     }, [selectedProjectId])
 
+    // --- View State ---
+    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
+    const { activeView, setActiveView, isViewReady } = useView()
+
     // STABLE reference for filtered projects using useMemo
     const filteredProjects = useMemo(() =>
         selectedSpaceId === null
@@ -91,6 +95,7 @@ export function DashboardClient({
     // Auto-select first project when space changes (NOTE: deps are primitives only)
     useEffect(() => {
         queueMicrotask(() => {
+            if (activeView === 'long-term' && selectedProjectId === null) return
             const projectsInSpace = selectedSpaceId === null
                 ? projects
                 : projects.filter(p => p.space_id === selectedSpaceId)
@@ -100,16 +105,12 @@ export function DashboardClient({
                 setSelectedProjectId(null)
             }
         })
-    }, [selectedSpaceId]) // ONLY depends on selectedSpaceId, not objects
+    }, [activeView, projects, selectedProjectId, selectedSpaceId])
 
     const selectedProject = useMemo(() =>
         projects.find(p => p.id === selectedProjectId),
         [projects, selectedProjectId]
     )
-
-    // --- View State ---
-    // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
-    const { activeView, setActiveView, isViewReady } = useView()
 
     // AI Chat open state (controlled from desktop panel FAB + mobile BottomNav)
     const [isAiChatOpen, setIsAiChatOpen] = useState(false)
@@ -1073,7 +1074,16 @@ export function DashboardClient({
                 )}
 
                 {isViewReady && activeView === 'long-term' && (
-                    <div className={cn("flex-1 flex overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
+                    <div className={cn("flex-1 flex flex-col overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
+                        <SpaceProjectSwitcher
+                            spaces={spaces}
+                            projects={projects}
+                            selectedSpaceId={selectedSpaceId}
+                            selectedProjectId={selectedProjectId}
+                            onSelectSpace={setSelectedSpaceId}
+                            onSelectProject={setSelectedProjectId}
+                            showAllProjectsOption
+                        />
                         <WishlistView
                             projects={projects}
                             selectedProjectId={selectedProjectId}
@@ -1181,6 +1191,7 @@ export function DashboardClient({
                         selectedProjectId={selectedProjectId}
                         onSelectSpace={setSelectedSpaceId}
                         onSelectProject={setSelectedProjectId}
+                        showAllProjectsOption={activeView === 'long-term'}
                     />
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     {activeView === 'habits' ? (

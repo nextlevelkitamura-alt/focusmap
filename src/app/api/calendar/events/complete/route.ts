@@ -104,12 +104,16 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: completionError.message }, { status: 500 });
     }
   } else {
-    const completionDeleteQuery = supabase
+    let completionDeleteQuery = supabase
       .from('event_completions')
       .delete()
       .eq('user_id', user.id)
       .eq('google_event_id', google_event_id)
       .eq('completed_date', normalizedCompletedDate);
+
+    if (completionCalendarId) {
+      completionDeleteQuery = completionDeleteQuery.eq('calendar_id', completionCalendarId);
+    }
 
     const { error: completionError } = await completionDeleteQuery;
 

@@ -431,12 +431,13 @@ export function WishlistView({
 
   const filteredItems = useMemo(() => {
     return items.filter(item => {
+      if (selectedProjectId && item.project_id !== selectedProjectId) return false
       const status = getStatus(item)
       if (statusFilter !== "all" && status !== statusFilter) return false
       if (tagFilter !== "all" && item.category !== tagFilter && !(item.tags ?? []).includes(tagFilter)) return false
       return true
     })
-  }, [items, statusFilter, tagFilter])
+  }, [items, selectedProjectId, statusFilter, tagFilter])
 
   const visibleAiTaskIds = useMemo(() => {
     const ids = new Set<string>()
