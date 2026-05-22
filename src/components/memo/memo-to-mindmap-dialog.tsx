@@ -24,6 +24,7 @@ interface ProjectOption {
 interface MemoToMindmapDialogProps {
   open: boolean
   noteIds: string[]
+  source?: "notes" | "wishlist"
   projects: ProjectOption[]
   spaces: ProjectOption[]
   defaultSpaceId: string | null
@@ -38,6 +39,7 @@ const NEW_PROJECT = "__new__"
 export function MemoToMindmapDialog({
   open,
   noteIds,
+  source = "notes",
   projects,
   spaces,
   defaultSpaceId,
@@ -80,6 +82,7 @@ export function MemoToMindmapDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           noteIds,
+          source,
           mode,
           targetProjectId: target !== NEW_PROJECT ? target : undefined,
         }),
@@ -94,7 +97,7 @@ export function MemoToMindmapDialog({
       setError(err instanceof Error ? err.message : "生成に失敗しました")
       setStep("config")
     }
-  }, [noteIds, mode, target])
+  }, [noteIds, source, mode, target])
 
   // --- ノード編集 ---
   const updateTitle = useCallback((tempId: string, title: string) => {
@@ -182,6 +185,7 @@ export function MemoToMindmapDialog({
         body: JSON.stringify({
           draft: { projectTitle: projectTitle.trim() || "新しいマインドマップ", nodes },
           target: targetPayload,
+          source,
         }),
       })
       const data = await res.json()
@@ -192,7 +196,7 @@ export function MemoToMindmapDialog({
       setError(err instanceof Error ? err.message : "保存に失敗しました")
       setStep("preview")
     }
-  }, [nodes, target, projectTitle, spaceId, reset, onSuccess])
+  }, [nodes, source, target, projectTitle, spaceId, reset, onSuccess])
 
   const canCreateNew = spaces.length > 0
   const newProjectInvalid = target === NEW_PROJECT && (!canCreateNew || !spaceId || !projectTitle.trim())

@@ -14,19 +14,22 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User as UserIcon, Layers, Plus, Pencil, Trash2, Check, Network, ListTodo, CalendarDays, Sparkles } from "lucide-react"
-import { Space } from "@/types/database"
+import { ChevronDown, LogOut, Settings, User as UserIcon, Layers, Plus, Pencil, Trash2, Check, Network, CalendarDays, Sparkles, StickyNote } from "lucide-react"
+import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
+import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 
 const ALL_SPACE_PREFS_KEY = "focusmap:allSpacePrefs"
 const ALL_SPACE_RENAME_ID = "__all__"
 
 interface HeaderProps {
     spaces?: Space[]
+    projects?: Project[]
     selectedSpaceId?: string | null
+    selectedProjectId?: string | null
     onSelectSpace?: (id: string | null) => void
     onCreateSpace?: (title: string, color?: string) => Promise<Space | null>
     onUpdateSpace?: (spaceId: string, updates: Partial<Space>) => Promise<void>
@@ -37,21 +40,28 @@ interface HeaderProps {
     showCalendarSplitToggle?: boolean
     isCalendarSplitVisible?: boolean
     onToggleCalendarSplit?: () => void
+    showMemoSplitToggle?: boolean
+    isMemoSplitVisible?: boolean
+    onToggleMemoSplit?: () => void
+    onMindmapUpdated?: () => void
 }
 
 export function Header({
     spaces = [],
+    projects = [],
     selectedSpaceId = null,
+    selectedProjectId = null,
     onSelectSpace,
     onCreateSpace,
     onUpdateSpace,
     onDeleteSpace,
-    showTaskListToggle = false,
-    isTaskListVisible = false,
-    onToggleTaskList,
     showCalendarSplitToggle = false,
     isCalendarSplitVisible = false,
     onToggleCalendarSplit,
+    showMemoSplitToggle = false,
+    isMemoSplitVisible = false,
+    onToggleMemoSplit,
+    onMindmapUpdated,
 }: HeaderProps) {
     const router = useRouter()
     const [user, setUser] = useState<User | null>(null)
@@ -80,6 +90,10 @@ export function Header({
     const createInputRef = useRef<HTMLInputElement>(null)
     const renameInputRef = useRef<HTMLInputElement>(null)
     const [dropdownOpen, setDropdownOpen] = useState(false)
+    const [organizeDialogOpen, setOrganizeDialogOpen] = useState(false)
+    const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
+    const [organizeError, setOrganizeError] = useState<string | null>(null)
+    const [isLoadingOrganizeMemos, setIsLoadingOrganizeMemos] = useState(false)
 
     useEffect(() => {
         const getUser = async () => {
@@ -144,6 +158,43 @@ export function Header({
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
         { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
     ]
+
+    const handleOpenAiOrganize = async () => {
+        if (!selectedProjectId) {
+            setOrganizeError("プロジェクトを選択してください")
+            return
+        }
+        setIsLoadingOrganizeMemos(true)
+        setOrganizeError(null)
+        try {
+            const res = await fetch(`/api/wishlist?project_id=${encodeURIComponent(selectedProjectId)}`, { cache: "no-store" })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data?.error || "メモの取得に失敗しました")
+            const ids = ((data.items || []) as Array<{
+                id: string
+                memo_status?: string | null
+                is_completed?: boolean | null
+                google_event_id?: string | null
+            }>)
+                .filter(item =>
+                    !item.is_completed &&
+                    !item.google_event_id &&
+                    (item.memo_status ?? "unsorted") === "unsorted",
+                )
+                .map(item => item.id)
+
+            if (ids.length === 0) {
+                setOrganizeError("このプロジェクトに未整理メモがありません")
+                return
+            }
+            setOrganizeMemoIds(ids.slice(0, 50))
+            setOrganizeDialogOpen(true)
+        } catch (error) {
+            setOrganizeError(error instanceof Error ? error.message : "メモの取得に失敗しました")
+        } finally {
+            setIsLoadingOrganizeMemos(false)
+        }
+    }
 
     return (
         <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
@@ -366,20 +417,19 @@ export function Header({
                         </Button>
                     ))}
                 </div>
-                {showTaskListToggle && activeView === 'map' && (
+                {activeView === 'map' && (
                     <Button
-                        variant={isTaskListVisible ? "secondary" : "ghost"}
+                        variant="ghost"
                         size="sm"
                         className={cn(
                             "gap-1.5 h-7 px-3 text-xs font-medium",
-                            isTaskListVisible
-                                ? "bg-background shadow-sm border"
-                                : "text-muted-foreground hover:text-foreground"
+                            "text-muted-foreground hover:text-foreground"
                         )}
-                        onClick={onToggleTaskList}
+                        onClick={handleOpenAiOrganize}
+                        disabled={isLoadingOrganizeMemos || !selectedProjectId}
                     >
-                        <ListTodo className="h-3.5 w-3.5" />
-                        タスク一覧
+                        <Sparkles className={cn("h-3.5 w-3.5", isLoadingOrganizeMemos && "animate-spin")} />
+                        AIで整理
                     </Button>
                 )}
             </div>
@@ -400,6 +450,22 @@ export function Header({
                         title={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
                     >
                         <CalendarDays className="h-4 w-4" />
+                    </Button>
+                )}
+                {showMemoSplitToggle && onToggleMemoSplit && (
+                    <Button
+                        variant={isMemoSplitVisible ? "secondary" : "ghost"}
+                        size="icon"
+                        className={cn(
+                            "text-muted-foreground",
+                            isMemoSplitVisible && "bg-background text-primary shadow-sm border border-primary/30"
+                        )}
+                        onClick={onToggleMemoSplit}
+                        aria-pressed={isMemoSplitVisible}
+                        aria-label={isMemoSplitVisible ? "メモ分割を閉じる" : "メモを分割表示"}
+                        title={isMemoSplitVisible ? "メモ分割を閉じる" : "メモを分割表示"}
+                    >
+                        <StickyNote className="h-4 w-4" />
                     </Button>
                 )}
                 <Button
@@ -449,6 +515,35 @@ export function Header({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
+
+            {organizeError && (
+                <div className="fixed left-1/2 top-16 z-[80] -translate-x-1/2 rounded-md border bg-background px-3 py-2 text-sm shadow-lg">
+                    <span className="text-muted-foreground">{organizeError}</span>
+                    <button
+                        type="button"
+                        className="ml-3 text-xs text-primary hover:underline"
+                        onClick={() => setOrganizeError(null)}
+                    >
+                        閉じる
+                    </button>
+                </div>
+            )}
+
+            <MemoToMindmapDialog
+                open={organizeDialogOpen}
+                noteIds={organizeMemoIds}
+                source="wishlist"
+                projects={projects.map(p => ({ id: p.id, title: p.title }))}
+                spaces={spaces.map(s => ({ id: s.id, title: s.title }))}
+                defaultSpaceId={selectedSpaceId}
+                defaultProjectId={selectedProjectId}
+                onClose={() => setOrganizeDialogOpen(false)}
+                onSuccess={() => {
+                    setOrganizeDialogOpen(false)
+                    setOrganizeMemoIds([])
+                    onMindmapUpdated?.()
+                }}
+            />
         </header>
     )
 }

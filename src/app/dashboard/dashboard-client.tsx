@@ -149,13 +149,25 @@ export function DashboardClient({
         updateTodaySubView('memo')
         setActiveView('today')
     }, [setActiveView, updateTodaySubView])
-    // Reload時はマインドマップを広く使えるよう、タスク一覧はデフォルト非表示
-    const [isTaskListVisible, setIsTaskListVisible] = useState(false)
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
+    const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
     const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
     const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
+    const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
+    const isRightSidePanelVisible = isCalendarPanelVisible
     const toggleCalendarSplit = useCallback(() => {
-        setIsCalendarSplitOpen(prev => !prev)
+        setIsCalendarSplitOpen(prev => {
+            const next = !prev
+            if (next) setIsMemoSplitOpen(false)
+            return next
+        })
+    }, [])
+    const toggleMemoSplit = useCallback(() => {
+        setIsMemoSplitOpen(prev => {
+            const next = !prev
+            if (next) setIsCalendarSplitOpen(false)
+            return next
+        })
     }, [])
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
@@ -961,17 +973,20 @@ export function DashboardClient({
                 {/* Header with Space Switcher */}
                 <Header
                     spaces={spaces}
+                    projects={projects}
                     selectedSpaceId={selectedSpaceId}
+                    selectedProjectId={selectedProjectId}
                     onSelectSpace={setSelectedSpaceId}
                     onCreateSpace={handleCreateSpace}
                     onUpdateSpace={handleUpdateSpace}
                     onDeleteSpace={handleDeleteSpace}
-                    showTaskListToggle={activeView !== 'today'}
-                    isTaskListVisible={isTaskListVisible}
-                    onToggleTaskList={() => setIsTaskListVisible(prev => !prev)}
                     showCalendarSplitToggle={activeView === 'map'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
+                    showMemoSplitToggle={activeView === 'map'}
+                    isMemoSplitVisible={isMemoSplitVisible}
+                    onToggleMemoSplit={toggleMemoSplit}
+                    onMindmapUpdated={refreshFromServer}
                 />
 
                 {/* Google カレンダー連携完了の一時通知（?calendar_connected=true を検知して3秒表示） */}
@@ -1276,6 +1291,38 @@ export function DashboardClient({
                             isCalendarSplitVisible={isCalendarPanelVisible}
                             onToggleCalendarSplit={toggleCalendarSplit}
                         />
+                    ) : activeView === 'map' && isMemoSplitVisible ? (
+                        <div className="flex h-full min-h-0 overflow-hidden">
+                            <div className="h-full min-w-[360px] max-w-[560px] border-r bg-background" style={{ width: '42%' }}>
+                                <WishlistView
+                                    projects={projects}
+                                    selectedProjectId={selectedProjectId}
+                                    selectedSpaceId={selectedSpaceId}
+                                    onOpenTodayMemoSchedule={openTodayMemoSchedule}
+                                    isCalendarSplitVisible={false}
+                                    compactComposer
+                                />
+                            </div>
+                            <div className="min-w-0 flex-1 overflow-hidden">
+                                <CenterPane
+                                    project={selectedProject}
+                                    groups={currentGroups}
+                                    tasks={currentTasks}
+                                    onUpdateProject={handleUpdateProjectTitle}
+                                    onCreateGroup={handleCreateGroup}
+                                    onDeleteGroup={handleDeleteGroup}
+                                    onCreateTask={createTask}
+                                    onUpdateTask={updateTask}
+                                    onDeleteTask={handleDeleteTask}
+                                    onBulkDelete={bulkDelete}
+                                    onReorderTask={reorderTask}
+                                    onReorderGroup={reorderGroup}
+                                    onRefreshCalendar={handleRefreshCalendar}
+                                    onAddOptimisticEvent={handleAddOptimisticEvent}
+                                    onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                                />
+                            </div>
+                        </div>
                     ) : (
                         <CenterPane
                             project={selectedProject}
@@ -1293,14 +1340,13 @@ export function DashboardClient({
                             onRefreshCalendar={handleRefreshCalendar}
                             onAddOptimisticEvent={handleAddOptimisticEvent}
                             onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
-                            isTaskListVisible={isTaskListVisible}
                         />
                     )}
                     </div>
                 </div>
 
                 {/* Right Resize Handle */}
-                {isCalendarPanelVisible && (
+                {isRightSidePanelVisible && (
                     <div
                         className="w-1 h-full bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-none flex items-center justify-center group"
                         onMouseDown={handleRightMouseDown}
@@ -1311,7 +1357,7 @@ export function DashboardClient({
                 )}
 
                 {/* Pane 3: Right Sidebar (Calendar) */}
-                {isCalendarPanelVisible && (
+                {isRightSidePanelVisible && (
                     <div
                         className="flex-none overflow-hidden h-full"
                         style={{ width: rightSidebarWidth }}

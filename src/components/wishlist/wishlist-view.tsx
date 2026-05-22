@@ -273,6 +273,7 @@ export function WishlistView({
   onOpenTodayMemoSchedule,
   isCalendarSplitVisible = false,
   onToggleCalendarSplit,
+  compactComposer = false,
 }: {
   projects?: Project[]
   selectedProjectId?: string | null
@@ -280,6 +281,7 @@ export function WishlistView({
   onOpenTodayMemoSchedule?: (payload: { memoId: string; date: Date }) => void
   isCalendarSplitVisible?: boolean
   onToggleCalendarSplit?: () => void
+  compactComposer?: boolean
 }) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -767,6 +769,57 @@ export function WishlistView({
     }
   }
 
+  const handleQuickAdd = async () => {
+    const text = intakeText.trim()
+    if (!text || isAnalyzing || isTranscribing) return
+    const [firstLine, ...rest] = text.split("\n")
+    const title = firstLine.trim().slice(0, 80) || "新しいメモ"
+    const description = rest.join("\n").trim() || (text.length > title.length ? text : "")
+    setIntakeError(null)
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          project_id: selectedProjectId,
+          description,
+          category: "アイデア",
+          tags: ["アイデア"],
+          memo_status: "unsorted",
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "メモの追加に失敗しました")
+      }
+      if (!data.item) {
+        throw new Error("追加結果を取得できませんでした")
+      }
+      const item = data.item as MemoItem
+      setItems(prev => [item, ...prev])
+      setIntakeText("")
+      setStatusFilter("all")
+      setTagFilter("all")
+      await refreshTags()
+      pushAction({
+        description: `「${item.title}」を追加`,
+        undo: async () => {
+          setItems(prev => prev.filter(existing => existing.id !== item.id))
+          await removeMemoItemFromServer(item.id)
+          await refreshTags()
+        },
+        redo: async () => {
+          const restored = await restoreMemoItem(item)
+          setItems(prev => prev.some(existing => existing.id === restored.id) ? prev : [restored, ...prev])
+          await refreshTags()
+        },
+      })
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : "メモの追加に失敗しました")
+    }
+  }
+
   const handleAnalyze = async () => {
     if (!intakeText.trim() || isAnalyzing) return
     setIntakeError(null)
@@ -1191,8 +1244,48 @@ export function WishlistView({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
-      <div className="shrink-0 space-y-2 border-b px-3 py-2 md:px-5">
-        <div className="flex items-center gap-2">
+      <div className={cn("shrink-0 border-b px-3 py-2", compactComposer ? "space-y-0 md:px-3" : "space-y-2 md:px-5")}>
+        {compactComposer ? (
+          <div className="flex items-center gap-2">
+            <input
+              value={intakeText}
+              onChange={e => setIntakeText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) void handleQuickAdd()
+              }}
+              placeholder="メモを入力"
+              className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              disabled={isAnalyzing || isTranscribing}
+            />
+            <Button
+              type="button"
+              onClick={handleVoiceToggle}
+              disabled={isTranscribing}
+              variant={isRecording ? "destructive" : "outline"}
+              className="h-10 shrink-0 gap-1.5 px-3"
+            >
+              {isTranscribing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isRecording ? (
+                <Square className="h-4 w-4" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
+              <span>{isRecording ? "停止" : "音声"}</span>
+            </Button>
+            <Button
+              type="button"
+              onClick={handleQuickAdd}
+              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
+              className="h-10 shrink-0 gap-1 px-3"
+            >
+              <Plus className="h-4 w-4" />
+              追加
+            </Button>
+          </div>
+        ) : (
+        <>
+          <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-semibold leading-tight">メモ</h1>
             <p className="hidden truncate text-xs text-muted-foreground sm:block">雑な入力を整理</p>
@@ -1247,9 +1340,9 @@ export function WishlistView({
           <Button onClick={handleCreate} size="sm" className="min-h-[40px] shrink-0 gap-1 px-3">
             <Plus className="h-4 w-4" /> 追加
           </Button>
-        </div>
+          </div>
 
-        <div className="flex gap-2">
+          <div className="flex gap-2">
           <textarea
             value={intakeText}
             onChange={e => setIntakeText(e.target.value)}
@@ -1268,8 +1361,8 @@ export function WishlistView({
             <PrimaryActionIcon className={cn("h-4 w-4", (isAnalyzing || isTranscribing) && "animate-spin")} />
             <span>{primaryActionLabel}</span>
           </Button>
-        </div>
-        {isAnalyzing && (
+          </div>
+          {isAnalyzing && (
           <div className="flex min-h-10 flex-wrap items-center gap-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
             <span className="font-medium text-foreground">
@@ -1277,8 +1370,8 @@ export function WishlistView({
             </span>
             <span>{analyzeElapsedSeconds}秒経過</span>
           </div>
-        )}
-        {intakeError && !isAnalyzing && (
+          )}
+          {intakeError && !isAnalyzing && (
           <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <span>{intakeError}</span>
             <button
@@ -1289,8 +1382,8 @@ export function WishlistView({
               閉じる
             </button>
           </div>
-        )}
-        {(isRecording || isTranscribing || voiceError) && (
+          )}
+          {(isRecording || isTranscribing || voiceError) && (
           <div className="flex min-h-8 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
             {isRecording && (
               <>
@@ -1331,8 +1424,8 @@ export function WishlistView({
               </div>
             )}
           </div>
-        )}
-        <div className={cn(!filterOpen && "hidden")}>
+          )}
+          <div className={cn(!filterOpen && "hidden")}>
           <FilterBar
             statusFilter={statusFilter}
             tagFilter={tagFilter}
@@ -1341,7 +1434,9 @@ export function WishlistView({
             onStatusChange={setStatusFilter}
             onTagChange={setTagFilter}
           />
-        </div>
+          </div>
+        </>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">

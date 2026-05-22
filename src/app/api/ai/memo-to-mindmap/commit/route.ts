@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
+    const source: 'notes' | 'wishlist' = body?.source === 'wishlist' ? 'wishlist' : 'notes'
 
     const parsed = MindmapDraftSchema.safeParse(body?.draft)
     if (!parsed.success) {
@@ -149,19 +150,37 @@ export async function POST(request: Request) {
       }
     }
     const allNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
-    await Promise.all(
-      allNoteIds.map(noteId =>
-        supabase
-          .from('notes')
-          .update({
-            task_id: taskIdByNoteId.get(noteId) ?? null,
-            project_id: projectId,
-            status: 'processed',
-          })
-          .eq('id', noteId)
-          .eq('user_id', user.id),
-      ),
-    )
+    if (source === 'wishlist') {
+      await Promise.all(
+        allNoteIds.map(noteId =>
+          supabase
+            .from('ideal_goals')
+            .update({
+              project_id: projectId,
+              memo_status: 'completed',
+              is_completed: true,
+              is_today: false,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', noteId)
+            .eq('user_id', user.id),
+        ),
+      )
+    } else {
+      await Promise.all(
+        allNoteIds.map(noteId =>
+          supabase
+            .from('notes')
+            .update({
+              task_id: taskIdByNoteId.get(noteId) ?? null,
+              project_id: projectId,
+              status: 'processed',
+            })
+            .eq('id', noteId)
+            .eq('user_id', user.id),
+        ),
+      )
+    }
 
     const rootTaskIds = draft.nodes
       .filter(n => effectiveParent(n) === null)

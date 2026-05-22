@@ -18,6 +18,7 @@ export async function POST(request: Request) {
 
     const body = await request.json()
     const noteIds: unknown = body?.noteIds
+    const source: 'notes' | 'wishlist' = body?.source === 'wishlist' ? 'wishlist' : 'notes'
     const mode: MemoMindmapMode = body?.mode === 'deep' ? 'deep' : 'quick'
     const targetProjectId: string | undefined = body?.targetProjectId || undefined
 
@@ -29,17 +30,37 @@ export async function POST(request: Request) {
     }
 
     // 対象メモを取得（本人のメモのみ・削除済みは除外）
-    const { data: notes, error: notesError } = await supabase
-      .from('notes')
-      .select('id, content')
-      .in('id', noteIds as string[])
-      .eq('user_id', user.id)
-      .is('deleted_at', null)
+    let validNotes: { id: string; content: string }[] = []
+    if (source === 'wishlist') {
+      const { data: memos, error: memosError } = await supabase
+        .from('ideal_goals')
+        .select('id, title, description')
+        .in('id', noteIds as string[])
+        .eq('user_id', user.id)
+        .in('status', ['wishlist', 'memo'])
 
-    if (notesError) {
-      return NextResponse.json({ error: notesError.message }, { status: 500 })
+      if (memosError) {
+        return NextResponse.json({ error: memosError.message }, { status: 500 })
+      }
+      validNotes = (memos || [])
+        .map(m => ({
+          id: m.id,
+          content: [m.title, m.description].filter(Boolean).join('\n\n'),
+        }))
+        .filter(n => n.content.trim().length > 0)
+    } else {
+      const { data: notes, error: notesError } = await supabase
+        .from('notes')
+        .select('id, content')
+        .in('id', noteIds as string[])
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+
+      if (notesError) {
+        return NextResponse.json({ error: notesError.message }, { status: 500 })
+      }
+      validNotes = (notes || []).filter(n => n.content && n.content.trim().length > 0)
     }
-    const validNotes = (notes || []).filter(n => n.content && n.content.trim().length > 0)
     if (validNotes.length === 0) {
       return NextResponse.json({ error: '有効なメモがありません' }, { status: 400 })
     }
@@ -63,7 +84,7 @@ export async function POST(request: Request) {
       modelName,
       inputTokens,
       outputTokens,
-      metadata: { noteCount: validNotes.length, mode, targetProjectId: targetProjectId ?? null },
+      metadata: { noteCount: validNotes.length, mode, source, targetProjectId: targetProjectId ?? null },
     })
 
     return NextResponse.json({
