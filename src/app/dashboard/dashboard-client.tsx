@@ -27,6 +27,7 @@ import { getTodayDateString } from "@/hooks/useHabits"
 import { OutlineView } from "@/components/mobile/outline-view"
 import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 import { AiView } from "@/components/ai/ai-view"
+import { MobileAiMapView } from "@/components/ai/mobile-ai-map-view"
 import { SchedulingPanel } from "@/components/ai/scheduling-panel"
 import { IdealView } from "@/components/ideal/ideal-view"
 import { WishlistView } from "@/components/wishlist/wishlist-view"
@@ -368,7 +369,7 @@ export function DashboardClient({
     // Debounced calendar refresh (2s after last call) + optimistic event add
     const calendarRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const handleCalendarEventCreated = useCallback((eventData?: {
-        id: string; title: string; scheduled_at: string; estimated_time: number; calendar_id?: string | null
+        id: string; title: string; scheduled_at: string; estimated_time: number; calendar_id?: string | null; description?: string | null
     }) => {
         // 楽観的にカレンダーへ即座追加
         if (eventData) {
@@ -380,6 +381,7 @@ export function DashboardClient({
                 google_event_id: '',
                 calendar_id: eventData.calendar_id || '',
                 title: eventData.title,
+                description: eventData.description || undefined,
                 start_time: startTime.toISOString(),
                 end_time: endTime.toISOString(),
                 is_all_day: false,
@@ -448,7 +450,7 @@ export function DashboardClient({
             habit_icon: null,
             habit_start_date: null,
             habit_end_date: null,
-            memo: null,
+            memo: taskData.memo ?? null,
             memo_images: null,
             node_width: null,
         }
@@ -466,6 +468,7 @@ export function DashboardClient({
                     scheduled_at: taskData.scheduled_at,
                     estimated_time: taskData.estimated_time,
                     calendar_id: taskData.calendar_id,
+                    description: taskData.memo,
                 })
             }
         }
@@ -521,6 +524,7 @@ export function DashboardClient({
                             scheduled_at: taskData.scheduled_at,
                             estimated_time: taskData.estimated_time,
                             calendar_id: taskData.calendar_id,
+                            description: taskData.memo,
                         })
                     }
                 }
@@ -1083,10 +1087,23 @@ export function DashboardClient({
 
                 {isViewReady && activeView === 'ai' && (
                     <div className="flex-1 md:hidden overflow-hidden">
-                        <AiChatPanel
-                            mode="fullscreen"
-                            activeProjectId={selectedProjectId}
-                            onMindmapUpdated={refreshFromServer}
+                        <MobileAiMapView
+                            projects={filteredProjects}
+                            spaces={spaces}
+                            selectedProjectId={selectedProjectId}
+                            selectedSpaceId={selectedSpaceId}
+                            onSelectProject={setSelectedProjectId}
+                            onSelectSpace={setSelectedSpaceId}
+                            selectedProject={selectedProject}
+                            groups={currentGroups}
+                            tasks={currentTasks}
+                            onCreateGroup={handleCreateGroup}
+                            onDeleteGroup={handleDeleteGroup}
+                            onUpdateProject={handleUpdateProjectTitle}
+                            onCreateTask={createTask}
+                            onUpdateTask={updateTask}
+                            onDeleteTask={handleDeleteTask}
+                            refreshFromServer={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
                     </div>
@@ -1145,6 +1162,7 @@ export function DashboardClient({
                             onRefreshCalendar={handleRefreshCalendar}
                             onAddOptimisticEvent={handleAddOptimisticEvent}
                             onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                            onOpenLinkedMemos={openMindmapLinkedMemos}
                         />
                     </div>
                 )}
@@ -1313,6 +1331,7 @@ export function DashboardClient({
                                     isCalendarSplitVisible={false}
                                     compactComposer
                                     mindmapMemoFocus={mindmapMemoFocus}
+                                    onLinkedTaskStatusChange={(taskId, status) => updateTask(taskId, { status })}
                                 />
                             </div>
                             <div className="min-w-0 flex-1 overflow-hidden">

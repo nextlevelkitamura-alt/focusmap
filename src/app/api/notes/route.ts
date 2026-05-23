@@ -117,7 +117,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json()
-    const { id, project_id, status, image_urls, restore, used } = body
+    const { id, project_id, status, image_urls, restore, used, content } = body
 
     if (!id) {
       return NextResponse.json({ error: 'Note ID is required' }, { status: 400 })
@@ -129,6 +129,9 @@ export async function PATCH(request: Request) {
     if (used === false) updateData.status = 'pending'
     if (status !== undefined) updateData.status = status
     if (image_urls !== undefined) updateData.image_urls = image_urls
+    if (content !== undefined && typeof content === 'string' && content.trim()) {
+      updateData.content = content.trim()
+    }
     if (restore === true) updateData.deleted_at = null
 
     if (Object.keys(updateData).length === 0) {

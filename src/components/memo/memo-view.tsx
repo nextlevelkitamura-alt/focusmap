@@ -383,6 +383,8 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
           title: noteContent.slice(0, 100),
           project_id: projectId || proposal.analysis.suggested_project_id || undefined,
           parent_task_id: parentTaskId || proposal.analysis.suggested_node_id || undefined,
+          source: 'memo',
+          memo: noteContent,
         }),
       })
 

@@ -41,6 +41,17 @@ type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "
 type ColumnKey = "unsorted" | "today" | "scheduled" | "completed"
 type MemoItem = IdealGoalWithItems
 
+type LinkedStructuredItem = {
+  id: string
+  memoItemId: string
+  sourceType: string
+  sourceId: string
+  title: string
+  body: string | null
+  actionType: "execution" | "research" | "decision"
+  placementMode: string | null
+}
+
 interface TodayRemovalDialogState {
   item: MemoItem
   scheduledDate: Date | undefined
@@ -89,10 +100,68 @@ const STATUS_LABEL: Record<MemoStatus | "all", string> = {
   completed: "完了",
 }
 
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function toLinkedStructuredItem(raw: unknown): LinkedStructuredItem | null {
+  const link = readRecord(raw)
+  const memoItemRaw = Array.isArray(link.memo_items) ? link.memo_items[0] : link.memo_items
+  const memoItem = readRecord(memoItemRaw)
+  const metadata = readRecord(memoItem.metadata)
+  const linkMetadata = readRecord(link.metadata)
+  const id = typeof link.id === "string" ? link.id : ""
+  const memoItemId = typeof memoItem.id === "string" ? memoItem.id : ""
+  const title = typeof memoItem.title === "string" ? memoItem.title : ""
+  if (!id || !memoItemId || !title) return null
+  const actionType = metadata.action_type === "research" || metadata.action_type === "decision" || metadata.action_type === "execution"
+    ? metadata.action_type
+    : memoItem.item_kind === "reference"
+      ? "research"
+      : memoItem.item_kind === "decision"
+        ? "decision"
+        : "execution"
+  return {
+    id,
+    memoItemId,
+    sourceType: typeof memoItem.source_type === "string" ? memoItem.source_type : "",
+    sourceId: typeof memoItem.source_id === "string" ? memoItem.source_id : "",
+    title,
+    body: typeof memoItem.body === "string" ? memoItem.body : null,
+    actionType,
+    placementMode: typeof linkMetadata.placement_mode === "string" ? linkMetadata.placement_mode : null,
+  }
+}
+
+function actionLabel(actionType: LinkedStructuredItem["actionType"]) {
+  if (actionType === "research") return "リサーチ"
+  if (actionType === "decision") return "判断"
+  return "実行"
+}
+
 function getStatus(item: MemoItem): MemoStatus {
   if (item.is_completed || item.memo_status === "completed") return "completed"
   if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
   return "unsorted"
+}
+
+function extractMindmapTaskIds(item: MemoItem | null | undefined): string[] {
+  const payload = readRecord(item?.ai_source_payload)
+  const links = Array.isArray(payload.mindmap_links) ? payload.mindmap_links : []
+  return Array.from(new Set(
+    links
+      .map(link => readRecord(link).task_id)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  ))
+}
+
+function getCompletionUpdate(updates: Record<string, unknown>): boolean | null {
+  if (typeof updates.is_completed === "boolean") return updates.is_completed
+  if (updates.memo_status === "completed") return true
+  if (updates.memo_status === "unsorted" || updates.memo_status === "organized" || updates.memo_status === "scheduled" || updates.memo_status === "time_candidates") {
+    return false
+  }
+  return null
 }
 
 // Asia/Tokyo の本日 0:00 / 翌日 0:00 を返す（UTC ミリ秒）
@@ -275,6 +344,7 @@ export function WishlistView({
   onToggleCalendarSplit,
   compactComposer = false,
   mindmapMemoFocus = null,
+  onLinkedTaskStatusChange,
 }: {
   projects?: Project[]
   selectedProjectId?: string | null
@@ -284,6 +354,7 @@ export function WishlistView({
   onToggleCalendarSplit?: () => void
   compactComposer?: boolean
   mindmapMemoFocus?: { taskId: string; requestKey: number } | null
+  onLinkedTaskStatusChange?: (taskId: string, status: string) => Promise<void> | void
 }) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -307,6 +378,7 @@ export function WishlistView({
     taskId: string
     taskTitle: string
     items: MemoItem[]
+    structuredItems: LinkedStructuredItem[]
     isLoading: boolean
     error: string | null
   } | null>(null)
@@ -607,6 +679,26 @@ export function WishlistView({
     return data.item as MemoItem
   }, [])
 
+  const getLinkedTaskIdsForMemo = useCallback((item: MemoItem | null) => {
+    if (!item) return []
+    const taskIds = new Set(extractMindmapTaskIds(item))
+    if (linkedMemoFocus) {
+      const isFocusedSource =
+        linkedMemoFocus.items.some(linkedItem => linkedItem.id === item.id) ||
+        linkedMemoFocus.structuredItems.some(structuredItem => structuredItem.sourceId === item.id)
+      if (isFocusedSource) taskIds.add(linkedMemoFocus.taskId)
+    }
+    return Array.from(taskIds)
+  }, [linkedMemoFocus])
+
+  const syncLinkedTaskCompletion = useCallback(async (item: MemoItem | null, isCompleted: boolean) => {
+    if (!onLinkedTaskStatusChange) return
+    const taskIds = getLinkedTaskIdsForMemo(item)
+    if (taskIds.length === 0) return
+    const status = isCompleted ? "done" : "todo"
+    await Promise.all(taskIds.map(taskId => onLinkedTaskStatusChange(taskId, status)))
+  }, [getLinkedTaskIdsForMemo, onLinkedTaskStatusChange])
+
   const restoreMemoItem = useCallback(async (item: MemoItem) => {
     const res = await fetch("/api/wishlist", {
       method: "POST",
@@ -639,6 +731,8 @@ export function WishlistView({
       const isLatestUpdate = () => itemUpdateVersions.current.get(id) === updateVersion
       const previousItems = items
       const previousSelectedItem = selectedItem
+      const completionUpdate = getCompletionUpdate(updates)
+      const previousCompletion = previousItem ? (previousItem.is_completed || previousItem.memo_status === "completed") : null
       const optimisticUpdate = (item: MemoItem): MemoItem => ({
         ...item,
         ...updates,
@@ -647,9 +741,13 @@ export function WishlistView({
       setItems(prev => prev.map(existing => existing.id === id ? optimisticUpdate(existing) : existing))
       setSelectedItem(prev => prev?.id === id ? optimisticUpdate(prev) : prev)
       setIntakeError(null)
+      const linkedTaskSync = completionUpdate !== null && previousItem
+        ? syncLinkedTaskCompletion(previousItem, completionUpdate)
+        : Promise.resolve()
       await enqueueItemSave(id, async () => {
         try {
           const item = await patchMemoItem(id, updates)
+          await linkedTaskSync
           if (!isLatestUpdate()) return
           setItems(prev => prev.map(existing => existing.id === id ? item : existing))
           setSelectedItem(prev => prev?.id === id ? item : prev)
@@ -674,6 +772,9 @@ export function WishlistView({
             })
           }
         } catch (err) {
+          if (completionUpdate !== null && previousItem && previousCompletion !== null) {
+            void syncLinkedTaskCompletion(previousItem, previousCompletion)
+          }
           if (isLatestUpdate()) {
             setItems(previousItems)
             setSelectedItem(previousSelectedItem)
@@ -685,7 +786,7 @@ export function WishlistView({
       return
     }
     await fetchItems()
-  }, [enqueueItemSave, fetchItems, items, patchMemoItem, pushAction, refreshTags, selectedItem])
+  }, [enqueueItemSave, fetchItems, items, patchMemoItem, pushAction, refreshTags, selectedItem, syncLinkedTaskCompletion])
 
   const handleDelete = useCallback(async (id: string) => {
     const deletedItem = items.find(item => item.id === id)
@@ -1181,10 +1282,13 @@ export function WishlistView({
     if (!mindmapMemoFocus) return
     const focus = mindmapMemoFocus
     let cancelled = false
+    setDetailOpen(false)
+    setSelectedItem(null)
     setLinkedMemoFocus({
       taskId: focus.taskId,
       taskTitle: "",
       items: [],
+      structuredItems: [],
       isLoading: true,
       error: null,
     })
@@ -1196,7 +1300,12 @@ export function WishlistView({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data?.error || "関連メモの取得に失敗しました")
-        const linkedItems = Array.isArray(data.items) ? data.items as MemoItem[] : []
+        const legacyItems = Array.isArray(data.items) ? data.items as MemoItem[] : []
+        const sourceItems = Array.isArray(data.source_items) ? data.source_items as MemoItem[] : []
+        const structuredItems = Array.isArray(data.structured_items)
+          ? (data.structured_items as unknown[]).map(toLinkedStructuredItem).filter((entry): entry is LinkedStructuredItem => !!entry)
+          : []
+        const linkedItems = [...new Map([...legacyItems, ...sourceItems].map(item => [item.id, item])).values()]
         if (cancelled) return
         setItems(prev => {
           const byId = new Map(prev.map(item => [item.id, item]))
@@ -1207,16 +1316,17 @@ export function WishlistView({
           taskId: focus.taskId,
           taskTitle: typeof data.task?.title === "string" ? data.task.title : "",
           items: linkedItems,
+          structuredItems,
           isLoading: false,
           error: null,
         })
-        if (linkedItems[0]) openDetail(linkedItems[0])
       } catch (err) {
         if (cancelled) return
         setLinkedMemoFocus({
           taskId: focus.taskId,
           taskTitle: "",
           items: [],
+          structuredItems: [],
           isLoading: false,
           error: err instanceof Error ? err.message : "関連メモの取得に失敗しました",
         })
@@ -1227,7 +1337,7 @@ export function WishlistView({
     return () => {
       cancelled = true
     }
-  }, [mindmapMemoFocus, openDetail])
+  }, [mindmapMemoFocus])
 
   // D&D: ドロップしたカラムキー（droppableId）からカラム遷移を判定し、更新を投げる
   const itemById = useMemo(() => new Map(items.map(item => [item.id, item])), [items])
@@ -1522,7 +1632,7 @@ export function WishlistView({
                     ? "読み込み中..."
                     : linkedMemoFocus.error
                       ? linkedMemoFocus.error
-                      : `${linkedMemoFocus.items.length}件`}
+                      : `${linkedMemoFocus.items.length}件 / 分解${linkedMemoFocus.structuredItems.length}件`}
                 </div>
               </div>
               <button
@@ -1541,7 +1651,7 @@ export function WishlistView({
               <Loader2 className="h-4 w-4 animate-spin" />
               関連メモを読み込み中...
             </div>
-          ) : filteredItems.length === 0 ? (
+          ) : filteredItems.length === 0 && (!linkedMemoFocus || linkedMemoFocus.structuredItems.length === 0) ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <p>{linkedMemoFocus ? "このノードに紐付くメモはありません" : "メモはまだありません"}</p>
               {!linkedMemoFocus && (
@@ -1551,26 +1661,64 @@ export function WishlistView({
               )}
             </div>
           ) : linkedMemoFocus ? (
-            <DragDropContext onDragEnd={handleDragEnd}>
-              <div className="mx-auto max-w-2xl">
-                <MemoSection
-                  columnKey="unsorted"
-                  title="関連メモ"
-                  count={filteredItems.length}
-                  items={filteredItems}
-                  emptyText="関連メモはありません"
-                  onUpdate={handleUpdate}
-                  onDelete={handleDelete}
-                  onOpen={openDetail}
-                  projectById={projectById}
-                  tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
-                  nativeMemoDrag={isCalendarSplitVisible}
-                />
-              </div>
-            </DragDropContext>
+            <div className="mx-auto max-w-2xl space-y-3">
+              {linkedMemoFocus.structuredItems.length > 0 && (
+                <div className="rounded-lg border bg-background/70 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-medium">このノードに紐付く分解項目</div>
+                      <div className="text-xs text-muted-foreground">元メモは下の関連メモに表示されます</div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {linkedMemoFocus.structuredItems.map(structuredItem => {
+                      return (
+                        <div key={structuredItem.id} className="rounded-md border bg-muted/10 p-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                                <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                                  {actionLabel(structuredItem.actionType)}
+                                </span>
+                                {structuredItem.placementMode && (
+                                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                                    {structuredItem.placementMode === "link_existing" ? "既存紐付け" : structuredItem.placementMode === "create_child" ? "子として追加" : "直下追加"}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="break-words text-sm font-medium leading-5">{structuredItem.title}</div>
+                              {structuredItem.body && (
+                                <div className="mt-1 break-words text-xs leading-5 text-muted-foreground">{structuredItem.body}</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              {filteredItems.length > 0 && (
+                <DragDropContext onDragEnd={handleDragEnd}>
+                  <MemoSection
+                    columnKey="unsorted"
+                    title="関連メモ"
+                    count={filteredItems.length}
+                    items={filteredItems}
+                    emptyText="関連メモはありません"
+                    onUpdate={handleUpdate}
+                    onDelete={handleDelete}
+                    onOpen={() => undefined}
+                    projectById={projectById}
+                    tagColors={tagColors}
+                    getAiTask={getMemoAiTask}
+                    onOpenCodex={openInCodexWebForMemo}
+                    onToggleToday={handleToggleTodayFromCard}
+                    nativeMemoDrag={isCalendarSplitVisible}
+                  />
+                </DragDropContext>
+              )}
+            </div>
           ) : (
             <DragDropContext onDragEnd={handleDragEnd}>
             <div className="mx-auto overflow-x-auto pb-2">

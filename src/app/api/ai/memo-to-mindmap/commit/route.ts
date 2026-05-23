@@ -82,6 +82,28 @@ export async function POST(request: Request) {
     const realIdByTempId = new Map<string, string>()
     for (const node of draft.nodes) realIdByTempId.set(node.tempId, randomUUID())
 
+    const allDraftNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
+    const sourceNoteContentById = new Map<string, { content: string; image_urls: string[] | null }>()
+    if (source === 'notes' && allDraftNoteIds.length > 0) {
+      const { data: sourceNotes, error: sourceNotesError } = await supabase
+        .from('notes')
+        .select('id, content, image_urls')
+        .in('id', allDraftNoteIds)
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+
+      if (sourceNotesError) {
+        console.warn('[memo-to-mindmap/commit] source note fetch failed:', sourceNotesError.message)
+      } else {
+        for (const note of sourceNotes || []) {
+          sourceNoteContentById.set(note.id, {
+            content: note.content || '',
+            image_urls: Array.isArray(note.image_urls) ? note.image_urls : null,
+          })
+        }
+      }
+    }
+
     // 親が存在しない参照はルート扱い
     const effectiveParent = (node: MindmapDraftNode): string | null =>
       node.parentTempId && nodeByTempId.has(node.parentTempId) ? node.parentTempId : null
@@ -113,6 +135,14 @@ export async function POST(request: Request) {
       const groupKey = parentTempId ?? '__root__'
       const orderIndex = orderCounter.get(groupKey) ?? 0
       orderCounter.set(groupKey, orderIndex + 1)
+      const sourceNotes = node.sourceNoteIds
+        .map(noteId => sourceNoteContentById.get(noteId))
+        .filter((note): note is { content: string; image_urls: string[] | null } => !!note)
+      const sourceMemo = sourceNotes
+        .map(note => note.content.trim())
+        .filter(Boolean)
+        .join('\n\n---\n\n')
+      const sourceImages = sourceNotes.flatMap(note => note.image_urls || []).filter(Boolean)
       return {
         id: realIdByTempId.get(node.tempId)!,
         user_id: user.id,
@@ -124,7 +154,9 @@ export async function POST(request: Request) {
         estimated_time: 0,
         actual_time_minutes: 0,
         is_group: hasChildren.has(node.tempId),
-        source: 'manual',
+        source: source === 'notes' ? 'memo' : 'wishlist',
+        memo: sourceMemo || null,
+        memo_images: sourceImages.length > 0 ? sourceImages : null,
         _depth: depthOf(node.tempId),
       }
     })
@@ -158,7 +190,7 @@ export async function POST(request: Request) {
         taskLinksByNoteId.set(noteId, links)
       }
     }
-    const allNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
+    const allNoteIds = allDraftNoteIds
     if (source === 'notes') {
       await Promise.all(
         allNoteIds.map(noteId =>

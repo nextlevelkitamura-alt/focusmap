@@ -19,6 +19,48 @@ import { MemoChatHistory } from "@/components/memo/memo-chat-history"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
 
+type StructuredMemoItem = {
+  id: string
+  source_type: "wishlist" | "note"
+  source_id: string
+  parent_item_id: string | null
+  project_id: string | null
+  title: string
+  body: string | null
+  item_kind: string
+  status: string
+  confidence: number | null
+  order_index: number
+  metadata: Record<string, unknown> | null
+  memo_node_links?: Array<{
+    id: string
+    task_id: string | null
+    link_type: string
+    status: string
+  }>
+}
+
+type PlacementMode = "root" | "create_child" | "link_existing"
+
+type PlacementCandidate = {
+  task_id: string
+  title: string
+  path: string
+  is_group: boolean
+  score: number
+  mode_hint: PlacementMode
+  reason: string
+}
+
+type PlacementState = {
+  candidates: PlacementCandidate[]
+  selected: {
+    mode: PlacementMode
+    task_id: string | null
+  }
+  isLoading: boolean
+}
+
 interface MemoImage {
   id: string
   file_name: string
@@ -144,6 +186,228 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
+function getActiveMindmapLink(item: StructuredMemoItem) {
+  return item.memo_node_links?.find(link => link.link_type === "mindmap_node" && link.status === "active") ?? null
+}
+
+function getActionType(item: StructuredMemoItem): "execution" | "research" | "decision" {
+  const actionType = item.metadata?.action_type
+  if (actionType === "research" || actionType === "decision" || actionType === "execution") return actionType
+  if (item.item_kind === "reference" || item.item_kind === "question") return "research"
+  if (item.item_kind === "decision") return "decision"
+  return "execution"
+}
+
+function getActionLabel(actionType: "execution" | "research" | "decision") {
+  switch (actionType) {
+    case "research": return "リサーチ"
+    case "decision": return "判断"
+    default: return "実行"
+  }
+}
+
+function getActionClassName(actionType: "execution" | "research" | "decision") {
+  switch (actionType) {
+    case "research": return "border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+    case "decision": return "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+    default: return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+  }
+}
+
+function getStatusLabel(status: string) {
+  switch (status) {
+    case "inbox": return "未整理"
+    case "organized": return "分解済み"
+    case "task_candidate": return "TODO候補"
+    case "task": return "TODO化"
+    case "scheduled": return "予定化"
+    case "done": return "完了"
+    case "dismissed": return "保留"
+    default: return status
+  }
+}
+
+function StructuredMemoItemRow({
+  item,
+  childrenItems,
+  isLinking,
+  linkingItemId,
+  isResearching,
+  researchPrompt,
+  placement,
+  onPlacementChange,
+  onLink,
+  onResearch,
+}: {
+  item: StructuredMemoItem
+  childrenItems: StructuredMemoItem[]
+  isLinking: boolean
+  linkingItemId: string | null
+  isResearching: boolean
+  researchPrompt: string | null
+  placement: PlacementState | null
+  onPlacementChange: (itemId: string, value: string) => void
+  onLink: (item: StructuredMemoItem) => Promise<void>
+  onResearch: (item: StructuredMemoItem) => Promise<void>
+}) {
+  const activeLink = getActiveMindmapLink(item)
+  const parentLinked = !!activeLink
+  const actionType = getActionType(item)
+  const confidenceLabel = typeof item.confidence === "number"
+    ? `${Math.round(item.confidence * 100)}%`
+    : null
+
+  return (
+    <div className="rounded-md border bg-muted/10 p-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={cn("rounded-full border px-2 py-0.5 text-[10px]", getActionClassName(actionType))}>
+              {getActionLabel(actionType)}
+            </span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+              {getStatusLabel(item.status)}
+            </span>
+            {confidenceLabel && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                {confidenceLabel}
+              </span>
+            )}
+            {activeLink && (
+              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+                マップ投入済み
+              </span>
+            )}
+          </div>
+          <div className="break-words text-sm font-medium leading-5">{item.title}</div>
+          {item.body && (
+            <p className="break-words text-xs leading-5 text-muted-foreground">{item.body}</p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">配置</span>
+            <select
+              value={placement?.selected.task_id ? `${placement.selected.mode}:${placement.selected.task_id}` : placement?.selected.mode ?? "root"}
+              onChange={event => onPlacementChange(item.id, event.target.value)}
+              disabled={!!activeLink || placement?.isLoading}
+              className="h-7 max-w-full rounded-md border bg-background px-2 text-[11px] text-muted-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+            >
+              <option value="root">プロジェクト直下に新規追加</option>
+              {placement?.candidates.map(candidate => (
+                <option key={`child-${candidate.task_id}`} value={`create_child:${candidate.task_id}`}>
+                  子として追加: {candidate.path}
+                </option>
+              ))}
+              {placement?.candidates.map(candidate => (
+                <option key={`link-${candidate.task_id}`} value={`link_existing:${candidate.task_id}`}>
+                  既存に紐付け: {candidate.path}
+                </option>
+              ))}
+            </select>
+            {placement?.isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isResearching}
+            onClick={() => void onResearch(item)}
+            className="h-8 px-2 text-xs"
+          >
+            {isResearching ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
+            リサーチ
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!!activeLink || isLinking}
+            onClick={() => void onLink(item)}
+            className="h-8 px-2 text-xs"
+          >
+            {isLinking ? (
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            ) : activeLink ? (
+              <Check className="mr-1 h-3 w-3" />
+            ) : (
+              <Plus className="mr-1 h-3 w-3" />
+            )}
+            {activeLink ? "済" : "マップ"}
+          </Button>
+        </div>
+      </div>
+
+      {researchPrompt && (
+        <div className="mt-2 rounded-md border bg-background/70 p-2">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-medium text-muted-foreground">リサーチプロンプト</span>
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText(researchPrompt).catch(() => {})}
+              className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              コピー
+            </button>
+          </div>
+          <pre className="max-h-28 whitespace-pre-wrap break-words text-[11px] leading-5 text-muted-foreground">{researchPrompt}</pre>
+        </div>
+      )}
+
+      {childrenItems.length > 0 && (
+        <div className="mt-3 space-y-2 border-l pl-3">
+          {childrenItems.map(child => {
+            const childLink = getActiveMindmapLink(child)
+            const childIsLinking = linkingItemId === child.id
+            const childDisabled = !!childLink || childIsLinking || !parentLinked
+            const childActionType = getActionType(child)
+            return (
+              <div key={child.id} className="rounded-md border bg-background/50 p-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={cn("rounded-full border px-2 py-0.5 text-[10px]", getActionClassName(childActionType))}>
+                        {getActionLabel(childActionType)}
+                      </span>
+                      {childLink && (
+                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+                          マップ投入済み
+                        </span>
+                      )}
+                    </div>
+                    <div className="break-words text-xs font-medium leading-5">{child.title}</div>
+                    {child.body && (
+                      <p className="break-words text-[11px] leading-5 text-muted-foreground">{child.body}</p>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={childDisabled}
+                    onClick={() => void onLink(child)}
+                    className="h-8 shrink-0 px-2 text-xs"
+                    title={!parentLinked ? "先に親項目をマップへ投入してください" : undefined}
+                  >
+                    {childIsLinking ? (
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    ) : childLink ? (
+                      <Check className="mr-1 h-3 w-3" />
+                    ) : (
+                      <Plus className="mr-1 h-3 w-3" />
+                    )}
+                    {childLink ? "済" : parentLinked ? "投入" : "親先"}
+                  </Button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function WishlistCardDetail({
   item,
   open,
@@ -179,6 +443,15 @@ export function WishlistCardDetail({
   const [newSubItem, setNewSubItem] = useState("")
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
+  const [structuredItems, setStructuredItems] = useState<StructuredMemoItem[]>([])
+  const [isLoadingStructure, setIsLoadingStructure] = useState(false)
+  const [isStructuringMemo, setIsStructuringMemo] = useState(false)
+  const [structureError, setStructureError] = useState<string | null>(null)
+  const [structureFeedback, setStructureFeedback] = useState("")
+  const [linkingItemId, setLinkingItemId] = useState<string | null>(null)
+  const [researchingItemId, setResearchingItemId] = useState<string | null>(null)
+  const [researchPrompts, setResearchPrompts] = useState<Record<string, string>>({})
+  const [placementByItemId, setPlacementByItemId] = useState<Record<string, PlacementState>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
   const draftSourceIdRef = useRef<string | null>(null)
 
@@ -197,6 +470,91 @@ export function WishlistCardDetail({
     const { attachments } = await res.json()
     setImages((attachments ?? []).filter((attachment: MemoImage) => attachment.file_type?.startsWith("image/")))
   }, [item?.id, open])
+
+  const loadStructuredItems = useCallback(async () => {
+    if (!item?.id || !open) return
+    setIsLoadingStructure(true)
+    setStructureError(null)
+    try {
+      const res = await fetch(`/api/memo-items?source_type=wishlist&source_id=${encodeURIComponent(item.id)}`, {
+        cache: "no-store",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "構造化項目の取得に失敗しました")
+      const items = Array.isArray(data.items) ? data.items as StructuredMemoItem[] : []
+      setStructuredItems(items)
+      const prompts: Record<string, string> = {}
+      for (const structuredItem of items) {
+        const prompt = structuredItem.metadata?.research_prompt
+        if (typeof prompt === "string") prompts[structuredItem.id] = prompt
+      }
+      setResearchPrompts(prompts)
+      setPlacementByItemId(prev => {
+        const next: Record<string, PlacementState> = {}
+        for (const structuredItem of items) {
+          if (prev[structuredItem.id]) next[structuredItem.id] = prev[structuredItem.id]
+        }
+        return next
+      })
+    } catch (err) {
+      setStructureError(err instanceof Error ? err.message : "構造化項目の取得に失敗しました")
+    } finally {
+      setIsLoadingStructure(false)
+    }
+  }, [item?.id, open])
+
+  const loadPlacementCandidates = useCallback(async (items: StructuredMemoItem[]) => {
+    const activeItems = items.filter(structuredItem => !getActiveMindmapLink(structuredItem))
+    if (activeItems.length === 0) return
+
+    setPlacementByItemId(prev => {
+      const next = { ...prev }
+      for (const structuredItem of activeItems) {
+        if (!next[structuredItem.id]) {
+          next[structuredItem.id] = {
+            candidates: [],
+            selected: { mode: "root", task_id: null },
+            isLoading: true,
+          }
+        } else {
+          next[structuredItem.id] = { ...next[structuredItem.id], isLoading: true }
+        }
+      }
+      return next
+    })
+
+    await Promise.all(activeItems.map(async structuredItem => {
+      try {
+        const res = await fetch(`/api/memo-items/${structuredItem.id}/placement-candidates`, { cache: "no-store" })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data?.error || "配置候補の取得に失敗しました")
+        const candidates = Array.isArray(data.candidates) ? data.candidates as PlacementCandidate[] : []
+        const recommended = data.recommended && typeof data.recommended === "object"
+          ? data.recommended as { mode?: PlacementMode; task_id?: string | null }
+          : null
+        setPlacementByItemId(prev => ({
+          ...prev,
+          [structuredItem.id]: {
+            candidates,
+            selected: {
+              mode: recommended?.mode ?? (candidates[0] ? "create_child" : "root"),
+              task_id: recommended?.task_id ?? candidates[0]?.task_id ?? null,
+            },
+            isLoading: false,
+          },
+        }))
+      } catch {
+        setPlacementByItemId(prev => ({
+          ...prev,
+          [structuredItem.id]: {
+            candidates: prev[structuredItem.id]?.candidates ?? [],
+            selected: prev[structuredItem.id]?.selected ?? { mode: "root", task_id: null },
+            isLoading: false,
+          },
+        }))
+      }
+    }))
+  }, [])
 
   const itemId = item?.id ?? null
   const itemTitle = item?.title ?? ""
@@ -219,6 +577,15 @@ export function WishlistCardDetail({
     loadImages()
   }, [loadImages])
 
+  useEffect(() => {
+    loadStructuredItems()
+  }, [loadStructuredItems])
+
+  useEffect(() => {
+    if (!open || structuredItems.length === 0) return
+    loadPlacementCandidates(structuredItems)
+  }, [loadPlacementCandidates, open, structuredItems])
+
   // aiTask の状態変化を launchStep に反映 + 完了時に自動クローズ
   useEffect(() => {
     if (!item) return
@@ -238,7 +605,7 @@ export function WishlistCardDetail({
         setLaunchStep(null)
       }, 2500)
     }
-  })
+  }, [getMemoAiTask, item, launchStep, onOpenChange])
 
   // 接続待ち中の経過秒数カウンター
   useEffect(() => {
@@ -327,6 +694,138 @@ export function WishlistCardDetail({
     await update({})
   }
 
+  const handleStructureMemo = async (mode: "quick" | "deep" = "quick") => {
+    const title = draftTitle.trim()
+    if (!title) {
+      setStructureError("構造化する前にメモの見出しを入力してください")
+      return
+    }
+
+    setIsStructuringMemo(true)
+    setStructureError(null)
+    try {
+      const description = draftDescription.trim() || null
+      if (title !== item.title || description !== (item.description ?? null)) {
+        await update({
+          title,
+          description,
+          memo_status: item.memo_status ?? "unsorted",
+        })
+        onSaved?.()
+      }
+
+      const res = await fetch("/api/ai/memo-structure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_type: "wishlist",
+          source_id: item.id,
+          mode,
+          feedback: structureFeedback.trim() || undefined,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "メモの構造化に失敗しました")
+      setStructuredItems(Array.isArray(data.items) ? data.items : [])
+      setStructureFeedback("")
+      onMemoChanged?.()
+    } catch (err) {
+      setStructureError(err instanceof Error ? err.message : "メモの構造化に失敗しました")
+    } finally {
+      setIsStructuringMemo(false)
+    }
+  }
+
+  const handleLinkStructuredItem = async (structuredItem: StructuredMemoItem) => {
+    if (!item.project_id && !structuredItem.project_id) {
+      setStructureError("マップに投入するには、先にメモへプロジェクトを設定してください")
+      return
+    }
+    const activeLink = getActiveMindmapLink(structuredItem)
+    if (activeLink) {
+      setStructureError("この項目はすでにマインドマップへ投入済みです")
+      return
+    }
+
+    const parent = structuredItem.parent_item_id
+      ? structuredItems.find(candidate => candidate.id === structuredItem.parent_item_id)
+      : null
+    const parentTaskId = parent ? getActiveMindmapLink(parent)?.task_id ?? null : null
+    if (structuredItem.parent_item_id && !parentTaskId) {
+      setStructureError("子項目をマップへ投入するには、先に親項目を投入してください")
+      return
+    }
+    const placement = placementByItemId[structuredItem.id]?.selected ?? { mode: "root" as PlacementMode, task_id: null }
+    const targetTaskId = placement.mode === "link_existing" ? placement.task_id : null
+    const targetParentTaskId = placement.mode === "create_child" ? placement.task_id : parentTaskId
+
+    setLinkingItemId(structuredItem.id)
+    setStructureError(null)
+    try {
+      const res = await fetch(`/api/memo-items/${structuredItem.id}/link-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: structuredItem.project_id ?? item.project_id,
+          task_id: targetTaskId,
+          parent_task_id: targetParentTaskId,
+          title: structuredItem.title,
+          memo: structuredItem.body,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "マップへの投入に失敗しました")
+      await loadStructuredItems()
+      onMemoChanged?.()
+    } catch (err) {
+      setStructureError(err instanceof Error ? err.message : "マップへの投入に失敗しました")
+    } finally {
+      setLinkingItemId(null)
+    }
+  }
+
+  const handlePlacementChange = (itemId: string, value: string) => {
+    const [modeRaw, taskIdRaw] = value.split(":")
+    const mode: PlacementMode = modeRaw === "link_existing" || modeRaw === "create_child" ? modeRaw : "root"
+    setPlacementByItemId(prev => {
+      const current = prev[itemId] ?? {
+        candidates: [],
+        selected: { mode: "root" as PlacementMode, task_id: null },
+        isLoading: false,
+      }
+      return {
+        ...prev,
+        [itemId]: {
+          ...current,
+          selected: {
+            mode,
+            task_id: mode === "root" ? null : taskIdRaw || null,
+          },
+        },
+      }
+    })
+  }
+
+  const handleCreateResearchPrompt = async (structuredItem: StructuredMemoItem) => {
+    setResearchingItemId(structuredItem.id)
+    setStructureError(null)
+    try {
+      const res = await fetch(`/api/memo-items/${structuredItem.id}/research-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "リサーチプロンプトの作成に失敗しました")
+      if (typeof data.prompt === "string") {
+        setResearchPrompts(prev => ({ ...prev, [structuredItem.id]: data.prompt }))
+      }
+    } catch (err) {
+      setStructureError(err instanceof Error ? err.message : "リサーチプロンプトの作成に失敗しました")
+    } finally {
+      setResearchingItemId(null)
+    }
+  }
+
   const handleAddTag = async () => {
     const tag = tagText.trim()
     if (!tag || tags.includes(tag)) return
@@ -380,7 +879,7 @@ export function WishlistCardDetail({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-[min(1120px,calc(100vw-32px))]">
         <SheetHeader>
           <SheetTitle className="text-left">メモを編集</SheetTitle>
         </SheetHeader>
@@ -575,6 +1074,82 @@ export function WishlistCardDetail({
 
           {/* 過去の対話履歴（このメモの分） */}
           <MemoChatHistory memoId={item.id} />
+
+          <div className="space-y-3 rounded-lg border bg-background/40 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4" />
+                構造化
+              </Label>
+              {isLoadingStructure && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            </div>
+
+            <div className="space-y-2">
+              <textarea
+                value={structureFeedback}
+                onChange={e => setStructureFeedback(e.target.value)}
+                rows={2}
+                placeholder="違和感があればここに書いて再構造化"
+                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleStructureMemo("quick")}
+                  disabled={isStructuringMemo}
+                  className="min-h-[40px]"
+                >
+                  {isStructuringMemo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                  すぐ分解
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleStructureMemo("deep")}
+                  disabled={isStructuringMemo}
+                  className="min-h-[40px]"
+                >
+                  AIで壁打ち
+                </Button>
+              </div>
+            </div>
+
+            {structureError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {structureError}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {structuredItems.length === 0 ? (
+                <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                  構造化項目はまだありません
+                </div>
+              ) : (
+                structuredItems
+                  .filter(structuredItem => !structuredItem.parent_item_id)
+                  .map(parent => {
+                    const children = structuredItems.filter(child => child.parent_item_id === parent.id)
+                    return (
+                      <StructuredMemoItemRow
+                        key={parent.id}
+                        item={parent}
+                        childrenItems={children}
+                        isLinking={linkingItemId === parent.id}
+                        linkingItemId={linkingItemId}
+                        isResearching={researchingItemId === parent.id}
+                        researchPrompt={researchPrompts[parent.id] ?? null}
+                        placement={placementByItemId[parent.id] ?? null}
+                        onPlacementChange={handlePlacementChange}
+                        onLink={handleLinkStructuredItem}
+                        onResearch={handleCreateResearchPrompt}
+                      />
+                    )
+                  })
+              )}
+            </div>
+          </div>
 
           {(onLaunchClaude || onLaunchCodex) && (() => {
             const aiTask = getMemoAiTask(item.id)

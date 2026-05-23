@@ -392,6 +392,49 @@ export async function PATCH(
       );
     }
 
+    if (body.status !== undefined && updatedTask) {
+      const linkedMemoStatus = updatedTask.status === 'done'
+        ? 'done'
+        : (updatedTask.scheduled_at ? 'scheduled' : 'task');
+
+      try {
+        const { data: memoLinks, error: memoLinksError } = await supabase
+          .from('memo_node_links')
+          .select('memo_item_id')
+          .eq('user_id', user.id)
+          .eq('task_id', taskId)
+          .eq('link_type', 'mindmap_node')
+          .eq('status', 'active');
+
+        if (memoLinksError) {
+          console.error('[tasks/[id] PATCH] Failed to load linked memo items:', memoLinksError);
+        } else {
+          const memoItemIds = Array.from(new Set(
+            (memoLinks ?? [])
+              .map(link => link.memo_item_id)
+              .filter((memoItemId): memoItemId is string => typeof memoItemId === 'string' && memoItemId.length > 0)
+          ));
+
+          if (memoItemIds.length > 0) {
+            const { error: memoItemUpdateError } = await supabase
+              .from('memo_items')
+              .update({
+                status: linkedMemoStatus,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('user_id', user.id)
+              .in('id', memoItemIds);
+
+            if (memoItemUpdateError) {
+              console.error('[tasks/[id] PATCH] Failed to sync structured memo status:', memoItemUpdateError);
+            }
+          }
+        }
+      } catch (memoSyncError) {
+        console.error('[tasks/[id] PATCH] Failed to sync structured memo status:', memoSyncError);
+      }
+    }
+
     // Googleカレンダーイベントも更新（存在する場合）
     if (task.google_event_id && updatedTask) {
       try {
@@ -408,7 +451,8 @@ export async function PATCH(
         const shouldUpdateCalendar =
           body.title !== undefined ||
           body.scheduled_at !== undefined ||
-          body.estimated_time !== undefined;
+          body.estimated_time !== undefined ||
+          body.memo !== undefined;
 
         if (shouldUpdateCalendar) {
           console.log('[tasks/[id] PATCH] Updating Google Calendar event:', task.google_event_id);
@@ -419,7 +463,8 @@ export async function PATCH(
             scheduled_at: updatedTask.scheduled_at,
             estimated_time: updatedTask.estimated_time || 60,
             google_event_id: task.google_event_id,
-            calendar_id: task.calendar_id || 'primary'
+            calendar_id: task.calendar_id || 'primary',
+            memo: updatedTask.memo
           });
 
           console.log('[tasks/[id] PATCH] Google Calendar event updated');

@@ -30,6 +30,7 @@ interface AiViewProps {
   onRefreshCalendar?: () => Promise<void>
   onAddOptimisticEvent?: (event: CalendarEvent) => void
   onRemoveOptimisticEvent?: (eventId: string) => void
+  onOpenLinkedMemos?: (taskId: string) => void
 }
 
 export function AiView({
@@ -53,6 +54,7 @@ export function AiView({
   onRefreshCalendar,
   onAddOptimisticEvent,
   onRemoveOptimisticEvent,
+  onOpenLinkedMemos,
 }: AiViewProps) {
   const handleMindmapUpdated = useCallback(() => {
     refreshFromServer()
@@ -107,6 +109,7 @@ export function AiView({
                 onRefreshCalendar={onRefreshCalendar}
                 onAddOptimisticEvent={onAddOptimisticEvent}
                 onRemoveOptimisticEvent={onRemoveOptimisticEvent}
+                onOpenLinkedMemos={onOpenLinkedMemos}
               />
             </div>
           </>

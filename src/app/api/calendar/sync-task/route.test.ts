@@ -80,6 +80,7 @@ const baseTask = {
   id: 'task-1',
   user_id: 'user-1',
   title: 'Test Task',
+  memo: 'Task memo',
   calendar_id: 'cal@gmail.com',
   google_event_id: null as string | null,
 }
@@ -143,6 +144,7 @@ describe('POST /api/calendar/sync-task', () => {
           scheduled_at: '2026-02-19T14:00:00Z',
           estimated_time: 60,
           calendar_id: 'cal@gmail.com',
+          memo: 'Task memo',
         })
       )
     })
@@ -159,7 +161,7 @@ describe('POST /api/calendar/sync-task', () => {
       expect(mockSyncTaskToCalendar).toHaveBeenCalledWith(
         'user-1',
         'task-1',
-        expect.objectContaining({ google_event_id: 'gevt-existing' })
+        expect.objectContaining({ google_event_id: 'gevt-existing', memo: 'Task memo' })
       )
     })
   })
@@ -329,7 +331,7 @@ describe('PATCH /api/calendar/sync-task', () => {
       expect(mockSyncTaskToCalendar).toHaveBeenCalledWith(
         'user-1',
         'task-1',
-        expect.objectContaining({ google_event_id: 'gevt-existing' })
+        expect.objectContaining({ google_event_id: 'gevt-existing', memo: 'Task memo' })
       )
     })
   })

@@ -1179,6 +1179,159 @@ export interface Database {
                     updated_at?: string
                 }
             }
+            memo_structure_runs: {
+                Row: {
+                    id: string
+                    user_id: string
+                    source_type: 'wishlist' | 'note'
+                    source_id: string
+                    project_id: string | null
+                    mode: 'quick' | 'deep' | 'manual'
+                    input_hash: string
+                    feedback: string | null
+                    project_context_snapshot: Json
+                    existing_item_snapshot: Json
+                    result: Json
+                    status: 'completed' | 'failed'
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    source_type: 'wishlist' | 'note'
+                    source_id: string
+                    project_id?: string | null
+                    mode?: 'quick' | 'deep' | 'manual'
+                    input_hash: string
+                    feedback?: string | null
+                    project_context_snapshot?: Json
+                    existing_item_snapshot?: Json
+                    result?: Json
+                    status?: 'completed' | 'failed'
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    source_type?: 'wishlist' | 'note'
+                    source_id?: string
+                    project_id?: string | null
+                    mode?: 'quick' | 'deep' | 'manual'
+                    input_hash?: string
+                    feedback?: string | null
+                    project_context_snapshot?: Json
+                    existing_item_snapshot?: Json
+                    result?: Json
+                    status?: 'completed' | 'failed'
+                }
+            }
+            memo_items: {
+                Row: {
+                    id: string
+                    user_id: string
+                    source_type: 'wishlist' | 'note'
+                    source_id: string
+                    structure_run_id: string | null
+                    parent_item_id: string | null
+                    project_id: string | null
+                    title: string
+                    body: string | null
+                    item_kind: 'summary' | 'theme' | 'task_candidate' | 'idea' | 'question' | 'reference' | 'decision'
+                    status: 'inbox' | 'organized' | 'task_candidate' | 'task' | 'scheduled' | 'done' | 'dismissed' | 'archived'
+                    content_hash: string
+                    source_input_hash: string
+                    confidence: number | null
+                    order_index: number
+                    metadata: Json
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    source_type: 'wishlist' | 'note'
+                    source_id: string
+                    structure_run_id?: string | null
+                    parent_item_id?: string | null
+                    project_id?: string | null
+                    title: string
+                    body?: string | null
+                    item_kind?: 'summary' | 'theme' | 'task_candidate' | 'idea' | 'question' | 'reference' | 'decision'
+                    status?: 'inbox' | 'organized' | 'task_candidate' | 'task' | 'scheduled' | 'done' | 'dismissed' | 'archived'
+                    content_hash: string
+                    source_input_hash: string
+                    confidence?: number | null
+                    order_index?: number
+                    metadata?: Json
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    source_type?: 'wishlist' | 'note'
+                    source_id?: string
+                    structure_run_id?: string | null
+                    parent_item_id?: string | null
+                    project_id?: string | null
+                    title?: string
+                    body?: string | null
+                    item_kind?: 'summary' | 'theme' | 'task_candidate' | 'idea' | 'question' | 'reference' | 'decision'
+                    status?: 'inbox' | 'organized' | 'task_candidate' | 'task' | 'scheduled' | 'done' | 'dismissed' | 'archived'
+                    content_hash?: string
+                    source_input_hash?: string
+                    confidence?: number | null
+                    order_index?: number
+                    metadata?: Json
+                    updated_at?: string
+                }
+            }
+            memo_node_links: {
+                Row: {
+                    id: string
+                    user_id: string
+                    memo_item_id: string
+                    source_type: 'wishlist' | 'note'
+                    source_id: string
+                    task_id: string | null
+                    project_id: string | null
+                    link_type: 'mindmap_node' | 'task' | 'schedule'
+                    status: 'active' | 'done' | 'dismissed' | 'archived'
+                    created_from_run_id: string | null
+                    metadata: Json
+                    created_at: string
+                    updated_at: string
+                }
+                Insert: {
+                    id?: string
+                    user_id: string
+                    memo_item_id: string
+                    source_type: 'wishlist' | 'note'
+                    source_id: string
+                    task_id?: string | null
+                    project_id?: string | null
+                    link_type?: 'mindmap_node' | 'task' | 'schedule'
+                    status?: 'active' | 'done' | 'dismissed' | 'archived'
+                    created_from_run_id?: string | null
+                    metadata?: Json
+                    created_at?: string
+                    updated_at?: string
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    memo_item_id?: string
+                    source_type?: 'wishlist' | 'note'
+                    source_id?: string
+                    task_id?: string | null
+                    project_id?: string | null
+                    link_type?: 'mindmap_node' | 'task' | 'schedule'
+                    status?: 'active' | 'done' | 'dismissed' | 'archived'
+                    created_from_run_id?: string | null
+                    metadata?: Json
+                    updated_at?: string
+                }
+            }
             ideal_attachments: {
                 Row: {
                     id: string
@@ -1465,7 +1618,7 @@ export interface Database {
 
 // Task stage type
 export type TaskStage = 'plan' | 'scheduled' | 'executing' | 'done' | 'archived'
-export type TaskSource = 'manual' | 'google_event'
+export type TaskSource = 'manual' | 'google_event' | 'memo' | 'wishlist'
 
 // Convenience type aliases for commonly used table rows
 export type Task = Database['public']['Tables']['tasks']['Row']
@@ -1522,6 +1675,18 @@ export type IdealGoalUpdate = Database['public']['Tables']['ideal_goals']['Updat
 export type IdealItem = Database['public']['Tables']['ideal_items']['Row']
 export type IdealItemInsert = Database['public']['Tables']['ideal_items']['Insert']
 export type IdealItemUpdate = Database['public']['Tables']['ideal_items']['Update']
+
+export type MemoStructureRun = Database['public']['Tables']['memo_structure_runs']['Row']
+export type MemoStructureRunInsert = Database['public']['Tables']['memo_structure_runs']['Insert']
+export type MemoStructureRunUpdate = Database['public']['Tables']['memo_structure_runs']['Update']
+
+export type MemoItem = Database['public']['Tables']['memo_items']['Row']
+export type MemoItemInsert = Database['public']['Tables']['memo_items']['Insert']
+export type MemoItemUpdate = Database['public']['Tables']['memo_items']['Update']
+
+export type MemoNodeLink = Database['public']['Tables']['memo_node_links']['Row']
+export type MemoNodeLinkInsert = Database['public']['Tables']['memo_node_links']['Insert']
+export type MemoNodeLinkUpdate = Database['public']['Tables']['memo_node_links']['Update']
 
 export type IdealAttachment = Database['public']['Tables']['ideal_attachments']['Row']
 export type IdealAttachmentInsert = Database['public']['Tables']['ideal_attachments']['Insert']

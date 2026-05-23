@@ -15,7 +15,7 @@ import 'reactflow/dist/style.css'
 import dagre from 'dagre'
 import { Task, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
-import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus, StickyNote, X, ImagePlus, Copy, Link2, Sparkles, Download } from "lucide-react"
+import { Calendar as CalendarIcon, ChevronRight, ChevronDown, Target, Clock, MoreHorizontal, CornerDownRight, Trash2, ChevronDown as ChevronDownKb, Plus, StickyNote, X, ImagePlus, Copy, Link2, Sparkles, Download, Check, Loader2 } from "lucide-react"
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight"
 import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select"
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select"
@@ -40,6 +40,40 @@ const fileToDataUrl = (file: File): Promise<string> =>
         reader.onerror = () => reject(new Error('Failed to read image file'))
         reader.readAsDataURL(file)
     })
+
+const DEFAULT_MEMO_TAGS = ['アイデア', 'お金', '学習', '今日する', '仕事', '生活', '健康', '人間関係']
+
+type LinkedWishlistMemo = {
+    id: string
+    title: string
+    project_id: string | null
+    description: string | null
+    category: string | null
+    tags: string[] | null
+    cover_image_url: string | null
+}
+
+type LinkedNoteMemo = {
+    id: string
+    content: string
+    project_id: string | null
+    image_urls: string[] | null
+}
+
+type MobileNodeData = {
+    label?: string
+    taskId?: string
+    project_id?: string | null
+    source?: string | null
+    memo?: string | null
+    memo_images?: string[] | null
+    projects?: Project[]
+    onSave?: (title: string) => Promise<void> | void
+    onUpdateMemo?: (memo: string | null) => Promise<void> | void
+    onUpdateMemoImages?: (memoImages: string[] | null) => Promise<void> | void
+    onUpdateProjectId?: (projectId: string | null) => Promise<void> | void
+    onConvertToMemo?: () => Promise<void> | void
+}
 
 function getLayoutedElements(nodes: Node[], edges: Edge[]): { nodes: Node[], edges: Edge[] } {
     const dagreGraph = new dagre.graphlib.Graph()
@@ -181,6 +215,290 @@ function HabitSettingsPanel({ data }: { data: any }) {
     )
 }
 
+function MobileLinkedMemoEditor({ data, onClose }: { data: MobileNodeData; onClose: () => void }) {
+    const [linkedItem, setLinkedItem] = useState<LinkedWishlistMemo | null>(null)
+    const [linkedNote, setLinkedNote] = useState<LinkedNoteMemo | null>(null)
+    const [isLoading, setIsLoading] = useState(false)
+    const [isSaving, setIsSaving] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [title, setTitle] = useState(data.label ?? '')
+    const [projectId, setProjectId] = useState(data.project_id ?? '')
+    const [category, setCategory] = useState('')
+    const [tags, setTags] = useState<string[]>([])
+    const [tagText, setTagText] = useState('')
+    const [memo, setMemo] = useState(data.memo ?? '')
+    const [imageUrlInput, setImageUrlInput] = useState('')
+    const [images, setImages] = useState<string[]>(() => Array.isArray(data.memo_images) ? data.memo_images.filter(Boolean) : [])
+
+    const taskId = data.taskId
+    const projects = data.projects ?? []
+    const tagOptions = useMemo(() => {
+        const set = new Set(DEFAULT_MEMO_TAGS)
+        if (category) set.add(category)
+        for (const tag of tags) set.add(tag)
+        return [...set].slice(0, 12)
+    }, [category, tags])
+
+    useEffect(() => {
+        let cancelled = false
+        async function loadLinkedMemo() {
+            if (!taskId) return
+            setIsLoading(true)
+            setError(null)
+            try {
+                const res = await fetch(`/api/mindmap/memo-links?task_id=${encodeURIComponent(taskId)}`)
+                if (!res.ok) throw new Error('紐づいたメモを読み込めませんでした')
+                const json = await res.json()
+                if (cancelled) return
+                const item = Array.isArray(json.items) ? json.items[0] as LinkedWishlistMemo | undefined : undefined
+                const note = Array.isArray(json.notes) ? json.notes[0] as LinkedNoteMemo | undefined : undefined
+                if (item) {
+                    setLinkedItem(item)
+                    setLinkedNote(null)
+                    setTitle(item.title ?? data.label ?? '')
+                    setProjectId(item.project_id ?? data.project_id ?? '')
+                    setCategory(item.category ?? '')
+                    setTags(Array.isArray(item.tags) ? item.tags : [])
+                    setMemo(item.description ?? data.memo ?? '')
+                    setImages(item.cover_image_url ? [item.cover_image_url] : [])
+                } else if (note) {
+                    setLinkedItem(null)
+                    setLinkedNote(note)
+                    setTitle(data.label ?? '')
+                    setProjectId(note.project_id ?? data.project_id ?? '')
+                    setCategory('')
+                    setTags([])
+                    setMemo(note.content ?? data.memo ?? '')
+                    setImages(Array.isArray(note.image_urls) ? note.image_urls.filter(Boolean) : [])
+                }
+            } catch (err) {
+                if (!cancelled) setError(err instanceof Error ? err.message : '紐づいたメモを読み込めませんでした')
+            } finally {
+                if (!cancelled) setIsLoading(false)
+            }
+        }
+        void loadLinkedMemo()
+        return () => { cancelled = true }
+    }, [taskId, data.label, data.memo, data.project_id])
+
+    const addTag = useCallback((nextTag = tagText) => {
+        const trimmed = nextTag.trim()
+        if (!trimmed) return
+        setTags(prev => prev.includes(trimmed) ? prev : [...prev, trimmed].slice(0, 6))
+        setTagText('')
+    }, [tagText])
+
+    const removeTag = useCallback((tag: string) => {
+        setTags(prev => prev.filter(t => t !== tag))
+    }, [])
+
+    const addImageUrl = useCallback(() => {
+        const next = imageUrlInput.trim()
+        if (!next) return
+        setImages(prev => prev.includes(next) ? prev : [...prev, next])
+        setImageUrlInput('')
+    }, [imageUrlInput])
+
+    const handleImageFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files ?? []).filter(file => file.type.startsWith('image/'))
+        if (files.length === 0) return
+        try {
+            const encoded = await Promise.all(files.map(fileToDataUrl))
+            setImages(prev => [...prev, ...encoded.filter(Boolean)])
+        } finally {
+            event.target.value = ''
+        }
+    }, [])
+
+    const handleSave = useCallback(async () => {
+        const nextTitle = title.trim()
+        if (!nextTitle) {
+            setError('メモの見出しは必須です')
+            return
+        }
+        setIsSaving(true)
+        setError(null)
+        try {
+            if (linkedItem) {
+                const res = await fetch(`/api/wishlist/${linkedItem.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: nextTitle,
+                        project_id: projectId || null,
+                        description: memo.trim() || null,
+                        category: category || null,
+                        tags,
+                        cover_image_url: images[0] ?? null,
+                    }),
+                })
+                if (!res.ok) throw new Error('メモの保存に失敗しました')
+            } else if (linkedNote) {
+                const res = await fetch('/api/notes', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: linkedNote.id,
+                        project_id: projectId || null,
+                        content: memo.trim() || nextTitle,
+                        image_urls: images.length > 0 ? images : null,
+                    }),
+                })
+                if (!res.ok) throw new Error('メモの保存に失敗しました')
+            }
+
+            await data.onSave?.(nextTitle)
+            await data.onUpdateProjectId?.(projectId || null)
+            await data.onUpdateMemo?.(memo.trim() || null)
+            await data.onUpdateMemoImages?.(images.length > 0 ? images : null)
+            onClose()
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'メモの保存に失敗しました')
+        } finally {
+            setIsSaving(false)
+        }
+    }, [title, linkedItem, linkedNote, projectId, memo, category, tags, images, data, onClose])
+
+    return (
+        <div className="space-y-5">
+            {isLoading && (
+                <div className="flex items-center gap-2 rounded-lg border p-3 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    紐づいたメモを読み込み中...
+                </div>
+            )}
+
+            <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">メモの見出し</label>
+                <input
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    className="nodrag nopan min-h-11 w-full rounded-lg border bg-background px-3 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+            </div>
+
+            <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">プロジェクト</label>
+                <div className="relative">
+                    <select
+                        value={projectId}
+                        onChange={e => setProjectId(e.target.value)}
+                        className="nodrag nopan min-h-11 w-full appearance-none rounded-lg border bg-background px-3 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                        <option value="">プロジェクト未設定</option>
+                        {projects.map(project => (
+                            <option key={project.id} value={project.id}>{project.title}</option>
+                        ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                </div>
+            </div>
+
+            <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground">タグ</label>
+                <div className="flex flex-wrap gap-1.5">
+                    {tagOptions.map(tag => {
+                        const selected = category === tag
+                        return (
+                            <button
+                                key={tag}
+                                type="button"
+                                onClick={() => setCategory(selected ? '' : tag)}
+                                className={cn(
+                                    "min-h-9 rounded-full border px-3 text-xs transition-colors",
+                                    selected ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground",
+                                )}
+                            >
+                                {tag}
+                            </button>
+                        )
+                    })}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                    {tags.map(tag => (
+                        <button
+                            key={tag}
+                            type="button"
+                            onClick={() => removeTag(tag)}
+                            className="rounded-full border px-2 py-1 text-xs text-muted-foreground"
+                        >
+                            {tag} ×
+                        </button>
+                    ))}
+                </div>
+                <div className="flex gap-2">
+                    <input
+                        value={tagText}
+                        onChange={e => setTagText(e.target.value)}
+                        onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault()
+                                addTag()
+                            }
+                        }}
+                        placeholder="タグを追加"
+                        className="nodrag nopan min-h-10 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                    <Button type="button" variant="outline" onClick={() => addTag()} className="min-h-10">追加</Button>
+                </div>
+            </div>
+
+            <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground">画像</label>
+                <div className="flex flex-wrap gap-2">
+                    <label className="flex h-24 w-28 items-center justify-center rounded-lg border border-dashed text-muted-foreground">
+                        <ImagePlus className="h-5 w-5" />
+                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageFileChange} />
+                    </label>
+                    {images.map((url, index) => (
+                        <div key={`${url}-${index}`} className="relative h-24 w-28 overflow-hidden rounded-lg border bg-muted">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={url} alt={`memo-image-${index + 1}`} className="h-full w-full object-cover" />
+                            <button
+                                type="button"
+                                onClick={() => setImages(prev => prev.filter((_, i) => i !== index))}
+                                className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white"
+                            >
+                                <X className="h-3 w-3" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+                <div className="flex gap-2">
+                    <input
+                        value={imageUrlInput}
+                        onChange={e => setImageUrlInput(e.target.value)}
+                        placeholder="画像URL または data:image..."
+                        className="nodrag nopan min-h-10 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                    <Button type="button" variant="outline" onClick={addImageUrl} className="min-h-10">追加</Button>
+                </div>
+            </div>
+
+            <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">メモ</label>
+                <textarea
+                    value={memo}
+                    onChange={e => setMemo(e.target.value)}
+                    rows={7}
+                    className="nodrag nopan w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+            </div>
+
+            {error && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                    {error}
+                </div>
+            )}
+
+            <Button type="button" onClick={handleSave} disabled={isSaving || !title.trim()} className="w-full min-h-11">
+                {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                メモを保存
+            </Button>
+        </div>
+    )
+}
+
 // --- Mobile Project Node ---
 const MobileProjectNode = React.memo(({ data, selected }: NodeProps) => {
     const [isEditing, setIsEditing] = useState(false)
@@ -266,6 +584,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
     const [showMenu, setShowMenu] = useState(false)
     const [imageUrlInput, setImageUrlInput] = useState('')
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
+    const [isConvertingToMemo, setIsConvertingToMemo] = useState(false)
     const inputRef = useRef<HTMLInputElement>(null)
     const wasSelectedRef = useRef(false)
     const justSavedRef = useRef(false)
@@ -319,6 +638,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
         ? (data.memo_images as string[]).filter((url: string) => typeof url === 'string' && !!url.trim())
         : []
     const hasMemoImages = memoImages.length > 0
+    const isLinkedMemoNode = data?.source === 'memo' || data?.source === 'wishlist'
     const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo || hasMemoImages
 
     const writeClipboard = useCallback(async (text: string, successMessage: string) => {
@@ -413,15 +733,38 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
         }
     }, [])
 
+    const handleConvertToMemo = useCallback(async () => {
+        if (!data?.onConvertToMemo || isConvertingToMemo) return
+        setIsConvertingToMemo(true)
+        setCopyFeedback(null)
+        try {
+            await data.onConvertToMemo()
+            setCopyFeedback('メモに変換しました')
+            setTimeout(() => setCopyFeedback(null), 1600)
+            setShowMenu(false)
+        } catch (error) {
+            console.error('[MobileTaskNode] Failed to convert task to memo:', error)
+            setCopyFeedback(error instanceof Error ? error.message : 'メモへの変換に失敗しました')
+            setTimeout(() => setCopyFeedback(null), 2200)
+        } finally {
+            setIsConvertingToMemo(false)
+        }
+    }, [data, isConvertingToMemo])
+
     return (
         <div
             className={cn(
                 "relative px-2 py-1.5 rounded-lg bg-background border text-xs shadow-sm flex flex-col gap-0.5 transition-all min-h-[36px] min-w-[92px] max-w-[128px]",
                 isHabit && "border-blue-400 bg-blue-50 dark:bg-blue-950/30",
+                isLinkedMemoNode && !isHabit && "border-amber-400 bg-amber-50 dark:bg-amber-950/25",
                 isNodeSelected && isHabit && "ring-2 ring-blue-400 ring-offset-2 ring-offset-background",
-                isNodeSelected && !isHabit && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                isNodeSelected && !isHabit && !isLinkedMemoNode && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                isNodeSelected && isLinkedMemoNode && !isHabit && "ring-2 ring-amber-400 ring-offset-2 ring-offset-background",
             )}
         >
+            {isLinkedMemoNode && (
+                <div className="absolute -left-0.5 top-1 bottom-1 w-1 rounded-full bg-amber-400" />
+            )}
             <Handle type="target" position={Position.Left} className="!bg-muted-foreground/50 !w-2 !h-2" />
 
             {/* Row 1: Content */}
@@ -437,7 +780,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                 )}
 
                 {/* Status dot */}
-                <div className={cn("w-2 h-2 rounded-full shrink-0", isDone ? "bg-primary" : "bg-muted-foreground/30")} />
+                <div className={cn("w-2 h-2 rounded-full shrink-0", isDone ? "bg-primary" : isLinkedMemoNode ? "bg-amber-400" : "bg-muted-foreground/30")} />
 
                 {/* Habit icon */}
                 {data?.is_habit && data?.habit_icon && (
@@ -487,6 +830,12 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                     <CalendarIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 )}
 
+                {isLinkedMemoNode && (
+                    <span className="shrink-0 rounded-[4px] bg-amber-200 px-1 text-[9px] font-medium leading-4 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200">
+                        メモ
+                    </span>
+                )}
+
                 {/* Menu button */}
                 <button
                     className="nodrag nopan w-7 h-7 flex items-center justify-center text-muted-foreground active:bg-muted rounded shrink-0"
@@ -514,7 +863,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         </div>
 
                         <div className="flex items-center justify-between px-4 py-2 border-b flex-shrink-0">
-                            <h3 className="text-base font-semibold">ノード詳細</h3>
+                            <h3 className="text-base font-semibold">{isLinkedMemoNode ? 'メモを編集' : 'ノード詳細'}</h3>
                             <button
                                 className="p-1.5 rounded-full hover:bg-muted transition-colors"
                                 onClick={() => setShowMenu(false)}
@@ -524,6 +873,30 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                         </div>
 
                         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+                            {isLinkedMemoNode ? (
+                                <MobileLinkedMemoEditor data={data as MobileNodeData} onClose={() => setShowMenu(false)} />
+                            ) : (
+                                <>
+                            <div className="rounded-lg border p-3 space-y-2">
+                                <div className="text-xs font-medium text-muted-foreground">メモ化</div>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="w-full justify-start text-sm h-10"
+                                    disabled={!data?.onConvertToMemo || isConvertingToMemo}
+                                    onClick={(e) => {
+                                        e.stopPropagation()
+                                        void handleConvertToMemo()
+                                    }}
+                                >
+                                    {isConvertingToMemo ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <StickyNote className="w-4 h-4 mr-2" />}
+                                    メモに変換
+                                </Button>
+                                {copyFeedback && (
+                                    <div className={cn("text-[10px]", copyFeedback.includes('失敗') ? "text-destructive" : "text-emerald-400")}>{copyFeedback}</div>
+                                )}
+                            </div>
+
                             <div className="rounded-lg border p-3 space-y-2">
                                 <div className="text-xs font-medium text-muted-foreground">タスク</div>
                                 <button
@@ -657,6 +1030,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                                     <div className="space-y-2">
                                         {memoImages.map((url, index) => (
                                             <div key={`${url}-${index}`} className="border rounded p-2 space-y-2">
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img
                                                     src={url}
                                                     alt={`memo-image-${index + 1}`}
@@ -743,8 +1117,11 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                             <div className="rounded-lg border p-3">
                                 <HabitSettingsPanel data={data} />
                             </div>
+                                </>
+                            )}
                         </div>
 
+                        {!isLinkedMemoNode && (
                         <div className="border-t px-4 py-3 grid grid-cols-2 gap-2 flex-shrink-0 bg-background">
                             <Button
                                 size="sm"
@@ -770,6 +1147,7 @@ const MobileTaskNode = React.memo(({ data, selected }: NodeProps) => {
                                 閉じる
                             </Button>
                         </div>
+                        )}
                     </div>
                 </div>,
                 document.body
@@ -819,6 +1197,7 @@ function getTaskAutoMinutes(taskId: string, childrenMap: Map<string, Task[]>, ta
 // --- Main Component ---
 interface MobileMindMapProps {
     project: Project
+    projects?: Project[]
     groups: Task[]
     tasks: Task[]
     onCreateGroup?: (title: string) => Promise<Task | null>
@@ -839,7 +1218,7 @@ function findRootGroupIdUtil(taskId: string, taskMap: Map<string, Task>): string
 }
 
 function MobileMindMapContent({
-    project, groups, tasks,
+    project, projects = [], groups, tasks,
     onCreateGroup, onDeleteGroup, onUpdateProject,
     onCreateTask, onUpdateTask, onDeleteTask, onReorderTask,
 }: MobileMindMapProps) {
@@ -914,7 +1293,7 @@ function MobileMindMapContent({
             const parent = task.parent_task_id ? taskMap.get(task.parent_task_id) : null
             const parentIsHabit = parent?.is_habit ?? false
 
-            const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at || !!task.memo
+            const hasInfoRow = (effectiveMinutes > 0) || (task.priority != null) || !!task.scheduled_at || !!task.memo || (Array.isArray(task.memo_images) && task.memo_images.length > 0)
             const isNested = depth >= 1
             const nodeWidth = estimateTaskNodeWidth(task.title, true)
             const height = estimateTaskNodeHeight(task.title, hasInfoRow, nodeWidth, true)
@@ -928,6 +1307,8 @@ function MobileMindMapContent({
                 data: {
                     label: task.title,
                     taskId: task.id,
+                    project_id: task.project_id ?? null,
+                    projects,
                     status: task.status,
                     priority: task.priority,
                     estimatedDisplayMinutes: effectiveMinutes,
@@ -936,6 +1317,7 @@ function MobileMindMapContent({
                     scheduled_at: task.scheduled_at,
                     calendar_id: task.calendar_id,
                     google_event_id: task.google_event_id,
+                    source: task.source,
                     is_habit: task.is_habit,
                     parentIsHabit,
                     compact: isNested,
@@ -1024,6 +1406,38 @@ function MobileMindMapContent({
                     memo_images: task.memo_images ?? null,
                     onUpdateMemo: (memo: string | null) => onUpdateTask?.(task.id, { memo }),
                     onUpdateMemoImages: (memo_images: string[] | null) => onUpdateTask?.(task.id, { memo_images }),
+                    onUpdateProjectId: (project_id: string | null) => onUpdateTask?.(task.id, { project_id }),
+                    onConvertToMemo: async () => {
+                        const title = task.title?.trim() || '無題メモ'
+                        const memoText = typeof task.memo === 'string' ? task.memo.trim() : ''
+                        const res = await fetch('/api/wishlist', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                title,
+                                project_id: task.project_id ?? null,
+                                description: memoText || null,
+                                cover_image_url: Array.isArray(task.memo_images) ? task.memo_images[0] ?? null : null,
+                                tags: [],
+                                status: 'memo',
+                                memo_status: 'organized',
+                                ai_source_payload: {
+                                    mindmap_links: [{
+                                        task_id: task.id,
+                                        task_title: title,
+                                        project_id: task.project_id ?? null,
+                                        source: 'task_settings_convert',
+                                        linked_at: new Date().toISOString(),
+                                    }],
+                                },
+                            }),
+                        })
+                        if (!res.ok) {
+                            const payload = await res.json().catch(() => ({}))
+                            throw new Error(payload?.error || 'メモへの変換に失敗しました')
+                        }
+                        await onUpdateTask?.(task.id, { source: 'wishlist' })
+                    },
                 },
             })
 
@@ -1048,7 +1462,7 @@ function MobileMindMapContent({
 
         const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(nodes, edgeList)
         return { layoutNodes: layouted, edges: layoutedEdges }
-    }, [project, groups, tasks, childrenMap, taskMap, collapsedTaskIds, selectedNodeId, onUpdateProject, onCreateGroup, onUpdateTask, onDeleteTask, onDeleteGroup, onCreateTask])
+    }, [project, projects, groups, tasks, childrenMap, taskMap, collapsedTaskIds, selectedNodeId, onUpdateProject, onCreateGroup, onUpdateTask, onDeleteTask, onDeleteGroup, onCreateTask])
 
     // Proxy text augmentation (Dagre 再計算を避けるため layout useMemo とは分離)
     const augmentedNodes = useMemo(() => {

@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { usePathname, useRouter } from "next/navigation"
-import { CalendarDays, Bot, Sparkles, Settings } from "lucide-react"
+import { CalendarDays, Network, Sparkles, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type BottomNavItem =
@@ -13,7 +13,7 @@ type BottomNavItem =
 const mainNavItems: BottomNavItem[] = [
     { type: "view", id: "today",     icon: CalendarDays, label: "Today" },
     { type: "view", id: "long-term", icon: Sparkles,     label: "メモ" },
-    { type: "view", id: "ai",        icon: Bot,          label: "AI" },
+    { type: "view", id: "ai",        icon: Network,      label: "マップ" },
     { type: "settings",              icon: Settings,     label: "設定" },
 ]
 

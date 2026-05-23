@@ -111,6 +111,7 @@ export async function POST(request: NextRequest) {
       estimated_time,
       google_event_id: currentGoogleEventId,
       calendar_id,
+      memo: task.memo,
       reminders,
     });
 
@@ -176,6 +177,7 @@ export async function PATCH(request: NextRequest) {
       estimated_time,
       google_event_id: task.google_event_id,
       calendar_id,
+      memo: task.memo,
       reminders,
     });
 

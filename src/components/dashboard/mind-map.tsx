@@ -20,30 +20,22 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, Target, Clock, GripVertical, StickyNote, ImagePlus, Copy, Link2, Sparkles, Check, ChevronDown, ChevronRight } from "lucide-react";
-import { PriorityBadge, PriorityPopover, Priority, getPriorityIconColor } from "@/components/ui/priority-select";
+import { Calendar as CalendarIcon, X, GripVertical, StickyNote, ImagePlus, Check, ChevronDown, ChevronRight } from "lucide-react";
+import { PriorityBadge, PriorityPopover, Priority } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
 import { useDrag } from "@/contexts/DragContext";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { TaskCalendarSelect } from "@/components/tasks/task-calendar-select";
 import { DateTimePicker } from "@/lib/dynamic-imports";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 import { format } from "date-fns";
-import { ja } from "date-fns/locale";
 import {
     NODE_WIDTH, NODE_HEIGHT, PROJECT_NODE_WIDTH, PROJECT_NODE_HEIGHT,
     estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements,
     NODE_MIN_WIDTH, NODE_RESIZE_MAX_WIDTH,
 } from "@/lib/mindmap-layout";
 import { BranchEdge } from "@/components/mindmap/branch-edge";
+import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
-
-type HabitUpdatePayload = Partial<Pick<Task,
-    'is_habit' | 'habit_frequency' | 'habit_icon' | 'habit_start_date' | 'habit_end_date'
->>;
 
 type ProjectNodeData = {
     label?: string;
@@ -99,6 +91,7 @@ type TaskNodeData = {
     onToggleCollapse?: () => void;
     collapsed?: boolean;
     google_event_id?: string | null;
+    source?: string | null;
     onUpdateStatus?: (status: string) => void;
     onResize?: (newWidth: number, commit: boolean) => void;
     estimatedIsOverride?: boolean;
@@ -109,14 +102,6 @@ type TaskNodeData = {
     onUpdateMemo?: (memo: string | null) => void;
     onRegisterSchedule?: (params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<void>;
     onOpenLinkedMemos?: () => void;
-};
-
-type HabitSettingsPanelData = {
-    is_habit?: boolean;
-    habit_frequency?: string | null;
-    habit_start_date?: string | null;
-    habit_end_date?: string | null;
-    onUpdateHabit?: (updates: HabitUpdatePayload) => void;
 };
 
 type MindMapCallbacks = {
@@ -347,12 +332,6 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps<ProjectNodeData>) 
 });
 ProjectNode.displayName = 'ProjectNode';
 
-// HABIT SETTINGS PANEL - local state for instant UI, saves via ref on popover close
-const HABIT_DAYS = [
-    { key: 'mon', label: '月' }, { key: 'tue', label: '火' }, { key: 'wed', label: '水' },
-    { key: 'thu', label: '木' }, { key: 'fri', label: '金' }, { key: 'sat', label: '土' }, { key: 'sun', label: '日' },
-] as const;
-
 const fileToDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -360,118 +339,6 @@ const fileToDataUrl = (file: File): Promise<string> =>
         reader.onerror = () => reject(new Error('Failed to read image file'));
         reader.readAsDataURL(file);
     });
-
-function HabitSettingsPanel({ data }: { data: HabitSettingsPanelData }) {
-    const [isHabit, setIsHabit] = useState<boolean>(data?.is_habit ?? false);
-    const [frequency, setFrequency] = useState<string>(data?.habit_frequency ?? '');
-    const [startDate, setStartDate] = useState<string>(data?.habit_start_date ?? '');
-    const [endDate, setEndDate] = useState<string>(data?.habit_end_date ?? '');
-
-    // Save immediately on any change via stable ref to onUpdateHabit
-    const onUpdateHabitRef = useRef(data?.onUpdateHabit);
-    useEffect(() => {
-        onUpdateHabitRef.current = data?.onUpdateHabit;
-    }, [data?.onUpdateHabit]);
-
-    const saveNow = useCallback((updates: {
-        isHabit: boolean; frequency: string; startDate: string; endDate: string;
-    }) => {
-        onUpdateHabitRef.current?.({
-            is_habit: updates.isHabit,
-            habit_frequency: updates.frequency || null,
-            habit_icon: null,
-            habit_start_date: updates.startDate || null,
-            habit_end_date: updates.endDate || null,
-        });
-    }, []);
-
-    const handleToggle = useCallback(() => {
-        setIsHabit(prev => {
-            const next = !prev;
-            saveNow({ isHabit: next, frequency, startDate, endDate });
-            return next;
-        });
-    }, [saveNow, frequency, startDate, endDate]);
-
-    const selectedDays = new Set(frequency.split(',').filter(Boolean));
-    const toggleDay = (key: string) => {
-        const next = new Set(selectedDays);
-        if (next.has(key)) next.delete(key); else next.add(key);
-        const newFreq = HABIT_DAYS.map(d => d.key).filter(k => next.has(k)).join(',');
-        setFrequency(newFreq);
-        saveNow({ isHabit, frequency: newFreq, startDate, endDate });
-    };
-
-    const handlePreset = (val: string) => {
-        setFrequency(val);
-        saveNow({ isHabit, frequency: val, startDate, endDate });
-    };
-
-    const handleStartDate = (val: string) => {
-        setStartDate(val);
-        saveNow({ isHabit, frequency, startDate: val, endDate });
-    };
-
-    const handleEndDate = (val: string) => {
-        setEndDate(val);
-        saveNow({ isHabit, frequency, startDate, endDate: val });
-    };
-
-    return (
-        <>
-            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">習慣</div>
-            <div className="nodrag nopan px-2 pb-2 space-y-2">
-                {/* Toggle */}
-                <button type="button" className="flex items-center justify-between w-full"
-                    onClick={(e) => { e.stopPropagation(); handleToggle(); }}
-                    onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-                    <span className="text-xs">習慣として設定</span>
-                    <div className={cn("inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-xs transition-colors", isHabit ? "bg-primary" : "bg-input")}>
-                        <span className={cn("pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform", isHabit ? "translate-x-4" : "translate-x-0")} />
-                    </div>
-                </button>
-
-                {isHabit && (
-                    <>
-                        {/* Day-of-week + presets in compact layout */}
-                        <div className="text-xs text-muted-foreground">曜日</div>
-                        <div className="flex gap-0.5">
-                            {HABIT_DAYS.map(({ key, label }) => (
-                                <button key={key} type="button"
-                                    className={cn("flex-1 h-6 text-[11px] rounded font-medium transition-colors",
-                                        selectedDays.has(key) ? "bg-primary text-primary-foreground" : "bg-muted/50 text-muted-foreground hover:bg-muted")}
-                                    onClick={(e) => { e.stopPropagation(); toggleDay(key); }}>
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="flex gap-1">
-                            {[{ label: '毎日', val: 'mon,tue,wed,thu,fri,sat,sun' }, { label: '平日', val: 'mon,tue,wed,thu,fri' }, { label: '土日', val: 'sat,sun' }].map(p => (
-                                <button key={p.val} type="button"
-                                    className={cn("flex-1 h-5 text-[10px] rounded transition-colors", frequency === p.val ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-muted/50")}
-                                    onClick={(e) => { e.stopPropagation(); handlePreset(p.val); }}>
-                                    {p.label}
-                                </button>
-                            ))}
-                        </div>
-
-                        {/* Period - compact horizontal */}
-                        <div className="text-xs text-muted-foreground">期間</div>
-                        <div className="flex items-center gap-1">
-                            <input type="date" className="flex-1 h-6 px-1 text-[11px] border rounded bg-background min-w-0"
-                                value={startDate} onChange={(e) => { e.stopPropagation(); handleStartDate(e.target.value); }}
-                                onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} />
-                            <span className="text-[10px] text-muted-foreground shrink-0">〜</span>
-                            <input type="date" className="flex-1 h-6 px-1 text-[11px] border rounded bg-background min-w-0"
-                                value={endDate} onChange={(e) => { e.stopPropagation(); handleEndDate(e.target.value); }}
-                                onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} />
-                        </div>
-                    </>
-                )}
-            </div>
-        </>
-    );
-}
 
 // TASK NODE
 const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeData>) => {
@@ -481,14 +348,6 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     const [isEditing, setIsEditing] = useState<boolean>(false);
     const [editValue, setEditValue] = useState<string>(data?.label ?? '');
     const [showCaret, setShowCaret] = useState<boolean>(false);
-    const [showScheduleMenu, setShowScheduleMenu] = useState<boolean>(false);
-    const [imageUrlInput, setImageUrlInput] = useState<string>('');
-    const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
-    // スケジュールパネル用ローカル状態（登録ボタンを押すまで確定しない）
-    const [localScheduledAt, setLocalScheduledAt] = useState<Date | null>(null);
-    const [localDurationMinutes, setLocalDurationMinutes] = useState<number>(0);
-    const [localCalendarId, setLocalCalendarId] = useState<string | null>(null);
-    const [isRegistering, setIsRegistering] = useState<boolean>(false);
 
 
     // Flag to prevent double-save when exiting via keyboard (Enter/Tab/Escape)
@@ -497,15 +356,6 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     const wasSelectedRef = useRef(false);
     // Guard: prevent focus operations from triggering onChange → edit mode
     const justFocusedRef = useRef(false);
-
-    // スケジュールパネルが開いた時にローカル状態を現在値で初期化
-    useEffect(() => {
-        if (showScheduleMenu) {
-            setLocalScheduledAt(data?.scheduled_at ? new Date(data.scheduled_at) : null);
-            setLocalDurationMinutes(data?.estimatedDisplayMinutes ?? 0);
-            setLocalCalendarId(data?.calendar_id || null);
-        }
-    }, [showScheduleMenu]);
 
     // Trigger edit from external
     useEffect(() => {
@@ -772,7 +622,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     }, [saveValue]);
 
     // Track selection state before mousedown for click-to-edit detection
-    const handleWrapperMouseDown = useCallback((e: React.MouseEvent) => {
+    const handleWrapperMouseDown = useCallback(() => {
         // Record whether node was already selected before this click
         wasSelectedRef.current = !!selected;
 
@@ -845,67 +695,11 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
     const hasScheduledAt = settings.showScheduledAt && !!data?.scheduled_at;
     const hasMemo = !!data?.memo;
     const hasMemoImages = memoImages.length > 0;
+    const isMemoNode = data?.source === 'memo' || data?.source === 'wishlist' || hasMemo || hasMemoImages;
     const hasInfoRow = hasEstimatedTime || hasPriority || hasScheduledAt || hasMemo || hasMemoImages;
     const isTaskDone = data?.is_habit
         ? (data?.status === 'done' && !!data?.habit_end_date && new Date(data.habit_end_date) < new Date())
         : data?.status === 'done';
-
-    const writeClipboard = useCallback(async (text: string, successMessage: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopyFeedback(successMessage);
-            setTimeout(() => setCopyFeedback(null), 1400);
-        } catch (error) {
-            console.error('[TaskNode] Failed to write clipboard:', error);
-            setCopyFeedback('コピーに失敗しました');
-            setTimeout(() => setCopyFeedback(null), 1600);
-        }
-    }, []);
-
-    const handleAddImageUrl = useCallback(() => {
-        const nextUrl = imageUrlInput.trim();
-        if (!nextUrl) return;
-        if (memoImages.includes(nextUrl)) {
-            setImageUrlInput('');
-            return;
-        }
-        data?.onUpdateMemoImages?.([...memoImages, nextUrl]);
-        setImageUrlInput('');
-    }, [imageUrlInput, memoImages, data]);
-
-    const handleImageFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(event.target.files ?? []);
-        if (files.length === 0) return;
-
-        try {
-            const encoded = await Promise.all(
-                files
-                    .filter(file => file.type.startsWith('image/'))
-                    .map(fileToDataUrl)
-            );
-            const merged = [...memoImages, ...encoded.filter(Boolean)];
-            data?.onUpdateMemoImages?.(merged.length > 0 ? merged : null);
-        } catch (error) {
-            console.error('[TaskNode] Failed to encode image files:', error);
-        } finally {
-            event.target.value = '';
-        }
-    }, [memoImages, data]);
-
-    const handleRemoveImage = useCallback((targetUrl: string) => {
-        const filtered = memoImages.filter(url => url !== targetUrl);
-        data?.onUpdateMemoImages?.(filtered.length > 0 ? filtered : null);
-    }, [memoImages, data]);
-
-    const buildAiMemoPayload = useCallback(() => {
-        const memoText = typeof data?.memo === 'string' ? data.memo.trim() : '';
-        const sections: string[] = [];
-        if (memoText) sections.push(`メモ:\n${memoText}`);
-        if (memoImages.length > 0) {
-            sections.push(`画像:\n${memoImages.map((url, idx) => `![image-${idx + 1}](${url})`).join('\n')}`);
-        }
-        return sections.join('\n\n').trim();
-    }, [data?.memo, memoImages]);
 
     return (
         <div
@@ -914,10 +708,17 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 "relative px-1.5 py-1 rounded-lg bg-background border text-[13px] shadow-sm flex flex-col gap-0 transition-all outline-none min-h-[30px] group",
                 !isEditing && "cursor-grab active:cursor-grabbing",
                 dragging && "is-dragging-active",
-                (data?.is_habit || data?.parentIsHabit) && "border-blue-400",
-                (selected || data?.isSelected) && (data?.is_habit || data?.parentIsHabit)
+                isTaskDone
+                    ? "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale"
+                    : (data?.is_habit || data?.parentIsHabit) && "border-blue-400",
+                !isTaskDone && isMemoNode && !(data?.is_habit || data?.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
+                (selected || data?.isSelected) && isTaskDone
+                    ? "ring-2 ring-muted-foreground/40 ring-offset-2 ring-offset-background"
+                    : (selected || data?.isSelected) && (data?.is_habit || data?.parentIsHabit)
                     ? "ring-2 ring-blue-400 ring-offset-2 ring-offset-background"
-                    : (selected || data?.isSelected) && "ring-2 ring-white ring-offset-2 ring-offset-background",
+                    : (selected || data?.isSelected) && isMemoNode
+                        ? "ring-2 ring-amber-400 ring-offset-2 ring-offset-background"
+                        : (selected || data?.isSelected) && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 data?.isDropTarget && data?.dropPosition === 'as-child' && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]",
             )}
             tabIndex={0}
@@ -927,6 +728,9 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
             onMouseDown={handleWrapperMouseDown}
         >
             {/* Drop position indicators */}
+            {isMemoNode && (
+                <div className={cn("absolute -left-0.5 top-1 bottom-1 w-1 rounded-full", isTaskDone ? "bg-muted-foreground/35" : "bg-amber-400")} />
+            )}
             {data?.isDropTarget && data?.dropPosition === 'above' && (
                 <div className="absolute -top-1.5 left-0 right-0 h-1 bg-sky-400 rounded-full shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
             )}
@@ -962,7 +766,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         <span className={cn(
                             "w-3.5 h-3.5 rounded-[3px] border flex items-center justify-center transition-colors",
                             isTaskDone
-                                ? "bg-primary border-primary text-primary-foreground"
+                                ? "bg-muted border-muted-foreground/40 text-muted-foreground"
                                 : "border-muted-foreground/50 hover:border-foreground bg-background"
                         )}>
                             {isTaskDone && <Check className="w-2 h-2" strokeWidth={3.5} />}
@@ -1034,6 +838,17 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                     </div>
                 )}
 
+                {isMemoNode && (
+                    <span className={cn(
+                        "nodrag nopan shrink-0 rounded-[4px] px-1 text-[9px] font-medium leading-4",
+                        isTaskDone
+                            ? "bg-muted text-muted-foreground"
+                            : "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200"
+                    )} title="メモ由来">
+                        メモ
+                    </span>
+                )}
+
                 {/* Menu column: 子数バッジ(上段・極小) + ハンバーガー(下段) を縦積み */}
                 <div className="flex flex-col items-center shrink-0 ml-0.5 leading-none gap-0">
                     {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
@@ -1059,339 +874,22 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         </button>
                     )}
 
-                {/* Quick Action Menu */}
-                <Dialog open={showScheduleMenu} onOpenChange={setShowScheduleMenu}>
-                    <DialogTrigger asChild>
-                        <button
-                            type="button"
-                            className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                data?.onOpenLinkedMemos?.();
-                            }}
-                            title="タスク詳細設定"
-                        >
-                            <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
-                                <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
-                                <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
-                                <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
-                            </svg>
-                        </button>
-                    </DialogTrigger>
-                    <DialogContent
-                        showCloseButton={false}
-                        className="nodrag nopan w-[min(94vw,46rem)] max-w-[min(94vw,46rem)] h-[min(88vh,46rem)] p-3 overflow-hidden"
-                        style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
-                        onTouchMove={(e) => e.stopPropagation()}
-                        onOpenAutoFocus={(e) => e.preventDefault()}
+                    <button
+                        type="button"
+                        className="nodrag nopan w-5 h-5 text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-all flex items-center justify-center rounded shrink-0"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            data?.onOpenLinkedMemos?.();
+                        }}
+                        title="関連メモ"
+                        aria-label="関連メモを開く"
                     >
-                        <div className="grid h-full grid-cols-2 gap-3">
-                            <div className="min-h-0 overflow-y-auto pr-1 space-y-1.5">
-                        {/* Priority */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">優先度</div>
-                        <div className="px-2 pb-2">
-                            <PriorityPopover
-                                value={(data?.priority ?? 3) as Priority}
-                                onChange={(priority) => data?.onUpdatePriority?.(priority)}
-                                trigger={
-                                    <Button variant="outline" size="sm" className="w-full justify-start text-xs h-8">
-                                        <Target className="w-3 h-3 mr-2" style={{ color: getPriorityIconColor((data?.priority ?? 3) as Priority) }} />
-                                        {data?.priority != null ? (
-                                            <PriorityBadge value={data.priority as Priority} />
-                                        ) : (
-                                            <span className="text-muted-foreground">優先度を設定</span>
-                                        )}
-                                    </Button>
-                                }
-                            />
-                        </div>
-
-                        {/* Schedule Section */}
-                        {(() => {
-                            const hasDuration = localDurationMinutes > 0;
-                            const hasDate = !!localScheduledAt;
-                            const hasCalendar = !!localCalendarId;
-                            const isReady = hasDuration && hasDate && hasCalendar;
-                            const steps = [
-                                { label: '所要時間', done: hasDuration },
-                                { label: '日時', done: hasDate },
-                                { label: 'カレンダー', done: hasCalendar },
-                            ];
-                            return (
-                                <div className="px-2 pt-2 pb-1">
-                                    <div className={cn(
-                                        "rounded-xl border-2 transition-colors duration-300 overflow-hidden",
-                                        isReady ? "border-primary/60 bg-primary/5" : "border-border bg-muted/20"
-                                    )}>
-                                        {/* ヘッダー */}
-                                        <div className={cn(
-                                            "flex items-center justify-between px-3 py-2 border-b transition-colors duration-300",
-                                            isReady ? "border-primary/30 bg-primary/10" : "border-border"
-                                        )}>
-                                            <div className="flex items-center gap-1.5">
-                                                <CalendarIcon className={cn("w-4 h-4 transition-colors", isReady ? "text-primary" : "text-muted-foreground")} />
-                                                <span className={cn("text-sm font-semibold transition-colors", isReady ? "text-primary" : "text-foreground")}>スケジュール</span>
-                                            </div>
-                                            {/* ステップインジケーター */}
-                                            <div className="flex items-center gap-1">
-                                                {steps.map((s, i) => (
-                                                    <div key={i} className={cn(
-                                                        "w-1.5 h-1.5 rounded-full transition-all duration-300",
-                                                        s.done ? "bg-primary scale-110" : "bg-muted-foreground/30"
-                                                    )} title={s.label} />
-                                                ))}
-                                            </div>
-                                        </div>
-                                        {/* フィールド群 */}
-                                        <div className="p-3 space-y-2.5">
-                                            {/* ① 所要時間 */}
-                                            <div className="flex items-center gap-2">
-                                                <span className={cn("text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-colors duration-200",
-                                                    hasDuration ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                                                )}>1</span>
-                                                <div className="flex-1">
-                                                    <EstimatedTimePopover
-                                                        valueMinutes={localDurationMinutes}
-                                                        onChangeMinutes={(minutes) => {
-                                                            setLocalDurationMinutes(minutes);
-                                                            data?.onUpdateEstimatedTime?.(minutes);
-                                                        }}
-                                                        isOverridden={!!data?.estimatedIsOverride}
-                                                        autoMinutes={data?.estimatedAutoMinutes}
-                                                        onResetAuto={data?.hasChildren ? () => {
-                                                            setLocalDurationMinutes(0);
-                                                            data?.onUpdateEstimatedTime?.(0);
-                                                        } : undefined}
-                                                        trigger={
-                                                            <Button variant="outline" size="sm" className={cn("w-full justify-start text-xs h-8 transition-colors", hasDuration && "border-primary/40 text-foreground")}>
-                                                                <Clock className="w-3 h-3 mr-2 shrink-0" />
-                                                                {hasDuration ? <EstimatedTimeBadge minutes={localDurationMinutes} /> : <span className="text-muted-foreground">所要時間を設定</span>}
-                                                            </Button>
-                                                        }
-                                                    />
-                                                </div>
-                                            </div>
-                                            {/* ② 日時 */}
-                                            <div className="flex items-center gap-2">
-                                                <span className={cn("text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-colors duration-200",
-                                                    hasDate ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                                                )}>2</span>
-                                                <div className="flex-1">
-                                                    <DateTimePicker
-                                                        date={localScheduledAt ?? undefined}
-                                                        setDate={(date) => {
-                                                            const next = date ?? null;
-                                                            setLocalScheduledAt(next);
-                                                            data?.onUpdateScheduledAt?.(next ? next.toISOString() : null);
-                                                        }}
-                                                        trigger={
-                                                            <Button variant="outline" size="sm" className={cn("w-full justify-start text-xs h-8 transition-colors", hasDate && "border-primary/40")}>
-                                                                <CalendarIcon className="w-3 h-3 mr-2 shrink-0" />
-                                                                {hasDate ? <span>{format(localScheduledAt!, 'M/d (E) HH:mm', { locale: ja })}</span> : <span className="text-muted-foreground">日時を設定</span>}
-                                                            </Button>
-                                                        }
-                                                    />
-                                                </div>
-                                            </div>
-                                            {/* ③ カレンダー */}
-                                            <div className="flex items-center gap-2">
-                                                <span className={cn("text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shrink-0 transition-colors duration-200",
-                                                    hasCalendar ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                                                )}>3</span>
-                                                <div className="flex-1">
-                                                    <TaskCalendarSelect
-                                                        value={localCalendarId}
-                                                        onChange={(calendarId) => {
-                                                            setLocalCalendarId(calendarId);
-                                                            data?.onUpdateCalendar?.(calendarId);
-                                                        }}
-                                                        className={cn("w-full h-8 justify-start transition-colors", hasCalendar && "border-primary/40")}
-                                                    />
-                                                </div>
-                                            </div>
-                                            {/* 登録ボタン */}
-                                            <button
-                                                type="button"
-                                                disabled={!isReady || isRegistering}
-                                                onClick={async (e) => {
-                                                    e.stopPropagation();
-                                                    if (!isReady) return;
-                                                    setIsRegistering(true);
-                                                    try {
-                                                        await data?.onRegisterSchedule?.({
-                                                            scheduledAt: localScheduledAt!.toISOString(),
-                                                            estimatedMinutes: localDurationMinutes,
-                                                            calendarId: localCalendarId,
-                                                        });
-                                                        setShowScheduleMenu(false);
-                                                    } catch (err: unknown) {
-                                                        console.error('[MindMap] Failed to register schedule:', err);
-                                                        if (typeof window !== 'undefined') {
-                                                            window.alert(err instanceof Error ? err.message : 'スケジュール登録に失敗しました');
-                                                        }
-                                                    } finally {
-                                                        setIsRegistering(false);
-                                                    }
-                                                }}
-                                                className={cn(
-                                                    "w-full h-10 rounded-lg text-sm font-semibold mt-1 transition-all duration-300",
-                                                    isReady
-                                                        ? "bg-primary text-primary-foreground shadow-md shadow-primary/30 hover:brightness-110 active:scale-[0.98] cursor-pointer animate-[pulse_2s_ease-in-out_1]"
-                                                        : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
-                                                )}
-                                            >
-                                                {isRegistering ? '登録中...' : isReady ? '✓ スケジュールに登録' : 'スケジュールに登録'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })()}
-
-                        {/* Memo */}
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">メモ</div>
-                        <div className="px-2 pb-2">
-                            <textarea
-                                className="nodrag nopan w-full text-xs border rounded p-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none min-h-[60px]"
-                                placeholder="メモを入力..."
-                                defaultValue={data?.memo || ''}
-                                key={data?.taskId + '-memo'}
-                                onBlur={(e) => {
-                                    const val = e.target.value.trim() || null;
-                                    if (val !== (data?.memo || null)) {
-                                        data?.onUpdateMemo?.(val);
-                                    }
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                            />
-                        </div>
-                            </div>
-
-                        {/* Memo Images */}
-                            <div className="min-h-0 overflow-y-auto pr-1 space-y-1.5">
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">画像</div>
-                        <div className="px-2 pb-2 space-y-2">
-                            <div className="flex gap-1">
-                                <input
-                                    className="nodrag nopan flex-1 h-8 text-xs border rounded px-2 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
-                                    placeholder="画像URL または data:image..."
-                                    value={imageUrlInput}
-                                    onChange={(e) => setImageUrlInput(e.target.value)}
-                                    onClick={(e) => e.stopPropagation()}
-                                />
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 px-2 text-xs"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleAddImageUrl();
-                                    }}
-                                >
-                                    追加
-                                </Button>
-                            </div>
-
-                            <label className="flex items-center justify-center gap-1 h-8 border rounded text-xs cursor-pointer hover:bg-muted/40">
-                                <ImagePlus className="w-3 h-3" />
-                                画像ファイルを追加
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    multiple
-                                    className="hidden"
-                                    onChange={handleImageFileChange}
-                                    onClick={(e) => e.stopPropagation()}
-                                />
-                            </label>
-
-                            {memoImages.length > 0 && (
-                                <div className="space-y-1.5">
-                                    {memoImages.map((url, index) => (
-                                        <div key={`${url}-${index}`} className="border rounded p-1.5 space-y-1">
-                                            <img
-                                                src={url}
-                                                alt={`memo-image-${index + 1}`}
-                                                className="w-full h-16 object-cover rounded bg-muted"
-                                            />
-                                            <div className="grid grid-cols-3 gap-1">
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-6 text-[10px] px-1"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        writeClipboard(url, 'URLをコピーしました');
-                                                    }}
-                                                >
-                                                    <Link2 className="w-3 h-3 mr-1" />
-                                                    URL
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-6 text-[10px] px-1"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        writeClipboard(`![image-${index + 1}](${url})`, 'Markdownをコピーしました');
-                                                    }}
-                                                >
-                                                    <Copy className="w-3 h-3 mr-1" />
-                                                    MD
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-6 text-[10px] px-1 text-red-400"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleRemoveImage(url);
-                                                    }}
-                                                >
-                                                    削除
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="w-full h-8 justify-start text-xs"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    const aiPayload = buildAiMemoPayload();
-                                    if (!aiPayload) return;
-                                    writeClipboard(aiPayload, 'AI用メモをコピーしました');
-                                }}
-                            >
-                                <Sparkles className="w-3 h-3 mr-2" />
-                                AI用にメモ+画像をコピー
-                            </Button>
-                            {copyFeedback && (
-                                <div className="text-[10px] text-emerald-400">{copyFeedback}</div>
-                            )}
-                        </div>
-
-                        {/* Habit Settings - uses HabitSettingsPanel */}
-                        <HabitSettingsPanel data={data} />
-                        {/* 閉じるボタン */}
-                        <div className="px-2 pb-2">
-                            <Button size="sm" className="w-full h-7 text-xs" onClick={(e) => { e.stopPropagation(); setShowScheduleMenu(false); }}>
-                                閉じる
-                            </Button>
-                        </div>
-                            </div>
-                        </div>
-                    </DialogContent>
-                </Dialog>
+                        <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
+                            <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
+                            <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
+                            <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
+                        </svg>
+                    </button>
                 </div>
             </div>
 
@@ -1546,6 +1044,8 @@ const nodeTypes = { projectNode: ProjectNode, taskNode: TaskNode };
 const edgeTypes = { branch: BranchEdge };
 const defaultViewport = { x: 0, y: 0, zoom: 0.75 };
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
+const MINDMAP_RENDERER_KEY = 'focusmap:mindmap-renderer';
+type MindMapRenderer = 'reactflow' | 'custom';
 
 type MindMapClipboardNode = {
     title: string;
@@ -1612,6 +1112,20 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // MindMap Display Settings (consistent default for SSR, restore from localStorage after mount)
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(DEFAULT_SETTINGS);
     useEffect(() => { setDisplaySettings(loadSettings()) }, []);
+    const [renderer, setRenderer] = useState<MindMapRenderer>('reactflow');
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const stored = window.localStorage.getItem(MINDMAP_RENDERER_KEY);
+        if (stored === 'reactflow' || stored === 'custom') {
+            setRenderer(stored);
+        }
+    }, []);
+    const updateRenderer = useCallback((nextRenderer: MindMapRenderer) => {
+        setRenderer(nextRenderer);
+        if (typeof window !== 'undefined') {
+            window.localStorage.setItem(MINDMAP_RENDERER_KEY, nextRenderer);
+        }
+    }, []);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -1641,6 +1155,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             habit_end_date: g?.habit_end_date ?? null,
             memo: g?.memo ?? null,
             memo_images: g?.memo_images ?? null,
+            source: g?.source ?? null,
             node_width: g?.node_width ?? null,
         })) ?? []);
         const tasksJson = JSON.stringify(tasks?.map(t => ({
@@ -1664,6 +1179,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             habit_end_date: t?.habit_end_date ?? null,
             memo: t?.memo ?? null,
             memo_images: t?.memo_images ?? null,
+            source: t?.source ?? null,
             node_width: t?.node_width ?? null,
         })) ?? []);
 
@@ -2434,6 +1950,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         habit_start_date: string | null; habit_end_date: string | null;
         memo: string | null;
         memo_images: string[] | null;
+        source: string | null;
         node_width: number | null;
     };
 
@@ -2516,7 +2033,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     || task.priority != null
                     || !!task.scheduled_at
                     || !!task.memo
-                    || !!(task.memo_images && task.memo_images.length > 0);
+                    || !!(task.memo_images && task.memo_images.length > 0)
+                    || task.source === 'memo'
+                    || task.source === 'wishlist';
                 const taskNodeHeight = estimateTaskNodeHeight(task.title || '', taskHasInfo, taskNodeWidth, isNarrow);
 
                 // Store computed data for data injection pass
@@ -2541,6 +2060,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         scheduled_at: task.scheduled_at,
                         google_event_id: task.google_event_id,
                         calendar_id: task.calendar_id,
+                        source: task.source,
                         priority: task.priority,
                         estimatedDisplayMinutes: taskDisplayEstimatedMinutes,
                         estimatedAutoMinutes: taskAutoEstimatedMinutes,
@@ -2606,7 +2126,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         task.priority != null ||
                         !!task.scheduled_at ||
                         !!task.memo ||
-                        !!(task.memo_images && task.memo_images.length > 0)
+                        !!(task.memo_images && task.memo_images.length > 0) ||
+                        task.source === 'memo' ||
+                        task.source === 'wishlist'
                     ) : false;
                     const newHeight = estimateTaskNodeHeight(task?.title || String(n.data?.label ?? ''), hasInfo, maxWidth, isNarrow);
                     n.width = maxWidth;
@@ -2632,7 +2154,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 taskData.priority != null ||
                 !!taskData.scheduled_at ||
                 !!taskData.memo ||
-                !!(taskData.memo_images && taskData.memo_images.length > 0)
+                !!(taskData.memo_images && taskData.memo_images.length > 0) ||
+                taskData.source === 'memo' ||
+                taskData.source === 'wishlist'
             ) : false;
             const newHeight = estimateTaskNodeHeight(label, hasInfo, newWidth, isNarrow);
             return { ...n, width: newWidth, height: newHeight, data: { ...n.data, nodeWidth: newWidth } };
@@ -2706,6 +2230,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     memo: taskData?.memo ?? null,
                     onUpdateMemo: (memo: string | null) => cbs.onUpdateTask?.(taskId, { memo }),
                     memo_images: taskData?.memo_images ?? null,
+                    source: taskData?.source ?? null,
                     onUpdateMemoImages: (memo_images: string[] | null) => cbs.onUpdateTask?.(taskId, { memo_images }),
                     onAddChild: () => cbs.addChildTask(taskId),
                     onAddSibling: () => cbs.addSiblingTask(taskId),
@@ -3195,6 +2720,156 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         flashClipboardFeedback,
     ]);
 
+    const handleCustomSelectNode = useCallback((nodeId: string | null) => {
+        applySelection(nodeId ? new Set([nodeId]) : new Set(), nodeId, 'user');
+    }, [applySelection]);
+
+    const handleCustomSelectNodes = useCallback((nodeIds: string[], primaryNodeId: string | null) => {
+        const nextIds = new Set(nodeIds);
+        const nextPrimaryId = primaryNodeId && nextIds.has(primaryNodeId) ? primaryNodeId : nodeIds[0] ?? null;
+        applySelection(nextIds, nextPrimaryId, 'user');
+    }, [applySelection]);
+
+    const handleCustomMoveTask = useCallback(async ({
+        taskId,
+        targetId,
+        position,
+    }: {
+        taskId: string;
+        targetId: string;
+        position: 'above' | 'below' | 'as-child';
+    }) => {
+        const draggedTask = getTaskById(taskId);
+        if (!draggedTask || taskId === targetId) return;
+
+        if (targetId === 'project-root') {
+            const isAlreadyRoot = groups.some(group => group.id === draggedTask.id);
+            if (isAlreadyRoot) return;
+            await onUpdateTask?.(draggedTask.id, { parent_task_id: null, project_id: project?.id ?? null });
+            return;
+        }
+
+        if (isDescendant(taskId, targetId)) return;
+        const targetTask = getTaskById(targetId);
+        if (!targetTask) return;
+
+        const isRootDragged = groups.some(group => group.id === draggedTask.id);
+        const isRootTarget = groups.some(group => group.id === targetTask.id);
+
+        if (position === 'as-child') {
+            if (draggedTask.parent_task_id === targetTask.id) {
+                await onReorderTask?.(draggedTask.id, targetTask.id, 'below');
+                return;
+            }
+
+            setCollapsedTaskIds(prev => {
+                if (!prev.has(targetTask.id)) return prev;
+                const next = new Set(prev);
+                next.delete(targetTask.id);
+                return next;
+            });
+
+            const updates: Partial<Task> = { parent_task_id: targetTask.id };
+            if (isRootDragged) updates.project_id = null;
+            await onUpdateTask?.(draggedTask.id, updates);
+            return;
+        }
+
+        if (isRootDragged && isRootTarget) {
+            await onReorderGroup?.(draggedTask.id, targetTask.id, position);
+        } else {
+            await onReorderTask?.(draggedTask.id, targetTask.id, position);
+        }
+    }, [getTaskById, groups, isDescendant, onReorderGroup, onReorderTask, onUpdateTask, project?.id]);
+
+    const handleCustomMoveTasks = useCallback(async ({
+        taskIds,
+        targetId,
+        position,
+    }: {
+        taskIds: string[];
+        targetId: string;
+        position: 'above' | 'below' | 'as-child';
+    }) => {
+        const uniqueTaskIds = Array.from(new Set(taskIds)).filter(id => id !== 'project-root');
+        if (uniqueTaskIds.length === 0) return;
+        if (uniqueTaskIds.length === 1) {
+            await handleCustomMoveTask({ taskId: uniqueTaskIds[0], targetId, position });
+            return;
+        }
+        if (!onUpdateTask) return;
+        if (targetId !== 'project-root' && uniqueTaskIds.includes(targetId)) return;
+
+        const allTasksById = new Map([...groups, ...tasks].map(task => [task.id, task]));
+        const selectedSet = new Set(uniqueTaskIds.filter(id => allTasksById.has(id)));
+        const moveRootIds = uniqueTaskIds.filter(id => {
+            if (!selectedSet.has(id)) return false;
+            let current = allTasksById.get(id);
+            const visited = new Set<string>();
+            while (current?.parent_task_id && !visited.has(current.parent_task_id)) {
+                if (selectedSet.has(current.parent_task_id)) return false;
+                visited.add(current.parent_task_id);
+                current = allTasksById.get(current.parent_task_id);
+            }
+            return true;
+        });
+
+        if (moveRootIds.length === 0) return;
+
+        if (targetId !== 'project-root' && moveRootIds.some(id => id === targetId || isDescendant(id, targetId))) {
+            return;
+        }
+
+        if (targetId === 'project-root') {
+            await Promise.all(
+                moveRootIds.map(taskId => {
+                    const task = allTasksById.get(taskId);
+                    if (!task || task.parent_task_id === null) return Promise.resolve();
+                    return onUpdateTask(taskId, { parent_task_id: null, project_id: project?.id ?? null });
+                })
+            );
+            return;
+        }
+
+        const targetTask = allTasksById.get(targetId);
+        if (!targetTask) return;
+
+        if (position === 'as-child') {
+            setCollapsedTaskIds(prev => {
+                if (!prev.has(targetTask.id)) return prev;
+                const next = new Set(prev);
+                next.delete(targetTask.id);
+                return next;
+            });
+
+            await Promise.all(
+                moveRootIds.map(taskId => {
+                    const task = allTasksById.get(taskId);
+                    if (!task || task.parent_task_id === targetTask.id) return Promise.resolve();
+                    const updates: Partial<Task> = { parent_task_id: targetTask.id };
+                    if (groups.some(group => group.id === taskId)) updates.project_id = null;
+                    return onUpdateTask(taskId, updates);
+                })
+            );
+            return;
+        }
+
+        const newParentId = targetTask.parent_task_id ?? null;
+        await Promise.all(
+            moveRootIds.map(taskId => {
+                const task = allTasksById.get(taskId);
+                if (!task || task.parent_task_id === newParentId) return Promise.resolve();
+                const updates: Partial<Task> = { parent_task_id: newParentId };
+                if (newParentId === null) {
+                    updates.project_id = project?.id ?? null;
+                } else if (groups.some(group => group.id === taskId)) {
+                    updates.project_id = null;
+                }
+                return onUpdateTask(taskId, updates);
+            })
+        );
+    }, [groups, handleCustomMoveTask, isDescendant, onUpdateTask, project?.id, tasks]);
+
     return (
         <div
             className="w-full h-full bg-muted/5 relative outline-none"
@@ -3203,6 +2878,30 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             onPasteCapture={handleContainerPasteCapture}
             onMouseDown={markUserAction}
         >
+            <div className="absolute left-3 top-3 z-20 inline-flex rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur">
+                {([
+                    { value: 'reactflow', label: 'React Flow' },
+                    { value: 'custom', label: '自作' },
+                ] as const).map(option => (
+                    <button
+                        key={option.value}
+                        type="button"
+                        className={cn(
+                            "h-8 rounded-md px-3 text-xs font-medium transition-colors",
+                            renderer === option.value
+                                ? "bg-foreground text-background"
+                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            updateRenderer(option.value);
+                        }}
+                    >
+                        {option.label}
+                    </button>
+                ))}
+            </div>
+
             {/* MindMap Display Settings Button (Top Right) */}
             <div className="absolute top-3 right-3 z-10">
                 <MindMapDisplaySettingsPopover
@@ -3211,41 +2910,59 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 />
             </div>
 
-            <ReactFlow
-                nodes={nodes}
-                onNodesChange={onNodesChange}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                defaultViewport={defaultViewport}
-                onNodeClick={handleNodeClick}
-                onNodeDragStart={handleNodeDragStart}
-                onNodeDrag={handleNodeDrag}
-                onNodeDragStop={handleNodeDragStop}
-                onSelectionDragStart={handleSelectionDragStart}
-                onSelectionDrag={handleSelectionDrag}
-                onSelectionDragStop={handleSelectionDragStop}
-                onPaneClick={handlePaneClick}
-                onSelectionChange={handleSelectionChange}
-                onWheel={handlePaneWheel}
-                fitView
-                fitViewOptions={{ padding: 0.35 }}
-                deleteKeyCode={null}
-                nodesConnectable={false}
-                nodesDraggable={true}
-                selectionOnDrag={true}
-                selectionMode={SelectionMode.Partial}
-                panOnDrag={[1, 2]}
-                panOnScroll={true}
-                zoomOnScroll={false}
-                minZoom={0.5}
-                maxZoom={1.5}
-                selectNodesOnDrag={true}
-                multiSelectionKeyCode="Shift"
-            >
-                <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255, 255, 255, 0.15)" />
-                <Controls showInteractive={false} />
-            </ReactFlow>
+            {renderer === 'custom' ? (
+                <CustomMindMapView
+                    project={project}
+                    groups={groups}
+                    tasks={tasks}
+                    collapsedTaskIds={collapsedTaskIds}
+                    selectedNodeId={selectedNodeId}
+                    selectedNodeIds={selectedNodeIds}
+                    onSelectNode={handleCustomSelectNode}
+                    onSelectNodes={handleCustomSelectNodes}
+                    onToggleCollapse={toggleTaskCollapse}
+                    onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                    onOpenLinkedMemos={onOpenLinkedMemos}
+                    onMoveTask={handleCustomMoveTask}
+                    onMoveTasks={handleCustomMoveTasks}
+                />
+            ) : (
+                <ReactFlow
+                    nodes={nodes}
+                    onNodesChange={onNodesChange}
+                    edges={edges}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    defaultViewport={defaultViewport}
+                    onNodeClick={handleNodeClick}
+                    onNodeDragStart={handleNodeDragStart}
+                    onNodeDrag={handleNodeDrag}
+                    onNodeDragStop={handleNodeDragStop}
+                    onSelectionDragStart={handleSelectionDragStart}
+                    onSelectionDrag={handleSelectionDrag}
+                    onSelectionDragStop={handleSelectionDragStop}
+                    onPaneClick={handlePaneClick}
+                    onSelectionChange={handleSelectionChange}
+                    onWheel={handlePaneWheel}
+                    fitView
+                    fitViewOptions={{ padding: 0.35 }}
+                    deleteKeyCode={null}
+                    nodesConnectable={false}
+                    nodesDraggable={true}
+                    selectionOnDrag={true}
+                    selectionMode={SelectionMode.Partial}
+                    panOnDrag={[1, 2]}
+                    panOnScroll={true}
+                    zoomOnScroll={false}
+                    minZoom={0.5}
+                    maxZoom={1.5}
+                    selectNodesOnDrag={true}
+                    multiSelectionKeyCode="Shift"
+                >
+                    <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255, 255, 255, 0.15)" />
+                    <Controls showInteractive={false} />
+                </ReactFlow>
+            )}
 
             {selectedNodeId && selectedNodeId !== 'project-root' && (
                 <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur border rounded-lg p-2 text-xs text-muted-foreground shadow-lg">

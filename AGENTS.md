@@ -55,6 +55,15 @@ main              ← 本番（Cloud Run自動デプロイ）
 - status の遷移: pending → running → awaiting_approval / completed / failed
 - Supabase Realtime で画面自動更新
 
+### マインドマップ移行方針
+- React Flow版は本番導線として維持し、自作マップは並走表示で育てる
+- マップの状態・階層・レイアウト計算は `src/lib/mindmap-model.ts` / `src/lib/mindmap-geometry.ts` を起点にする
+- desktop/mobileで別々にロジックを増やさない。新しい判断、完了、メモ連携、リサーチ状態は先に共通モデルへ追加する
+- 自作マップは段階移行する。順番は「表示 → 選択/完了/関連メモ → 折りたたみ → 作成/編集 → ドラッグ/複数選択 → React Flow置換」
+- 自作マップで未実装の操作はReact Flow版を残して逃がす。React Flow版を壊して置き換えない
+- メモ由来ノード、完了ノード、履歴表示の意味はdesktop/mobileで同じにする
+- UIはFocusmap基準で、左上から重要な判断項目を置き、操作は小さく密度高く保つ
+
 ## ディレクトリ構造（主要）
 ```
 src/

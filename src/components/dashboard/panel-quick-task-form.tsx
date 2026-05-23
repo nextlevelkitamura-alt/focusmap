@@ -136,7 +136,7 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
         } finally {
             setIsSubmitting(false)
         }
-    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, isSubmitting, onCreateTask, resetForm, setIsOpen])
+    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, memo, isSubmitting, onCreateTask, resetForm, setIsOpen])
 
     // Escape to close
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

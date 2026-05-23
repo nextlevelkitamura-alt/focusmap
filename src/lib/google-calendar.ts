@@ -145,6 +145,7 @@ export function taskToCalendarEvent(
     title: string;
     scheduled_at: string | null;
     estimated_time: number;
+    memo?: string | null;
     reminders?: number[];
   },
   taskId?: string
@@ -177,6 +178,10 @@ export function taskToCalendarEvent(
     },
   };
 
+  if (task.memo) {
+    event.description = task.memo;
+  }
+
   // taskId が指定されている場合は Extended Properties に保存
   if (taskId) {
     event.extendedProperties = {
@@ -201,6 +206,7 @@ export async function syncTaskToCalendar(
     estimated_time: number;
     google_event_id?: string | null;
     calendar_id?: string | null;
+    memo?: string | null;
     reminders?: number[];
   },
   injectedClient?: SupabaseClient,

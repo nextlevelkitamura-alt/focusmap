@@ -37,7 +37,44 @@ export async function GET(request: NextRequest) {
     .sort((a, b) => getLinkTime(b.link) - getLinkTime(a.link))
     .map(entry => entry.memo)
 
-  return NextResponse.json({ task, items })
+  const { data: notes, error: notesError } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('task_id', taskId)
+    .is('deleted_at', null)
+    .order('updated_at', { ascending: false })
+
+  if (notesError) return NextResponse.json({ error: notesError.message }, { status: 500 })
+
+  const { data: structuredLinks, error: structuredError } = await supabase
+    .from('memo_node_links')
+    .select('*, memo_items(*)')
+    .eq('user_id', user.id)
+    .eq('task_id', taskId)
+    .eq('link_type', 'mindmap_node')
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+
+  if (structuredError) return NextResponse.json({ error: structuredError.message }, { status: 500 })
+
+  const structuredSourceIds = new Set<string>()
+  for (const link of structuredLinks ?? []) {
+    const memoItem = Array.isArray(link.memo_items) ? link.memo_items[0] : link.memo_items
+    if (memoItem?.source_type === 'wishlist' && typeof memoItem.source_id === 'string') {
+      structuredSourceIds.add(memoItem.source_id)
+    }
+  }
+
+  const sourceItems = (memos || []).filter(memo => structuredSourceIds.has(memo.id))
+
+  return NextResponse.json({
+    task,
+    items,
+    notes: notes || [],
+    structured_items: structuredLinks || [],
+    source_items: sourceItems,
+  })
 }
 
 interface MindmapLink {
