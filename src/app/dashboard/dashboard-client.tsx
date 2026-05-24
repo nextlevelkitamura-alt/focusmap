@@ -1103,6 +1103,7 @@ export function DashboardClient({
                             onCreateTask={createTask}
                             onUpdateTask={updateTask}
                             onDeleteTask={handleDeleteTask}
+                            onReorderTask={reorderTask}
                             refreshFromServer={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />

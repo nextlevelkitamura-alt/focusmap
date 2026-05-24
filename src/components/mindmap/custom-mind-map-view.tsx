@@ -11,6 +11,7 @@ type CustomMindMapViewProps = {
     project: Project;
     groups: Task[];
     tasks: Task[];
+    isMobile?: boolean;
     collapsedTaskIds: Set<string>;
     selectedNodeId: string | null;
     selectedNodeIds: Set<string>;
@@ -299,6 +300,7 @@ export function CustomMindMapView({
     project,
     groups,
     tasks,
+    isMobile = false,
     collapsedTaskIds,
     selectedNodeId,
     selectedNodeIds,
@@ -310,8 +312,8 @@ export function CustomMindMapView({
     onMoveTask,
     onMoveTasks,
 }: CustomMindMapViewProps) {
-    const [zoom, setZoom] = useState(0.9);
-    const [panOffset, setPanOffset] = useState<Point>({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(() => isMobile ? 0.85 : 0.9);
+    const [panOffset, setPanOffset] = useState<Point>(() => isMobile ? { x: -20, y: 4 } : { x: 0, y: 0 });
     const [dragState, setDragState] = useState<DragState | null>(null);
     const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
     const [panState, setPanState] = useState<PanState | null>(null);
@@ -322,14 +324,14 @@ export function CustomMindMapView({
     const panOffsetRef = useRef(panOffset);
     const suppressPaneClickUntilRef = useRef(0);
     const model = useMemo(
-        () => buildMindMapModel({ project, groups, tasks, collapsedTaskIds }),
-        [project, groups, tasks, collapsedTaskIds]
+        () => buildMindMapModel({ project, groups, tasks, collapsedTaskIds, isMobile }),
+        [project, groups, tasks, collapsedTaskIds, isMobile]
     );
 
     const offsetX = PADDING - model.bounds.minX;
     const offsetY = PADDING - model.bounds.minY;
-    const stageWidth = Math.max(960, model.bounds.width + PADDING * 2);
-    const stageHeight = Math.max(640, model.bounds.height + PADDING * 2);
+    const stageWidth = Math.max(isMobile ? 760 : 960, model.bounds.width + PADDING * 2);
+    const stageHeight = Math.max(isMobile ? 720 : 640, model.bounds.height + PADDING * 2);
     const positionedNodes = useMemo(
         () => model.nodes.map(node => ({ ...node, x: node.x + offsetX, y: node.y + offsetY })),
         [model.nodes, offsetX, offsetY]
@@ -385,7 +387,7 @@ export function CustomMindMapView({
     }, []);
 
     const setZoomAtViewportPoint = useCallback((nextZoomRaw: number, origin: Point | null = null) => {
-        const nextZoom = Math.min(1.4, Math.max(0.55, Number(nextZoomRaw.toFixed(2))));
+        const nextZoom = Math.min(isMobile ? 1.25 : 1.4, Math.max(isMobile ? 0.6 : 0.55, Number(nextZoomRaw.toFixed(2))));
         const currentZoom = zoomRef.current;
         if (nextZoom === currentZoom) return;
         const rect = viewportRef.current?.getBoundingClientRect();
@@ -404,16 +406,16 @@ export function CustomMindMapView({
         panOffsetRef.current = nextPan;
         setZoom(nextZoom);
         setPanOffset(nextPan);
-    }, []);
+    }, [isMobile]);
 
     const fitView = useCallback(() => {
         const rect = viewportRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const padding = 80;
+        const padding = isMobile ? 44 : 80;
         const fittedZoom = Math.min(
-            1.1,
+            isMobile ? 0.95 : 1.1,
             Math.max(
-                0.55,
+                isMobile ? 0.6 : 0.55,
                 Math.min(
                     (rect.width - padding) / Math.max(stageWidth, 1),
                     (rect.height - padding) / Math.max(stageHeight, 1)
@@ -429,7 +431,7 @@ export function CustomMindMapView({
         panOffsetRef.current = nextPan;
         setZoom(nextZoom);
         setPanOffset(nextPan);
-    }, [stageHeight, stageWidth]);
+    }, [isMobile, stageHeight, stageWidth]);
 
     const isDescendantNode = useCallback((candidateId: string, ancestorId: string) => {
         let current = nodeById.get(candidateId);
@@ -554,6 +556,7 @@ export function CustomMindMapView({
 
     const handlePanePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (event.button !== 0) return;
+        if (isMobile && event.pointerType === "touch") return;
         if (spacePressed) return;
         const target = event.target;
         if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return;
@@ -567,13 +570,14 @@ export function CustomMindMapView({
             currentY: point.y,
             additive: event.shiftKey || event.metaKey || event.ctrlKey,
         });
-    }, [getStagePoint, spacePressed]);
+    }, [getStagePoint, isMobile, spacePressed]);
 
     const handlePanPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        const isPanButton = event.button === 1 || event.button === 2 || (event.button === 0 && spacePressed);
+        const isTouchPan = isMobile && event.pointerType === "touch";
+        const isPanButton = event.button === 1 || event.button === 2 || (event.button === 0 && spacePressed) || isTouchPan;
         if (!isPanButton) return;
         const target = event.target;
-        if (target instanceof HTMLElement && target.closest("input,textarea,select,a")) return;
+        if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return;
         event.preventDefault();
         event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -586,7 +590,7 @@ export function CustomMindMapView({
             startPanY: panOffsetRef.current.y,
             moved: false,
         });
-    }, [spacePressed]);
+    }, [isMobile, spacePressed]);
 
     const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
         if (!event.ctrlKey && !event.metaKey) return;
@@ -753,8 +757,11 @@ export function CustomMindMapView({
         : null;
 
     return (
-        <div className="relative h-full w-full overflow-hidden bg-muted/5">
-            <div className="absolute right-3 top-14 z-20 flex items-center gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur">
+        <div className="relative h-full w-full overflow-hidden bg-muted/5" style={isMobile ? { touchAction: "none" } : undefined}>
+            <div className={cn(
+                "absolute z-20 flex items-center gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
+                isMobile ? "right-2 top-2" : "right-3 top-14"
+            )}>
                 <button
                     type="button"
                     className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -788,6 +795,7 @@ export function CustomMindMapView({
                     "h-full w-full overflow-hidden bg-[radial-gradient(circle,rgba(255,255,255,0.16)_1px,transparent_1px)] [background-size:20px_20px]",
                     panState ? "cursor-grabbing select-none" : spacePressed ? "cursor-grab" : "cursor-default"
                 )}
+                style={isMobile ? { touchAction: "none" } : undefined}
                 onPointerDown={handlePanPointerDown}
                 onContextMenu={(event) => event.preventDefault()}
                 onWheel={handleWheel}

@@ -32,6 +32,7 @@ interface MobileAiMapViewProps {
   onCreateTask?: (groupId: string, title?: string, parentTaskId?: string | null) => Promise<Task | null>
   onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
   onDeleteTask?: (taskId: string) => Promise<void>
+  onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
   refreshFromServer: () => Promise<void>
   onCalendarEventCreated?: (eventData?: { id: string; title: string; scheduled_at: string; estimated_time: number; calendar_id?: string | null }) => void
 }
@@ -52,6 +53,7 @@ export function MobileAiMapView({
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
+  onReorderTask,
   refreshFromServer,
   onCalendarEventCreated,
 }: MobileAiMapViewProps) {
@@ -166,6 +168,7 @@ export function MobileAiMapView({
             onCreateTask={onCreateTask}
             onUpdateTask={onUpdateTask}
             onDeleteTask={onDeleteTask}
+            onReorderTask={onReorderTask}
             projects={projects}
           />
         ) : (
