@@ -16,9 +16,12 @@ export type PinchViewportStart = {
 
 const DEFAULT_PINCH_SENSITIVITY = 1
 
-export const getMindMapViewportBounds = (isMobile: boolean): MindMapViewportBounds => ({
-  minZoom: isMobile ? 0.6 : 0.55,
-  maxZoom: isMobile ? 1.25 : 1.4,
+export const MINDMAP_MIN_ZOOM = 0.2
+export const MINDMAP_MAX_ZOOM = 2.5
+
+export const getMindMapViewportBounds = (): MindMapViewportBounds => ({
+  minZoom: MINDMAP_MIN_ZOOM,
+  maxZoom: MINDMAP_MAX_ZOOM,
 })
 
 export const clampMindMapZoom = (zoom: number, bounds: MindMapViewportBounds) => {

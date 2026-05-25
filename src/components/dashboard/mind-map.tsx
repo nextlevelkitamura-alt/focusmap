@@ -35,7 +35,7 @@ import {
 } from "@/lib/mindmap-layout";
 import { BranchEdge } from "@/components/mindmap/branch-edge";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
-import { getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
+import { getMindMapViewportBounds, getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 
 type ProjectNodeData = {
@@ -1126,6 +1126,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // 画面幅 767px 以下でモバイルレイアウト（コンパクト化）
     const isNarrow = useIsNarrowViewport();
+    const zoomBounds = useMemo(() => getMindMapViewportBounds(), []);
 
     // MindMap Display Settings (consistent default for SSR, restore from localStorage after mount)
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(DEFAULT_SETTINGS);
@@ -2369,10 +2370,10 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 x: event.clientX - rect.left,
                 y: event.clientY - rect.top,
             },
-            bounds: { minZoom: 0.5, maxZoom: 1.5 },
+            bounds: zoomBounds,
         });
         reactFlow.setViewport({ x: next.pan.x, y: next.pan.y, zoom: next.zoom }, { duration: 0 });
-    }, [reactFlow]);
+    }, [reactFlow, zoomBounds]);
 
     const handleNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {
         if (node.type === 'projectNode') return;
@@ -2942,6 +2943,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     project={project}
                     groups={groups}
                     tasks={tasks}
+                    isMobile={isNarrow}
                     collapsedTaskIds={collapsedTaskIds}
                     selectedNodeId={selectedNodeId}
                     selectedNodeIds={selectedNodeIds}
@@ -2981,8 +2983,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     panOnDrag={[1, 2]}
                     panOnScroll={true}
                     zoomOnScroll={false}
-                    minZoom={0.5}
-                    maxZoom={1.5}
+                    minZoom={zoomBounds.minZoom}
+                    maxZoom={zoomBounds.maxZoom}
                     selectNodesOnDrag={true}
                     multiSelectionKeyCode="Shift"
                 >

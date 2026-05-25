@@ -6,8 +6,12 @@ import {
 } from "./mindmap-viewport"
 
 describe("mindmap viewport helpers", () => {
+  test("allows a wider mind map zoom range", () => {
+    expect(getMindMapViewportBounds()).toEqual({ minZoom: 0.2, maxZoom: 2.5 })
+  })
+
   test("keeps the stage point under the zoom origin stable", () => {
-    const bounds = getMindMapViewportBounds(false)
+    const bounds = getMindMapViewportBounds()
     const origin = { x: 320, y: 180 }
     const currentPan = { x: 20, y: -40 }
     const currentZoom = 0.75
@@ -29,7 +33,7 @@ describe("mindmap viewport helpers", () => {
   })
 
   test("combines pinch zoom with midpoint panning", () => {
-    const bounds = getMindMapViewportBounds(true)
+    const bounds = getMindMapViewportBounds()
     const next = getPinchViewportTransform({
       start: {
         initialDistance: 100,
@@ -46,8 +50,8 @@ describe("mindmap viewport helpers", () => {
     expect(next.pan.y).toBeCloseTo(116)
   })
 
-  test("clamps zoom to mobile bounds", () => {
-    const bounds = getMindMapViewportBounds(true)
+  test("clamps zoom to the wider mind map bounds", () => {
+    const bounds = getMindMapViewportBounds()
     const next = getPinchViewportTransform({
       start: {
         initialDistance: 100,
@@ -59,11 +63,11 @@ describe("mindmap viewport helpers", () => {
       bounds,
     })
 
-    expect(next.zoom).toBe(1.25)
+    expect(next.zoom).toBe(2.5)
   })
 
   test("can dampen pinch sensitivity for touch screens", () => {
-    const bounds = getMindMapViewportBounds(true)
+    const bounds = getMindMapViewportBounds()
     const next = getPinchViewportTransform({
       start: {
         initialDistance: 100,
