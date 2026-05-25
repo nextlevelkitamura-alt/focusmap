@@ -76,7 +76,6 @@ type PanState = {
     startClientY: number;
     startPanX: number;
     startPanY: number;
-    moved: boolean;
 };
 
 type Point = {
@@ -383,6 +382,7 @@ export function CustomMindMapView({
     const pendingViewportTransformRef = useRef<{ zoom: number; pan: Point } | null>(null);
     const viewportRafRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
+    const panMovedRef = useRef(false);
     const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
     const model = useMemo(
@@ -448,10 +448,31 @@ export function CustomMindMapView({
         };
     }, []);
 
-    const applyViewportTransform = useCallback((nextZoom: number, nextPan: Point) => {
+    const writeStageTransform = useCallback((nextZoom: number, nextPan: Point) => {
+        const stage = stageRef.current;
+        if (!stage) return;
+        stage.style.transform = `translate3d(${nextPan.x}px, ${nextPan.y}px, 0) scale(${nextZoom})`;
+    }, []);
+
+    const commitViewportTransform = useCallback(() => {
+        if (viewportRafRef.current !== null) {
+            window.cancelAnimationFrame(viewportRafRef.current);
+            viewportRafRef.current = null;
+        }
+        const pending = pendingViewportTransformRef.current;
+        pendingViewportTransformRef.current = null;
+        const nextZoom = pending?.zoom ?? zoomRef.current;
+        const nextPan = pending?.pan ?? panOffsetRef.current;
+        setZoom(nextZoom);
+        setPanOffset(nextPan);
+    }, []);
+
+    const applyViewportTransform = useCallback((nextZoom: number, nextPan: Point, options: { deferCommit?: boolean } = {}) => {
         zoomRef.current = nextZoom;
         panOffsetRef.current = nextPan;
         pendingViewportTransformRef.current = { zoom: nextZoom, pan: nextPan };
+        writeStageTransform(nextZoom, nextPan);
+        if (options.deferCommit) return;
         if (viewportRafRef.current !== null) return;
         viewportRafRef.current = window.requestAnimationFrame(() => {
             viewportRafRef.current = null;
@@ -461,7 +482,7 @@ export function CustomMindMapView({
             setZoom(pending.zoom);
             setPanOffset(pending.pan);
         });
-    }, []);
+    }, [writeStageTransform]);
 
     const setZoomAtViewportPoint = useCallback((nextZoomRaw: number, origin: Point | null = null) => {
         const rect = viewportRef.current?.getBoundingClientRect();
@@ -694,8 +715,8 @@ export function CustomMindMapView({
             startClientY: event.clientY,
             startPanX: panOffsetRef.current.x,
             startPanY: panOffsetRef.current.y,
-            moved: false,
         });
+        panMovedRef.current = false;
     }, [isMobile, spacePressed]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
@@ -755,13 +776,14 @@ export function CustomMindMapView({
                 currentMidpoint,
                 bounds: getMindMapViewportBounds(isMobile),
             });
-            applyViewportTransform(next.zoom, next.pan);
+            applyViewportTransform(next.zoom, next.pan, { deferCommit: true });
         };
 
         const endPinch = (event: TouchEvent) => {
             if (event.touches.length >= 2) return;
             if (pinchGestureRef.current) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
+                commitViewportTransform();
             }
             pinchGestureRef.current = null;
         };
@@ -806,13 +828,14 @@ export function CustomMindMapView({
                 currentMidpoint: origin,
                 bounds: getMindMapViewportBounds(isMobile),
             });
-            applyViewportTransform(next.zoom, next.pan);
+            applyViewportTransform(next.zoom, next.pan, { deferCommit: true });
         };
 
         const endGesture = (event: Event) => {
             event.preventDefault();
             if (pinchGestureRef.current) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
+                commitViewportTransform();
             }
             pinchGestureRef.current = null;
         };
@@ -836,7 +859,7 @@ export function CustomMindMapView({
             viewport.removeEventListener("gesturechange", moveGesture);
             viewport.removeEventListener("gestureend", endGesture);
         };
-    }, [applyViewportTransform, clearPendingLongPressDrag, getStagePoint, handleWheel, isMobile]);
+    }, [applyViewportTransform, clearPendingLongPressDrag, commitViewportTransform, getStagePoint, handleWheel, isMobile]);
 
     useEffect(() => {
         return () => clearPendingLongPressDrag();
@@ -973,19 +996,17 @@ export function CustomMindMapView({
                 x: panState.startPanX + deltaX,
                 y: panState.startPanY + deltaY,
             };
-            panOffsetRef.current = nextPan;
-            setPanOffset(nextPan);
-            const moved = panState.moved || Math.hypot(deltaX, deltaY) >= DRAG_START_THRESHOLD;
-            if (moved !== panState.moved) {
-                setPanState(prev => prev ? { ...prev, moved } : prev);
-            }
+            applyViewportTransform(zoomRef.current, nextPan, { deferCommit: true });
+            panMovedRef.current = panMovedRef.current || Math.hypot(deltaX, deltaY) >= DRAG_START_THRESHOLD;
         };
 
         const handlePointerUp = () => {
             clearPendingLongPressDrag();
-            if (panState.moved) {
+            if (panMovedRef.current) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
             }
+            commitViewportTransform();
+            panMovedRef.current = false;
             setPanState(null);
         };
 
@@ -997,7 +1018,7 @@ export function CustomMindMapView({
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, [clearPendingLongPressDrag, panState]);
+    }, [applyViewportTransform, clearPendingLongPressDrag, commitViewportTransform, panState]);
 
     const selectionRect = selectionBox
         ? {
@@ -1062,8 +1083,10 @@ export function CustomMindMapView({
                     style={{
                         width: stageWidth,
                         height: stageHeight,
-                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+                        transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${zoom})`,
                         transformOrigin: "top left",
+                        willChange: "transform",
+                        backfaceVisibility: "hidden",
                     }}
                 >
                     <svg
