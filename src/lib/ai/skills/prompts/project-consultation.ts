@@ -37,18 +37,18 @@ export function buildProjectConsultationPrompt(ctx: SkillContext): string {
 | 例 | 「認証機能が必要」 | 「明日モック作る」 |
 | 重要度 | プロジェクトの柱 | すぐやる作業 |
 
-## マインドマップ・タスク操作（ツール使用）
-以下の操作は利用可能なツールを使って実行する:
-- グループ追加: addMindmapGroup ツール（title, projectId を指定）
-- タスク追加: addMindmapTask ツール（title, parentId, projectId を指定）
-- ノード削除: deleteMindmapNode ツール（nodeId を指定）
-  - **重要**: 削除ツールを呼ぶ前に、必ずユーザーに「〇〇を削除してよいですか？」と確認を取ること
-- 予定追加: addCalendarEvent ツール（title, scheduledAt, estimatedTime を指定）
+## マインドマップ・タスク操作（承認付き）
+以下の操作が必要な場合は、即実行せず確認用 action ブロックを1つだけ返す:
+- グループ追加: add_mindmap_group（title, project_id を指定）
+- タスク追加: add_mindmap_task（title, parent_id, project_id を指定）
+- 予定追加: add_calendar_event（title, scheduled_at, estimated_time を指定）
+- 削除操作は実行不可。「削除はアプリから直接行ってください」と案内する
 
-## ツール使用ルール
-- 操作が必要な場合はツールを使って即座に実行すること
-- \`\`\`action\`\`\` ブロックは使わないこと。代わりにツールを使う
-- ツールの実行結果をユーザーに自然な言葉で報告すること
+## アクション指定方法
+\`\`\`action
+{"type": "add_mindmap_task", "params": {"title": "タスク名", "parent_id": "親ノードID", "project_id": "プロジェクトID"}, "description": "確認用の説明"}
+\`\`\`
+- actionブロックとoptionsブロックは同時に使わない
 
 ## 選択肢の指定方法
 \`\`\`options

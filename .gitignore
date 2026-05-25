@@ -60,6 +60,7 @@ docs/env.md
 # Temp
 tmp/
 .playwright-mcp/
+.playwright-cli/
 supabase/.temp/
 scripts/task-runner.paused
 

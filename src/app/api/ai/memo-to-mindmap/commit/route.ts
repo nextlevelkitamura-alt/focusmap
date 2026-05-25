@@ -238,6 +238,8 @@ export async function POST(request: Request) {
                   ...payload,
                   mindmap_links: nextLinks,
                 },
+                project_id: projectId,
+                memo_status: 'organized',
                 updated_at: linkedAt,
               })
               .eq('id', memo.id)

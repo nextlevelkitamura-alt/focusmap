@@ -1,9 +1,8 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import dynamic from "next/dynamic"
 import { LeftSidebar } from "@/components/dashboard/left-sidebar"
-import { CenterPane } from "@/components/dashboard/center-pane"
-import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { RightSidebar, RightSidebarRef } from "@/components/dashboard/right-sidebar"
 import { Header } from "@/components/layout/header"
 import { Database, Task, Project, Space } from "@/types/database"
@@ -21,22 +20,85 @@ import { ChevronLeft, ChevronRight, Target } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useView } from "@/contexts/ViewContext"
-import { TodayView } from "@/components/today/today-view"
-import { HabitsView } from "@/components/habits/habits-view"
 import { getTodayDateString } from "@/hooks/useHabits"
-import { OutlineView } from "@/components/mobile/outline-view"
-import { AiChatPanel } from "@/components/ai/ai-chat-panel"
-import { AiView } from "@/components/ai/ai-view"
-import { MobileAiMapView } from "@/components/ai/mobile-ai-map-view"
-import { SchedulingPanel } from "@/components/ai/scheduling-panel"
-import { IdealView } from "@/components/ideal/ideal-view"
-import { WishlistView } from "@/components/wishlist/wishlist-view"
-import { AiTodosView } from "@/components/ai-todos/ai-todos-view"
-import { TodayTaskBoard } from "@/components/today/today-task-board"
-import { AiExecutionTimeline } from "@/components/today/ai-execution-timeline"
-import { TodayMemoBoard } from "@/components/dashboard/today-memo-board"
 import { TodayDateProvider } from "@/contexts/TodayDateContext"
 import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
+import { preloadDashboardPanels, preloadDashboardView } from "@/lib/dashboard-preload"
+import { fetchWishlistItems } from "@/lib/wishlist-cache"
+import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport"
+
+function DashboardPaneFallback() {
+    return (
+        <div className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
+            <div className="h-9 w-40 animate-pulse rounded-md bg-muted/70" />
+            <div className="grid flex-1 min-h-0 gap-3">
+                <div className="rounded-md border bg-muted/30" />
+                <div className="rounded-md border bg-muted/20" />
+            </div>
+        </div>
+    )
+}
+
+const CenterPane = dynamic(
+    () => import("@/components/dashboard/center-pane").then(mod => ({ default: mod.CenterPane })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const SpaceProjectSwitcher = dynamic(
+    () => import("@/components/dashboard/space-project-switcher").then(mod => ({ default: mod.SpaceProjectSwitcher })),
+    { loading: () => <div className="h-11 shrink-0 border-b bg-muted/20" />, ssr: false },
+)
+const TodayView = dynamic(
+    () => import("@/components/today/today-view").then(mod => ({ default: mod.TodayView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const HabitsView = dynamic(
+    () => import("@/components/habits/habits-view").then(mod => ({ default: mod.HabitsView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const MobileAiMapView = dynamic(
+    () => import("@/components/ai/mobile-ai-map-view").then(mod => ({ default: mod.MobileAiMapView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const MobileAiExecutionView = dynamic(
+    () => import("@/components/ai/mobile-ai-execution-view").then(mod => ({ default: mod.MobileAiExecutionView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const AiView = dynamic(
+    () => import("@/components/ai/ai-view").then(mod => ({ default: mod.AiView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const IdealView = dynamic(
+    () => import("@/components/ideal/ideal-view").then(mod => ({ default: mod.IdealView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const WishlistView = dynamic(
+    () => import("@/components/wishlist/wishlist-view").then(mod => ({ default: mod.WishlistView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const AiTodosView = dynamic(
+    () => import("@/components/ai-todos/ai-todos-view").then(mod => ({ default: mod.AiTodosView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const TodayTaskBoard = dynamic(
+    () => import("@/components/today/today-task-board").then(mod => ({ default: mod.TodayTaskBoard })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const AiExecutionTimeline = dynamic(
+    () => import("@/components/today/ai-execution-timeline").then(mod => ({ default: mod.AiExecutionTimeline })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const TodayMemoBoard = dynamic(
+    () => import("@/components/dashboard/today-memo-board").then(mod => ({ default: mod.TodayMemoBoard })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
+const AiChatPanel = dynamic(
+    () => import("@/components/ai/ai-chat-panel").then(mod => ({ default: mod.AiChatPanel })),
+    { ssr: false },
+)
+const SchedulingPanel = dynamic(
+    () => import("@/components/ai/scheduling-panel").then(mod => ({ default: mod.SchedulingPanel })),
+    { ssr: false },
+)
 
 interface DashboardClientProps {
     initialSpaces: Space[]
@@ -84,6 +146,30 @@ export function DashboardClient({
     // --- View State ---
     // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
     const { activeView, setActiveView, isViewReady } = useView()
+    const isMobileViewport = useIsNarrowViewport()
+
+    useEffect(() => {
+        if (!isViewReady || typeof window === "undefined") return
+
+        preloadDashboardView(activeView)
+
+        const warmup = () => {
+            preloadDashboardPanels()
+            preloadDashboardView("today")
+            preloadDashboardView("long-term")
+            preloadDashboardView("ai")
+            preloadDashboardView("map")
+            void fetchWishlistItems({ spaceId: selectedSpaceId }).catch(() => undefined)
+        }
+
+        if ("requestIdleCallback" in window && "cancelIdleCallback" in window) {
+            const handle = window.requestIdleCallback(warmup, { timeout: 3500 })
+            return () => window.cancelIdleCallback(handle)
+        }
+
+        const handle = setTimeout(warmup, 1200)
+        return () => clearTimeout(handle)
+    }, [activeView, isViewReady, selectedSpaceId])
 
     // STABLE reference for filtered projects using useMemo
     const filteredProjects = useMemo(() =>
@@ -188,14 +274,24 @@ export function DashboardClient({
     // BottomNav の AI タブは setActiveView('ai') を使うので、イベントリスナーは不要
 
     // --- MindMap Sync Hook ---
+    const initialTasksByParentId = useMemo(() => {
+        const byParentId = new Map<string | null, Task[]>()
+        for (const task of initialTasks) {
+            const parentId = task.parent_task_id ?? null
+            const list = byParentId.get(parentId)
+            if (list) list.push(task)
+            else byParentId.set(parentId, [task])
+        }
+        return byParentId
+    }, [initialTasks])
+
     // STABLE reference for initial groups (root tasks) using useMemo
     const projectRootTasksInitial = useMemo(() => {
         // ルートタスク = parent_task_id === null のタスク
-        return initialTasks.filter(t =>
-            t.parent_task_id === null &&
+        return (initialTasksByParentId.get(null) ?? []).filter(t =>
             t.project_id === selectedProjectId
         )
-    }, [initialTasks, selectedProjectId])
+    }, [initialTasksByParentId, selectedProjectId])
 
     // STABLE reference for initial child tasks - useMemo
     // 選択プロジェクトに属する子タスク（parent_task_id !== null）
@@ -208,31 +304,26 @@ export function DashboardClient({
         const queue = [...rootTaskIds]
         while (queue.length > 0) {
             const parentId = queue.shift()!
-            for (const t of initialTasks) {
+            for (const t of initialTasksByParentId.get(parentId) ?? []) {
                 if (taskIds.has(t.id)) continue
                 // is_group=true のタスクはルートタスクとして処理済み → スキップ
                 if (t.is_group === true) continue
-                if (t.parent_task_id === parentId) {
-                    result.push(t)
-                    taskIds.add(t.id)
-                    queue.push(t.id) // 子タスクの子も探索
-                }
+                result.push(t)
+                taskIds.add(t.id)
+                queue.push(t.id) // 子タスクの子も探索
             }
         }
         return result
-    }, [initialTasks, projectRootTasksInitial])
+    }, [initialTasksByParentId, projectRootTasksInitial])
 
     const {
         groups: currentGroups,
         tasks: currentTasks,
         createGroup,
-        updateGroupTitle,
-        updateGroup,
         deleteGroup,
         createTask,
         updateTask,
         deleteTask,
-        moveTask,
         updateProjectTitle,
         bulkDelete,
         reorderTask,
@@ -258,7 +349,7 @@ export function DashboardClient({
     // ビュー切り替え時にマインドマップのタスクを再取得
     useEffect(() => {
         if (activeView === 'map' || activeView === 'ai') {
-            refreshFromServer()
+            refreshFromServer({ staleMs: 30_000 })
         }
     }, [activeView, refreshFromServer])
 
@@ -1041,7 +1132,7 @@ export function DashboardClient({
                     />
                 )}
                 {/* === Mobile Views (wait for mount to avoid SSR hydration flash) === */}
-                {isViewReady && activeView === 'today' && (
+                {isViewReady && isMobileViewport && activeView === 'today' && (
                     <>
                         {/* Mobile */}
                         <div className="flex-1 min-h-0 flex flex-col md:hidden overflow-hidden">
@@ -1058,41 +1149,13 @@ export function DashboardClient({
                     </>
                 )}
 
-                {isViewReady && activeView === 'habits' && (
+                {isViewReady && isMobileViewport && activeView === 'habits' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <HabitsView onUpdateTask={updateTask} />
                     </div>
                 )}
 
-                {isViewReady && activeView === 'map' && (
-                    <div className="flex-1 md:hidden overflow-hidden">
-                        <OutlineView
-                            project={selectedProject}
-                            groups={currentGroups}
-                            tasks={currentTasks}
-                            spaces={spaces}
-                            projects={filteredProjects}
-                            selectedProjectId={selectedProjectId}
-                            selectedSpaceId={selectedSpaceId}
-                            onSelectProject={setSelectedProjectId}
-                            onSelectSpace={setSelectedSpaceId}
-                            onCreateGroup={handleCreateGroup}
-                            onCreateTask={createTask}
-                            onUpdateTask={updateTask}
-                            onDeleteTask={handleDeleteTask}
-                            onDeleteGroup={handleDeleteGroup}
-                            onMoveTask={moveTask}
-                            onReorderTask={reorderTask}
-                            onUpdateGroupTitle={updateGroupTitle}
-                            onUpdateGroup={updateGroup}
-                            onUpdateProject={handleUpdateProjectTitle}
-                            onCreateProject={handleCreateProject}
-                            onOpenLinkedMemos={openMindmapLinkedMemos}
-                        />
-                    </div>
-                )}
-
-                {isViewReady && activeView === 'ai' && (
+                {isViewReady && isMobileViewport && activeView === 'map' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <MobileAiMapView
                             projects={filteredProjects}
@@ -1118,6 +1181,16 @@ export function DashboardClient({
                     </div>
                 )}
 
+                {isViewReady && isMobileViewport && activeView === 'ai' && (
+                    <div className="flex-1 md:hidden overflow-hidden">
+                        <MobileAiExecutionView
+                            selectedProjectId={selectedProjectId}
+                            onMindmapUpdated={refreshFromServer}
+                            onCalendarEventCreated={handleCalendarEventCreated}
+                        />
+                    </div>
+                )}
+
                 {/* === Mobile/Desktop: Ideal View === */}
                 {isViewReady && activeView === 'ideal' && (
                     <div className="flex-1 flex overflow-hidden">
@@ -1138,18 +1211,20 @@ export function DashboardClient({
                         />
                         <WishlistView
                             projects={projects}
+                            spaces={spaces}
                             selectedProjectId={selectedProjectId}
                             selectedSpaceId={selectedSpaceId}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={false}
                             onToggleCalendarSplit={toggleCalendarSplit}
                             mindmapMemoFocus={mindmapMemoFocus}
+                            onMindmapUpdated={refreshFromServer}
                         />
                     </div>
                 )}
 
                 {/* === Desktop: AI View === */}
-                {activeView === 'ai' && (
+                {!isMobileViewport && activeView === 'ai' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
                         <AiView
                             projects={filteredProjects}
@@ -1178,13 +1253,14 @@ export function DashboardClient({
                 )}
 
                 {/* === Desktop: AI Todos View === */}
-                {activeView === 'ai-todos' && (
+                {!isMobileViewport && activeView === 'ai-todos' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
                         <AiTodosView initialTasks={[]} initialSnapshot={null} sessionDate={getTodayDateString()} />
                     </div>
                 )}
 
                 {/* === Desktop: 3-pane layout === */}
+                {!isMobileViewport && (
                 <TodayDateProvider selectedDate={todaySelectedDate} setSelectedDate={setTodaySelectedDate}>
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
@@ -1324,18 +1400,21 @@ export function DashboardClient({
                     ) : activeView === 'long-term' ? (
                         <WishlistView
                             projects={projects}
+                            spaces={spaces}
                             selectedProjectId={selectedProjectId}
                             selectedSpaceId={selectedSpaceId}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={isCalendarPanelVisible}
                             onToggleCalendarSplit={toggleCalendarSplit}
                             mindmapMemoFocus={mindmapMemoFocus}
+                            onMindmapUpdated={refreshFromServer}
                         />
                     ) : activeView === 'map' && isMemoSplitVisible ? (
                         <div className="flex h-full min-h-0 overflow-hidden">
                             <div className="h-full min-w-[360px] max-w-[560px] border-r bg-background" style={{ width: '42%' }}>
                                 <WishlistView
                                     projects={projects}
+                                    spaces={spaces}
                                     selectedProjectId={selectedProjectId}
                                     selectedSpaceId={selectedSpaceId}
                                     onOpenTodayMemoSchedule={openTodayMemoSchedule}
@@ -1343,6 +1422,7 @@ export function DashboardClient({
                                     compactComposer
                                     mindmapMemoFocus={mindmapMemoFocus}
                                     onLinkedTaskStatusChange={(taskId, status) => updateTask(taskId, { status })}
+                                    onMindmapUpdated={refreshFromServer}
                                 />
                             </div>
                             <div className="min-w-0 flex-1 overflow-hidden">
@@ -1423,12 +1503,13 @@ export function DashboardClient({
                 )}
             </div>
             </TodayDateProvider>
+                )}
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
-            {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
+            {isAiChatOpen && activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <AiChatPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
-            {activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
+            {isSchedulingOpen && activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             </TimerProvider>

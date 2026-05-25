@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Sparkles, Loader2 } from "lucide-react"
+import { Sparkles } from "lucide-react"
 import type { IdealGoalWithItems, Project } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
@@ -15,6 +15,7 @@ import {
 } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { cn } from "@/lib/utils"
+import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
 
 type MemoItem = IdealGoalWithItems
 
@@ -79,12 +80,8 @@ export function TodayMemoBoard({
 
   const fetchItems = useCallback(async () => {
     try {
-      const params = new URLSearchParams()
-      if (selectedSpaceId) params.set("space_id", selectedSpaceId)
-      const res = await fetch(`/api/wishlist${params.size ? `?${params.toString()}` : ""}`)
-      if (!res.ok) throw new Error(`取得失敗 (${res.status})`)
-      const data = await res.json()
-      setItems((data.items ?? []) as MemoItem[])
+      const nextItems = await fetchWishlistItems({ spaceId: selectedSpaceId })
+      setItems(nextItems as MemoItem[])
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : "メモの取得に失敗しました")
@@ -97,7 +94,10 @@ export function TodayMemoBoard({
 
   // 他画面（メモ画面 / カレンダー削除）からの更新通知で再取得
   useEffect(() => {
-    const handler = () => { void fetchItems() }
+    const handler = () => {
+      invalidateWishlistItemsCache()
+      void fetchItems()
+    }
     window.addEventListener(WISHLIST_REFRESH_EVENT, handler)
     return () => window.removeEventListener(WISHLIST_REFRESH_EVENT, handler)
   }, [fetchItems])
@@ -156,6 +156,7 @@ export function TodayMemoBoard({
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) throw new Error(data.error || "カレンダー追加に失敗しました")
+        invalidateWishlistItemsCache()
         // 本物の google_event_id で再 broadcast → 同じ id の楽観イベントが置き換わる
         broadcastCalendarOptimisticEvent({
           ...optimisticEvent,
@@ -266,6 +267,7 @@ export function TodayMemoBoard({
       })
       const data = await res.json()
       if (!res.ok || data.error) throw new Error(data.error || "更新失敗")
+      invalidateWishlistItemsCache()
       if (data.item) {
         setItems(curr => curr.map(it => it.id === id ? (data.item as MemoItem) : it))
       }
@@ -293,6 +295,7 @@ export function TodayMemoBoard({
     try {
       const res = await fetch(`/api/wishlist/${id}`, { method: "DELETE" })
       if (!res.ok) throw new Error("削除失敗")
+      invalidateWishlistItemsCache()
       window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
     } catch (e) {
       setItems(prev)
@@ -319,6 +322,7 @@ export function TodayMemoBoard({
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || data.error) throw new Error(data.error || "更新失敗")
+        invalidateWishlistItemsCache()
       } else {
         await handleUpdate(item.id, { is_today: false } as Partial<MemoItem>)
       }
@@ -333,8 +337,16 @@ export function TodayMemoBoard({
 
   if (isLoading) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 読み込み中
+      <div className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
+        <div className="h-7 w-36 animate-pulse rounded-md bg-muted/70" />
+        <div className="grid gap-3">
+          {[0, 1, 2].map(index => (
+            <div key={index} className="rounded-md border bg-background p-3">
+              <div className="mb-2 h-5 w-3/4 animate-pulse rounded bg-muted/60" />
+              <div className="h-12 animate-pulse rounded bg-muted/30" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }

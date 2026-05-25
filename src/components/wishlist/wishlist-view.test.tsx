@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WishlistView } from './wishlist-view'
 import type { IdealGoalWithItems } from '@/types/database'
 import { TODAY_DURATION_DEFAULT } from '@/lib/calendar-constants'
+import { invalidateWishlistItemsCache } from '@/lib/wishlist-cache'
 
 const calendarEvents = vi.hoisted(() => ({
   broadcastCalendarOptimisticEvent: vi.fn(),
@@ -172,6 +173,7 @@ async function renderVisibleWishlist(expectedText = 'Drop memo') {
 describe('WishlistView calendar D&D', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    invalidateWishlistItemsCache()
     window.__focusmapMemoDropHandler = undefined
     window.__focusmapMemoDrag = null
     calendarEvents.broadcastCalendarOptimisticEvent.mockClear()

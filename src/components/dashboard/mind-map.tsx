@@ -35,6 +35,7 @@ import {
 } from "@/lib/mindmap-layout";
 import { BranchEdge } from "@/components/mindmap/branch-edge";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
+import { getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 
 type ProjectNodeData = {
@@ -2358,10 +2359,19 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const handlePaneWheel = useCallback((event: React.WheelEvent) => {
         if (!event.ctrlKey && !event.metaKey) return;
         event.preventDefault();
-        const current = reactFlow.getZoom();
-        const delta = event.deltaY > 0 ? -0.08 : 0.08;
-        const next = Math.min(1.5, Math.max(0.5, current + delta));
-        reactFlow.zoomTo(next);
+        const rect = event.currentTarget.getBoundingClientRect();
+        const viewport = reactFlow.getViewport();
+        const next = getViewportTransformAtPoint({
+            currentZoom: viewport.zoom,
+            currentPan: { x: viewport.x, y: viewport.y },
+            nextZoom: viewport.zoom * Math.exp(-event.deltaY * 0.002),
+            origin: {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+            },
+            bounds: { minZoom: 0.5, maxZoom: 1.5 },
+        });
+        reactFlow.setViewport({ x: next.pan.x, y: next.pan.y, zoom: next.zoom }, { duration: 0 });
     }, [reactFlow]);
 
     const handleNodeDragStart = useCallback((_: React.MouseEvent, node: Node) => {

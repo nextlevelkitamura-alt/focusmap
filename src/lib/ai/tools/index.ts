@@ -254,7 +254,7 @@ export const deleteMindmapNode = tool({
 
 // ━━━ ツール自動実行の有効化判定 ━━━
 
-const TOOL_ENABLED_SKILLS = new Set(['task', 'brainstorm', 'project-consultation'])
+const TOOL_ENABLED_SKILLS = new Set<string>()
 
 export function isToolEnabledSkill(skillId: string): boolean {
   return TOOL_ENABLED_SKILLS.has(skillId)

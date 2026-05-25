@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
 import { TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -36,6 +36,8 @@ import { getTagColor } from "@/lib/color-utils"
 import { WishlistCard } from "./wishlist-card"
 import { WishlistCardDetail } from "./wishlist-card-detail"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
+import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
+import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type ColumnKey = "unsorted" | "today" | "scheduled" | "completed"
@@ -337,6 +339,7 @@ function buildMemoCreatePayload(item: MemoItem): Record<string, unknown> {
 
 export function WishlistView({
   projects = [],
+  spaces = [],
   selectedProjectId = null,
   selectedSpaceId = null,
   onOpenTodayMemoSchedule,
@@ -345,8 +348,10 @@ export function WishlistView({
   compactComposer = false,
   mindmapMemoFocus = null,
   onLinkedTaskStatusChange,
+  onMindmapUpdated,
 }: {
   projects?: Project[]
+  spaces?: Array<{ id: string; title: string }>
   selectedProjectId?: string | null
   selectedSpaceId?: string | null
   onOpenTodayMemoSchedule?: (payload: { memoId: string; date: Date }) => void
@@ -355,6 +360,7 @@ export function WishlistView({
   compactComposer?: boolean
   mindmapMemoFocus?: { taskId: string; requestKey: number } | null
   onLinkedTaskStatusChange?: (taskId: string, status: string) => Promise<void> | void
+  onMindmapUpdated?: () => Promise<void> | void
 }) {
   const [items, setItems] = useState<MemoItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -374,6 +380,9 @@ export function WishlistView({
   const [filterOpen, setFilterOpen] = useState(false)
   const [isCheckingVisibleAi, setIsCheckingVisibleAi] = useState(false)
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
+  const [showMindmapDialog, setShowMindmapDialog] = useState(false)
   const [linkedMemoFocus, setLinkedMemoFocus] = useState<{
     taskId: string
     taskTitle: string
@@ -469,12 +478,12 @@ export function WishlistView({
     return () => window.clearInterval(interval)
   }, [analyzeStartedAt, isAnalyzing])
 
-  const fetchItems = useCallback(async () => {
-    const params = new URLSearchParams()
-    if (selectedSpaceId) params.set("space_id", selectedSpaceId)
-    const res = await fetch(`/api/wishlist${params.size ? `?${params.toString()}` : ""}`)
-    const { items } = await res.json()
-    setItems(items ?? [])
+  const fetchItems = useCallback(async (options?: { force?: boolean }) => {
+    const nextItems = await fetchWishlistItems({
+      spaceId: selectedSpaceId,
+      force: options?.force,
+    })
+    setItems(nextItems)
   }, [selectedSpaceId])
 
   useEffect(() => {
@@ -483,7 +492,7 @@ export function WishlistView({
 
   // 他画面（Today タブ / カレンダー削除）からの更新通知で再取得
   useEffect(() => {
-    const handler = () => { void fetchItems() }
+    const handler = () => { void fetchItems({ force: true }) }
     window.addEventListener(WISHLIST_REFRESH_EVENT, handler)
     return () => window.removeEventListener(WISHLIST_REFRESH_EVENT, handler)
   }, [fetchItems])
@@ -639,6 +648,55 @@ export function WishlistView({
     )
   }, [filteredItems, todayRange])
 
+  const selectedMemosProjectId = useMemo(() => {
+    const ids = new Set(
+      items
+        .filter(item => selectedMemoIds.has(item.id))
+        .map(item => item.project_id)
+        .filter((projectId): projectId is string => !!projectId),
+    )
+    const selectedItemsCount = items.filter(item => selectedMemoIds.has(item.id)).length
+    return ids.size === 1 && selectedItemsCount === selectedMemoIds.size ? [...ids][0] : null
+  }, [items, selectedMemoIds])
+
+  const visibleMemoIds = useMemo(() => filteredItems.map(item => item.id), [filteredItems])
+
+  const toggleMemoSelection = useCallback((memoId: string) => {
+    setSelectedMemoIds(prev => {
+      const next = new Set(prev)
+      if (next.has(memoId)) next.delete(memoId)
+      else next.add(memoId)
+      return next
+    })
+  }, [])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedMemoIds(new Set())
+  }, [])
+
+  const toggleSelectVisibleMemos = useCallback(() => {
+    setSelectedMemoIds(prev => {
+      const visibleSet = new Set(visibleMemoIds)
+      const allVisibleSelected = visibleMemoIds.length > 0 && visibleMemoIds.every(id => prev.has(id))
+      if (allVisibleSelected) {
+        const next = new Set(prev)
+        for (const id of visibleSet) next.delete(id)
+        return next
+      }
+      return new Set([...prev, ...visibleMemoIds])
+    })
+  }, [visibleMemoIds])
+
+  useEffect(() => {
+    setSelectedMemoIds(prev => {
+      if (prev.size === 0) return prev
+      const existingIds = new Set(items.map(item => item.id))
+      const next = new Set([...prev].filter(id => existingIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [items])
+
   const targetCalendarId = useMemo(() => {
     const writableCalendars = calendars.filter(calendar => calendar.access_level === "owner" || calendar.access_level === "writer")
     return (
@@ -676,6 +734,7 @@ export function WishlistView({
     if (!data.item) {
       throw new Error("更新結果を取得できませんでした")
     }
+    invalidateWishlistItemsCache()
     return data.item as MemoItem
   }, [])
 
@@ -712,6 +771,7 @@ export function WishlistView({
     if (!data.item) {
       throw new Error("復元結果を取得できませんでした")
     }
+    invalidateWishlistItemsCache()
     return data.item as MemoItem
   }, [])
 
@@ -721,6 +781,7 @@ export function WishlistView({
       const data = await res.json().catch(() => ({}))
       throw new Error(data?.error || "メモの削除に失敗しました")
     }
+    invalidateWishlistItemsCache()
   }, [])
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
@@ -860,6 +921,7 @@ export function WishlistView({
         throw new Error("作成結果を取得できませんでした")
       }
       const item = data.item as MemoItem
+      invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
       setSelectedItem(item)
       setStatusFilter("all")
@@ -916,6 +978,7 @@ export function WishlistView({
         throw new Error("追加結果を取得できませんでした")
       }
       const item = data.item as MemoItem
+      invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
       setIntakeText("")
       setStatusFilter("all")
@@ -1017,6 +1080,7 @@ export function WishlistView({
         throw new Error("保存結果を取得できませんでした")
       }
       const item = data.item as MemoItem
+      invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
       setStatusFilter("all")
       setTagFilter("all")
@@ -1084,6 +1148,7 @@ export function WishlistView({
         return false
       }
       const { google_event_id, item: updatedItem } = await res.json()
+      invalidateWishlistItemsCache()
       if (updatedItem) {
         setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
         setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
@@ -1219,6 +1284,7 @@ export function WishlistView({
       }
       if (data.item) {
         const updatedItem = data.item as MemoItem
+        invalidateWishlistItemsCache()
         setItems(prev => prev.map(existing => existing.id === item.id ? updatedItem : existing))
         setSelectedItem(prev => prev?.id === item.id ? updatedItem : prev)
       }
@@ -1396,7 +1462,20 @@ export function WishlistView({
   }, [handleUnscheduleMemo, itemById, handleUpdate, openDetail, openTodayRemovalDialog])
 
   if (isLoading) {
-    return <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">読み込み中...</div>
+    return (
+      <div className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
+        <div className="h-10 w-40 animate-pulse rounded-md bg-muted/70" />
+        <div className="grid flex-1 min-h-0 gap-3 md:grid-cols-3">
+          {[0, 1, 2].map(index => (
+            <div key={index} className="space-y-3 rounded-md border bg-background p-3">
+              <div className="h-8 animate-pulse rounded bg-muted/60" />
+              <div className="h-24 animate-pulse rounded bg-muted/40" />
+              <div className="h-24 animate-pulse rounded bg-muted/30" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   const hasIntakeText = intakeText.trim().length > 0
@@ -1469,6 +1548,18 @@ export function WishlistView({
               <Plus className="h-4 w-4" />
               追加
             </Button>
+            <Button
+              type="button"
+              variant={selectMode ? "secondary" : "outline"}
+              size="icon"
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              className="h-10 w-10 shrink-0"
+              aria-pressed={selectMode}
+              aria-label={selectMode ? "メモ選択を終了" : "メモを複数選択"}
+              title={selectMode ? "メモ選択を終了" : "メモを複数選択"}
+            >
+              <Network className="h-4 w-4" />
+            </Button>
           </div>
         ) : (
         <>
@@ -1523,6 +1614,18 @@ export function WishlistView({
                 {activeFilterCount}
               </span>
             )}
+          </Button>
+          <Button
+            type="button"
+            variant={selectMode ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            aria-pressed={selectMode}
+            className="min-h-[40px] shrink-0 gap-1 px-3"
+            title={selectMode ? "メモ選択を終了" : "複数メモをマインドマップに整理"}
+          >
+            <Network className="h-4 w-4" />
+            <span className="hidden sm:inline">{selectMode ? "選択解除" : "マップ化"}</span>
           </Button>
           <Button onClick={handleCreate} size="sm" className="min-h-[40px] shrink-0 gap-1 px-3">
             <Plus className="h-4 w-4" /> 追加
@@ -1628,6 +1731,25 @@ export function WishlistView({
             onTagChange={setTagFilter}
           />
           </div>
+          {selectMode && (
+          <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border bg-primary/5 px-3 py-2 text-xs">
+            <span className="font-medium text-foreground">{selectedMemoIds.size}件選択中</span>
+            <button
+              type="button"
+              onClick={toggleSelectVisibleMemos}
+              className="rounded border bg-background px-2 py-1 text-muted-foreground hover:text-foreground"
+            >
+              {visibleMemoIds.length > 0 && visibleMemoIds.every(id => selectedMemoIds.has(id)) ? "表示分を解除" : "表示分を全選択"}
+            </button>
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              className="ml-auto rounded px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              キャンセル
+            </button>
+          </div>
+          )}
         </>
         )}
       </div>
@@ -1728,6 +1850,9 @@ export function WishlistView({
                     onOpenCodex={openInCodexWebForMemo}
                     onToggleToday={handleToggleTodayFromCard}
                     nativeMemoDrag={isCalendarSplitVisible}
+                    selectMode={selectMode}
+                    selectedMemoIds={selectedMemoIds}
+                    onToggleSelect={toggleMemoSelection}
                   />
                 </DragDropContext>
               )}
@@ -1753,6 +1878,9 @@ export function WishlistView({
                   nativeMemoDrag={isCalendarSplitVisible}
                   className="md:col-span-2"
                   listClassName="sm:grid-cols-2"
+                  selectMode={selectMode}
+                  selectedMemoIds={selectedMemoIds}
+                  onToggleSelect={toggleMemoSelection}
                 />
                 <MemoSection
                   columnKey="today"
@@ -1769,6 +1897,9 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={isCalendarSplitVisible}
+                  selectMode={selectMode}
+                  selectedMemoIds={selectedMemoIds}
+                  onToggleSelect={toggleMemoSelection}
                 />
                 <MemoSection
                   columnKey="scheduled"
@@ -1785,6 +1916,9 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={false}
+                  selectMode={selectMode}
+                  selectedMemoIds={selectedMemoIds}
+                  onToggleSelect={toggleMemoSelection}
                 />
                 <MemoSection
                   columnKey="completed"
@@ -1801,6 +1935,9 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={false}
+                  selectMode={selectMode}
+                  selectedMemoIds={selectedMemoIds}
+                  onToggleSelect={toggleMemoSelection}
                 />
               </div>
             </div>
@@ -1846,6 +1983,63 @@ export function WishlistView({
         onUnschedule={handleDialogUnschedule}
         onOpenTodaySchedule={handleDialogOpenTodaySchedule}
         onReschedule={handleDialogReschedule}
+      />
+
+      {selectMode && !showMindmapDialog && (
+        <div className="fixed bottom-20 left-1/2 z-50 flex w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2 items-center gap-2 rounded-full border bg-background/95 p-1.5 shadow-lg backdrop-blur md:bottom-6">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={toggleSelectVisibleMemos}
+            className="h-9 shrink-0 rounded-full px-3 text-xs"
+          >
+            {visibleMemoIds.length > 0 && visibleMemoIds.every(id => selectedMemoIds.has(id)) ? "解除" : "全選択"}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => setShowMindmapDialog(true)}
+            disabled={selectedMemoIds.size === 0}
+            className="h-9 min-w-0 flex-1 rounded-full px-3 text-xs"
+          >
+            <Network className="mr-1 h-4 w-4" />
+            {selectedMemoIds.size > 0 ? `${selectedMemoIds.size}件をマップ化` : "メモを選択"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={exitSelectMode}
+            className="h-9 w-9 shrink-0 rounded-full"
+            aria-label="選択を終了"
+            title="選択を終了"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      <MemoToMindmapDialog
+        open={showMindmapDialog}
+        noteIds={[...selectedMemoIds]}
+        source="wishlist"
+        projects={projects.map(project => ({ id: project.id, title: project.title }))}
+        spaces={spaces.map(space => ({ id: space.id, title: space.title }))}
+        defaultSpaceId={selectedSpaceId}
+        defaultProjectId={selectedMemosProjectId}
+        onClose={() => setShowMindmapDialog(false)}
+        onSuccess={projectId => {
+          const committedIds = new Set(selectedMemoIds)
+          setShowMindmapDialog(false)
+          exitSelectMode()
+          setItems(prev => prev.map(item =>
+            committedIds.has(item.id)
+              ? { ...item, project_id: projectId, memo_status: "organized", updated_at: new Date().toISOString() }
+              : item,
+          ))
+          void fetchItems({ force: true })
+          void onMindmapUpdated?.()
+        }}
       />
     </div>
   )
@@ -1955,6 +2149,9 @@ function MemoSection({
   onOpenCodex,
   onToggleToday,
   nativeMemoDrag = false,
+  selectMode = false,
+  selectedMemoIds,
+  onToggleSelect,
 }: {
   columnKey: ColumnKey
   title: string
@@ -1972,6 +2169,9 @@ function MemoSection({
   onOpenCodex: (item: MemoItem) => Promise<void>
   onToggleToday: (item: MemoItem, isTodayColumn: boolean) => Promise<void>
   nativeMemoDrag?: boolean
+  selectMode?: boolean
+  selectedMemoIds?: Set<string>
+  onToggleSelect?: (memoId: string) => void
 }) {
   return (
     <section className={cn("min-w-0", className)}>
@@ -1996,15 +2196,16 @@ function MemoSection({
             ) : (
               <div className={cn("grid gap-3", listClassName)}>
                 {items.map((item, index) => (
-                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                  <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={selectMode}>
                     {(dragProvided, dragSnapshot) => (
                       <div
                         ref={dragProvided.innerRef}
                         {...dragProvided.draggableProps}
-                        {...dragProvided.dragHandleProps}
+                        {...(!selectMode ? dragProvided.dragHandleProps : {})}
                         className={cn(
-                          "rounded-lg transition-shadow",
+                          "relative rounded-lg transition-shadow",
                           dragSnapshot.isDragging && "opacity-80 shadow-xl ring-2 ring-primary/40",
+                          selectMode && selectedMemoIds?.has(item.id) && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                         )}
                       >
                         <WishlistCard
@@ -2019,6 +2220,27 @@ function MemoSection({
                           onToggleToday={onToggleToday}
                           nativeMemoDrag={nativeMemoDrag}
                         />
+                        {selectMode && (
+                          <>
+                            <button
+                              type="button"
+                              className="absolute inset-0 z-20 rounded-lg"
+                              onClick={() => onToggleSelect?.(item.id)}
+                              aria-pressed={selectedMemoIds?.has(item.id) ?? false}
+                              aria-label={selectedMemoIds?.has(item.id) ? "メモの選択を解除" : "メモを選択"}
+                            />
+                            <div
+                              className={cn(
+                                "pointer-events-none absolute right-2 top-2 z-30 flex h-6 w-6 items-center justify-center rounded-full border shadow-sm",
+                                selectedMemoIds?.has(item.id)
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-border bg-background text-transparent",
+                              )}
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </Draggable>

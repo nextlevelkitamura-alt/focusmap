@@ -1,10 +1,14 @@
 "use client"
 
-import { forwardRef } from "react"
-import { DesktopRightPanel, DesktopRightPanelRef } from "@/components/dashboard/desktop-right-panel"
+import { forwardRef, lazy, Suspense } from "react"
+import type { DesktopRightPanelRef } from "@/components/dashboard/desktop-right-panel"
 import { Task, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
 import { type QuickTaskData } from "@/components/today/quick-task-fab"
+
+const DesktopRightPanel = lazy(() =>
+    import("@/components/dashboard/desktop-right-panel").then(mod => ({ default: mod.DesktopRightPanel }))
+)
 
 export interface RightSidebarRef {
     refreshCalendar: () => Promise<void>
@@ -27,9 +31,11 @@ interface RightSidebarProps {
 
 export const RightSidebar = forwardRef<RightSidebarRef, RightSidebarProps>(function RightSidebar(props, ref) {
     return (
-        <DesktopRightPanel
-            ref={ref as React.Ref<DesktopRightPanelRef>}
-            {...props}
-        />
+        <Suspense fallback={<div className="h-full w-full animate-pulse bg-muted/30" />}>
+            <DesktopRightPanel
+                ref={ref as React.Ref<DesktopRightPanelRef>}
+                {...props}
+            />
+        </Suspense>
     )
 })

@@ -34,7 +34,7 @@ interface UseMindMapSyncReturn {
     isLoading: boolean
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
-    refreshFromServer: () => Promise<void>
+    refreshFromServer: (options?: { force?: boolean; staleMs?: number }) => Promise<void>
     undo: () => Promise<string | null>
     redo: () => Promise<string | null>
     canUndo: () => boolean
@@ -48,7 +48,7 @@ export function useMindMapSync({
     initialTasks = [],
     onSyncError,
 }: UseMindMapSyncProps): UseMindMapSyncReturn {
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
     const { cancelNotifications } = useNotificationScheduler()
 
     // 統合ステート管理（全タスクを1つのリストで管理）
@@ -69,6 +69,8 @@ export function useMindMapSync({
     // UIは先に楽観更新し、DB保存だけをキュー化することで連打時も最後の操作が残る。
     const taskSaveQueues = useRef(new Map<string, Promise<void>>())
     const taskUpdateVersions = useRef(new Map<string, number>())
+    const lastServerRefreshAt = useRef(Date.now())
+    const refreshInFlight = useRef<Promise<void> | null>(null)
 
     // 最新の allTasks を参照するための ref（callback の依存配列から除外するため）
     const allTasksRef = useRef(allTasks)
@@ -134,6 +136,8 @@ export function useMindMapSync({
         pendingInserts.current.clear()
         taskSaveQueues.current.clear()
         taskUpdateVersions.current.clear()
+        lastServerRefreshAt.current = Date.now()
+        refreshInFlight.current = null
     }, [projectId, clear])
 
     const enqueueTaskSave = useCallback((taskId: string, operation: () => Promise<void>) => {
@@ -1268,13 +1272,22 @@ export function useMindMapSync({
     }, [supabase])
 
     // サーバーからタスクを再取得（ビュー切り替え時など外部でタスクが追加された場合）
-    const refreshFromServer = useCallback(async () => {
+    const refreshFromServer = useCallback(async (options?: { force?: boolean; staleMs?: number }) => {
         if (!projectId) return
-        try {
+        const staleMs = options?.staleMs ?? 0
+        if (!options?.force && staleMs > 0 && Date.now() - lastServerRefreshAt.current < staleMs) {
+            return
+        }
+        if (refreshInFlight.current) return refreshInFlight.current
+
+        const refresh = (async () => {
+            setIsLoading(true)
             const { data, error } = await supabase
                 .from('tasks')
                 .select('*')
                 .eq('project_id', projectId)
+                .is('deleted_at', null)
+                .order('order_index', { ascending: true })
             if (error) throw error
             if (data) {
                 setAllTasks(prev => {
@@ -1285,8 +1298,17 @@ export function useMindMapSync({
                     return [...data, ...optimistic]
                 })
             }
+            lastServerRefreshAt.current = Date.now()
+        })()
+
+        refreshInFlight.current = refresh
+        try {
+            await refresh
         } catch (e) {
             console.error('[Sync] refreshFromServer failed:', e)
+        } finally {
+            if (refreshInFlight.current === refresh) refreshInFlight.current = null
+            setIsLoading(false)
         }
     }, [projectId, supabase])
 

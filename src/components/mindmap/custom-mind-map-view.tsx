@@ -5,6 +5,11 @@ import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, StickyNote } 
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
+import {
+    getMindMapViewportBounds,
+    getPinchViewportTransform,
+    getViewportTransformAtPoint,
+} from "@/lib/mindmap-viewport";
 import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
 
 type CustomMindMapViewProps = {
@@ -82,6 +87,7 @@ type Point = {
 type PinchGestureState = {
     initialDistance: number;
     initialZoom: number;
+    initialStagePoint: Point;
 };
 
 type PendingLongPressDragState = {
@@ -374,6 +380,8 @@ export function CustomMindMapView({
     const stageRef = useRef<HTMLDivElement>(null);
     const zoomRef = useRef(zoom);
     const panOffsetRef = useRef(panOffset);
+    const pendingViewportTransformRef = useRef<{ zoom: number; pan: Point } | null>(null);
+    const viewportRafRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
     const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
@@ -440,27 +448,37 @@ export function CustomMindMapView({
         };
     }, []);
 
+    const applyViewportTransform = useCallback((nextZoom: number, nextPan: Point) => {
+        zoomRef.current = nextZoom;
+        panOffsetRef.current = nextPan;
+        pendingViewportTransformRef.current = { zoom: nextZoom, pan: nextPan };
+        if (viewportRafRef.current !== null) return;
+        viewportRafRef.current = window.requestAnimationFrame(() => {
+            viewportRafRef.current = null;
+            const pending = pendingViewportTransformRef.current;
+            if (!pending) return;
+            pendingViewportTransformRef.current = null;
+            setZoom(pending.zoom);
+            setPanOffset(pending.pan);
+        });
+    }, []);
+
     const setZoomAtViewportPoint = useCallback((nextZoomRaw: number, origin: Point | null = null) => {
-        const nextZoom = Math.min(isMobile ? 1.25 : 1.4, Math.max(isMobile ? 0.6 : 0.55, Number(nextZoomRaw.toFixed(2))));
-        const currentZoom = zoomRef.current;
-        if (nextZoom === currentZoom) return;
         const rect = viewportRef.current?.getBoundingClientRect();
         const originPoint = origin ?? {
             x: rect ? rect.width / 2 : 0,
             y: rect ? rect.height / 2 : 0,
         };
-        const currentPan = panOffsetRef.current;
-        const stageX = (originPoint.x - currentPan.x) / currentZoom;
-        const stageY = (originPoint.y - currentPan.y) / currentZoom;
-        const nextPan = {
-            x: originPoint.x - stageX * nextZoom,
-            y: originPoint.y - stageY * nextZoom,
-        };
-        zoomRef.current = nextZoom;
-        panOffsetRef.current = nextPan;
-        setZoom(nextZoom);
-        setPanOffset(nextPan);
-    }, [isMobile]);
+        const next = getViewportTransformAtPoint({
+            currentZoom: zoomRef.current,
+            currentPan: panOffsetRef.current,
+            nextZoom: nextZoomRaw,
+            origin: originPoint,
+            bounds: getMindMapViewportBounds(isMobile),
+        });
+        if (next.zoom === zoomRef.current && next.pan.x === panOffsetRef.current.x && next.pan.y === panOffsetRef.current.y) return;
+        applyViewportTransform(next.zoom, next.pan);
+    }, [applyViewportTransform, isMobile]);
 
     const fitView = useCallback(() => {
         const rect = viewportRef.current?.getBoundingClientRect();
@@ -476,16 +494,13 @@ export function CustomMindMapView({
                 )
             )
         );
-        const nextZoom = Number(fittedZoom.toFixed(2));
+        const nextZoom = fittedZoom;
         const nextPan = {
             x: (rect.width - stageWidth * nextZoom) / 2,
             y: (rect.height - stageHeight * nextZoom) / 2,
         };
-        zoomRef.current = nextZoom;
-        panOffsetRef.current = nextPan;
-        setZoom(nextZoom);
-        setPanOffset(nextPan);
-    }, [isMobile, stageHeight, stageWidth]);
+        applyViewportTransform(nextZoom, nextPan);
+    }, [applyViewportTransform, isMobile, stageHeight, stageWidth]);
 
     const isDescendantNode = useCallback((candidateId: string, ancestorId: string) => {
         let current = nodeById.get(candidateId);
@@ -688,8 +703,8 @@ export function CustomMindMapView({
         event.preventDefault();
         const rect = viewportRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const delta = event.deltaY > 0 ? -0.08 : 0.08;
-        setZoomAtViewportPoint(zoomRef.current + delta, {
+        const nextZoom = zoomRef.current * Math.exp(-event.deltaY * 0.002);
+        setZoomAtViewportPoint(nextZoom, {
             x: event.clientX - rect.left,
             y: event.clientY - rect.top,
         });
@@ -703,9 +718,16 @@ export function CustomMindMapView({
             if (event.touches.length !== 2) return;
             event.preventDefault();
             clearPendingLongPressDrag();
+            const midpoint = getTouchMidpoint(event.touches, viewport);
+            const currentZoom = zoomRef.current;
+            const currentPan = panOffsetRef.current;
             pinchGestureRef.current = {
                 initialDistance: getTouchDistance(event.touches),
-                initialZoom: zoomRef.current,
+                initialZoom: currentZoom,
+                initialStagePoint: {
+                    x: (midpoint.x - currentPan.x) / currentZoom,
+                    y: (midpoint.y - currentPan.y) / currentZoom,
+                },
             };
             setPanState(null);
             setSelectionBox(null);
@@ -716,14 +738,24 @@ export function CustomMindMapView({
             if (event.touches.length !== 2) return;
             event.preventDefault();
             const currentDistance = getTouchDistance(event.touches);
+            const currentMidpoint = getTouchMidpoint(event.touches, viewport);
             const currentGesture = pinchGestureRef.current ?? {
                 initialDistance: currentDistance,
                 initialZoom: zoomRef.current,
+                initialStagePoint: getStagePoint(
+                    (event.touches[0].clientX + event.touches[1].clientX) / 2,
+                    (event.touches[0].clientY + event.touches[1].clientY) / 2
+                ) ?? { x: 0, y: 0 },
             };
             pinchGestureRef.current = currentGesture;
             if (currentGesture.initialDistance <= 0) return;
-            const nextZoom = currentGesture.initialZoom * (currentDistance / currentGesture.initialDistance);
-            setZoomAtViewportPoint(nextZoom, getTouchMidpoint(event.touches, viewport));
+            const next = getPinchViewportTransform({
+                start: currentGesture,
+                currentDistance,
+                currentMidpoint,
+                bounds: getMindMapViewportBounds(isMobile),
+            });
+            applyViewportTransform(next.zoom, next.pan);
         };
 
         const endPinch = (event: TouchEvent) => {
@@ -736,9 +768,19 @@ export function CustomMindMapView({
 
         const startGesture = (event: Event) => {
             event.preventDefault();
+            const rect = viewport.getBoundingClientRect();
+            const origin = "clientX" in event && typeof (event as WebKitGestureEvent).clientX === "number" && typeof (event as WebKitGestureEvent).clientY === "number"
+                ? { x: (event as WebKitGestureEvent).clientX! - rect.left, y: (event as WebKitGestureEvent).clientY! - rect.top }
+                : { x: rect.width / 2, y: rect.height / 2 };
+            const currentZoom = zoomRef.current;
+            const currentPan = panOffsetRef.current;
             pinchGestureRef.current = {
                 initialDistance: 1,
-                initialZoom: zoomRef.current,
+                initialZoom: currentZoom,
+                initialStagePoint: {
+                    x: (origin.x - currentPan.x) / currentZoom,
+                    y: (origin.y - currentPan.y) / currentZoom,
+                },
             };
             setPanState(null);
             setSelectionBox(null);
@@ -751,13 +793,20 @@ export function CustomMindMapView({
             const currentGesture = pinchGestureRef.current ?? {
                 initialDistance: 1,
                 initialZoom: zoomRef.current,
+                initialStagePoint: getStagePoint(gestureEvent.clientX ?? 0, gestureEvent.clientY ?? 0) ?? { x: 0, y: 0 },
             };
             pinchGestureRef.current = currentGesture;
             const rect = viewport.getBoundingClientRect();
             const origin = typeof gestureEvent.clientX === "number" && typeof gestureEvent.clientY === "number"
                 ? { x: gestureEvent.clientX - rect.left, y: gestureEvent.clientY - rect.top }
                 : { x: rect.width / 2, y: rect.height / 2 };
-            setZoomAtViewportPoint(currentGesture.initialZoom * gestureEvent.scale, origin);
+            const next = getPinchViewportTransform({
+                start: currentGesture,
+                currentDistance: gestureEvent.scale,
+                currentMidpoint: origin,
+                bounds: getMindMapViewportBounds(isMobile),
+            });
+            applyViewportTransform(next.zoom, next.pan);
         };
 
         const endGesture = (event: Event) => {
@@ -787,11 +836,19 @@ export function CustomMindMapView({
             viewport.removeEventListener("gesturechange", moveGesture);
             viewport.removeEventListener("gestureend", endGesture);
         };
-    }, [clearPendingLongPressDrag, handleWheel, setZoomAtViewportPoint]);
+    }, [applyViewportTransform, clearPendingLongPressDrag, getStagePoint, handleWheel, isMobile]);
 
     useEffect(() => {
         return () => clearPendingLongPressDrag();
     }, [clearPendingLongPressDrag]);
+
+    useEffect(() => {
+        return () => {
+            if (viewportRafRef.current !== null) {
+                window.cancelAnimationFrame(viewportRafRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (!dragState) return;

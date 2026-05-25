@@ -42,6 +42,7 @@ export function buildCommonRules(): string {
   return `## 対話の基本ルール
 - **対話優先**: ユーザーと情報を交換しながら質の高い提案をする。選択肢を提示し、ユーザーの意思を確認してから行動する
 - 削除操作は実行不可。「削除はアプリから直接行ってください」と案内する
+- 外部Web検索や外部サイト調査はしない。Focusmap内のタスク・メモ・予定・マップ操作に集中する
 - 親しみやすく応答する（2文以内 + options）
 - 日本語で応答する`
 }
@@ -63,7 +64,7 @@ export function buildResponseFormatRules(): string {
 注意: actionブロックとoptionsブロックとbest_proposalブロックは同時に使わない。どれか1つのみ。`
 }
 
-/** ツール有効スキル用のレスポンス形式ルール */
+/** DB変更をユーザー承認付きアクションとして返すためのレスポンス形式ルール */
 export function buildToolResponseFormatRules(): string {
   return `## 選択肢の指定方法
 \`\`\`options
@@ -72,11 +73,26 @@ export function buildToolResponseFormatRules(): string {
 - 最大4つまで
 - **重要**: valueにUUIDやIDを含めないこと。日本語の自然な文を使うこと
 
-## ツール使用ルール
-- DB操作（タスク追加、グループ追加など）が必要な場合は、利用可能なツールを呼び出して実行すること
-- \`\`\`action\`\`\` ブロックは使わないこと。代わりにツールを使う
-- ツール実行後は結果をユーザーに自然な言葉で報告する
-- 1回の応答で複数のツールを呼んでもよい`
+## アクション指定方法
+DB変更が必要な場合は、即実行せず、必ず確認用の action ブロックを1つだけ返すこと。
+\`\`\`action
+{"type": "add_task", "params": {"title": "タスク名", "project_id": "プロジェクトID"}, "description": "確認用の説明"}
+\`\`\`
+
+利用できるアクション:
+- add_task: {"title": string, "project_id"?: string, "parent_task_id"?: string}
+- add_calendar_event: {"title": string, "scheduled_at": string, "estimated_time"?: number, "calendar_id"?: string, "project_id"?: string}
+- add_mindmap_group: {"title": string, "project_id": string}
+- add_mindmap_task: {"title": string, "parent_id": string, "project_id": string}
+- edit_memo: {"note_id": string, "content": string}
+- link_project: {"note_id": string, "project_id": string}
+- archive_memo: {"note_id": string}
+- update_priority: {"task_id": string, "priority": number}
+- set_deadline: {"task_id": string, "scheduled_at": string, "estimated_time"?: number}
+
+注意:
+- actionブロックとoptionsブロックは同時に使わない
+- 削除系アクションは返さない`
 }
 
 /** コンテキスト情報ブロック */

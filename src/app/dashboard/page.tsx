@@ -12,25 +12,26 @@ export default async function DashboardPage() {
         redirect('/login')
     }
 
-    // Fetch ALL data (Hierarchical)
-    // 1. Spaces
-    const { data: spaces } = await supabase
-        .from("spaces")
-        .select("*")
-        .order("created_at", { ascending: false })
+    const [spacesResult, projectsResult, tasksResult] = await Promise.all([
+        supabase
+            .from("spaces")
+            .select("*")
+            .order("created_at", { ascending: false }),
+        supabase
+            .from("projects")
+            .select("*")
+            .order("created_at", { ascending: false }),
+        supabase
+            .from("tasks")
+            .select("*")
+            .is("deleted_at", null)
+            .order("priority", { ascending: false, nullsFirst: false })
+            .order("order_index", { ascending: true }),
+    ])
 
-    // 2. Projects
-    const { data: projects } = await supabase
-        .from("projects")
-        .select("*")
-        .order("created_at", { ascending: false })
-
-    // 3. Tasks (soft-deleteされたタスクを除外)
-    const { data: tasks } = await supabase
-        .from("tasks")
-        .select("*")
-        .is("deleted_at", null)
-        .order("priority", { ascending: false })
+    const spaces = spacesResult.data
+    const projects = projectsResult.data
+    const tasks = tasksResult.data
 
     return (
         <DashboardLoader

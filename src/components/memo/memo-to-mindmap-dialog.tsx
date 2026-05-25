@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo, type ReactNode } from "react"
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react"
 import { Loader2, Trash2, Sparkles, Network } from "lucide-react"
 import {
   Dialog,
@@ -57,6 +57,7 @@ export function MemoToMindmapDialog({
   const [target, setTarget] = useState<string>(defaultProjectId || NEW_PROJECT)
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || spaces[0]?.id || "")
   const { pushAction } = useUndoRedo()
+  const firstSpaceId = spaces[0]?.id || ""
 
   const reset = useCallback(() => {
     setStep("config")
@@ -65,8 +66,13 @@ export function MemoToMindmapDialog({
     setProjectTitle("")
     setError(null)
     setTarget(defaultProjectId || NEW_PROJECT)
-    setSpaceId(defaultSpaceId || spaces[0]?.id || "")
-  }, [defaultProjectId, defaultSpaceId, spaces])
+    setSpaceId(defaultSpaceId || firstSpaceId)
+  }, [defaultProjectId, defaultSpaceId, firstSpaceId])
+
+  useEffect(() => {
+    if (!open) return
+    reset()
+  }, [open, reset])
 
   const handleClose = useCallback(() => {
     if (step === "generating" || step === "committing") return

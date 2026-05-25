@@ -8,8 +8,13 @@ const DashboardClient = dynamic(
     {
         ssr: false,
         loading: () => (
-            <div className="flex items-center justify-center h-screen bg-background">
-                <div className="animate-pulse text-muted-foreground">読み込み中...</div>
+            <div className="flex h-screen flex-col gap-3 bg-background p-4">
+                <div className="h-12 shrink-0 animate-pulse rounded-md bg-muted/70" />
+                <div className="grid flex-1 min-h-0 gap-3 md:grid-cols-[13rem_1fr_22rem]">
+                    <div className="hidden rounded-md border bg-muted/30 md:block" />
+                    <div className="rounded-md border bg-muted/20" />
+                    <div className="hidden rounded-md border bg-muted/30 md:block" />
+                </div>
             </div>
         ),
     }
