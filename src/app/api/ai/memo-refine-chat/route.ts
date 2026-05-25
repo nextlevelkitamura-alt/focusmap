@@ -3,6 +3,7 @@ import { createClient } from "@/utils/supabase/server"
 import { chatCompletionWithTools, type AgentMessage, type ToolDef, type ToolCall } from "@/lib/ai-client"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getCalendarClient } from "@/lib/google-calendar"
+import { DEFAULT_GEMINI_MODEL } from "@/lib/ai/providers"
 
 // ─── 与える道具 ─────────────────────────────────────────────────────────
 const TOOLS: ToolDef[] = [
@@ -382,7 +383,7 @@ export async function POST(req: Request) {
   const body = (await req.json()) as ChatRequest
   const messages = Array.isArray(body.messages) ? body.messages : []
   const source = body.source
-  const model = body.model ?? "glm-5.1"
+  const model = body.model ?? DEFAULT_GEMINI_MODEL
   const sessionId = body.session_id ?? null
 
   if (!source?.id) {
@@ -455,7 +456,7 @@ export async function POST(req: Request) {
           content: JSON.stringify(toolResult),
         })
       }
-      // ループ続行（次のイテレーションで GLM の応答を取りに行く）
+      // ループ続行（次のイテレーションで AI の応答を取りに行く）
     } else {
       // テキストだけの応答 → ここで終了
       finalContent = result.content ?? ""
@@ -498,7 +499,7 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({
-    /** GLM の最終テキスト応答（ユーザーに表示） */
+    /** AI の最終テキスト応答（ユーザーに表示） */
     response: finalContent ?? "（応答なし）",
     /** このターンで実行されたツール一覧（UI に chip 表示） */
     actions,

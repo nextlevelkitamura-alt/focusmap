@@ -58,13 +58,13 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
   const [sessionId, setSessionId] = useState<string>("")
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // シートを開いたとき初期メッセージを GLM から取得
+  // シートを開いたとき初期メッセージを AI から取得
   useEffect(() => {
     if (open && history.length === 0) {
       // セッションID生成（チャットシート1回ぶん）
       setSessionId(crypto.randomUUID())
       // 初回: system は backend で付与されるので、user の "start" 的なシード必要なし
-      // ただし GLM が黙ったままになるとUX悪いので、明示的に一発「読みました、まず質問します」を引き出すために
+      // ただし AI が黙ったままになるとUX悪いので、明示的に一発「読みました、まず質問します」を引き出すために
       // ユーザーロールで「（自動: 元メモを見て会話を始めて）」を送る
       const seed: AgentMessage = { role: "user", content: "元メモを読んで、整理を手伝ってください。まず何が必要か質問してください。" }
       void runTurn([seed], false)
@@ -142,7 +142,7 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
     const userMsg: AgentMessage = { role: "user", content: trimmed }
     // ① まずユーザーメッセージを即時表示（API応答待たない）
     setItems(prev => [...prev, { kind: "user", content: trimmed }])
-    // ② API 呼び出し（"GLM が考えています..." がスピナーで出る）
+    // ② API 呼び出し（"AI が考えています..." がスピナーで出る）
     const nextHistory = [...history, userMsg]
     await runTurn(nextHistory, false)  // ユーザー表示は既に済んでいるので displaySeedAsUser=false
   }
@@ -186,7 +186,7 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 space-y-3">
           {items.length === 0 && !isWaiting && (
             <div className="text-center text-sm text-muted-foreground py-12">
-              GLM があなたのメモを読んで、質問を考えます...
+              AI があなたのメモを読んで、質問を考えます...
             </div>
           )}
           {items.map((item, i) => (
@@ -195,7 +195,7 @@ export function MemoRefineChat({ open, onOpenChange, source, model, onTouched }:
           {isWaiting && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              GLM が考えています...
+              AI が考えています...
             </div>
           )}
           {error && (

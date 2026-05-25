@@ -78,6 +78,33 @@ type Point = {
     y: number;
 };
 
+type PinchGestureState = {
+    initialDistance: number;
+    initialZoom: number;
+};
+
+type WebKitGestureEvent = Event & {
+    scale: number;
+    clientX?: number;
+    clientY?: number;
+};
+
+const getTouchDistance = (touches: TouchList) => {
+    const first = touches[0];
+    const second = touches[1];
+    return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+};
+
+const getTouchMidpoint = (touches: TouchList, viewport: HTMLDivElement): Point => {
+    const rect = viewport.getBoundingClientRect();
+    const first = touches[0];
+    const second = touches[1];
+    return {
+        x: (first.clientX + second.clientX) / 2 - rect.left,
+        y: (first.clientY + second.clientY) / 2 - rect.top,
+    };
+};
+
 const formatDateShort = (value: string | null) => {
     if (!value) return null;
     const date = new Date(value);
@@ -322,6 +349,7 @@ export function CustomMindMapView({
     const stageRef = useRef<HTMLDivElement>(null);
     const zoomRef = useRef(zoom);
     const panOffsetRef = useRef(panOffset);
+    const pinchGestureRef = useRef<PinchGestureState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
     const model = useMemo(
         () => buildMindMapModel({ project, groups, tasks, collapsedTaskIds, isMobile }),
@@ -573,6 +601,7 @@ export function CustomMindMapView({
     }, [getStagePoint, isMobile, spacePressed]);
 
     const handlePanPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (pinchGestureRef.current) return;
         const isTouchPan = isMobile && event.pointerType === "touch";
         const isPanButton = event.button === 1 || event.button === 2 || (event.button === 0 && spacePressed) || isTouchPan;
         if (!isPanButton) return;
@@ -592,7 +621,7 @@ export function CustomMindMapView({
         });
     }, [isMobile, spacePressed]);
 
-    const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    const handleWheel = useCallback((event: WheelEvent) => {
         if (!event.ctrlKey && !event.metaKey) return;
         event.preventDefault();
         const rect = viewportRef.current?.getBoundingClientRect();
@@ -603,6 +632,99 @@ export function CustomMindMapView({
             y: event.clientY - rect.top,
         });
     }, [setZoomAtViewportPoint]);
+
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+
+        const startPinch = (event: TouchEvent) => {
+            if (event.touches.length !== 2) return;
+            event.preventDefault();
+            pinchGestureRef.current = {
+                initialDistance: getTouchDistance(event.touches),
+                initialZoom: zoomRef.current,
+            };
+            setPanState(null);
+            setSelectionBox(null);
+            setDragState(null);
+        };
+
+        const movePinch = (event: TouchEvent) => {
+            if (event.touches.length !== 2) return;
+            event.preventDefault();
+            const currentDistance = getTouchDistance(event.touches);
+            const currentGesture = pinchGestureRef.current ?? {
+                initialDistance: currentDistance,
+                initialZoom: zoomRef.current,
+            };
+            pinchGestureRef.current = currentGesture;
+            if (currentGesture.initialDistance <= 0) return;
+            const nextZoom = currentGesture.initialZoom * (currentDistance / currentGesture.initialDistance);
+            setZoomAtViewportPoint(nextZoom, getTouchMidpoint(event.touches, viewport));
+        };
+
+        const endPinch = (event: TouchEvent) => {
+            if (event.touches.length >= 2) return;
+            if (pinchGestureRef.current) {
+                suppressPaneClickUntilRef.current = Date.now() + 200;
+            }
+            pinchGestureRef.current = null;
+        };
+
+        const startGesture = (event: Event) => {
+            event.preventDefault();
+            pinchGestureRef.current = {
+                initialDistance: 1,
+                initialZoom: zoomRef.current,
+            };
+            setPanState(null);
+            setSelectionBox(null);
+            setDragState(null);
+        };
+
+        const moveGesture = (event: Event) => {
+            event.preventDefault();
+            const gestureEvent = event as WebKitGestureEvent;
+            const currentGesture = pinchGestureRef.current ?? {
+                initialDistance: 1,
+                initialZoom: zoomRef.current,
+            };
+            pinchGestureRef.current = currentGesture;
+            const rect = viewport.getBoundingClientRect();
+            const origin = typeof gestureEvent.clientX === "number" && typeof gestureEvent.clientY === "number"
+                ? { x: gestureEvent.clientX - rect.left, y: gestureEvent.clientY - rect.top }
+                : { x: rect.width / 2, y: rect.height / 2 };
+            setZoomAtViewportPoint(currentGesture.initialZoom * gestureEvent.scale, origin);
+        };
+
+        const endGesture = (event: Event) => {
+            event.preventDefault();
+            if (pinchGestureRef.current) {
+                suppressPaneClickUntilRef.current = Date.now() + 200;
+            }
+            pinchGestureRef.current = null;
+        };
+
+        viewport.addEventListener("wheel", handleWheel, { passive: false });
+        viewport.addEventListener("touchstart", startPinch, { passive: false });
+        viewport.addEventListener("touchmove", movePinch, { passive: false });
+        viewport.addEventListener("touchend", endPinch);
+        viewport.addEventListener("touchcancel", endPinch);
+        viewport.addEventListener("gesturestart", startGesture, { passive: false });
+        viewport.addEventListener("gesturechange", moveGesture, { passive: false });
+        viewport.addEventListener("gestureend", endGesture, { passive: false });
+
+        return () => {
+            viewport.removeEventListener("wheel", handleWheel);
+            viewport.removeEventListener("touchstart", startPinch);
+            viewport.removeEventListener("touchmove", movePinch);
+            viewport.removeEventListener("touchend", endPinch);
+            viewport.removeEventListener("touchcancel", endPinch);
+            viewport.removeEventListener("gesturestart", startGesture);
+            viewport.removeEventListener("gesturechange", moveGesture);
+            viewport.removeEventListener("gestureend", endGesture);
+        };
+    }, [handleWheel, setZoomAtViewportPoint]);
 
     useEffect(() => {
         if (!dragState) return;
@@ -716,6 +838,7 @@ export function CustomMindMapView({
         if (!panState) return;
 
         const handlePointerMove = (event: PointerEvent) => {
+            if (pinchGestureRef.current) return;
             const deltaX = event.clientX - panState.startClientX;
             const deltaY = event.clientY - panState.startClientY;
             const nextPan = {
@@ -757,7 +880,7 @@ export function CustomMindMapView({
         : null;
 
     return (
-        <div className="relative h-full w-full overflow-hidden bg-muted/5" style={isMobile ? { touchAction: "none" } : undefined}>
+        <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
             <div className={cn(
                 "absolute z-20 flex items-center gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
                 isMobile ? "right-2 top-2" : "right-3 top-14"
@@ -795,10 +918,9 @@ export function CustomMindMapView({
                     "h-full w-full overflow-hidden bg-[radial-gradient(circle,rgba(255,255,255,0.16)_1px,transparent_1px)] [background-size:20px_20px]",
                     panState ? "cursor-grabbing select-none" : spacePressed ? "cursor-grab" : "cursor-default"
                 )}
-                style={isMobile ? { touchAction: "none" } : undefined}
+                style={{ touchAction: "none", overscrollBehavior: "contain" }}
                 onPointerDown={handlePanPointerDown}
                 onContextMenu={(event) => event.preventDefault()}
-                onWheel={handleWheel}
                 onClick={() => {
                     if (Date.now() < suppressPaneClickUntilRef.current) return;
                     onSelectNode(null);

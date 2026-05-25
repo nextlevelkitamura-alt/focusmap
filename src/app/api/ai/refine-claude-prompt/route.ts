@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 import { chatCompletion } from "@/lib/ai-client"
+import { DEFAULT_GEMINI_MODEL } from "@/lib/ai/providers"
 
-// GLM/Kimi にメモを Claude Code への明確な作業依頼に書き直してもらう
+// メモを Claude Code への明確な作業依頼に書き直してもらう
 const SYSTEM_PROMPT = `あなたはユーザーの雑なメモを、Claude Code（コーディング AI エージェント）への明確な作業依頼に書き直すアシスタントです。
 
 ## 入力
@@ -32,7 +33,7 @@ interface RefineRequest {
   title?: string
   description?: string
   repo_path?: string
-  /** モデルID。既存メモ整理と同じ glm-5.1 / kimi-k2.6 等。省略時はai-client側のデフォルト */
+  /** モデルID。省略時は Gemini の標準モデル */
   model?: string
 }
 
@@ -45,13 +46,13 @@ export async function POST(req: Request) {
   const title = (body.title ?? "").trim()
   const description = (body.description ?? "").trim()
   const repoPath = (body.repo_path ?? "").trim()
-  const model = (body.model ?? "glm-5.1").trim()
+  const model = (body.model ?? DEFAULT_GEMINI_MODEL).trim()
 
   if (!title && !description) {
     return NextResponse.json({ error: "title or description required" }, { status: 400 })
   }
 
-  // GLM/Kimi への入力を整形（OpenCode Goプラン経由）
+  // AI への入力を整形
   const userMessage = [
     repoPath ? `対象リポジトリ: ${repoPath}` : null,
     title ? `メモタイトル: ${title}` : null,

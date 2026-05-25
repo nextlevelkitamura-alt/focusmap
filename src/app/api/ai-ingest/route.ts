@@ -3,7 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { chatCompletion } from '@/lib/ai-client'
 import { generateText } from 'ai'
 import { google } from '@ai-sdk/google'
-import { DEFAULT_GEMINI_MODEL } from '@/lib/ai/providers'
+import { DEFAULT_GEMINI_MODEL, resolveGeminiModel } from '@/lib/ai/providers'
 
 const MEMO_TAGS = ['仕事', '生活', '学習', '健康', '人間関係', 'お金'] as const
 
@@ -13,8 +13,7 @@ schema={"title":string,"category":string,"tags":string[],"description":string,"s
 現在日時: ${new Date().toISOString()}`
 
 function normalizeMemoModel(model: string) {
-  if (model === 'gemini-3.0-flash' || model === 'gemini-3.1-flash-lite') return DEFAULT_GEMINI_MODEL
-  return model
+  return model.startsWith('gemini-') ? resolveGeminiModel(model) : model
 }
 
 function normalizeMemoCategory(value: unknown, fallbackText = '') {

@@ -1,7 +1,7 @@
 /**
  * AI プロバイダー — Vercel AI SDK ベース
  *
- * 現在: 全スキルで Gemini Flash-Lite を使用
+ * 現在: 全スキルで Gemini Flash Preview を使用
  * 将来: APIキー追加で OpenAI / Anthropic に切替可能
  */
 import { google } from '@ai-sdk/google'
@@ -12,8 +12,22 @@ import type { AgentId } from '../agents/index'
 // import { openai } from '@ai-sdk/openai'
 // import { anthropic } from '@ai-sdk/anthropic'
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
+export const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview'
 export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
+
+const REMOVED_OR_INVALID_GEMINI_MODELS = new Set([
+  'gemini-3.0-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
+])
+
+export function resolveGeminiModel(modelName = process.env.GEMINI_MODEL): string {
+  const requested = modelName?.trim()
+  if (!requested) return DEFAULT_GEMINI_MODEL
+  if (REMOVED_OR_INVALID_GEMINI_MODELS.has(requested)) return DEFAULT_GEMINI_MODEL
+  if (!requested.startsWith('gemini-')) return DEFAULT_GEMINI_MODEL
+  return requested
+}
 
 export interface SkillModelConfig {
   maxTokens: number
@@ -58,7 +72,7 @@ export function getModelForSkill(_skillId?: string) {
   //   return anthropic('claude-sonnet-4-6')
   // }
 
-  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  const modelName = resolveGeminiModel()
   return google(modelName)
 }
 
@@ -106,7 +120,7 @@ export function getModelForAgent(_agentId: AgentId) {
   // if (process.env.ANTHROPIC_API_KEY && ['coach', 'strategist'].includes(_agentId)) {
   //   return anthropic('claude-sonnet-4-6')
   // }
-  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  const modelName = resolveGeminiModel()
   return google(modelName)
 }
 
@@ -135,6 +149,6 @@ export function getModelForMemoMindmap(mode: MemoMindmapMode) {
     const modelName = process.env.DEEPSEEK_MODEL || DEFAULT_DEEPSEEK_MODEL
     return { model: deepseek(modelName), modelName }
   }
-  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  const modelName = resolveGeminiModel()
   return { model: google(modelName), modelName }
 }

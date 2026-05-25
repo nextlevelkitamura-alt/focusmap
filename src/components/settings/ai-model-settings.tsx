@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 
-const DEFAULT_MODEL = "gemini-2.5-flash-lite"
+const DEFAULT_MODEL = "gemini-3-flash-preview"
 
 const MODEL_OPTIONS = [
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "低遅延・低コストの標準モデル", badge: "推奨" },
-  { id: "glm-5.1", label: "GLM-5.1", note: "外部APIの予備モデル", badge: "予備" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "高速。無料枠あり", badge: "高速" },
+  { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview", note: "新世代のFlashプレビュー標準モデル", badge: "推奨" },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "バランス重視の安定版モデル", badge: "安定" },
+  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", note: "低遅延・低コストの旧標準モデル", badge: "旧" },
+  { id: "glm-5.1", label: "GLM-5.1", note: "外部APIの予備モデル（ローカル向け）", badge: "予備" },
   { id: "kimi-k2.6", label: "Kimi K2.6", note: "品質優先。時間はかかりやすい", badge: "品質" },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", note: "品質と速度のバランス", badge: "バランス" },
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", note: "短い整理を速く返す", badge: "高速" },
@@ -44,7 +45,7 @@ export function AiModelSettings() {
           ? data.preferences.ai_ingest_model
           : DEFAULT_MODEL
         const normalizedModel =
-          savedModel === "gemini-3.0-flash" || savedModel === "gemini-3.1-flash-lite"
+          savedModel === "gemini-3.0-flash" || savedModel === "gemini-3.1-flash-lite" || savedModel === "gemini-3.5-flash"
             ? DEFAULT_MODEL
             : savedModel
         setModel(normalizedModel)
@@ -184,7 +185,7 @@ export function AiModelSettings() {
               <Input
                 value={customModel}
                 onChange={e => setCustomModel(e.target.value)}
-                placeholder="例: gemini-2.5-flash-lite"
+                placeholder="例: gemini-3-flash-preview"
                 className="min-h-[44px] border-white/10 bg-[#171717] text-zinc-100 placeholder:text-zinc-600"
               />
             )}

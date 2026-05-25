@@ -1,7 +1,7 @@
 import { generateText } from "ai"
 import { NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
-import { DEFAULT_GEMINI_MODEL, getModelForSkill } from "@/lib/ai/providers"
+import { getModelForSkill, resolveGeminiModel } from "@/lib/ai/providers"
 import {
   collectProgressEvidence,
   deterministicProgress,
@@ -61,7 +61,7 @@ async function maybeGenerateGeminiComment(
   deterministic: ReturnType<typeof deterministicProgress>,
   evidence: Awaited<ReturnType<typeof collectProgressEvidence>>,
 ) {
-  const modelName = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  const modelName = resolveGeminiModel()
 
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     return {

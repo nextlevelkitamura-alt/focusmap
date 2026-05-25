@@ -1497,7 +1497,7 @@ export function WishlistCardDetail({
           description: draftDescription || item.description || undefined,
           repo_path: item.project_id ? projects.find(p => p.id === item.project_id)?.repo_path || undefined : undefined,
         }}
-        model="glm-5.1"
+        model="gemini-3-flash-preview"
         onTouched={onMemoChanged}
       />
     </Sheet>

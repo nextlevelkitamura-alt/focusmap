@@ -99,7 +99,7 @@ ${projectContext || '(プロジェクトなし)'}
 - 日時情報を含めず、予定の本質的な名前だけを抽出すること
 - map 分類の場合は null`
 
-    // GLM/Kimi（ai-client経由）で生成
+    // ai-client経由で生成（productionではGeminiへフォールバック）
     const responseText = await chatCompletion(
       [{ role: 'user', content: prompt }],
       { max_tokens: 800 },

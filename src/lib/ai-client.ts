@@ -1,3 +1,7 @@
+import { generateText, jsonSchema, type JSONValue, type ModelMessage, type ToolSet } from 'ai'
+import { google } from '@ai-sdk/google'
+import { resolveGeminiModel } from '@/lib/ai/providers'
+
 const AI_BASE_URL = (process.env.EXTERNAL_AI_API_BASE_URL ?? 'https://api.moonshot.ai/v1').replace(/\/$/, '')
 const AI_API_KEY  = process.env.EXTERNAL_AI_API_KEY ?? process.env.OPENCODE_GO_API_KEY ?? process.env.MOONSHOT_API_KEY ?? ''
 const AI_MODEL    = process.env.EXTERNAL_AI_MODEL ?? 'kimi-k2.6'
@@ -44,9 +48,151 @@ function chatCompletionsUrl() {
     : `${AI_BASE_URL}/chat/completions`
 }
 
-function assertExternalAiAllowed() {
-  if (process.env.NODE_ENV === 'production' && !ALLOW_EXTERNAL_AI_IN_PRODUCTION) {
-    throw new Error('External non-Google AI providers are disabled in production.')
+function normalizeGeminiModel(model?: string) {
+  return resolveGeminiModel(model)
+}
+
+function shouldUseGemini(model?: string) {
+  const requestedModel = model?.trim().toLowerCase()
+  return (
+    requestedModel?.startsWith('gemini-') ||
+    !AI_API_KEY ||
+    (process.env.NODE_ENV === 'production' && !ALLOW_EXTERNAL_AI_IN_PRODUCTION)
+  )
+}
+
+function assertGeminiConfigured() {
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    throw new Error('GOOGLE_GENERATIVE_AI_API_KEY が設定されていません')
+  }
+}
+
+async function geminiChatCompletion(
+  messages: Message[],
+  opts?: { temperature?: number; max_tokens?: number; model?: string },
+) {
+  assertGeminiConfigured()
+  const model = normalizeGeminiModel(opts?.model)
+  const system = messages.find(message => message.role === 'system')?.content
+  const prompt = messages
+    .filter(message => message.role !== 'system')
+    .map(message => `${message.role}: ${message.content}`)
+    .join('\n\n')
+
+  const result = await generateText({
+    model: google(model),
+    system,
+    prompt,
+    maxOutputTokens: opts?.max_tokens ?? 1200,
+    temperature: opts?.temperature ?? 0.5,
+  })
+
+  if (!result.text?.trim()) {
+    throw new Error(`AI_EMPTY_RESPONSE:${model}:${result.finishReason ?? 'unknown'}`)
+  }
+  return result.text
+}
+
+function toGeminiMessages(messages: AgentMessage[]): ModelMessage[] {
+  const toolNameByCallId = new Map<string, string>()
+
+  return messages.map((message): ModelMessage => {
+    if (message.role === 'system' || message.role === 'user') {
+      return { role: message.role, content: message.content }
+    }
+
+    if (message.role === 'assistant') {
+      const content: NonNullable<Extract<ModelMessage, { role: 'assistant' }>['content']> = []
+      if (message.content?.trim()) {
+        content.push({ type: 'text', text: message.content })
+      }
+      for (const call of message.tool_calls ?? []) {
+        toolNameByCallId.set(call.id, call.function.name)
+        let input: unknown = {}
+        try {
+          input = JSON.parse(call.function.arguments || '{}')
+        } catch {
+          input = { raw_arguments: call.function.arguments }
+        }
+        content.push({
+          type: 'tool-call',
+          toolCallId: call.id,
+          toolName: call.function.name,
+          input,
+        })
+      }
+      return { role: 'assistant', content: content.length ? content : '' }
+    }
+
+    if (message.role === 'tool') {
+      const toolName = toolNameByCallId.get(message.tool_call_id) ?? 'unknown_tool'
+      let value: JSONValue = message.content
+      try {
+        value = JSON.parse(message.content) as JSONValue
+      } catch {
+        value = message.content
+      }
+      return {
+        role: 'tool',
+        content: [{
+          type: 'tool-result',
+          toolCallId: message.tool_call_id,
+          toolName,
+          output: { type: 'json', value },
+        }],
+      }
+    }
+
+    return { role: 'assistant', content: '' }
+  })
+}
+
+function toGeminiTools(tools: ToolDef[]): ToolSet {
+  return Object.fromEntries(
+    tools.map(def => [
+      def.function.name,
+      {
+        description: def.function.description,
+        inputSchema: jsonSchema(def.function.parameters),
+      },
+    ]),
+  ) as ToolSet
+}
+
+function toToolChoice(toolChoice?: 'auto' | 'none' | 'required') {
+  if (!toolChoice) return undefined
+  return toolChoice
+}
+
+async function geminiChatCompletionWithTools(
+  messages: AgentMessage[],
+  tools: ToolDef[],
+  opts?: { temperature?: number; max_tokens?: number; model?: string; tool_choice?: 'auto' | 'none' | 'required' },
+): Promise<ChatResult> {
+  assertGeminiConfigured()
+  const model = normalizeGeminiModel(opts?.model)
+  const result = await generateText({
+    model: google(model),
+    messages: toGeminiMessages(messages),
+    tools: toGeminiTools(tools),
+    toolChoice: toToolChoice(opts?.tool_choice),
+    maxOutputTokens: opts?.max_tokens ?? 1500,
+    temperature: opts?.temperature ?? 0.5,
+  })
+
+  const toolCalls = result.toolCalls?.map(call => ({
+    id: call.toolCallId,
+    type: 'function' as const,
+    function: {
+      name: call.toolName,
+      arguments: JSON.stringify(call.input ?? {}),
+    },
+  }))
+
+  return {
+    content: result.text || null,
+    tool_calls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+    finish_reason: result.finishReason ?? 'unknown',
   }
 }
 
@@ -54,7 +200,9 @@ export async function chatCompletion(
   messages: Message[],
   opts?: { temperature?: number; max_tokens?: number; model?: string }
 ): Promise<string> {
-  assertExternalAiAllowed()
+  if (shouldUseGemini(opts?.model)) {
+    return geminiChatCompletion(messages, opts)
+  }
   if (!AI_API_KEY) throw new Error('EXTERNAL_AI_API_KEY が設定されていません')
 
   const model = opts?.model || AI_MODEL
@@ -121,7 +269,9 @@ export async function chatCompletionWithTools(
   tools: ToolDef[],
   opts?: { temperature?: number; max_tokens?: number; model?: string; tool_choice?: 'auto' | 'none' | 'required' }
 ): Promise<ChatResult> {
-  assertExternalAiAllowed()
+  if (shouldUseGemini(opts?.model)) {
+    return geminiChatCompletionWithTools(messages, tools, opts)
+  }
   if (!AI_API_KEY) throw new Error('EXTERNAL_AI_API_KEY が設定されていません')
 
   const model = opts?.model || AI_MODEL

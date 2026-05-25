@@ -53,10 +53,20 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY)
 const DRY_RUN = process.argv.includes('--dry-run')
 const SUMMARY_THRESHOLD = 600
+const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview'
+const INVALID_GEMINI_MODELS = new Set(['gemini-3.0-flash', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'])
+
+function resolveGeminiModel(modelName = process.env.GEMINI_MODEL): string {
+  const requested = modelName?.trim()
+  if (!requested || INVALID_GEMINI_MODELS.has(requested) || !requested.startsWith('gemini-')) {
+    return DEFAULT_GEMINI_MODEL
+  }
+  return requested
+}
 
 async function summarize(text: string): Promise<string> {
   try {
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'
+    const modelName = resolveGeminiModel()
     const { text: out } = await generateText({
       model: google(modelName),
       prompt:

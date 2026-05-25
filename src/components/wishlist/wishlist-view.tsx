@@ -365,7 +365,7 @@ export function WishlistView({
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null)
   const [analyzeElapsedSeconds, setAnalyzeElapsedSeconds] = useState(0)
   const [intakeError, setIntakeError] = useState<string | null>(null)
-  const [selectedAiModel, setSelectedAiModel] = useState("gemini-2.5-flash-lite")
+  const [selectedAiModel, setSelectedAiModel] = useState("gemini-3-flash-preview")
   const [suggestion, setSuggestion] = useState<MemoSuggestion | null>(null)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
@@ -529,14 +529,14 @@ export function WishlistView({
         const data = await res.json()
         const savedModel = typeof data.preferences?.ai_ingest_model === "string"
           ? data.preferences.ai_ingest_model
-          : "gemini-2.5-flash-lite"
+          : "gemini-3-flash-preview"
         setSelectedAiModel(
-          savedModel === "gemini-3.0-flash" || savedModel === "gemini-3.1-flash-lite"
-            ? "gemini-2.5-flash-lite"
+          savedModel === "gemini-3.0-flash" || savedModel === "gemini-3.1-flash-lite" || savedModel === "gemini-3.5-flash"
+            ? "gemini-3-flash-preview"
             : savedModel,
         )
       } catch {
-        setSelectedAiModel("gemini-2.5-flash-lite")
+        setSelectedAiModel("gemini-3-flash-preview")
       }
     }
     loadAiModel()
