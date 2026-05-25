@@ -781,15 +781,17 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
             <div className="flex items-center gap-2">
               <Button
                 variant={isRecording ? "destructive" : "outline"}
-                size="sm"
+                size="icon"
                 onClick={isRecording ? stopRecording : startRecording}
                 disabled={isLoading || isTranscribing}
-                className="gap-1"
+                className="h-9 w-9 shrink-0"
+                aria-label={isRecording ? "録音を停止" : "音声入力"}
+                title={isRecording ? "録音を停止" : "音声入力"}
               >
                 {isRecording ? (
-                  <><Square className="w-3 h-3" />停止</>
+                  <Square className="w-3 h-3" />
                 ) : (
-                  <><Mic className="w-4 h-4" />音声入力</>
+                  <Mic className="w-4 h-4" />
                 )}
               </Button>
               {isRecording && (
@@ -1378,9 +1380,11 @@ export function MemoView({ className, projects = [], spaces = [], selectedSpaceI
             <VoiceWaveform analyserRef={analyserRef} />
             <button
               onClick={stopRecording}
-              className="text-xs font-medium bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded-full transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 transition-colors hover:bg-white/30"
+              aria-label="録音を停止"
+              title="録音を停止"
             >
-              停止
+              <Square className="h-3 w-3" />
             </button>
           </div>
         </div>

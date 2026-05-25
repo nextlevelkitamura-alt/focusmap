@@ -122,11 +122,11 @@ export function MobileAiMapView({
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <div className="z-10 shrink-0 border-b bg-background/95 px-3 py-2 backdrop-blur">
-        <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto_auto_auto] gap-2">
+        <div className="grid grid-cols-[minmax(5.75rem,0.95fr)_minmax(6.25rem,1.1fr)_auto_auto_auto] gap-1.5">
           <select
             value={selectedSpaceId ?? ""}
             onChange={(event) => onSelectSpace(event.target.value || null)}
-            className="min-w-0 rounded-md border bg-background px-2 py-2 text-xs font-medium"
+            className="min-h-11 min-w-0 rounded-md border bg-background px-3 py-2 text-sm font-medium"
             aria-label="スペースを選択"
           >
             <option value="">全体</option>
@@ -137,20 +137,20 @@ export function MobileAiMapView({
           <select
             value={selectedProjectId || ""}
             onChange={(event) => onSelectProject(event.target.value)}
-            className="min-w-0 rounded-md border bg-background px-2 py-2 text-xs font-medium"
+            className="min-h-11 min-w-0 rounded-md border bg-background px-3 py-2 text-sm font-medium"
             aria-label="プロジェクトを選択"
           >
             {projects.map(project => (
               <option key={project.id} value={project.id}>{project.title}</option>
             ))}
           </select>
-          <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" onClick={handleCreateRoot}>
+          <Button type="button" size="icon" variant="outline" className="h-10 w-10 shrink-0" onClick={handleCreateRoot}>
             <Plus className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" onClick={() => setIsMemoPickerOpen(true)}>
+          <Button type="button" size="icon" variant="outline" className="h-10 w-10 shrink-0" onClick={() => setIsMemoPickerOpen(true)}>
             <Network className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" className="h-9 w-9 shrink-0" onClick={() => setIsChatOpen(true)}>
+          <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setIsChatOpen(true)}>
             <MessageCircle className="h-4 w-4" />
           </Button>
         </div>

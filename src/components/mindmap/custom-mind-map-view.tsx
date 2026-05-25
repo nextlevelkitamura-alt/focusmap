@@ -34,6 +34,7 @@ type CustomMindMapViewProps = {
 
 const PADDING = 72;
 const DRAG_START_THRESHOLD = 6;
+const TOUCH_DRAG_LONG_PRESS_DELAY_MS = 500;
 const DROP_TARGET_MAX_DISTANCE = 190;
 
 type CustomDropPosition = "above" | "below" | "as-child";
@@ -81,6 +82,13 @@ type Point = {
 type PinchGestureState = {
     initialDistance: number;
     initialZoom: number;
+};
+
+type PendingLongPressDragState = {
+    timerId: number;
+    node: MindMapModelNode;
+    startClientX: number;
+    startClientY: number;
 };
 
 type WebKitGestureEvent = Event & {
@@ -169,7 +177,7 @@ function CustomTaskNode({
                 node.isDone && "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale",
                 selected && node.isDone && "ring-muted-foreground/40",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
-                !dragging && "cursor-grab active:cursor-grabbing",
+                !dragging && "cursor-grab",
                 dropPosition === "as-child" && !dragging && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
             style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}
@@ -350,6 +358,7 @@ export function CustomMindMapView({
     const zoomRef = useRef(zoom);
     const panOffsetRef = useRef(panOffset);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
+    const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
     const model = useMemo(
         () => buildMindMapModel({ project, groups, tasks, collapsedTaskIds, isMobile }),
@@ -540,17 +549,17 @@ export function CustomMindMapView({
         onSelectNodes(Array.from(next), next.size > 0 ? primaryNodeId : null);
     }, [onSelectNode, onSelectNodes, selectedNodeId, selectedNodeIds]);
 
-    const handleStartDrag = useCallback((node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => {
-        if (node.kind !== "task" || event.button !== 0) return;
-        if (event.shiftKey || event.metaKey || event.ctrlKey) {
-            event.stopPropagation();
-            return;
-        }
-        const point = getStagePoint(event.clientX, event.clientY);
+    const clearPendingLongPressDrag = useCallback(() => {
+        const pending = pendingLongPressDragRef.current;
+        if (!pending) return;
+        window.clearTimeout(pending.timerId);
+        pendingLongPressDragRef.current = null;
+    }, []);
+
+    const beginDragFromClientPoint = useCallback((node: MindMapModelNode, clientX: number, clientY: number) => {
+        if (node.kind !== "task") return;
+        const point = getStagePoint(clientX, clientY);
         if (!point) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
 
         const dragNodeIds = selectedTaskIds.includes(node.id) && selectedTaskIds.length > 1
             ? selectedTaskIds
@@ -581,6 +590,42 @@ export function CustomMindMapView({
             target: null,
         });
     }, [getStagePoint, nodeById, onSelectNode, selectedNodeIds, selectedTaskIds]);
+
+    const handleStartDrag = useCallback((node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => {
+        if (node.kind !== "task" || event.button !== 0) return;
+        if (event.shiftKey || event.metaKey || event.ctrlKey) {
+            event.stopPropagation();
+            return;
+        }
+
+        clearPendingLongPressDrag();
+
+        if (isMobile && event.pointerType === "touch") {
+            const startClientX = event.clientX;
+            const startClientY = event.clientY;
+            const timerId = window.setTimeout(() => {
+                const pending = pendingLongPressDragRef.current;
+                if (!pending || pending.node.id !== node.id) return;
+                pendingLongPressDragRef.current = null;
+                setPanState(null);
+                setSelectionBox(null);
+                beginDragFromClientPoint(node, startClientX, startClientY);
+            }, TOUCH_DRAG_LONG_PRESS_DELAY_MS);
+
+            pendingLongPressDragRef.current = {
+                timerId,
+                node,
+                startClientX,
+                startClientY,
+            };
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        beginDragFromClientPoint(node, event.clientX, event.clientY);
+    }, [beginDragFromClientPoint, clearPendingLongPressDrag, isMobile]);
 
     const handlePanePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (event.button !== 0) return;
@@ -640,6 +685,7 @@ export function CustomMindMapView({
         const startPinch = (event: TouchEvent) => {
             if (event.touches.length !== 2) return;
             event.preventDefault();
+            clearPendingLongPressDrag();
             pinchGestureRef.current = {
                 initialDistance: getTouchDistance(event.touches),
                 initialZoom: zoomRef.current,
@@ -724,7 +770,11 @@ export function CustomMindMapView({
             viewport.removeEventListener("gesturechange", moveGesture);
             viewport.removeEventListener("gestureend", endGesture);
         };
-    }, [handleWheel, setZoomAtViewportPoint]);
+    }, [clearPendingLongPressDrag, handleWheel, setZoomAtViewportPoint]);
+
+    useEffect(() => {
+        return () => clearPendingLongPressDrag();
+    }, [clearPendingLongPressDrag]);
 
     useEffect(() => {
         if (!dragState) return;
@@ -841,6 +891,10 @@ export function CustomMindMapView({
             if (pinchGestureRef.current) return;
             const deltaX = event.clientX - panState.startClientX;
             const deltaY = event.clientY - panState.startClientY;
+            const pendingDrag = pendingLongPressDragRef.current;
+            if (pendingDrag && Math.hypot(event.clientX - pendingDrag.startClientX, event.clientY - pendingDrag.startClientY) >= DRAG_START_THRESHOLD) {
+                clearPendingLongPressDrag();
+            }
             const nextPan = {
                 x: panState.startPanX + deltaX,
                 y: panState.startPanY + deltaY,
@@ -854,6 +908,7 @@ export function CustomMindMapView({
         };
 
         const handlePointerUp = () => {
+            clearPendingLongPressDrag();
             if (panState.moved) {
                 suppressPaneClickUntilRef.current = Date.now() + 200;
             }
@@ -868,7 +923,7 @@ export function CustomMindMapView({
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
         };
-    }, [panState]);
+    }, [clearPendingLongPressDrag, panState]);
 
     const selectionRect = selectionBox
         ? {

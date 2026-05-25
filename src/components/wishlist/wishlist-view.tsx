@@ -1413,6 +1413,7 @@ export function WishlistView({
       : hasIntakeText
         ? Sparkles
         : Mic
+  const showPrimaryActionText = hasIntakeText || isAnalyzing
   const handlePrimaryIntakeAction = async () => {
     if (isAnalyzing || isTranscribing) return
     if (hasIntakeText) {
@@ -1442,7 +1443,10 @@ export function WishlistView({
               onClick={handleVoiceToggle}
               disabled={isTranscribing}
               variant={isRecording ? "destructive" : "outline"}
-              className="h-10 shrink-0 gap-1.5 px-3"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              aria-label={isRecording ? "録音を停止" : "音声入力"}
+              title={isRecording ? "録音を停止" : "音声入力"}
             >
               {isTranscribing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1451,7 +1455,6 @@ export function WishlistView({
               ) : (
                 <Mic className="h-4 w-4" />
               )}
-              <span>{isRecording ? "停止" : "音声"}</span>
             </Button>
             <Button
               type="button"
@@ -1536,10 +1539,16 @@ export function WishlistView({
             onClick={handlePrimaryIntakeAction}
             disabled={isAnalyzing || isTranscribing}
             variant={isRecording ? "destructive" : hasIntakeText ? "default" : "outline"}
-            className="min-h-[44px] min-w-[86px] shrink-0 gap-1 px-3"
+            size={showPrimaryActionText ? "default" : "icon"}
+            className={cn(
+              "min-h-[44px] shrink-0",
+              showPrimaryActionText ? "min-w-[86px] gap-1 px-3" : "w-11 px-0",
+            )}
+            aria-label={primaryActionLabel}
+            title={primaryActionLabel}
           >
             <PrimaryActionIcon className={cn("h-4 w-4", (isAnalyzing || isTranscribing) && "animate-spin")} />
-            <span>{primaryActionLabel}</span>
+            {showPrimaryActionText && <span>{primaryActionLabel}</span>}
           </Button>
           </div>
           {isAnalyzing && (
