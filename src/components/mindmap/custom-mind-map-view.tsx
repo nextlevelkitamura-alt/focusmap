@@ -145,6 +145,7 @@ function CustomTaskNode({
     node,
     selected,
     dragging,
+    dragReady,
     dropPosition,
     onSelectNode,
     onStartDrag,
@@ -155,6 +156,7 @@ function CustomTaskNode({
     node: MindMapModelNode;
     selected: boolean;
     dragging?: boolean;
+    dragReady?: boolean;
     dropPosition?: CustomDropPosition | null;
     onSelectNode: (nodeId: string, options?: { additive: boolean }) => void;
     onStartDrag: (node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => void;
@@ -176,6 +178,7 @@ function CustomTaskNode({
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
                 node.isDone && "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale",
                 selected && node.isDone && "ring-muted-foreground/40",
+                dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 !dragging && "cursor-grab",
                 dropPosition === "as-child" && !dragging && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
@@ -1041,6 +1044,7 @@ export function CustomMindMapView({
                                 node={positionedNode}
                                 selected={selectedNodeIds.has(node.id)}
                                 dragging={isDraggingNode && dragState?.dragging}
+                                dragReady={isDraggingNode && !!dragState && !dragState.dragging}
                                 dropPosition={dropPosition}
                                 onSelectNode={handleSelectTaskNode}
                                 onStartDrag={handleStartDrag}
