@@ -180,12 +180,6 @@ function combineDateTime(dateValue: string, timeValue: string) {
   return date.toISOString()
 }
 
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-}
-
 function getActiveMindmapLink(item: StructuredMemoItem) {
   return item.memo_node_links?.find(link => link.link_type === "mindmap_node" && link.status === "active") ?? null
 }
@@ -837,25 +831,32 @@ export function WishlistCardDetail({
     await update({ tags: tags.filter(t => t !== tag) })
   }
 
-  const uploadImage = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
+  const uploadImages = async (files: File[]) => {
+    const imageFiles = files.filter(file => file.type.startsWith("image/"))
+    if (imageFiles.length === 0) {
       setSaveError("画像ファイルを選択してください")
       return
     }
     setIsUploadingImage(true)
     setSaveError(null)
     try {
-      const formData = new FormData()
-      formData.append("file", file)
-      const res = await fetch(`/api/wishlist/${item.id}/attachments`, {
-        method: "POST",
-        body: formData,
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "画像の保存に失敗しました")
+      const uploaded: MemoImage[] = []
+      for (const file of imageFiles) {
+        const formData = new FormData()
+        formData.append("file", file)
+        const res = await fetch(`/api/wishlist/${item.id}/attachments`, {
+          method: "POST",
+          body: formData,
+        })
+        const data = await res.json()
+        if (!res.ok || data.error) {
+          throw new Error(data.error || "画像の保存に失敗しました")
+        }
+        if (data.attachment) uploaded.push(data.attachment as MemoImage)
       }
-      setImages(prev => [...prev, data.attachment])
+      if (uploaded.length > 0) {
+        setImages(prev => [...prev, ...uploaded])
+      }
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "画像の保存に失敗しました")
@@ -879,68 +880,72 @@ export function WishlistCardDetail({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-[min(1120px,calc(100vw-32px))]">
-        <SheetHeader>
+      <SheetContent side="right" className="w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1120px,calc(100vw-32px))] sm:px-6">
+        <SheetHeader className="px-0 pb-2 pt-4">
           <SheetTitle className="text-left">メモを編集</SheetTitle>
         </SheetHeader>
 
-        <div className="space-y-5 px-4 pb-6">
-          <div className="space-y-1">
-            <Label>メモの見出し</Label>
-            <Input
-              value={draftTitle}
-              onChange={e => setDraftTitle(e.target.value)}
-              className="text-base font-semibold"
-            />
-          </div>
+        <div className="space-y-4 pb-6">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2">
+            <label className="min-w-0 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">見出し</span>
+              <Input
+                value={draftTitle}
+                onChange={e => setDraftTitle(e.target.value)}
+                className="h-10 min-w-0 text-sm font-semibold"
+              />
+            </label>
 
-          <div className="space-y-2">
-            <Label>プロジェクト</Label>
-            <div className="relative">
-              <select
-                value={item.project_id ?? ""}
-                onChange={e => update({ project_id: e.target.value || null })}
-                className="min-h-[44px] w-full appearance-none rounded-md border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                style={selectedProject ? {
-                  borderColor: colorToRgba(selectedProjectColor, 0.55),
-                  boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
-                } : undefined}
-              >
-                <option value="">プロジェクト未設定</option>
-                {projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.title}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>タグ</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {categoryOptions.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => update({ category: item.category === cat ? null : cat })}
-                  className="min-h-9 rounded-full border px-3 text-xs transition-colors"
-                  style={{
-                    borderColor: getTagColor(cat, tagColors),
-                    backgroundColor: item.category === cat ? getTagColor(cat, tagColors) : colorToRgba(getTagColor(cat, tagColors), 0.12),
-                    color: item.category === cat ? "#fff" : getTagColor(cat, tagColors),
-                  }}
+            <label className="min-w-0 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
+              <div className="relative">
+                <select
+                  value={item.project_id ?? ""}
+                  onChange={e => update({ project_id: e.target.value || null })}
+                  className="h-10 w-full appearance-none truncate rounded-md border bg-background px-2 pr-7 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                  style={selectedProject ? {
+                    borderColor: colorToRgba(selectedProjectColor, 0.55),
+                    boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
+                  } : undefined}
                 >
-                  {cat}
-                </button>
-              ))}
+                  <option value="">未設定</option>
+                  {projects.map(project => (
+                    <option key={project.id} value={project.id}>
+                      {project.title}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+            </label>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label className="shrink-0">タグ</Label>
+              <div className="-mr-3 flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-1 pr-3">
+                {categoryOptions.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => update({ category: item.category === cat ? null : cat })}
+                    className="min-h-8 shrink-0 rounded-full border px-2.5 text-xs transition-colors"
+                    style={{
+                      borderColor: getTagColor(cat, tagColors),
+                      backgroundColor: item.category === cat ? getTagColor(cat, tagColors) : colorToRgba(getTagColor(cat, tagColors), 0.12),
+                      color: item.category === cat ? "#fff" : getTagColor(cat, tagColors),
+                    }}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
               {tags.map(tag => (
                 <button
                   key={tag}
                   onClick={() => removeTag(tag)}
-                  className="rounded-full border px-2 py-1 text-xs hover:opacity-80"
+                  className="shrink-0 rounded-full border px-2 py-1 text-xs hover:opacity-80"
                   style={{
                     borderColor: colorToRgba(getTagColor(tag, tagColors), 0.55),
                     backgroundColor: colorToRgba(getTagColor(tag, tagColors), 0.08),
@@ -957,34 +962,40 @@ export function WishlistCardDetail({
                 onChange={e => setTagText(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handleAddTag()}
                 placeholder="タグを追加"
+                className="h-10"
               />
-              <Button variant="outline" onClick={handleAddTag}>追加</Button>
+              <Button variant="outline" onClick={handleAddTag} className="h-10 shrink-0">追加</Button>
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label>画像</Label>
-            <div className="flex flex-wrap items-start gap-2">
+            <div className="flex items-center gap-2">
+              <Label className="shrink-0">画像</Label>
+              <span className="text-[11px] text-muted-foreground">{images.length}枚</span>
+            </div>
+            <div className="-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploadingImage}
-                className="flex h-24 w-28 items-center justify-center rounded-md border border-dashed text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
               >
-                {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+                {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                <span className="text-[10px]">複数選択</span>
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 className="hidden"
                 onChange={e => {
-                  const file = e.target.files?.[0]
-                  if (file) uploadImage(file)
+                  const files = Array.from(e.target.files ?? [])
+                  if (files.length > 0) void uploadImages(files)
                 }}
               />
               {images.map(image => (
-                <div key={image.id} className="w-28 overflow-hidden rounded-md border bg-muted/20">
+                <div key={image.id} className="w-20 shrink-0 overflow-hidden rounded-md border bg-muted/20">
                   <a
                     href={image.file_url}
                     download={image.file_name}
@@ -994,10 +1005,9 @@ export function WishlistCardDetail({
                     title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={image.file_url} alt={image.file_name} className="h-24 w-28 object-cover" />
+                    <img src={image.file_url} alt={image.file_name} className="h-16 w-20 object-cover" />
                   </a>
-                  <div className="flex items-center justify-between gap-1 px-1.5 py-1">
-                    <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{formatFileSize(image.file_size)}</span>
+                  <div className="flex items-center justify-end gap-0.5 px-1 py-0.5">
                     <a
                       href={image.file_url}
                       download={image.file_name}

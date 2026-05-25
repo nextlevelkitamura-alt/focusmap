@@ -142,31 +142,37 @@ export function MemoToMindmapDialog({
     return map
   }, [nodes])
 
-  const renderNode = (node: MindmapDraftNode, depth: number): ReactNode => {
+  const renderNodeEditor = (node: MindmapDraftNode): ReactNode => {
     const children = childrenMap.get(node.tempId) || []
     return (
-      <div key={node.tempId}>
-        <div
-          className="flex items-center gap-1.5 py-1"
-          style={{ paddingLeft: `${depth * 16}px` }}
-        >
-          <span className="text-muted-foreground shrink-0 text-xs">
-            {children.length > 0 ? "▸" : "·"}
-          </span>
+      <div key={node.tempId} className="flex items-center gap-3">
+        <div className="relative w-40 shrink-0 rounded-lg border bg-background p-1.5 shadow-sm sm:w-48">
           <input
             value={node.title}
             onChange={e => updateTitle(node.tempId, e.target.value)}
-            className="flex-1 min-w-0 h-8 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            className="h-8 w-full rounded-md border border-input bg-background px-2 pr-8 text-xs font-medium outline-none focus:ring-1 focus:ring-primary"
           />
           <button
             onClick={() => deleteSubtree(node.tempId)}
-            className="shrink-0 h-7 w-7 flex items-center justify-center rounded text-muted-foreground hover:text-destructive transition-colors"
+            className="absolute right-2 top-2.5 flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-destructive"
             title="このノードと子を削除"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
+          {node.sourceNoteIds.length > 0 && (
+            <div className="mt-1 truncate text-[10px] text-muted-foreground">
+              メモ {node.sourceNoteIds.length}
+            </div>
+          )}
         </div>
-        {children.map(c => renderNode(c, depth + 1))}
+        {children.length > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="h-px w-5 shrink-0 bg-border" />
+            <div className="flex flex-col gap-2">
+              {children.map(child => renderNodeEditor(child))}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -248,7 +254,7 @@ export function MemoToMindmapDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && handleClose()}>
-      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-1rem)] max-w-3xl flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Network className="w-4.5 h-4.5 text-primary" />
@@ -309,13 +315,15 @@ export function MemoToMindmapDialog({
               placeholder="マインドマップのタイトル"
               className="h-9 px-2.5 rounded-md border border-input bg-background text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
             />
-            <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-dashed bg-muted/30 p-2">
+            <div className="min-h-[280px] flex-1 overflow-auto rounded-lg border border-dashed bg-muted/30 p-3">
               {rootNodes.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
                   ノードがありません
                 </p>
               ) : (
-                rootNodes.map(n => renderNode(n, 0))
+                <div className="flex min-w-max flex-col gap-3">
+                  {rootNodes.map(node => renderNodeEditor(node))}
+                </div>
               )}
             </div>
             <div className="space-y-1.5">
