@@ -14,6 +14,8 @@ export type PinchViewportStart = {
   initialStagePoint: ViewportPoint
 }
 
+const DEFAULT_PINCH_SENSITIVITY = 1
+
 export const getMindMapViewportBounds = (isMobile: boolean): MindMapViewportBounds => ({
   minZoom: isMobile ? 0.6 : 0.55,
   maxZoom: isMobile ? 1.25 : 1.4,
@@ -56,13 +58,16 @@ export const getPinchViewportTransform = ({
   currentDistance,
   currentMidpoint,
   bounds,
+  sensitivity = DEFAULT_PINCH_SENSITIVITY,
 }: {
   start: PinchViewportStart
   currentDistance: number
   currentMidpoint: ViewportPoint
   bounds: MindMapViewportBounds
+  sensitivity?: number
 }) => {
-  const ratio = start.initialDistance > 0 ? currentDistance / start.initialDistance : 1
+  const rawRatio = start.initialDistance > 0 ? currentDistance / start.initialDistance : 1
+  const ratio = rawRatio > 0 ? Math.pow(rawRatio, sensitivity) : 1
   const zoom = clampMindMapZoom(start.initialZoom * ratio, bounds)
 
   return {

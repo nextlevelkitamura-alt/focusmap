@@ -41,6 +41,10 @@ const PADDING = 72;
 const DRAG_START_THRESHOLD = 6;
 const TOUCH_DRAG_LONG_PRESS_DELAY_MS = 500;
 const DROP_TARGET_MAX_DISTANCE = 190;
+const ZOOM_BUTTON_STEP = 0.05;
+const ZOOM_SLIDER_STEP_PERCENT = 1;
+const TOUCH_PINCH_SENSITIVITY = 0.65;
+const DESKTOP_GESTURE_SENSITIVITY = 0.85;
 
 type CustomDropPosition = "above" | "below" | "as-child";
 
@@ -394,6 +398,8 @@ export function CustomMindMapView({
     const offsetY = PADDING - model.bounds.minY;
     const stageWidth = Math.max(isMobile ? 760 : 960, model.bounds.width + PADDING * 2);
     const stageHeight = Math.max(isMobile ? 720 : 640, model.bounds.height + PADDING * 2);
+    const zoomBounds = getMindMapViewportBounds(isMobile);
+    const zoomPercent = Math.round(zoom * 100);
     const positionedNodes = useMemo(
         () => model.nodes.map(node => ({ ...node, x: node.x + offsetX, y: node.y + offsetY })),
         [model.nodes, offsetX, offsetY]
@@ -500,6 +506,12 @@ export function CustomMindMapView({
         if (next.zoom === zoomRef.current && next.pan.x === panOffsetRef.current.x && next.pan.y === panOffsetRef.current.y) return;
         applyViewportTransform(next.zoom, next.pan);
     }, [applyViewportTransform, isMobile]);
+
+    const handleZoomSliderChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+        const nextZoom = Number(event.currentTarget.value) / 100;
+        if (!Number.isFinite(nextZoom)) return;
+        setZoomAtViewportPoint(nextZoom);
+    }, [setZoomAtViewportPoint]);
 
     const fitView = useCallback(() => {
         const rect = viewportRef.current?.getBoundingClientRect();
@@ -775,6 +787,7 @@ export function CustomMindMapView({
                 currentDistance,
                 currentMidpoint,
                 bounds: getMindMapViewportBounds(isMobile),
+                sensitivity: TOUCH_PINCH_SENSITIVITY,
             });
             applyViewportTransform(next.zoom, next.pan, { deferCommit: true });
         };
@@ -827,6 +840,7 @@ export function CustomMindMapView({
                 currentDistance: gestureEvent.scale,
                 currentMidpoint: origin,
                 bounds: getMindMapViewportBounds(isMobile),
+                sensitivity: isMobile ? TOUCH_PINCH_SENSITIVITY : DESKTOP_GESTURE_SENSITIVITY,
             });
             applyViewportTransform(next.zoom, next.pan, { deferCommit: true });
         };
@@ -1030,36 +1044,50 @@ export function CustomMindMapView({
         : null;
 
     return (
-        <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
+        <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
             <div className={cn(
-                "absolute z-20 flex items-center gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
+                "absolute z-20 flex flex-col gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
                 isMobile ? "right-2 top-2" : "right-3 top-14"
             )}>
-                <button
-                    type="button"
-                    className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => setZoomAtViewportPoint(zoom - 0.1)}
-                    title="縮小"
-                >
-                    <Minus className="h-3.5 w-3.5" />
-                </button>
-                <div className="min-w-10 text-center text-[11px] text-muted-foreground">{Math.round(zoom * 100)}%</div>
-                <button
-                    type="button"
-                    className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => setZoomAtViewportPoint(zoom + 0.1)}
-                    title="拡大"
-                >
-                    <Plus className="h-3.5 w-3.5" />
-                </button>
-                <button
-                    type="button"
-                    className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={fitView}
-                    title="全体を表示"
-                >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={() => setZoomAtViewportPoint(zoom - ZOOM_BUTTON_STEP)}
+                        title="縮小"
+                    >
+                        <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <div className="min-w-10 text-center text-[11px] text-muted-foreground">{zoomPercent}%</div>
+                    <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={() => setZoomAtViewportPoint(zoom + ZOOM_BUTTON_STEP)}
+                        title="拡大"
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={fitView}
+                        title="全体を表示"
+                    >
+                        <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+                <input
+                    aria-label="ズーム"
+                    type="range"
+                    min={Math.round(zoomBounds.minZoom * 100)}
+                    max={Math.round(zoomBounds.maxZoom * 100)}
+                    step={ZOOM_SLIDER_STEP_PERCENT}
+                    value={zoomPercent}
+                    onChange={handleZoomSliderChange}
+                    className={cn("h-5 accent-primary", isMobile ? "w-36" : "w-44")}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                />
             </div>
 
             <div

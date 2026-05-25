@@ -61,4 +61,22 @@ describe("mindmap viewport helpers", () => {
 
     expect(next.zoom).toBe(1.25)
   })
+
+  test("can dampen pinch sensitivity for touch screens", () => {
+    const bounds = getMindMapViewportBounds(true)
+    const next = getPinchViewportTransform({
+      start: {
+        initialDistance: 100,
+        initialZoom: 0.8,
+        initialStagePoint: { x: 100, y: 80 },
+      },
+      currentDistance: 150,
+      currentMidpoint: { x: 200, y: 160 },
+      bounds,
+      sensitivity: 0.65,
+    })
+
+    expect(next.zoom).toBeCloseTo(0.8 * Math.pow(1.5, 0.65))
+    expect(next.zoom).toBeLessThan(1.2)
+  })
 })
