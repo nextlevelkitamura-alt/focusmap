@@ -147,6 +147,7 @@ export function MobileMindMap({
             onSelectNodes={handleSelectNodes}
             onToggleCollapse={handleToggleCollapse}
             onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+            onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
             onOpenLinkedMemos={onOpenLinkedMemos}
             onMoveTask={handleMoveTask}
         />

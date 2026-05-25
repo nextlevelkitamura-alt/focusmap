@@ -104,7 +104,7 @@ export function buildMindMapModel({
     graph.setDefaultEdgeLabel(() => ({}));
     graph.setGraph({
         rankdir: 'LR',
-        nodesep: isMobile ? 2 : 4,
+        nodesep: isMobile ? 8 : 12,
         ranksep: isMobile ? 24 : 36,
         edgesep: 4,
         ranker: 'network-simplex',

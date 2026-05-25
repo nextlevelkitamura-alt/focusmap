@@ -6,6 +6,11 @@ import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
 import {
+    NODE_MIN_WIDTH,
+    NODE_MIN_WIDTH_MOBILE,
+    NODE_RESIZE_MAX_WIDTH,
+} from "@/lib/mindmap-geometry";
+import {
     getMindMapViewportBounds,
     getPinchViewportTransform,
     getViewportTransformAtPoint,
@@ -32,6 +37,7 @@ type CustomMindMapViewProps = {
     onNavigateNode?: (taskId: string, direction: CustomNavigationDirection) => void;
     onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
+    onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
     onMoveTask?: (params: {
         taskId: string;
@@ -182,6 +188,9 @@ function CustomTaskNode({
     onNavigate,
     onSaveTitle,
     onUpdateStatus,
+    onResize,
+    resizeScale,
+    isMobile,
     onOpenLinkedMemos,
 }: {
     node: MindMapModelNode;
@@ -203,6 +212,9 @@ function CustomTaskNode({
     onNavigate?: (taskId: string, direction: CustomNavigationDirection) => void;
     onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
+    onResize?: (taskId: string, width: number, commit: boolean) => void;
+    resizeScale: number;
+    isMobile: boolean;
     onOpenLinkedMemos?: (taskId: string) => void;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
@@ -371,6 +383,40 @@ function CustomTaskNode({
         void finishEditing();
     }, [finishEditing, isEditing]);
 
+    const handleResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+        if (!onResize || isEditing || event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const target = event.currentTarget;
+        target.setPointerCapture?.(event.pointerId);
+        const startX = event.clientX;
+        const startWidth = node.width;
+        const minWidth = isMobile ? NODE_MIN_WIDTH_MOBILE : NODE_MIN_WIDTH;
+        const scale = Math.max(0.1, resizeScale);
+
+        const getNextWidth = (clientX: number) => {
+            const delta = (clientX - startX) / scale;
+            return Math.round(Math.max(minWidth, Math.min(NODE_RESIZE_MAX_WIDTH, startWidth + delta)));
+        };
+
+        const handleMove = (moveEvent: PointerEvent) => {
+            onResize(node.id, getNextWidth(moveEvent.clientX), false);
+        };
+
+        const cleanup = (upEvent: PointerEvent) => {
+            onResize(node.id, getNextWidth(upEvent.clientX), true);
+            target.releasePointerCapture?.(event.pointerId);
+            target.removeEventListener("pointermove", handleMove);
+            target.removeEventListener("pointerup", cleanup);
+            target.removeEventListener("pointercancel", cleanup);
+        };
+
+        target.addEventListener("pointermove", handleMove);
+        target.addEventListener("pointerup", cleanup);
+        target.addEventListener("pointercancel", cleanup);
+    }, [isEditing, isMobile, node.id, node.width, onResize, resizeScale]);
+
     return (
         <div
             ref={wrapperRef}
@@ -378,7 +424,7 @@ function CustomTaskNode({
             tabIndex={0}
             className={cn(
                 "absolute rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
-                "flex flex-col gap-0 outline-none",
+                "group flex flex-col gap-0 outline-none",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
@@ -546,6 +592,23 @@ function CustomTaskNode({
                     {node.hasMemo && <StickyNote className="h-3 w-3" />}
                 </div>
             )}
+            {onResize && (
+                <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="ノード幅を変更"
+                    title="ノード幅を変更"
+                    className={cn(
+                        "absolute top-0 bottom-0 z-20 flex w-3 cursor-col-resize select-none items-center justify-center",
+                        "opacity-0 transition-opacity group-hover:opacity-100",
+                        selected && "opacity-100"
+                    )}
+                    style={{ right: -6 }}
+                    onPointerDown={handleResizePointerDown}
+                >
+                    <div className="h-8 w-0.5 rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/60" />
+                </div>
+            )}
         </div>
     );
 }
@@ -619,6 +682,7 @@ export function CustomMindMapView({
     onNavigateNode,
     onSaveTitle,
     onUpdateStatus,
+    onResizeNode,
     onOpenLinkedMemos,
     onMoveTask,
     onMoveTasks,
@@ -629,6 +693,7 @@ export function CustomMindMapView({
     const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
     const [panState, setPanState] = useState<PanState | null>(null);
     const [spacePressed, setSpacePressed] = useState(false);
+    const [nodeWidthOverrides, setNodeWidthOverrides] = useState<Record<string, number>>({});
     const viewportRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const zoomRef = useRef(zoom);
@@ -639,9 +704,23 @@ export function CustomMindMapView({
     const panMovedRef = useRef(false);
     const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
+    const groupsForModel = useMemo(
+        () => groups.map(task => {
+            const width = nodeWidthOverrides[task.id];
+            return width == null ? task : { ...task, node_width: width };
+        }),
+        [groups, nodeWidthOverrides]
+    );
+    const tasksForModel = useMemo(
+        () => tasks.map(task => {
+            const width = nodeWidthOverrides[task.id];
+            return width == null ? task : { ...task, node_width: width };
+        }),
+        [tasks, nodeWidthOverrides]
+    );
     const model = useMemo(
-        () => buildMindMapModel({ project, groups, tasks, collapsedTaskIds, isMobile }),
-        [project, groups, tasks, collapsedTaskIds, isMobile]
+        () => buildMindMapModel({ project, groups: groupsForModel, tasks: tasksForModel, collapsedTaskIds, isMobile }),
+        [project, groupsForModel, tasksForModel, collapsedTaskIds, isMobile]
     );
 
     const offsetX = PADDING - model.bounds.minX;
@@ -670,6 +749,23 @@ export function CustomMindMapView({
     useEffect(() => {
         panOffsetRef.current = panOffset;
     }, [panOffset]);
+
+    const handleResizeNode = useCallback((taskId: string, width: number, commit: boolean) => {
+        setNodeWidthOverrides(prev => (prev[taskId] === width ? prev : { ...prev, [taskId]: width }));
+        if (!commit) return;
+        void Promise.resolve(onResizeNode?.(taskId, width))
+            .catch(error => {
+                console.error("[CustomMindMap] Failed to save node width:", error);
+            })
+            .finally(() => {
+                setNodeWidthOverrides(prev => {
+                    if (prev[taskId] !== width) return prev;
+                    const next = { ...prev };
+                    delete next[taskId];
+                    return next;
+                });
+            });
+    }, [onResizeNode]);
 
     useEffect(() => {
         const isTypingTarget = (target: EventTarget | null) => {
@@ -1459,6 +1555,9 @@ export function CustomMindMapView({
                                 onNavigate={onNavigateNode}
                                 onSaveTitle={onSaveTitle}
                                 onUpdateStatus={onUpdateStatus}
+                                onResize={onResizeNode ? handleResizeNode : undefined}
+                                resizeScale={zoom}
+                                isMobile={isMobile}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
                             />
                         );

@@ -5,8 +5,8 @@ export const NODE_WIDTH_MOBILE = 168;
 export const NODE_HEIGHT = 36;
 export const PROJECT_NODE_WIDTH = 220;
 export const PROJECT_NODE_HEIGHT = 52;
-export const NODE_MAX_WIDTH = 180;
-export const NODE_MAX_WIDTH_MOBILE = 188;
+export const NODE_MAX_WIDTH = 220;
+export const NODE_MAX_WIDTH_MOBILE = 204;
 export const NODE_MIN_WIDTH = 110;
 export const NODE_MIN_WIDTH_MOBILE = 144;
 export const NODE_RESIZE_MAX_WIDTH = 500;
@@ -16,6 +16,8 @@ const NODE_VERTICAL_PADDING = 12;
 const NODE_INFO_ROW_HEIGHT = 16;
 const NODE_TEXT_RESERVED_WIDTH = 60;
 const NODE_TEXT_RESERVED_WIDTH_MOBILE = 56;
+const NODE_HEIGHT_RESERVED_WIDTH = 88;
+const NODE_HEIGHT_RESERVED_WIDTH_MOBILE = 82;
 
 const estimateTextWidthPx = (text: string): number => {
     let width = 0;
@@ -52,7 +54,7 @@ export const estimateTaskNodeHeight = (
     nodeWidth: number = NODE_WIDTH,
     isMobile = false,
 ) => {
-    const reserved = isMobile ? NODE_TEXT_RESERVED_WIDTH_MOBILE : NODE_TEXT_RESERVED_WIDTH;
+    const reserved = isMobile ? NODE_HEIGHT_RESERVED_WIDTH_MOBILE : NODE_HEIGHT_RESERVED_WIDTH;
     const availableTextWidthPx = Math.max(64, nodeWidth - reserved);
     const text = (title || '').trim();
 

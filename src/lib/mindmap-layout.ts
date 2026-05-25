@@ -47,12 +47,13 @@ export function getLayoutedElements(
     // This prevents "gap" issues when nodes are deleted and new ones are added
     dagreGraph.nodes().forEach(n => dagreGraph.removeNode(n));
 
-    // nodesep/edgesep は固定の小さい値。BranchEdge は親の右側 sourceX+offset を
+    // nodesep/edgesep は控えめに保つ。BranchEdge は親の右側 sourceX+offset を
     // 共有トランクとして使うため、edgesep を大きく取る必要はない。
     // edgesep を 26 にしていた時は 5 兄弟で +104px の余白が発生し間延びしていた。
+    // nodesep は長文ノードの実描画高さとの差を吸収するため少し余白を持たせる。
     dagreGraph.setGraph({
         rankdir: 'LR',
-        nodesep: isMobile ? 2 : 4,
+        nodesep: isMobile ? 8 : 12,
         ranksep: isMobile ? 24 : 36,
         edgesep: 4,
         ranker: 'network-simplex',

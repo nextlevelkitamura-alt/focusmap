@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, test, vi } from "vitest"
 import { CustomMindMapView } from "./custom-mind-map-view"
 import type { Project, Task } from "@/types/database"
@@ -122,5 +122,33 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => {
       expect(stage).toHaveStyle("transform: translate3d(-40px, -24px, 0) scale(0.9)")
     })
+  })
+
+  test("resizes a task node from the right edge and commits the width", async () => {
+    const onResizeNode = vi.fn()
+    renderMap({
+      onResizeNode,
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+    })
+
+    const node = getNode("Root task", "root-1")
+    const initialWidth = parseFloat(node.style.width)
+    const handle = within(node).getByRole("separator", { name: "ノード幅を変更" })
+
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 100 })
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 145 })
+
+    await waitFor(() => {
+      expect(parseFloat(node.style.width)).toBeGreaterThan(initialWidth)
+    })
+
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 145 })
+
+    await waitFor(() => {
+      expect(onResizeNode).toHaveBeenCalledWith("root-1", expect.any(Number))
+    })
+    const committedWidth = onResizeNode.mock.calls.at(-1)?.[1] as number
+    expect(committedWidth).toBeGreaterThan(initialWidth)
   })
 })

@@ -2960,6 +2960,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
                     onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
                     onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                    onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                     onOpenLinkedMemos={onOpenLinkedMemos}
                     onMoveTask={handleCustomMoveTask}
                     onMoveTasks={handleCustomMoveTasks}
