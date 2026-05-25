@@ -1320,6 +1320,10 @@ export function WishlistView({
           isLoading: false,
           error: null,
         })
+        if (linkedItems.length === 1) {
+          setSelectedItem(linkedItems[0])
+          setDetailOpen(true)
+        }
       } catch (err) {
         if (cancelled) return
         setLinkedMemoFocus({
@@ -1717,7 +1721,7 @@ export function WishlistView({
                     emptyText="関連メモはありません"
                     onUpdate={handleUpdate}
                     onDelete={handleDelete}
-                    onOpen={() => undefined}
+                    onOpen={openDetail}
                     projectById={projectById}
                     tagColors={tagColors}
                     getAiTask={getMemoAiTask}

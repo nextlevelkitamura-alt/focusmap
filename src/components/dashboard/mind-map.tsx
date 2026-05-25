@@ -839,27 +839,44 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                 )}
 
                 {isMemoNode && (
-                    <span className={cn(
-                        "nodrag nopan shrink-0 rounded-[4px] px-1 text-[9px] font-medium leading-4",
-                        isTaskDone
-                            ? "bg-muted text-muted-foreground"
-                            : "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200"
-                    )} title="メモ由来">
+                    <button
+                        type="button"
+                        className={cn(
+                            "nodrag nopan shrink-0 rounded-[4px] px-1.5 text-[9px] font-medium leading-5 transition-colors",
+                            "active:scale-95 active:bg-amber-300 dark:active:bg-amber-500/40",
+                            !data?.onOpenLinkedMemos && "cursor-default",
+                            isTaskDone
+                                ? "bg-muted text-muted-foreground"
+                                : "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200"
+                        )}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            data?.onOpenLinkedMemos?.();
+                        }}
+                        title="関連メモを編集"
+                        aria-label="関連メモを編集"
+                    >
                         メモ
-                    </span>
+                    </button>
                 )}
 
-                {/* Menu column: 子数バッジ(上段・極小) + ハンバーガー(下段) を縦積み */}
+                {/* Menu column: 子数トグル + ハンバーガーを縦積み */}
                 <div className="flex flex-col items-center shrink-0 ml-0.5 leading-none gap-0">
                     {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
                         <button
                             type="button"
                             className={cn(
-                                "nodrag nopan flex items-center gap-px px-0.5 h-2.5 rounded-sm text-[9px] font-semibold transition-colors",
-                                data?.collapsed
+                                "nodrag nopan flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold transition-colors",
+                                isTaskDone
+                                    ? "text-muted-foreground/50"
+                                    : data?.collapsed
                                     ? "text-primary hover:bg-primary/15"
                                     : "text-muted-foreground/70 hover:text-foreground hover:bg-muted/50"
                             )}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                                 e.stopPropagation();
                                 data.onToggleCollapse?.();
@@ -869,8 +886,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         >
                             <span>{data?.childCount ?? 0}</span>
                             {data?.collapsed
-                                ? <ChevronRight className="w-2 h-2" strokeWidth={3} />
-                                : <ChevronDown className="w-2 h-2" strokeWidth={3} />}
+                                ? <ChevronRight className="h-3 w-3" strokeWidth={3} />
+                                : <ChevronDown className="h-3 w-3" strokeWidth={3} />}
                         </button>
                     )}
 

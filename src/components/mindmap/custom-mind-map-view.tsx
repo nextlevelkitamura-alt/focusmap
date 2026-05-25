@@ -235,14 +235,26 @@ function CustomTaskNode({
                 </div>
 
                 {isMemoNode && (
-                    <span className={cn(
-                        "shrink-0 rounded-[4px] px-1 text-[9px] font-medium leading-4",
-                        node.isDone
-                            ? "bg-muted text-muted-foreground"
-                            : "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200"
-                    )}>
+                    <button
+                        type="button"
+                        className={cn(
+                            "shrink-0 rounded-[4px] px-1.5 text-[9px] font-medium leading-5 transition-colors",
+                            "active:scale-95 active:bg-amber-300 dark:active:bg-amber-500/40",
+                            !onOpenLinkedMemos && "cursor-default",
+                            node.isDone
+                                ? "bg-muted text-muted-foreground"
+                                : "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200"
+                        )}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onOpenLinkedMemos?.(node.id);
+                        }}
+                        title="関連メモを編集"
+                        aria-label="関連メモを編集"
+                    >
                         メモ
-                    </span>
+                    </button>
                 )}
 
                 <div className="flex shrink-0 flex-col items-center leading-none">
@@ -250,8 +262,10 @@ function CustomTaskNode({
                         <button
                             type="button"
                             className={cn(
-                                "flex h-2.5 items-center gap-px rounded-sm px-0.5 text-[9px] font-semibold transition-colors",
-                                node.collapsed
+                                "flex h-5 min-w-5 items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-semibold transition-colors",
+                                node.isDone
+                                    ? "text-muted-foreground/50"
+                                    : node.collapsed
                                     ? "text-primary hover:bg-primary/15"
                                     : "text-muted-foreground/70 hover:bg-muted/50 hover:text-foreground"
                             )}
@@ -263,7 +277,7 @@ function CustomTaskNode({
                             title={node.collapsed ? `${node.childCount}件の子を展開` : "折りたたむ"}
                         >
                             <span>{node.childCount}</span>
-                            {node.collapsed ? <ChevronRight className="h-2 w-2" strokeWidth={3} /> : <ChevronDown className="h-2 w-2" strokeWidth={3} />}
+                            {node.collapsed ? <ChevronRight className="h-3 w-3" strokeWidth={3} /> : <ChevronDown className="h-3 w-3" strokeWidth={3} />}
                         </button>
                     )}
                     <button

@@ -34,6 +34,7 @@ interface OutlineViewProps {
     onUpdateGroup: (groupId: string, updates: Partial<Task>) => Promise<void>
     onUpdateProject?: (projectId: string, title: string) => Promise<void>
     onCreateProject?: (title: string) => Promise<Project | null>
+    onOpenLinkedMemos?: (taskId: string) => void
 }
 
 export function OutlineView({
@@ -57,6 +58,7 @@ export function OutlineView({
     onUpdateGroup,
     onUpdateProject,
     onCreateProject,
+    onOpenLinkedMemos,
 }: OutlineViewProps) {
     const [activeTab, setActiveTab] = useState<MobileMapTab>('mindmap')
 
@@ -136,6 +138,7 @@ export function OutlineView({
                             onUpdateTask={onUpdateTask}
                             onDeleteTask={onDeleteTask}
                             onReorderTask={onReorderTask}
+                            onOpenLinkedMemos={onOpenLinkedMemos}
                         />
                     ) : (
                         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

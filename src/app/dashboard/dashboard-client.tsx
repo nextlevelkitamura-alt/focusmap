@@ -172,10 +172,16 @@ export function DashboardClient({
         })
     }, [])
     const openMindmapLinkedMemos = useCallback((taskId: string) => {
+        const isMobileViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
         setIsCalendarSplitOpen(false)
-        setIsMemoSplitOpen(true)
+        if (isMobileViewport) {
+            setIsMemoSplitOpen(false)
+            setActiveView('long-term')
+        } else {
+            setIsMemoSplitOpen(true)
+        }
         setMindmapMemoFocus({ taskId, requestKey: Date.now() })
-    }, [])
+    }, [setActiveView])
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
 
@@ -1081,6 +1087,7 @@ export function DashboardClient({
                             onUpdateGroup={updateGroup}
                             onUpdateProject={handleUpdateProjectTitle}
                             onCreateProject={handleCreateProject}
+                            onOpenLinkedMemos={openMindmapLinkedMemos}
                         />
                     </div>
                 )}
@@ -1104,6 +1111,7 @@ export function DashboardClient({
                             onUpdateTask={updateTask}
                             onDeleteTask={handleDeleteTask}
                             onReorderTask={reorderTask}
+                            onOpenLinkedMemos={openMindmapLinkedMemos}
                             refreshFromServer={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
@@ -1135,6 +1143,7 @@ export function DashboardClient({
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={false}
                             onToggleCalendarSplit={toggleCalendarSplit}
+                            mindmapMemoFocus={mindmapMemoFocus}
                         />
                     </div>
                 )}
@@ -1320,6 +1329,7 @@ export function DashboardClient({
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={isCalendarPanelVisible}
                             onToggleCalendarSplit={toggleCalendarSplit}
+                            mindmapMemoFocus={mindmapMemoFocus}
                         />
                     ) : activeView === 'map' && isMemoSplitVisible ? (
                         <div className="flex h-full min-h-0 overflow-hidden">

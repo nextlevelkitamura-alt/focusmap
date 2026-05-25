@@ -18,6 +18,7 @@ interface MobileMindMapProps {
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onReorderTask?: (taskId: string, referenceTaskId: string, position: "above" | "below") => Promise<void>
+    onOpenLinkedMemos?: (taskId: string) => void
 }
 
 export function MobileMindMap({
@@ -26,6 +27,7 @@ export function MobileMindMap({
     tasks,
     onUpdateTask,
     onReorderTask,
+    onOpenLinkedMemos,
 }: MobileMindMapProps) {
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -145,6 +147,7 @@ export function MobileMindMap({
             onSelectNodes={handleSelectNodes}
             onToggleCollapse={handleToggleCollapse}
             onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+            onOpenLinkedMemos={onOpenLinkedMemos}
             onMoveTask={handleMoveTask}
         />
     )
