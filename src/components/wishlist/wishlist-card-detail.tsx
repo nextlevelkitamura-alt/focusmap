@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Plus, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Network, Plus, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
 import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -221,11 +221,163 @@ function getStatusLabel(status: string) {
   }
 }
 
-function StructuredMemoItemRow({
-  item,
-  childrenItems,
-  isLinking,
+function StructuredMemoMindmap({
+  items,
   linkingItemId,
+  researchingItemId,
+  researchPrompts,
+  placementByItemId,
+  onPlacementChange,
+  onLink,
+  onResearch,
+}: {
+  items: StructuredMemoItem[]
+  linkingItemId: string | null
+  researchingItemId: string | null
+  researchPrompts: Record<string, string>
+  placementByItemId: Record<string, PlacementState>
+  onPlacementChange: (itemId: string, value: string) => void
+  onLink: (item: StructuredMemoItem) => Promise<void>
+  onResearch: (item: StructuredMemoItem) => Promise<void>
+}) {
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string | null, StructuredMemoItem[]>()
+    for (const structuredItem of items) {
+      const key = structuredItem.parent_item_id ?? null
+      map.set(key, [...(map.get(key) ?? []), structuredItem])
+    }
+    return map
+  }, [items])
+  const roots = childrenByParent.get(null) ?? []
+
+  return (
+    <div className="overflow-x-auto rounded-lg border bg-muted/20 p-3">
+      <div className="flex min-w-max items-center gap-3">
+        <StructuredMemoSourceRoot count={items.length} />
+        {roots.length > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="h-px w-5 shrink-0 bg-border" />
+            <div className="relative flex flex-col gap-3 pl-4 before:absolute before:bottom-5 before:left-0 before:top-5 before:w-px before:bg-border">
+              {roots.map(root => (
+                <div
+                  key={root.id}
+                  className="relative before:absolute before:left-[-1rem] before:top-1/2 before:h-px before:w-4 before:bg-border"
+                >
+                  <StructuredMemoMindmapNode
+                    item={root}
+                    childrenByParent={childrenByParent}
+                    depth={0}
+                    parentLinked
+                    linkingItemId={linkingItemId}
+                    researchingItemId={researchingItemId}
+                    researchPrompts={researchPrompts}
+                    placementByItemId={placementByItemId}
+                    onPlacementChange={onPlacementChange}
+                    onLink={onLink}
+                    onResearch={onResearch}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StructuredMemoSourceRoot({ count }: { count: number }) {
+  return (
+    <div className="flex w-36 shrink-0 flex-col gap-1 rounded-lg border border-primary/35 bg-primary/[0.06] p-2.5 shadow-sm">
+      <div className="flex items-center gap-1.5 text-xs font-medium">
+        <Network className="h-3.5 w-3.5 text-primary" />
+        元メモ
+      </div>
+      <div className="text-[11px] leading-4 text-muted-foreground">
+        分解 {count} 項目
+      </div>
+    </div>
+  )
+}
+
+function StructuredMemoMindmapNode({
+  item,
+  childrenByParent,
+  depth,
+  parentLinked,
+  linkingItemId,
+  researchingItemId,
+  researchPrompts,
+  placementByItemId,
+  onPlacementChange,
+  onLink,
+  onResearch,
+}: {
+  item: StructuredMemoItem
+  childrenByParent: Map<string | null, StructuredMemoItem[]>
+  depth: number
+  parentLinked: boolean
+  linkingItemId: string | null
+  researchingItemId: string | null
+  researchPrompts: Record<string, string>
+  placementByItemId: Record<string, PlacementState>
+  onPlacementChange: (itemId: string, value: string) => void
+  onLink: (item: StructuredMemoItem) => Promise<void>
+  onResearch: (item: StructuredMemoItem) => Promise<void>
+}) {
+  const activeLink = getActiveMindmapLink(item)
+  const children = childrenByParent.get(item.id) ?? []
+
+  return (
+    <div className="flex items-center gap-3">
+      <StructuredMemoNodeCard
+        item={item}
+        depth={depth}
+        parentLinked={parentLinked}
+        isLinking={linkingItemId === item.id}
+        isResearching={researchingItemId === item.id}
+        researchPrompt={researchPrompts[item.id] ?? null}
+        placement={placementByItemId[item.id] ?? null}
+        onPlacementChange={onPlacementChange}
+        onLink={onLink}
+        onResearch={onResearch}
+      />
+      {children.length > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="h-px w-5 shrink-0 bg-border" />
+          <div className="relative flex flex-col gap-3 pl-4 before:absolute before:bottom-5 before:left-0 before:top-5 before:w-px before:bg-border">
+            {children.map(child => (
+              <div
+                key={child.id}
+                className="relative before:absolute before:left-[-1rem] before:top-1/2 before:h-px before:w-4 before:bg-border"
+              >
+                <StructuredMemoMindmapNode
+                  item={child}
+                  childrenByParent={childrenByParent}
+                  depth={depth + 1}
+                  parentLinked={!!activeLink}
+                  linkingItemId={linkingItemId}
+                  researchingItemId={researchingItemId}
+                  researchPrompts={researchPrompts}
+                  placementByItemId={placementByItemId}
+                  onPlacementChange={onPlacementChange}
+                  onLink={onLink}
+                  onResearch={onResearch}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StructuredMemoNodeCard({
+  item,
+  depth,
+  parentLinked,
+  isLinking,
   isResearching,
   researchPrompt,
   placement,
@@ -234,9 +386,9 @@ function StructuredMemoItemRow({
   onResearch,
 }: {
   item: StructuredMemoItem
-  childrenItems: StructuredMemoItem[]
+  depth: number
+  parentLinked: boolean
   isLinking: boolean
-  linkingItemId: string | null
   isResearching: boolean
   researchPrompt: string | null
   placement: PlacementState | null
@@ -245,14 +397,22 @@ function StructuredMemoItemRow({
   onResearch: (item: StructuredMemoItem) => Promise<void>
 }) {
   const activeLink = getActiveMindmapLink(item)
-  const parentLinked = !!activeLink
   const actionType = getActionType(item)
   const confidenceLabel = typeof item.confidence === "number"
     ? `${Math.round(item.confidence * 100)}%`
     : null
+  const canChoosePlacement = depth === 0
+  const canLink = !activeLink && !isLinking && (depth === 0 || parentLinked)
+  const linkTitle = depth > 0 && !parentLinked ? "先に親項目をマップへ投入してください" : undefined
 
   return (
-    <div className="rounded-md border bg-muted/10 p-2.5">
+    <div
+      className={cn(
+        "w-[min(21rem,calc(100vw-3rem))] shrink-0 rounded-lg border bg-background p-2.5 shadow-sm",
+        depth === 0 ? "border-primary/30 bg-primary/[0.03]" : "bg-muted/10",
+        activeLink && "border-emerald-500/35 bg-emerald-500/[0.04]",
+      )}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -273,52 +433,36 @@ function StructuredMemoItemRow({
               </span>
             )}
           </div>
-          <div className="break-words text-sm font-medium leading-5">{item.title}</div>
-          {item.body && (
-            <p className="break-words text-xs leading-5 text-muted-foreground">{item.body}</p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">配置</span>
-            <select
-              value={placement?.selected.task_id ? `${placement.selected.mode}:${placement.selected.task_id}` : placement?.selected.mode ?? "root"}
-              onChange={event => onPlacementChange(item.id, event.target.value)}
-              disabled={!!activeLink || placement?.isLoading}
-              className="h-7 max-w-full rounded-md border bg-background px-2 text-[11px] text-muted-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
-            >
-              <option value="root">プロジェクト直下に新規追加</option>
-              {placement?.candidates.map(candidate => (
-                <option key={`child-${candidate.task_id}`} value={`create_child:${candidate.task_id}`}>
-                  子として追加: {candidate.path}
-                </option>
-              ))}
-              {placement?.candidates.map(candidate => (
-                <option key={`link-${candidate.task_id}`} value={`link_existing:${candidate.task_id}`}>
-                  既存に紐付け: {candidate.path}
-                </option>
-              ))}
-            </select>
-            {placement?.isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          <div className={cn("break-words font-medium leading-5", depth === 0 ? "text-sm" : "text-xs")}>
+            {item.title}
           </div>
+          {item.body && (
+            <p className={cn("break-words leading-5 text-muted-foreground", depth === 0 ? "text-xs" : "text-[11px]")}>
+              {item.body}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size="icon"
             disabled={isResearching}
             onClick={() => void onResearch(item)}
-            className="h-8 px-2 text-xs"
+            className="h-8 w-8"
+            title="リサーチプロンプトを作成"
+            aria-label="リサーチプロンプトを作成"
           >
-            {isResearching ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
-            リサーチ
+            {isResearching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
           </Button>
           <Button
             type="button"
-            variant="outline"
+            variant={activeLink ? "secondary" : "outline"}
             size="sm"
-            disabled={!!activeLink || isLinking}
+            disabled={!canLink}
             onClick={() => void onLink(item)}
             className="h-8 px-2 text-xs"
+            title={linkTitle}
           >
             {isLinking ? (
               <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -327,15 +471,42 @@ function StructuredMemoItemRow({
             ) : (
               <Plus className="mr-1 h-3 w-3" />
             )}
-            {activeLink ? "済" : "マップ"}
+            {activeLink ? "済" : depth === 0 ? "マップ" : parentLinked ? "投入" : "親先"}
           </Button>
         </div>
       </div>
 
+      {canChoosePlacement && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] text-muted-foreground">配置</span>
+          <select
+            value={placement?.selected.task_id ? `${placement.selected.mode}:${placement.selected.task_id}` : placement?.selected.mode ?? "root"}
+            onChange={event => onPlacementChange(item.id, event.target.value)}
+            disabled={!!activeLink || placement?.isLoading}
+            className="h-7 min-w-0 max-w-full flex-1 rounded-md border bg-background px-2 text-[11px] text-muted-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+          >
+            <option value="root">プロジェクト直下に新規追加</option>
+            {placement?.candidates.map(candidate => (
+              <option key={`child-${candidate.task_id}`} value={`create_child:${candidate.task_id}`}>
+                子として追加: {candidate.path}
+              </option>
+            ))}
+            {placement?.candidates.map(candidate => (
+              <option key={`link-${candidate.task_id}`} value={`link_existing:${candidate.task_id}`}>
+                既存に紐付け: {candidate.path}
+              </option>
+            ))}
+          </select>
+          {placement?.isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+        </div>
+      )}
+
       {researchPrompt && (
-        <div className="mt-2 rounded-md border bg-background/70 p-2">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-medium text-muted-foreground">リサーチプロンプト</span>
+        <details className="mt-2 rounded-md border bg-muted/30 p-2">
+          <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground">
+            リサーチプロンプト
+          </summary>
+          <div className="mt-1 flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={() => navigator.clipboard?.writeText(researchPrompt).catch(() => {})}
@@ -345,58 +516,7 @@ function StructuredMemoItemRow({
             </button>
           </div>
           <pre className="max-h-28 whitespace-pre-wrap break-words text-[11px] leading-5 text-muted-foreground">{researchPrompt}</pre>
-        </div>
-      )}
-
-      {childrenItems.length > 0 && (
-        <div className="mt-3 space-y-2 border-l pl-3">
-          {childrenItems.map(child => {
-            const childLink = getActiveMindmapLink(child)
-            const childIsLinking = linkingItemId === child.id
-            const childDisabled = !!childLink || childIsLinking || !parentLinked
-            const childActionType = getActionType(child)
-            return (
-              <div key={child.id} className="rounded-md border bg-background/50 p-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className={cn("rounded-full border px-2 py-0.5 text-[10px]", getActionClassName(childActionType))}>
-                        {getActionLabel(childActionType)}
-                      </span>
-                      {childLink && (
-                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
-                          マップ投入済み
-                        </span>
-                      )}
-                    </div>
-                    <div className="break-words text-xs font-medium leading-5">{child.title}</div>
-                    {child.body && (
-                      <p className="break-words text-[11px] leading-5 text-muted-foreground">{child.body}</p>
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={childDisabled}
-                    onClick={() => void onLink(child)}
-                    className="h-8 shrink-0 px-2 text-xs"
-                    title={!parentLinked ? "先に親項目をマップへ投入してください" : undefined}
-                  >
-                    {childIsLinking ? (
-                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                    ) : childLink ? (
-                      <Check className="mr-1 h-3 w-3" />
-                    ) : (
-                      <Plus className="mr-1 h-3 w-3" />
-                    )}
-                    {childLink ? "済" : parentLinked ? "投入" : "親先"}
-                  </Button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+        </details>
       )}
     </div>
   )
@@ -1088,7 +1208,7 @@ export function WishlistCardDetail({
           <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
               <Label className="flex items-center gap-1.5">
-                <Sparkles className="h-4 w-4" />
+                <Network className="h-4 w-4" />
                 構造化
               </Label>
               {isLoadingStructure && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
@@ -1137,26 +1257,16 @@ export function WishlistCardDetail({
                   構造化項目はまだありません
                 </div>
               ) : (
-                structuredItems
-                  .filter(structuredItem => !structuredItem.parent_item_id)
-                  .map(parent => {
-                    const children = structuredItems.filter(child => child.parent_item_id === parent.id)
-                    return (
-                      <StructuredMemoItemRow
-                        key={parent.id}
-                        item={parent}
-                        childrenItems={children}
-                        isLinking={linkingItemId === parent.id}
-                        linkingItemId={linkingItemId}
-                        isResearching={researchingItemId === parent.id}
-                        researchPrompt={researchPrompts[parent.id] ?? null}
-                        placement={placementByItemId[parent.id] ?? null}
-                        onPlacementChange={handlePlacementChange}
-                        onLink={handleLinkStructuredItem}
-                        onResearch={handleCreateResearchPrompt}
-                      />
-                    )
-                  })
+                <StructuredMemoMindmap
+                  items={structuredItems}
+                  linkingItemId={linkingItemId}
+                  researchingItemId={researchingItemId}
+                  researchPrompts={researchPrompts}
+                  placementByItemId={placementByItemId}
+                  onPlacementChange={handlePlacementChange}
+                  onLink={handleLinkStructuredItem}
+                  onResearch={handleCreateResearchPrompt}
+                />
               )}
             </div>
           </div>

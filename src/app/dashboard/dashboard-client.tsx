@@ -1089,9 +1089,7 @@ export function DashboardClient({
                     selectedSpaceId={selectedSpaceId}
                     selectedProjectId={selectedProjectId}
                     onSelectSpace={setSelectedSpaceId}
-                    onCreateSpace={handleCreateSpace}
-                    onUpdateSpace={handleUpdateSpace}
-                    onDeleteSpace={handleDeleteSpace}
+                    onSelectProject={setSelectedProjectId}
                     showCalendarSplitToggle={activeView === 'map'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
@@ -1208,6 +1206,7 @@ export function DashboardClient({
                             onSelectSpace={setSelectedSpaceId}
                             onSelectProject={setSelectedProjectId}
                             showAllProjectsOption
+                            className="md:hidden"
                         />
                         <WishlistView
                             projects={projects}
@@ -1314,15 +1313,6 @@ export function DashboardClient({
 
                 {/* Pane 2: Center (TodayTaskBoard / MindMap / Habits) */}
                 <div className="flex-1 min-w-0 overflow-hidden h-full w-full flex flex-col" style={{ minWidth: 0 }}>
-                    <SpaceProjectSwitcher
-                        spaces={spaces}
-                        projects={projects}
-                        selectedSpaceId={selectedSpaceId}
-                        selectedProjectId={selectedProjectId}
-                        onSelectSpace={setSelectedSpaceId}
-                        onSelectProject={setSelectedProjectId}
-                        showAllProjectsOption={activeView === 'long-term'}
-                    />
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                     {activeView === 'habits' ? (
                         <HabitsView onUpdateTask={updateTask} />

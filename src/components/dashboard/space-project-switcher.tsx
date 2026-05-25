@@ -56,16 +56,16 @@ export function SpaceProjectSwitcher({
     <div className={cn("shrink-0 border-b bg-background px-2 py-1", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <button className="flex items-center gap-1.5 max-w-full rounded-md px-2 py-1 text-sm hover:bg-muted transition-colors">
+          <button className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-muted transition-colors">
             <span
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: normalizeColor(currentSpace?.color, DEFAULT_SPACE_COLOR) }}
             />
-            <span className="text-muted-foreground truncate max-w-[140px]">
+            <span className="min-w-0 text-muted-foreground truncate max-w-[140px]">
               {currentSpace?.title ?? "全体"}
             </span>
             <ChevronRight className="w-3 h-3 text-muted-foreground/50 shrink-0" />
-            <span className="font-medium truncate max-w-[200px]">
+            <span className="min-w-0 font-medium truncate max-w-[200px]">
               {currentProject?.title ?? (showAllProjectsOption ? "全プロジェクト" : "プロジェクト未選択")}
             </span>
             <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />

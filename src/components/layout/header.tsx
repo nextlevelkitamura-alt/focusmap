@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { createClient } from "@/utils/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { useRouter } from "next/navigation"
@@ -14,16 +14,13 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, Settings, User as UserIcon, Layers, Plus, Pencil, Trash2, Check, Network, CalendarDays, Sparkles, StickyNote } from "lucide-react"
+import { LogOut, Settings, User as UserIcon, Network, CalendarDays, Sparkles, StickyNote } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
-import { DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
-
-const ALL_SPACE_PREFS_KEY = "focusmap:allSpacePrefs"
-const ALL_SPACE_RENAME_ID = "__all__"
+import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -31,9 +28,7 @@ interface HeaderProps {
     selectedSpaceId?: string | null
     selectedProjectId?: string | null
     onSelectSpace?: (id: string | null) => void
-    onCreateSpace?: (title: string, color?: string) => Promise<Space | null>
-    onUpdateSpace?: (spaceId: string, updates: Partial<Space>) => Promise<void>
-    onDeleteSpace?: (spaceId: string) => Promise<void>
+    onSelectProject?: (id: string | null) => void
     showTaskListToggle?: boolean
     isTaskListVisible?: boolean
     onToggleTaskList?: () => void
@@ -52,9 +47,7 @@ export function Header({
     selectedSpaceId = null,
     selectedProjectId = null,
     onSelectSpace,
-    onCreateSpace,
-    onUpdateSpace,
-    onDeleteSpace,
+    onSelectProject,
     showCalendarSplitToggle = false,
     isCalendarSplitVisible = false,
     onToggleCalendarSplit,
@@ -66,30 +59,6 @@ export function Header({
     const router = useRouter()
     const [user, setUser] = useState<User | null>(null)
     const [supabase] = useState(() => createClient())
-
-    // Space create/rename state
-    const [isCreatingSpace, setIsCreatingSpace] = useState(false)
-    const [newSpaceTitle, setNewSpaceTitle] = useState("")
-    const [newSpaceColor, setNewSpaceColor] = useState(DEFAULT_SPACE_COLOR)
-    const [renamingSpaceId, setRenamingSpaceId] = useState<string | null>(null)
-    const [renameTitle, setRenameTitle] = useState("")
-    const [renameColor, setRenameColor] = useState(DEFAULT_SPACE_COLOR)
-    const [allSpacePrefs, setAllSpacePrefs] = useState(() => {
-        if (typeof window === "undefined") return { title: "全体", color: DEFAULT_SPACE_COLOR }
-        try {
-            const raw = window.localStorage.getItem(ALL_SPACE_PREFS_KEY)
-            const parsed = raw ? JSON.parse(raw) as { title?: string; color?: string } : null
-            return {
-                title: parsed?.title?.trim() || "全体",
-                color: normalizeColor(parsed?.color, DEFAULT_SPACE_COLOR),
-            }
-        } catch {
-            return { title: "全体", color: DEFAULT_SPACE_COLOR }
-        }
-    })
-    const createInputRef = useRef<HTMLInputElement>(null)
-    const renameInputRef = useRef<HTMLInputElement>(null)
-    const [dropdownOpen, setDropdownOpen] = useState(false)
     const [organizeDialogOpen, setOrganizeDialogOpen] = useState(false)
     const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
     const [organizeError, setOrganizeError] = useState<string | null>(null)
@@ -103,55 +72,13 @@ export function Header({
         getUser()
     }, [supabase])
 
-    useEffect(() => {
-        if (isCreatingSpace && createInputRef.current) {
-            createInputRef.current.focus()
-        }
-    }, [isCreatingSpace])
-
-    useEffect(() => {
-        if (renamingSpaceId && renameInputRef.current) {
-            renameInputRef.current.focus()
-            renameInputRef.current.select()
-        }
-    }, [renamingSpaceId])
-
     const handleLogout = async () => {
         await supabase.auth.signOut()
         router.refresh()
         router.push("/login")
     }
 
-    const handleCreateSubmit = async () => {
-        if (!newSpaceTitle.trim() || !onCreateSpace) return
-        await onCreateSpace(newSpaceTitle.trim(), normalizeColor(newSpaceColor, DEFAULT_SPACE_COLOR))
-        setNewSpaceTitle("")
-        setNewSpaceColor(DEFAULT_SPACE_COLOR)
-        setIsCreatingSpace(false)
-    }
-
-    const handleRenameSubmit = async () => {
-        if (!renameTitle.trim() || !renamingSpaceId) return
-        const color = normalizeColor(renameColor, DEFAULT_SPACE_COLOR)
-        if (renamingSpaceId === ALL_SPACE_RENAME_ID) {
-            const next = { title: renameTitle.trim(), color }
-            setAllSpacePrefs(next)
-            window.localStorage.setItem(ALL_SPACE_PREFS_KEY, JSON.stringify(next))
-        } else if (onUpdateSpace) {
-            await onUpdateSpace(renamingSpaceId, { title: renameTitle.trim(), color })
-        }
-        setRenamingSpaceId(null)
-        setRenameTitle("")
-        setRenameColor(DEFAULT_SPACE_COLOR)
-    }
-
     const { activeView, setActiveView } = useView()
-
-    const selectedSpace = spaces.find(s => s.id === selectedSpaceId)
-    const displayName = selectedSpaceId === null ? allSpacePrefs.title : (selectedSpace?.title || "Space")
-    const displayColor = selectedSpaceId === null
-        ? allSpacePrefs.color
-        : normalizeColor(selectedSpace?.color, DEFAULT_SPACE_COLOR)
 
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Today', icon: <CalendarDays className="h-3.5 w-3.5" /> },
@@ -198,202 +125,25 @@ export function Header({
 
     return (
         <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
-            {/* Left: Logo & Space Switcher */}
-            <div className="flex items-center gap-4">
+            {/* Left: Logo & current workspace */}
+            <div className="flex min-w-0 max-w-[440px] items-center gap-3">
                 <FocusmapLogo className="h-9 w-auto text-foreground" />
 
-                <div className="h-6 w-px bg-border mx-2" />
-
-                <DropdownMenu open={dropdownOpen} onOpenChange={(open) => {
-                    setDropdownOpen(open)
-                    if (!open) {
-                        setIsCreatingSpace(false)
-                        setNewSpaceTitle("")
-                        setNewSpaceColor(DEFAULT_SPACE_COLOR)
-                        setRenamingSpaceId(null)
-                        setRenameTitle("")
-                        setRenameColor(DEFAULT_SPACE_COLOR)
-                    }
-                }}>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="gap-2 font-normal">
-                            {selectedSpaceId === null && <Layers className="h-3.5 w-3.5 text-muted-foreground" />}
-                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: displayColor }} />
-                            {displayName}
-                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-[220px]">
-                        <DropdownMenuLabel>Spaces</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-
-                        {/* 全体 option */}
-                        {renamingSpaceId === ALL_SPACE_RENAME_ID ? (
-                            <div className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        ref={renameInputRef}
-                                        value={renameTitle}
-                                        onChange={(e) => setRenameTitle(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleRenameSubmit()
-                                            if (e.key === 'Escape') { setRenamingSpaceId(null); setRenameTitle(""); setRenameColor(DEFAULT_SPACE_COLOR) }
-                                        }}
-                                        className="min-w-0 flex-1 text-sm bg-muted/50 border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-primary"
-                                    />
-                                    <input
-                                        type="color"
-                                        value={renameColor}
-                                        onChange={(e) => setRenameColor(e.target.value)}
-                                        className="h-8 w-9 cursor-pointer rounded border bg-transparent p-0.5"
-                                        aria-label="全体の色"
-                                    />
-                                    <button
-                                        className="h-8 w-8 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
-                                        onClick={handleRenameSubmit}
-                                    >
-                                        <Check className="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="group flex items-center">
-                                <DropdownMenuItem
-                                    onClick={() => onSelectSpace?.(null)}
-                                    className="flex-1 gap-2"
-                                >
-                                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: allSpacePrefs.color }} />
-                                    <Layers className="h-3.5 w-3.5" />
-                                    {allSpacePrefs.title}
-                                    {selectedSpaceId === null && <Check className="h-3.5 w-3.5 ml-auto" />}
-                                </DropdownMenuItem>
-                                <button
-                                    className="mr-2 h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        setRenamingSpaceId(ALL_SPACE_RENAME_ID)
-                                        setRenameTitle(allSpacePrefs.title)
-                                        setRenameColor(allSpacePrefs.color)
-                                    }}
-                                >
-                                    <Pencil className="h-3 w-3" />
-                                </button>
-                            </div>
-                        )}
-
-                        <DropdownMenuSeparator />
-
-                        {/* Space list */}
-                        {spaces.map(space => (
-                            renamingSpaceId === space.id ? (
-                                <div key={space.id} className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            ref={renameInputRef}
-                                            value={renameTitle}
-                                            onChange={(e) => setRenameTitle(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') handleRenameSubmit()
-                                                if (e.key === 'Escape') { setRenamingSpaceId(null); setRenameTitle(""); setRenameColor(DEFAULT_SPACE_COLOR) }
-                                            }}
-                                            className="min-w-0 flex-1 text-sm bg-muted/50 border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-primary"
-                                        />
-                                        <input
-                                            type="color"
-                                            value={renameColor}
-                                            onChange={(e) => setRenameColor(e.target.value)}
-                                            className="h-8 w-9 cursor-pointer rounded border bg-transparent p-0.5"
-                                            aria-label={`${space.title}の色`}
-                                        />
-                                        <button
-                                            className="h-8 w-8 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
-                                            onClick={handleRenameSubmit}
-                                        >
-                                            <Check className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div key={space.id} className="group flex items-center">
-                                    <DropdownMenuItem
-                                        onClick={() => onSelectSpace?.(space.id)}
-                                        className="flex-1 gap-2"
-                                    >
-                                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }} />
-                                        {space.title}
-                                        {selectedSpaceId === space.id && <Check className="h-3.5 w-3.5 ml-auto" />}
-                                    </DropdownMenuItem>
-                                    <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                setRenamingSpaceId(space.id)
-                                                setRenameTitle(space.title)
-                                                setRenameColor(normalizeColor(space.color, DEFAULT_SPACE_COLOR))
-                                            }}
-                                        >
-                                            <Pencil className="h-3 w-3" />
-                                        </button>
-                                        <button
-                                            className="h-5 w-5 flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                if (window.confirm(`スペース「${space.title}」を削除しますか？\n配下のプロジェクト・タスクも全て削除されます。`)) {
-                                                    onDeleteSpace?.(space.id)
-                                                }
-                                            }}
-                                        >
-                                            <Trash2 className="h-3 w-3" />
-                                        </button>
-                                    </div>
-                                </div>
-                            )
-                        ))}
-
-                        <DropdownMenuSeparator />
-
-                        {/* Create Space */}
-                        {isCreatingSpace ? (
-                            <div className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        ref={createInputRef}
-                                        value={newSpaceTitle}
-                                        onChange={(e) => setNewSpaceTitle(e.target.value)}
-                                        placeholder="スペース名..."
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleCreateSubmit()
-                                            if (e.key === 'Escape') { setIsCreatingSpace(false); setNewSpaceTitle(""); setNewSpaceColor(DEFAULT_SPACE_COLOR) }
-                                        }}
-                                        className="min-w-0 flex-1 text-sm bg-muted/50 border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-primary"
-                                    />
-                                    <input
-                                        type="color"
-                                        value={newSpaceColor}
-                                        onChange={(e) => setNewSpaceColor(e.target.value)}
-                                        className="h-8 w-9 cursor-pointer rounded border bg-transparent p-0.5"
-                                        aria-label="新しいスペースの色"
-                                    />
-                                    <button
-                                        className="h-8 w-8 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
-                                        onClick={handleCreateSubmit}
-                                    >
-                                        <Check className="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <DropdownMenuItem onClick={(e) => {
-                                e.preventDefault()
-                                setIsCreatingSpace(true)
-                            }}>
-                                <Plus className="h-3.5 w-3.5 mr-2" />
-                                スペースを追加
-                            </DropdownMenuItem>
-                        )}
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                {onSelectSpace && onSelectProject && (
+                    <>
+                        <div className="h-6 w-px bg-border" />
+                        <SpaceProjectSwitcher
+                            spaces={spaces}
+                            projects={projects}
+                            selectedSpaceId={selectedSpaceId}
+                            selectedProjectId={selectedProjectId}
+                            onSelectSpace={onSelectSpace}
+                            onSelectProject={onSelectProject}
+                            showAllProjectsOption={activeView === 'long-term'}
+                            className="max-w-[280px] border-b-0 bg-transparent px-0 py-0"
+                        />
+                    </>
+                )}
             </div>
 
             {/* Center: View Tabs */}

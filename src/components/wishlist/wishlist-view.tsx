@@ -1508,7 +1508,7 @@ export function WishlistView({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
-      <div className={cn("shrink-0 border-b px-3 py-2", compactComposer ? "space-y-0 md:px-3" : "space-y-2 md:px-5")}>
+      <div className={cn("shrink-0 border-b px-3 py-2", compactComposer ? "space-y-2 md:px-3" : "space-y-2 md:px-5")}>
         {compactComposer ? (
           <div className="flex items-center gap-2">
             <input
@@ -1731,26 +1731,16 @@ export function WishlistView({
             onTagChange={setTagFilter}
           />
           </div>
-          {selectMode && (
-          <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border bg-primary/5 px-3 py-2 text-xs">
-            <span className="font-medium text-foreground">{selectedMemoIds.size}件選択中</span>
-            <button
-              type="button"
-              onClick={toggleSelectVisibleMemos}
-              className="rounded border bg-background px-2 py-1 text-muted-foreground hover:text-foreground"
-            >
-              {visibleMemoIds.length > 0 && visibleMemoIds.every(id => selectedMemoIds.has(id)) ? "表示分を解除" : "表示分を全選択"}
-            </button>
-            <button
-              type="button"
-              onClick={exitSelectMode}
-              className="ml-auto rounded px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              キャンセル
-            </button>
-          </div>
-          )}
         </>
+        )}
+        {selectMode && (
+          <MemoSelectionToolbar
+            selectedCount={selectedMemoIds.size}
+            allVisibleSelected={visibleMemoIds.length > 0 && visibleMemoIds.every(id => selectedMemoIds.has(id))}
+            onToggleVisible={toggleSelectVisibleMemos}
+            onMap={() => setShowMindmapDialog(true)}
+            onCancel={exitSelectMode}
+          />
         )}
       </div>
 
@@ -1986,7 +1976,7 @@ export function WishlistView({
       />
 
       {selectMode && !showMindmapDialog && (
-        <div className="fixed bottom-20 left-1/2 z-50 flex w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2 items-center gap-2 rounded-full border bg-background/95 p-1.5 shadow-lg backdrop-blur md:bottom-6">
+        <div className="fixed bottom-20 left-1/2 z-50 flex w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2 items-center gap-2 rounded-full border bg-background/95 p-1.5 shadow-lg backdrop-blur md:hidden">
           <Button
             type="button"
             variant="ghost"
@@ -2041,6 +2031,50 @@ export function WishlistView({
           void onMindmapUpdated?.()
         }}
       />
+    </div>
+  )
+}
+
+function MemoSelectionToolbar({
+  selectedCount,
+  allVisibleSelected,
+  onToggleVisible,
+  onMap,
+  onCancel,
+}: {
+  selectedCount: number
+  allVisibleSelected: boolean
+  onToggleVisible: () => void
+  onMap: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border bg-primary/5 px-3 py-2 text-xs">
+      <span className="font-medium text-foreground">{selectedCount}件選択中</span>
+      <button
+        type="button"
+        onClick={onToggleVisible}
+        className="rounded border bg-background px-2 py-1 text-muted-foreground hover:text-foreground"
+      >
+        {allVisibleSelected ? "表示分を解除" : "表示分を全選択"}
+      </button>
+      <Button
+        type="button"
+        size="sm"
+        onClick={onMap}
+        disabled={selectedCount === 0}
+        className="ml-auto h-8 gap-1.5 px-3 text-xs"
+      >
+        <Network className="h-3.5 w-3.5" />
+        {selectedCount > 0 ? `${selectedCount}件をマップ化` : "メモを選択"}
+      </Button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        キャンセル
+      </button>
     </div>
   )
 }
@@ -2212,7 +2246,7 @@ function MemoSection({
                           item={item}
                           onUpdate={onUpdate}
                           onDelete={onDelete}
-                          onClick={() => onOpen(item)}
+                          onClick={() => selectMode ? onToggleSelect?.(item.id) : onOpen(item)}
                           project={item.project_id ? projectById.get(item.project_id) ?? null : null}
                           tagColors={tagColors}
                           aiTask={getAiTask(item.id)}
