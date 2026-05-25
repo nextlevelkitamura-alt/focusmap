@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, StickyNote } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,14 @@ type CustomMindMapViewProps = {
     onSelectNode: (nodeId: string | null) => void;
     onSelectNodes: (nodeIds: string[], primaryNodeId: string | null) => void;
     onToggleCollapse: (taskId: string) => void;
+    pendingEditNodeId?: string | null;
+    onAddRootNode?: () => void | Promise<void>;
+    onAddChildNode?: (taskId: string) => void | Promise<void>;
+    onAddSiblingNode?: (taskId: string) => void | Promise<void>;
+    onPromoteNode?: (taskId: string) => void | Promise<void>;
+    onDeleteNode?: (taskId: string) => void | Promise<void>;
+    onNavigateNode?: (taskId: string, direction: CustomNavigationDirection) => void;
+    onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
     onMoveTask?: (params: {
@@ -43,10 +51,13 @@ const TOUCH_DRAG_LONG_PRESS_DELAY_MS = 500;
 const DROP_TARGET_MAX_DISTANCE = 190;
 const ZOOM_BUTTON_STEP = 0.05;
 const ZOOM_SLIDER_STEP_PERCENT = 1;
-const TOUCH_PINCH_SENSITIVITY = 0.65;
-const DESKTOP_GESTURE_SENSITIVITY = 0.85;
+const WHEEL_PAN_SENSITIVITY = 1;
+const WHEEL_ZOOM_SENSITIVITY = 0.0035;
+const TOUCH_PINCH_SENSITIVITY = 1;
+const DESKTOP_GESTURE_SENSITIVITY = 1.35;
 
 type CustomDropPosition = "above" | "below" | "as-child";
+type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
 type CustomDropTarget = {
     nodeId: string;
@@ -154,32 +165,217 @@ function CustomBranchPath({
 function CustomTaskNode({
     node,
     selected,
+    primarySelected,
+    selectedCount,
     dragging,
     dragReady,
     dropPosition,
+    triggerEdit,
+    initialEditValue,
     onSelectNode,
     onStartDrag,
     onToggleCollapse,
+    onAddChild,
+    onAddSibling,
+    onPromote,
+    onDelete,
+    onNavigate,
+    onSaveTitle,
     onUpdateStatus,
     onOpenLinkedMemos,
 }: {
     node: MindMapModelNode;
     selected: boolean;
+    primarySelected: boolean;
+    selectedCount: number;
     dragging?: boolean;
     dragReady?: boolean;
     dropPosition?: CustomDropPosition | null;
+    triggerEdit?: boolean;
+    initialEditValue?: string;
     onSelectNode: (nodeId: string, options?: { additive: boolean }) => void;
     onStartDrag: (node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => void;
     onToggleCollapse: (taskId: string) => void;
+    onAddChild?: (taskId: string) => void | Promise<void>;
+    onAddSibling?: (taskId: string) => void | Promise<void>;
+    onPromote?: (taskId: string) => void | Promise<void>;
+    onDelete?: (taskId: string) => void | Promise<void>;
+    onNavigate?: (taskId: string, direction: CustomNavigationDirection) => void;
+    onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
 }) {
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const isFinishingEditRef = useRef(false);
+    const handledTriggerEditRef = useRef<string | null>(null);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const scheduledLabel = formatDateShort(node.scheduledAt);
     const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode;
 
+    useEffect(() => {
+        if (!isEditing) setEditValue(initialEditValue ?? node.title);
+    }, [initialEditValue, isEditing, node.title]);
+
+    useEffect(() => {
+        if (!triggerEdit) {
+            if (handledTriggerEditRef.current === node.id) handledTriggerEditRef.current = null;
+            return;
+        }
+        if (handledTriggerEditRef.current === node.id) return;
+        handledTriggerEditRef.current = node.id;
+        setIsEditing(true);
+        setEditValue(initialEditValue ?? "");
+    }, [initialEditValue, node.id, triggerEdit]);
+
+    useLayoutEffect(() => {
+        if (!primarySelected || isEditing) return;
+        wrapperRef.current?.focus();
+    }, [isEditing, primarySelected]);
+
+    useLayoutEffect(() => {
+        if (!isEditing) return;
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus();
+        const length = input.value.length;
+        input.setSelectionRange(length, length);
+    }, [isEditing]);
+
+    useLayoutEffect(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        input.style.height = "auto";
+        input.style.height = `${input.scrollHeight}px`;
+    }, [editValue, isEditing]);
+
+    const saveValue = useCallback(async () => {
+        const nextTitle = editValue.trim() || "Task";
+        if (nextTitle !== node.title) {
+            await onSaveTitle?.(node.id, nextTitle);
+        }
+        setEditValue(nextTitle);
+        return nextTitle;
+    }, [editValue, node.id, node.title, onSaveTitle]);
+
+    const finishEditing = useCallback(async () => {
+        if (isFinishingEditRef.current) return;
+        isFinishingEditRef.current = true;
+        try {
+            await saveValue();
+            setIsEditing(false);
+            requestAnimationFrame(() => wrapperRef.current?.focus());
+        } finally {
+            setTimeout(() => {
+                isFinishingEditRef.current = false;
+            }, 0);
+        }
+    }, [saveValue]);
+
+    const cancelEditing = useCallback(() => {
+        isFinishingEditRef.current = true;
+        setEditValue(initialEditValue ?? node.title);
+        setIsEditing(false);
+        requestAnimationFrame(() => wrapperRef.current?.focus());
+        setTimeout(() => {
+            isFinishingEditRef.current = false;
+        }, 0);
+    }, [initialEditValue, node.title]);
+
+    const beginEditing = useCallback((value?: string) => {
+        setEditValue(value ?? (initialEditValue ?? node.title));
+        setIsEditing(true);
+    }, [initialEditValue, node.title]);
+
+    const handleNodeKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (isEditing) return;
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+        if (event.key === "Tab") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.shiftKey) {
+                await onPromote?.(node.id);
+            } else {
+                await onAddChild?.(node.id);
+            }
+            return;
+        }
+
+        if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            event.stopPropagation();
+            await onAddSibling?.(node.id);
+            return;
+        }
+
+        if ((event.key === "Delete" || event.key === "Backspace") && selectedCount <= 1) {
+            event.preventDefault();
+            event.stopPropagation();
+            await onDelete?.(node.id);
+            return;
+        }
+
+        if (event.key === "F2" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            beginEditing();
+            return;
+        }
+
+        if (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            event.preventDefault();
+            event.stopPropagation();
+            onNavigate?.(node.id, event.key);
+            return;
+        }
+
+        if (event.key.length === 1) {
+            event.preventDefault();
+            event.stopPropagation();
+            beginEditing(event.key);
+        }
+    }, [beginEditing, isEditing, node.id, onAddChild, onAddSibling, onDelete, onNavigate, onPromote, selectedCount]);
+
+    const handleInputKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        event.stopPropagation();
+
+        if (event.key === "Enter" && !event.nativeEvent.isComposing && !event.shiftKey) {
+            event.preventDefault();
+            await finishEditing();
+            return;
+        }
+
+        if (event.key === "Tab") {
+            event.preventDefault();
+            await finishEditing();
+            if (event.shiftKey) {
+                await onPromote?.(node.id);
+            } else {
+                await onAddChild?.(node.id);
+            }
+            return;
+        }
+
+        if (event.key === "Escape") {
+            event.preventDefault();
+            cancelEditing();
+        }
+    }, [cancelEditing, finishEditing, node.id, onAddChild, onPromote]);
+
+    const handleInputBlur = useCallback(() => {
+        if (!isEditing) return;
+        if (isFinishingEditRef.current) return;
+        void finishEditing();
+    }, [finishEditing, isEditing]);
+
     return (
         <div
+            ref={wrapperRef}
+            data-id={node.id}
+            tabIndex={0}
             className={cn(
                 "absolute rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
                 "flex flex-col gap-0 outline-none",
@@ -203,6 +399,11 @@ function CustomTaskNode({
                 event.stopPropagation();
                 onSelectNode(node.id, { additive: event.shiftKey || event.metaKey || event.ctrlKey });
             }}
+            onDoubleClick={(event) => {
+                event.stopPropagation();
+                beginEditing();
+            }}
+            onKeyDown={handleNodeKeyDown}
         >
             {dropPosition === "above" && !dragging && (
                 <div className="absolute -top-1.5 left-0 right-0 h-1 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.9)]" />
@@ -237,12 +438,33 @@ function CustomTaskNode({
                     </span>
                 </button>
 
-                <div className={cn(
-                    "min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-0.5 font-bold leading-tight",
-                    node.isDone && "line-through text-muted-foreground"
-                )}>
-                    {node.title}
-                </div>
+                {isEditing ? (
+                    <textarea
+                        ref={inputRef}
+                        rows={1}
+                        value={editValue}
+                        className={cn(
+                            "min-w-0 flex-1 resize-none overflow-hidden bg-transparent px-0.5 font-bold leading-tight outline-none",
+                            "whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
+                            node.isDone && "line-through text-muted-foreground"
+                        )}
+                        onChange={(event) => {
+                            setEditValue(event.currentTarget.value);
+                            event.currentTarget.style.height = "auto";
+                            event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`;
+                        }}
+                        onBlur={handleInputBlur}
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={handleInputKeyDown}
+                    />
+                ) : (
+                    <div className={cn(
+                        "min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-0.5 font-bold leading-tight",
+                        node.isDone && "line-through text-muted-foreground"
+                    )}>
+                        {node.title}
+                    </div>
+                )}
 
                 {isMemoNode && (
                     <button
@@ -331,17 +553,30 @@ function CustomTaskNode({
 function CustomProjectNode({
     node,
     selected,
+    primarySelected,
     dropPosition,
     onSelectNode,
+    onAddChild,
 }: {
     node: MindMapModelNode;
     selected: boolean;
+    primarySelected: boolean;
     dropPosition?: CustomDropPosition | null;
     onSelectNode: (nodeId: string) => void;
+    onAddChild?: () => void | Promise<void>;
 }) {
+    const ref = useRef<HTMLButtonElement>(null);
+
+    useLayoutEffect(() => {
+        if (!primarySelected) return;
+        ref.current?.focus();
+    }, [primarySelected]);
+
     return (
         <button
+            ref={ref}
             type="button"
+            data-id={node.id}
             className={cn(
                 "absolute flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm",
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
@@ -351,6 +586,12 @@ function CustomProjectNode({
             onClick={(event) => {
                 event.stopPropagation();
                 onSelectNode(node.id);
+            }}
+            onKeyDown={async (event) => {
+                if (event.key !== "Tab" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+                event.preventDefault();
+                event.stopPropagation();
+                await onAddChild?.();
             }}
         >
             <span className="truncate">{node.title}</span>
@@ -369,6 +610,14 @@ export function CustomMindMapView({
     onSelectNode,
     onSelectNodes,
     onToggleCollapse,
+    pendingEditNodeId,
+    onAddRootNode,
+    onAddChildNode,
+    onAddSiblingNode,
+    onPromoteNode,
+    onDeleteNode,
+    onNavigateNode,
+    onSaveTitle,
     onUpdateStatus,
     onOpenLinkedMemos,
     onMoveTask,
@@ -406,6 +655,7 @@ export function CustomMindMapView({
         [model.nodes, offsetX, offsetY]
     );
     const nodeById = useMemo(() => new Map(positionedNodes.map(node => [node.id, node])), [positionedNodes]);
+    const rawTaskTitleById = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task.title ?? ""])), [groups, tasks]);
     const selectedTaskIds = useMemo(
         () => positionedNodes
             .filter(node => node.kind === "task" && selectedNodeIds.has(node.id))
@@ -733,16 +983,26 @@ export function CustomMindMapView({
     }, [isMobile, spacePressed]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
-        if (!event.ctrlKey && !event.metaKey) return;
         event.preventDefault();
         const rect = viewportRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const nextZoom = zoomRef.current * Math.exp(-event.deltaY * 0.002);
+
+        if (!event.ctrlKey && !event.metaKey) {
+            const deltaModeScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? Math.max(rect.width, rect.height) : 1;
+            const nextPan = {
+                x: panOffsetRef.current.x - event.deltaX * deltaModeScale * WHEEL_PAN_SENSITIVITY,
+                y: panOffsetRef.current.y - event.deltaY * deltaModeScale * WHEEL_PAN_SENSITIVITY,
+            };
+            applyViewportTransform(zoomRef.current, nextPan);
+            return;
+        }
+
+        const nextZoom = zoomRef.current * Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
         setZoomAtViewportPoint(nextZoom, {
             x: event.clientX - rect.left,
             y: event.clientY - rect.top,
         });
-    }, [setZoomAtViewportPoint]);
+    }, [applyViewportTransform, setZoomAtViewportPoint]);
 
     useEffect(() => {
         const viewport = viewportRef.current;
@@ -1105,6 +1365,7 @@ export function CustomMindMapView({
 
             <div
                 ref={viewportRef}
+                data-testid="custom-mind-map-viewport"
                 className={cn(
                     "h-full w-full overflow-hidden bg-[radial-gradient(circle,rgba(255,255,255,0.16)_1px,transparent_1px)] [background-size:20px_20px]",
                     panState ? "cursor-grabbing select-none" : spacePressed ? "cursor-grab" : "cursor-default"
@@ -1120,6 +1381,7 @@ export function CustomMindMapView({
                 <div
                     className="absolute left-0 top-0 origin-top-left"
                     ref={stageRef}
+                    data-testid="custom-mind-map-stage"
                     onPointerDown={handlePanePointerDown}
                     style={{
                         width: stageWidth,
@@ -1168,8 +1430,10 @@ export function CustomMindMapView({
                                     key={node.id}
                                     node={positionedNode}
                                     selected={selectedNodeId === node.id}
+                                    primarySelected={selectedNodeId === node.id}
                                     dropPosition={dropPosition}
                                     onSelectNode={onSelectNode}
+                                    onAddChild={onAddRootNode}
                                 />
                             );
                         }
@@ -1178,12 +1442,22 @@ export function CustomMindMapView({
                                 key={node.id}
                                 node={positionedNode}
                                 selected={selectedNodeIds.has(node.id)}
+                                primarySelected={selectedNodeId === node.id}
+                                selectedCount={selectedNodeIds.size}
                                 dragging={isDraggingNode && dragState?.dragging}
                                 dragReady={isDraggingNode && !!dragState && !dragState.dragging}
                                 dropPosition={dropPosition}
+                                triggerEdit={pendingEditNodeId === node.id}
+                                initialEditValue={rawTaskTitleById.get(node.id)}
                                 onSelectNode={handleSelectTaskNode}
                                 onStartDrag={handleStartDrag}
                                 onToggleCollapse={onToggleCollapse}
+                                onAddChild={onAddChildNode}
+                                onAddSibling={onAddSiblingNode}
+                                onPromote={onPromoteNode}
+                                onDelete={onDeleteNode}
+                                onNavigate={onNavigateNode}
+                                onSaveTitle={onSaveTitle}
                                 onUpdateStatus={onUpdateStatus}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
                             />

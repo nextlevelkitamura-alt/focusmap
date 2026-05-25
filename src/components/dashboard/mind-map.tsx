@@ -1063,6 +1063,7 @@ const edgeTypes = { branch: BranchEdge };
 const defaultViewport = { x: 0, y: 0, zoom: 0.75 };
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
 const MINDMAP_RENDERER_KEY = 'focusmap:mindmap-renderer';
+const MINDMAP_WHEEL_ZOOM_SENSITIVITY = 0.0035;
 type MindMapRenderer = 'reactflow' | 'custom';
 
 type MindMapClipboardNode = {
@@ -2365,7 +2366,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         const next = getViewportTransformAtPoint({
             currentZoom: viewport.zoom,
             currentPan: { x: viewport.x, y: viewport.y },
-            nextZoom: viewport.zoom * Math.exp(-event.deltaY * 0.002),
+            nextZoom: viewport.zoom * Math.exp(-event.deltaY * MINDMAP_WHEEL_ZOOM_SENSITIVITY),
             origin: {
                 x: event.clientX - rect.left,
                 y: event.clientY - rect.top,
@@ -2950,6 +2951,14 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onSelectNode={handleCustomSelectNode}
                     onSelectNodes={handleCustomSelectNodes}
                     onToggleCollapse={toggleTaskCollapse}
+                    pendingEditNodeId={pendingEditNodeId}
+                    onAddRootNode={() => callbacks.createRootTaskAndFocus("New Task")}
+                    onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
+                    onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
+                    onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}
+                    onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
+                    onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
+                    onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
                     onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
                     onOpenLinkedMemos={onOpenLinkedMemos}
                     onMoveTask={handleCustomMoveTask}
