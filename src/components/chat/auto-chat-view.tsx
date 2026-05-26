@@ -2,11 +2,20 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Send, Loader2, Sparkles } from 'lucide-react';
+import { Send, Loader2, Sparkles, Activity, Check, X } from 'lucide-react';
 import { ChatMessage } from './chat-message';
 import { SkillSuggestion } from './skill-suggestion';
 import { TaskResultCard } from './task-result-card';
 import type { IntentResult } from '@/lib/ai/intent-classifier';
+
+interface PingResult {
+  provider: string;
+  model: string;
+  ok: boolean;
+  latency_ms: number;
+  response_preview?: string;
+  error?: string;
+}
 
 interface AutoChatViewProps {
   spaceId: string | null;
@@ -33,7 +42,28 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [executing, setExecuting] = useState<string | null>(null);
+  const [ping, setPing] = useState<PingResult | null>(null);
+  const [pinging, setPinging] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const handlePing = async () => {
+    setPinging(true);
+    try {
+      const res = await fetch('/api/chat/ping');
+      const data = (await res.json()) as PingResult;
+      setPing(data);
+    } catch (e) {
+      setPing({
+        provider: 'unknown',
+        model: 'unknown',
+        ok: false,
+        latency_ms: 0,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPinging(false);
+    }
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -138,14 +168,40 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border/40 px-4 py-3">
+      <header className="flex items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
         <h1 className="flex items-center gap-2 text-base font-semibold">
           <Sparkles className="h-4 w-4 text-primary" />
           自動化チャット
         </h1>
-        <p className="text-xs text-muted-foreground">
-          自然言語で指示すると AI がスキルを判定して実行します
-        </p>
+        <div className="flex items-center gap-2">
+          {ping && (
+            <span
+              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
+                ping.ok
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+              }`}
+              title={ping.error ?? ping.response_preview}
+            >
+              {ping.ok ? <Check className="h-2.5 w-2.5" /> : <X className="h-2.5 w-2.5" />}
+              {ping.model} ({ping.latency_ms}ms)
+            </span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePing}
+            disabled={pinging}
+            className="h-7 gap-1 text-[11px]"
+          >
+            {pinging ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Activity className="h-3 w-3" />
+            )}
+            接続テスト
+          </Button>
+        </div>
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 px-4 py-4">

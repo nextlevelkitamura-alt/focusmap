@@ -1,8 +1,19 @@
 /**
  * スキル: email-summary (Gmail未読メールを要約・優先度判定)
  *
- * - Supabase user_calendar_settings の OAuth token (gmail.readonly scope) で Gmail API呼び出し
- * - 各メールを Gemini Flash-Lite で3行要約 + 優先度 (high/medium/low)
+ * ⚠️ 現状ステータス: 「保留 (MCP経由実装待ち)」
+ *
+ * 当初 gmail.readonly OAuth scope を自前実装する計画だったが、
+ * Google OAuth verification の負担 (動画提出 / 審査数ヶ月) を避けるため、
+ * 外部 MCP サーバ (Composio / Zapier MCP 等) 経由で実装する方針に変更。
+ * 詳細: docs/plans/mcp-integration.md
+ *
+ * 現状の実装は内部用 (北村本人の検証用) として残すが、
+ * 本番運用では MCP コネクタ経由に置換予定。
+ *
+ * 動作要件:
+ *   - user_calendar_settings の OAuth token に gmail.readonly scope が含まれていること
+ *   - 現状の本番ユーザーには付与されていない → 起動時にスコープ不足エラーが返る
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';

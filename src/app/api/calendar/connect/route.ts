@@ -50,12 +50,13 @@ export async function GET(request: NextRequest) {
     scope: [
       'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-      // Phase 4: メール要約スキル用 (focusmap-agent が読み取りのみ実行)
-      'https://www.googleapis.com/auth/gmail.readonly',
       // 連携アカウントの表示用（メール/名前/picture）。non-sensitiveなのでOAuth verification申請不要
       'openid',
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile',
+      // 注: Gmail / Drive / Sheets 等の sensitive scope は Google OAuth verification が必要なため、
+      //     ここに追加せず、 外部 MCPサーバ (Composio / Zapier MCP 等) 経由で連携する方針。
+      //     詳細: docs/plans/mcp-integration.md
     ],
     state: encodeCalendarOAuthState(user.id, nextPath),
     hl: 'en',
