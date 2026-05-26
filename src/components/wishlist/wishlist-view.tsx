@@ -40,8 +40,12 @@ import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
-type ColumnKey = "unsorted" | "today" | "scheduled" | "completed"
-type MemoItem = IdealGoalWithItems
+type ColumnKey = "unsorted" | "mapped" | "today" | "scheduled" | "completed"
+type MemoItem = IdealGoalWithItems & {
+  mindmap_link_count?: number | null
+  mindmap_linked_at?: string | null
+  mindmap_task_ids?: string[] | null
+}
 
 type LinkedStructuredItem = {
   id: string
@@ -151,10 +155,17 @@ function extractMindmapTaskIds(item: MemoItem | null | undefined): string[] {
   const payload = readRecord(item?.ai_source_payload)
   const links = Array.isArray(payload.mindmap_links) ? payload.mindmap_links : []
   return Array.from(new Set(
-    links
+    [
+      ...(Array.isArray(item?.mindmap_task_ids) ? item.mindmap_task_ids : []),
+      ...links
       .map(link => readRecord(link).task_id)
       .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+    ]
   ))
+}
+
+function hasMindmapLinks(item: MemoItem | null | undefined): boolean {
+  return (item?.mindmap_link_count ?? 0) > 0 || extractMindmapTaskIds(item).length > 0
 }
 
 function getCompletionUpdate(updates: Record<string, unknown>): boolean | null {
@@ -185,6 +196,7 @@ function getColumn(item: MemoItem, todayStart: number, todayEnd: number): Column
   const isScheduledToday = sched != null && !Number.isNaN(sched) && sched >= todayStart && sched < todayEnd
   if (item.is_today || isScheduledToday) return "today"
   if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
+  if (hasMindmapLinks(item)) return "mapped"
   return "unsorted"
 }
 
@@ -207,6 +219,11 @@ function sortMemoItemsForSection(items: MemoItem[], section: ColumnKey) {
     if (section === "scheduled") {
       return getTimestamp(a.scheduled_at) - getTimestamp(b.scheduled_at)
         || getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
+    }
+    if (section === "mapped") {
+      return getTimestamp(b.mindmap_linked_at) - getTimestamp(a.mindmap_linked_at)
+        || getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
+        || getTimestamp(b.created_at) - getTimestamp(a.created_at)
     }
     if (section === "completed") {
       return getTimestamp(b.updated_at) - getTimestamp(a.updated_at)
@@ -638,6 +655,13 @@ export function WishlistView({
     return sortMemoItemsForSection(
       filteredItems.filter(item => getColumn(item, todayRange.start, todayRange.end) === "unsorted"),
       "unsorted",
+    )
+  }, [filteredItems, todayRange])
+
+  const mappedItems = useMemo(() => {
+    return sortMemoItemsForSection(
+      filteredItems.filter(item => getColumn(item, todayRange.start, todayRange.end) === "mapped"),
+      "mapped",
     )
   }, [filteredItems, todayRange])
 
@@ -1426,6 +1450,10 @@ export function WishlistView({
       openDetail(item)
       return
     }
+    if (to === "mapped") {
+      setIntakeError("マップ追加済みへ入れるには、メモを選択してマップ化してください。")
+      return
+    }
 
     let updates: Partial<MemoItem> | null = null
     if (to === "today") {
@@ -1849,8 +1877,15 @@ export function WishlistView({
             </div>
           ) : (
             <DragDropContext onDragEnd={handleDragEnd}>
-            <div className="mx-auto overflow-x-auto pb-2">
-              <div className="grid min-w-0 max-w-7xl gap-4 md:min-w-[72rem] md:grid-cols-5">
+            <div className="mx-auto w-full overflow-x-auto pb-2">
+              <div
+                className={cn(
+                  "grid min-w-0 gap-4 md:w-max",
+                  unscheduledItems.length >= 2
+                    ? "md:grid-cols-[13rem_13rem_17rem_13rem_13rem_13rem]"
+                    : "md:grid-cols-[13rem_17rem_13rem_13rem_13rem]",
+                )}
+              >
                 <MemoSection
                   columnKey="unsorted"
                   title="未予定"
@@ -1866,8 +1901,27 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={isCalendarSplitVisible}
-                  className="md:col-span-2"
-                  listClassName="sm:grid-cols-2"
+                  className={unscheduledItems.length >= 2 ? "md:col-span-2" : undefined}
+                  listClassName={unscheduledItems.length >= 2 ? "sm:grid-cols-2" : undefined}
+                  selectMode={selectMode}
+                  selectedMemoIds={selectedMemoIds}
+                  onToggleSelect={toggleMemoSelection}
+                />
+                <MemoSection
+                  columnKey="mapped"
+                  title="マップ追加済み"
+                  count={mappedItems.length}
+                  items={mappedItems}
+                  emptyText="マップ追加済みのメモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
+                  nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
                   onToggleSelect={toggleMemoSelection}
@@ -2228,7 +2282,7 @@ function MemoSection({
                 {emptyText}
               </div>
             ) : (
-              <div className={cn("grid gap-3", listClassName)}>
+              <div className={cn("grid min-w-0 gap-3", listClassName)}>
                 {items.map((item, index) => (
                   <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={selectMode}>
                     {(dragProvided, dragSnapshot) => (
@@ -2237,7 +2291,7 @@ function MemoSection({
                         {...dragProvided.draggableProps}
                         {...(!selectMode ? dragProvided.dragHandleProps : {})}
                         className={cn(
-                          "relative rounded-lg transition-shadow",
+                          "relative min-w-0 rounded-lg transition-shadow",
                           dragSnapshot.isDragging && "opacity-80 shadow-xl ring-2 ring-primary/40",
                           selectMode && selectedMemoIds?.has(item.id) && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                         )}

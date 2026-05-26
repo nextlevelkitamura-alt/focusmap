@@ -353,13 +353,13 @@ export function NoteClaudeRunnerPanel({
   }
 
   return (
-    <div className="mt-2 rounded-md border bg-background/60">
+    <div className="mt-2 min-w-0 overflow-hidden rounded-md border bg-background/60">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
-        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left hover:bg-muted/40 rounded-t-md"
+        className="flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-t-md px-2.5 py-1.5 text-left hover:bg-muted/40"
       >
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           {latestTask.status === "completed" ? (
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
           ) : latestTask.status === "failed" ? (
@@ -371,13 +371,13 @@ export function NoteClaudeRunnerPanel({
             )} />
           )}
           <span className={cn(
-            "text-[11px] px-1.5 py-0.5 rounded font-medium",
+            "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
             STATUS_COLOR[latestTask.status] ?? "bg-muted text-muted-foreground",
           )}>
             {STATUS_LABEL[latestTask.status] ?? latestTask.status}
           </span>
           <span className={cn(
-            "text-[11px] px-1.5 py-0.5 rounded font-medium",
+            "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
             latestTask.executor === "codex" || latestTask.executor === "codex_app"
               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
               : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -392,13 +392,13 @@ export function NoteClaudeRunnerPanel({
               {PROGRESS_STATE_LABEL[progressSummary.state] ?? "不明"}
             </span>
           )}
-          <span className="text-[11px] text-muted-foreground truncate">
+          <span className="min-w-0 flex-1 basis-24 truncate text-[11px] text-muted-foreground">
             {progressSummary && progressPercent !== null
               ? `${progressPercent}% / ${PROGRESS_STATE_LABEL[progressSummary.state] ?? "不明"} / ${progressSummary.current_step || progressSummary.summary}`
               : "セッション"}
           </span>
         </div>
-        {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+        {expanded ? <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
       </button>
 
       {expanded && (

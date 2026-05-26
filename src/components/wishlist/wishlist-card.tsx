@@ -168,7 +168,7 @@ export function WishlistCard({
       onDragEnd={canNativeMemoDrag ? handleNativeDragEnd : undefined}
       onClick={onClick}
       className={cn(
-        "group relative flex flex-col rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
+        "group relative flex w-full min-w-0 flex-col overflow-hidden rounded-lg border bg-card p-3 transition-colors hover:border-primary/40",
         canNativeMemoDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         accentColor && "border-l-4",
         isCompleted && "opacity-55",
@@ -219,14 +219,14 @@ export function WishlistCard({
               </span>
             )}
           </div>
-          <p className={cn("line-clamp-2 text-sm font-semibold leading-snug", isCompleted && "line-through text-muted-foreground")}>
+          <p className={cn("line-clamp-2 break-words text-sm font-semibold leading-snug", isCompleted && "line-through text-muted-foreground")}>
             {item.title}
           </p>
         </div>
       </div>
 
       {item.description && (
-        <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+        <p className="mt-2 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">
           {item.description}
         </p>
       )}
@@ -298,8 +298,8 @@ export function WishlistCard({
         </div>
       )}
 
-      <div className="mt-2 flex items-center justify-between" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-1">
+      <div className="mt-2 flex min-w-0 items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
+        <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"
             onPointerDown={e => e.stopPropagation()}
@@ -332,7 +332,7 @@ export function WishlistCard({
             <Sun className={cn("h-5 w-5", isTodayColumn && "fill-amber-400/30")} />
           </button>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {onOpenCodex && (
             <div className="flex items-center" onClick={e => e.stopPropagation()}>
               <NoteClaudeRunnerButton
@@ -360,7 +360,7 @@ export function WishlistCard({
       </div>
 
       {onOpenCodex && aiTask && (
-        <div onClick={e => e.stopPropagation()}>
+        <div className="min-w-0" onClick={e => e.stopPropagation()}>
           <NoteClaudeRunnerPanel
             latestTask={aiTask}
             isProjectAssigned={!!item.project_id}

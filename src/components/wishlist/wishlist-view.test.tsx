@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WishlistView } from './wishlist-view'
 import type { IdealGoalWithItems } from '@/types/database'
@@ -303,5 +303,84 @@ describe('WishlistView calendar D&D', () => {
     expect(screen.getByText('Today memo').closest('div[draggable="true"]')).toBeTruthy()
     expect(screen.getByText('Scheduled memo').closest('div[draggable="true"]')).toBeNull()
     expect(screen.getByText('Completed memo').closest('div[draggable="true"]')).toBeNull()
+  })
+
+  test('マインドマップ連携済みメモをマップ追加済みカラムに表示する', async () => {
+    const wishlistItems = [
+      createMemoItem({
+        id: 'memo-mapped',
+        title: 'Mapped memo',
+        memo_status: 'organized',
+        ai_source_payload: {
+          mindmap_links: [
+            {
+              task_id: 'task-1',
+              linked_at: '2026-05-20T00:00:00.000Z',
+            },
+          ],
+        },
+      }),
+      createMemoItem({ id: 'memo-unsorted', title: 'Unsorted memo' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist') return jsonResponse({ items: wishlistItems })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    }))
+
+    await renderVisibleWishlist('Mapped memo')
+
+    expect(screen.getByText('マップ追加済み')).toBeInTheDocument()
+    expect(screen.getByText('Mapped memo')).toBeInTheDocument()
+    expect(screen.getByText('Unsorted memo')).toBeInTheDocument()
+  })
+
+  test('看板の完了切り替えを紐づくマインドマップノードへ同期する', async () => {
+    const originalItem = createMemoItem({
+      id: 'memo-linked',
+      title: 'Linked memo',
+      memo_status: 'organized',
+      mindmap_task_ids: ['task-1', 'task-2'],
+    } as Partial<IdealGoalWithItems>)
+    let serverItem = originalItem
+    const fetchMock = vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist') return jsonResponse({ items: [serverItem] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      if (url === '/api/wishlist/memo-linked') {
+        const [, init] = fetchMock.mock.calls.at(-1) ?? []
+        const updates = JSON.parse((init?.body as string | undefined) ?? '{}')
+        serverItem = createMemoItem({ ...serverItem, ...updates })
+        return jsonResponse({ item: serverItem })
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const onLinkedTaskStatusChange = vi.fn(async () => undefined)
+
+    render(
+      <WishlistView
+        onLinkedTaskStatusChange={onLinkedTaskStatusChange}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Linked memo')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTitle('完了にする'))
+
+    await waitFor(() => {
+      expect(onLinkedTaskStatusChange).toHaveBeenCalledWith('task-1', 'done')
+      expect(onLinkedTaskStatusChange).toHaveBeenCalledWith('task-2', 'done')
+    })
+
+    fireEvent.click(screen.getByTitle('完了済み'))
+
+    await waitFor(() => {
+      expect(onLinkedTaskStatusChange).toHaveBeenCalledWith('task-1', 'todo')
+      expect(onLinkedTaskStatusChange).toHaveBeenCalledWith('task-2', 'todo')
+    })
   })
 })

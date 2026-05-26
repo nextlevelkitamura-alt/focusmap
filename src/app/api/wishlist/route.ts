@@ -2,6 +2,72 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { upsertMemoTags } from '@/lib/memo-tags-server'
 
+type WishlistRow = Record<string, unknown> & {
+  id: string
+  ai_source_payload?: unknown
+}
+
+function readMindmapLinks(payload: unknown): Array<{ task_id?: unknown; linked_at?: unknown }> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return []
+  const links = (payload as { mindmap_links?: unknown }).mindmap_links
+  if (!Array.isArray(links)) return []
+  return links.filter((link): link is { task_id?: unknown; linked_at?: unknown } =>
+    !!link && typeof link === 'object' && !Array.isArray(link),
+  )
+}
+
+async function withMindmapLinkMetadata(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  rows: WishlistRow[] | null,
+) {
+  const items = rows ?? []
+  if (items.length === 0) return items
+
+  const ids = items.map(item => item.id)
+  const { data: structuredLinks } = await supabase
+    .from('memo_node_links')
+    .select('source_id, task_id, created_at')
+    .eq('user_id', userId)
+    .eq('source_type', 'wishlist')
+    .eq('link_type', 'mindmap_node')
+    .eq('status', 'active')
+    .in('source_id', ids)
+
+  const linkMetaBySourceId = new Map<string, { taskIds: Set<string>; count: number; linkedAt: string | null }>()
+  for (const link of structuredLinks ?? []) {
+    if (!link.source_id) continue
+    const current = linkMetaBySourceId.get(link.source_id) ?? { taskIds: new Set<string>(), count: 0, linkedAt: null }
+    current.count += 1
+    if (link.task_id) current.taskIds.add(link.task_id)
+    if (!current.linkedAt || new Date(link.created_at).getTime() > new Date(current.linkedAt).getTime()) {
+      current.linkedAt = link.created_at
+    }
+    linkMetaBySourceId.set(link.source_id, current)
+  }
+
+  return items.map(item => {
+    const legacyLinks = readMindmapLinks(item.ai_source_payload)
+    const legacyTaskIds = legacyLinks
+      .map(link => link.task_id)
+      .filter((taskId): taskId is string => typeof taskId === 'string' && taskId.length > 0)
+    const legacyLinkedAt = legacyLinks
+      .map(link => typeof link.linked_at === 'string' ? link.linked_at : null)
+      .filter((value): value is string => !!value)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null
+    const structuredMeta = linkMetaBySourceId.get(item.id)
+    const taskIds = new Set([...(structuredMeta?.taskIds ?? []), ...legacyTaskIds])
+    const linkedAtCandidates = [structuredMeta?.linkedAt ?? null, legacyLinkedAt].filter((value): value is string => !!value)
+    const linkedAt = linkedAtCandidates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null
+    return {
+      ...item,
+      mindmap_link_count: Math.max(taskIds.size, structuredMeta?.count ?? 0, legacyTaskIds.length),
+      mindmap_linked_at: linkedAt,
+      mindmap_task_ids: [...taskIds],
+    }
+  })
+}
+
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -39,7 +105,8 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ items: data })
+  const items = await withMindmapLinkMetadata(supabase, user.id, data as WishlistRow[] | null)
+  return NextResponse.json({ items })
 }
 
 export async function POST(request: NextRequest) {
@@ -243,5 +310,6 @@ export async function POST(request: NextRequest) {
     .eq('id', savedItem.id)
     .single()
 
-  return NextResponse.json({ item: item ?? savedItem }, { status: 201 })
+  const [withMetadata] = await withMindmapLinkMetadata(supabase, user.id, [(item ?? savedItem) as WishlistRow])
+  return NextResponse.json({ item: withMetadata ?? item ?? savedItem }, { status: 201 })
 }

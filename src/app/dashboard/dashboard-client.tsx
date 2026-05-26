@@ -1217,6 +1217,7 @@ export function DashboardClient({
                             isCalendarSplitVisible={false}
                             onToggleCalendarSplit={toggleCalendarSplit}
                             mindmapMemoFocus={mindmapMemoFocus}
+                            onLinkedTaskStatusChange={(taskId, status) => handleUpdateTaskWithQuickSync(taskId, { status })}
                             onMindmapUpdated={refreshFromServer}
                         />
                     </div>
@@ -1411,7 +1412,7 @@ export function DashboardClient({
                                     isCalendarSplitVisible={false}
                                     compactComposer
                                     mindmapMemoFocus={mindmapMemoFocus}
-                                    onLinkedTaskStatusChange={(taskId, status) => updateTask(taskId, { status })}
+                                    onLinkedTaskStatusChange={(taskId, status) => handleUpdateTaskWithQuickSync(taskId, { status })}
                                     onMindmapUpdated={refreshFromServer}
                                 />
                             </div>
