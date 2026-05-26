@@ -97,6 +97,85 @@
 3. **Kimi K2.6 の半額以下** で同等以上のエージェント能力 (公式リファレンス)
 4. **2026-04リリースの最新世代**、価格戦略も攻撃的 (75%割引が永続化)
 
+### 2.3.4 Cache hit 最適化戦略 (`agent` tier の **必須要件**)
+
+DeepSeek V4 Pro の **Cache hit ($0.003625/M) は通常入力 ($0.435/M) の 120倍安い**。これを活用しないと Team プランの粗利率が破綻する。
+
+**粗利率試算 (Team $195/月、agent 500実行/月):**
+
+| 状態 | API原価 | 粗利率 |
+|---|---|---|
+| Cache hit 0% (素朴実装) | $152 | **22%** ❌ |
+| Cache hit 50% | $77 | 60% △ |
+| **Cache hit 80%** | **$32** | **84%** ✅ 目標値 |
+| Cache hit 95% | $11 | 94% ✅ |
+
+#### 実装方針
+
+1. **プロンプト構造を「Cache 対象」と「Variable 部分」に明確分離**
+
+   ```
+   [CACHED_PREFIX]  ← 全実行で固定、自動でCache対象
+     ・システム指示 (役割定義、ガードレール、暴走対策の指示)
+     ・出力JSONスキーマ
+     ・Tool定義一覧
+     ・Few-shot 例示
+     → 約2,000〜5,000 tokens、毎回同じ
+   [/CACHED_PREFIX]
+
+   [VARIABLE]  ← 毎回変わる、Cache miss
+     ・現在のDOMスナップショット
+     ・このタスクのユーザー指示
+     ・直近の実行履歴
+     → 約1,000〜10,000 tokens
+   [/VARIABLE]
+   ```
+
+2. **Cache hit率の目標**: 全 agent 実行で **80%以上**
+   - 計測指標: `cache_hit_tokens / total_input_tokens`
+   - 月次でモニタリング、低下時はプロンプト構造を見直す
+
+3. **DeepSeek API の Cache 仕様**
+   - 入力プロンプトの **先頭部分** が前回と完全一致するとCache hit
+   - 最小Cache対象長: 通常 1,024 tokens 以上 (公式仕様の確認 Phase 3 Month 1 で実施)
+   - 明示的なCache ID指定は不要、自動判定
+
+4. **スキル定義での扱い**
+
+   ```json
+   {
+     "id": "form-aggregate",
+     "model_tier": "agent",
+     "cache_strategy": {
+       "enabled": true,
+       "min_hit_rate_target": 0.80,
+       "cached_sections": ["system", "tools", "output_schema", "examples"]
+     }
+   }
+   ```
+
+#### Cache miss が高い場合の打ち手
+
+| Cache hit率 | 状態 | 打ち手 |
+|---|---|---|
+| > 80% | 健全 | 維持 |
+| 50-80% | 注意 | プロンプト構造の見直し、可変部分の最小化 |
+| < 50% | 危険 | agent モデルを Kimi K2.6 に切替検討 (Cache依存度が低い設計) |
+
+#### Phase 3 Month 3 のフルベンチマークで実測必須
+
+- 実Playwright + DeepSeek V4 Pro で Cache hit率を計測
+- 目標 80% に届かない場合は Team プラン構造の再設計が必要
+- 副案: Cache hit に依存しないモデル (Kimi K2.6) を採用、その分価格を上げる
+
+#### Cache hit 戦略は agent tier の **必須要件**
+
+スキル開発時のレビュー項目:
+- [ ] プロンプトが Cached / Variable に明確分離されているか
+- [ ] Cached 部分が 1,024 tokens 以上あるか
+- [ ] Variable 部分に「毎回変わる必要のない情報」が紛れていないか
+- [ ] テスト実行で Cache hit率を確認したか
+
 **判定基準** (Phase 3 Month 3 で実機検証時に適用):
 - Playwright + 実DOM操作で 80%以上の成功率
 - 1実行あたり $0.30 以下
