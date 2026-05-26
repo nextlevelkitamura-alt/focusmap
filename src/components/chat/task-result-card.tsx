@@ -3,7 +3,7 @@
 import { useAiTaskStream } from '@/hooks/use-ai-task-stream';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Check, X, Activity } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TaskResultCardProps {
@@ -30,6 +30,37 @@ const STATUS_COLOR: Record<string, string> = {
 export function TaskResultCard({ taskId }: TaskResultCardProps) {
   const { task, loading } = useAiTaskStream(taskId);
   const [showRaw, setShowRaw] = useState(false);
+  const [liveLog, setLiveLog] = useState<string>('');
+
+  useEffect(() => {
+    if (!taskId) return;
+    let mounted = true;
+
+    const fetchLiveLog = async () => {
+      try {
+        const res = await fetch(`/api/ai-tasks/${taskId}/live-log`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (mounted) setLiveLog(typeof data.log === 'string' ? data.log : '');
+      } catch {
+        if (mounted) setLiveLog('');
+      }
+    };
+
+    void fetchLiveLog();
+    const interval = window.setInterval(() => {
+      if (task?.status === 'completed' || task?.status === 'failed') {
+        window.clearInterval(interval);
+        return;
+      }
+      void fetchLiveLog();
+    }, 4000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [task?.status, taskId]);
 
   if (loading || !task) {
     return (
@@ -41,8 +72,10 @@ export function TaskResultCard({ taskId }: TaskResultCardProps) {
   }
 
   const result = task.result as
-    | { steps?: Array<{ label: string; status: string }>; output?: string }
+    | { steps?: Array<{ label: string; status: string }>; output?: string; live_log?: string; message?: string }
     | null;
+  const rawLog = liveLog || result?.live_log || result?.message || '';
+  const visibleLog = rawLog.trim().split('\n').slice(-8).join('\n');
 
   return (
     <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
@@ -86,6 +119,18 @@ export function TaskResultCard({ taskId }: TaskResultCardProps) {
             </li>
           ))}
         </ol>
+      )}
+
+      {visibleLog && (
+        <div className="rounded border border-border/40 bg-background p-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            {task.status === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
+            実行ログ
+          </div>
+          <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-muted-foreground">
+            {visibleLog}
+          </pre>
+        </div>
       )}
 
       {/* Output (completed時) */}

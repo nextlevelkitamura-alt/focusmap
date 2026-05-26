@@ -29,7 +29,9 @@ export function useUsage(spaceId: string | null, userId: string | null): UseUsag
     setError(null);
     try {
       const supabase = createClient();
-      const result = await getUsageInfo(supabase, spaceId, userId);
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.id === userId ? data.user.email ?? null : null;
+      const result = await getUsageInfo(supabase, spaceId, userId, email);
       setPersonal(result.personal);
       setWorkspace(result.workspace);
     } catch (e) {

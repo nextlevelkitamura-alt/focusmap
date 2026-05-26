@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
 
   // プラン上限check (スキル実行系のみ。pure 壁打ち=skill_idなし は無制限扱い)
   if (skill_id) {
-    const usageCheck = await assertCanExecute(supabase, resolved.spaceId, user.id)
+    const usageCheck = await assertCanExecute(supabase, resolved.spaceId, user.id, user.email)
     if (!usageCheck.allowed) {
       return NextResponse.json(
         {

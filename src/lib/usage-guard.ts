@@ -39,6 +39,25 @@ interface SpaceMeta {
   seat_count: number;
 }
 
+const DEFAULT_UNLIMITED_AI_EMAILS = ['nextlevel.kitamura@gmail.com'];
+
+function normalizedEmail(value: string | null | undefined): string | null {
+  const email = value?.trim().toLowerCase();
+  return email || null;
+}
+
+function getUnlimitedAiEmails(): Set<string> {
+  const configured = typeof process !== 'undefined'
+    ? process.env.NEXTLEVEL_UNLIMITED_AI_EMAILS?.split(',') ?? []
+    : [];
+  return new Set([...DEFAULT_UNLIMITED_AI_EMAILS, ...configured].map(normalizedEmail).filter(Boolean) as string[]);
+}
+
+export function isUnlimitedAiAccount(email?: string | null): boolean {
+  const normalized = normalizedEmail(email);
+  return Boolean(normalized && getUnlimitedAiEmails().has(normalized));
+}
+
 async function fetchSpaceMeta(
   supabase: SupabaseClient,
   spaceId: string | null,
@@ -98,6 +117,7 @@ export async function getUsageInfo(
   supabase: SupabaseClient,
   spaceId: string | null,
   userId: string,
+  userEmail?: string | null,
 ): Promise<{ personal: UsageInfo; workspace: UsageInfo | null }> {
   const cycle = formatBillingCycle();
   const spaceMeta = await fetchSpaceMeta(supabase, spaceId);
@@ -105,8 +125,9 @@ export async function getUsageInfo(
   const seatCount = spaceMeta?.seat_count ?? 1;
   const plan = getPlan(planId);
   const summaries = await fetchUsageSummary(supabase, spaceMeta?.id ?? null, userId, cycle);
+  const unlimitedAccount = isUnlimitedAiAccount(userEmail);
 
-  const personalLimit = plan.monthlyExecutionsPerSeat;
+  const personalLimit = unlimitedAccount ? Infinity : plan.monthlyExecutionsPerSeat;
   const personalExec = summaries.user.executions;
   const personalRatio = isFinite(personalLimit) ? personalExec / Math.max(personalLimit, 1) : 0;
 
@@ -128,7 +149,7 @@ export async function getUsageInfo(
 
   let workspace: UsageInfo | null = null;
   if (spaceMeta && summaries.space) {
-    const wsLimit = getMonthlyExecutionLimit(planId, seatCount);
+    const wsLimit = unlimitedAccount ? Infinity : getMonthlyExecutionLimit(planId, seatCount);
     const wsExec = summaries.space.executions;
     const wsRatio = isFinite(wsLimit) ? wsExec / Math.max(wsLimit, 1) : 0;
     workspace = {
@@ -155,8 +176,9 @@ export async function assertCanExecute(
   supabase: SupabaseClient,
   spaceId: string | null,
   userId: string,
+  userEmail?: string | null,
 ): Promise<UsageCheckResult> {
-  const usage = await getUsageInfo(supabase, spaceId, userId);
+  const usage = await getUsageInfo(supabase, spaceId, userId, userEmail);
   const checkScope = usage.workspace ?? usage.personal;
 
   if (checkScope.executions >= checkScope.limit && isFinite(checkScope.limit)) {

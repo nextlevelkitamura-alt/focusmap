@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   Bot,
   CheckCircle2,
+  Circle,
   History,
   Loader2,
   Menu,
@@ -468,12 +469,11 @@ function ChatBubble({ message }: { message: FocusmapChatMessage }) {
   const isUser = message.role === "user"
   return (
     <div className={cn("flex gap-3", isUser && "flex-row-reverse")}>
-      <div className={cn(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-        isUser ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
-      )}>
-        {isUser ? <span className="text-xs font-semibold">You</span> : <Bot className="h-4 w-4" />}
-      </div>
+      {!isUser && (
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Bot className="h-4 w-4" />
+        </div>
+      )}
       <div className={cn("min-w-0 max-w-[86%] space-y-2", isUser && "items-end")}>
         <div className={cn(
           "rounded-lg px-3 py-2 text-sm leading-6",
@@ -481,6 +481,9 @@ function ChatBubble({ message }: { message: FocusmapChatMessage }) {
         )}>
           <p className="whitespace-pre-wrap">{message.content}</p>
           {message.error && <p className="mt-2 text-xs text-red-400">{message.error}</p>}
+          {message.status === "running" && !message.taskId && (
+            <ThinkingTrace automation={message.modelLabel === "deepseek-v4-pro"} />
+          )}
         </div>
         <div className={cn("flex items-center gap-1.5 text-[10px] text-muted-foreground", isUser && "justify-end")}>
           {statusIcon(message)}
@@ -489,6 +492,27 @@ function ChatBubble({ message }: { message: FocusmapChatMessage }) {
         </div>
         {message.taskId && <TaskResultCard taskId={message.taskId} />}
       </div>
+    </div>
+  )
+}
+
+function ThinkingTrace({ automation }: { automation: boolean }) {
+  const steps = automation
+    ? ["自動化の意図を判定", "使うスキルと実行権限を確認", "バックグラウンド実行へ投入"]
+    : ["会話履歴を整理", "モデルへ送信", "回答を生成"]
+
+  return (
+    <div className="mt-3 space-y-1.5 rounded-md border border-border/60 bg-background/50 p-2 text-xs text-muted-foreground">
+      {steps.map((step, index) => (
+        <div key={step} className="flex items-center gap-2">
+          {index === 0 ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-400" />
+          ) : (
+            <Circle className="h-3 w-3 shrink-0" />
+          )}
+          <span>{step}</span>
+        </div>
+      ))}
     </div>
   )
 }

@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. プラン上限check
-  const usage = await assertCanExecute(supabase, spaceId, user.id);
+  const usage = await assertCanExecute(supabase, spaceId, user.id, user.email);
   if (!usage.allowed) {
     return NextResponse.json(
       {

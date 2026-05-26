@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import type { ComponentType, ReactNode } from "react"
-import { Bot, Chrome, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Workflow } from "lucide-react"
+import { Bot, Chrome, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Terminal, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
@@ -76,6 +76,16 @@ export function AutomationSettings() {
           </div>
         </SettingBlock>
       </div>
+
+      <SettingBlock
+        icon={Terminal}
+        title="実行方式"
+        description="Webアプリ単体からPCのファイルやターミナルを直接操作するのではなく、Mac側の常駐ランナーが terminal / Playwright / GWS を実行します。"
+      >
+        <p className="text-xs leading-5 text-zinc-500">
+          Focusmapは指示と実行状態を ai_tasks に保存し、Mac側ランナーがそれを取りに行って処理します。ログイン済みブラウザの操作、スプレッドシート書き込み、コマンド実行が必要な処理はこのランナー側で実行します。
+        </p>
+      </SettingBlock>
 
       <SettingBlock
         icon={Cloud}
