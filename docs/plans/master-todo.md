@@ -22,7 +22,11 @@
 | ✅ 完了 | **本番DB へ差分migration適用** (spaces.plan等 + audit_logs + user_byok_keys + system_skill_templates + helper関数3個) |
 | ✅ 完了 | **LP動作検証 + 価格表レイアウト修正** (Preview MCP で snapshot 確認、4プラン表示OK) |
 | ✅ 完了 | **focusmap-agent MVP本体実装** (config / heartbeat / claim / executor / calendar-organize / Gemini Flash-Lite / safety) |
-| **🔥 次** | **実機統合テスト** (北村本人の config.json でローカル起動 → ai_runners 登録 → calendar-organize 完走確認) |
+| ✅ 完了 | **Phase A: ワンクリックセットアップ** (install.sh強化 + 3stepウィザード + Gmail scope + agent_token API) |
+| ✅ 完了 | **Phase B: AIチャット + DeepSeek V4 Pro** (intent classifier + /dashboard/chat + Realtime hook) |
+| ✅ 完了 | **Phase C: Playwright + 実GCal連携** (google-calendar.ts + Playwright executor + web-research / email-summary / 実GCal化 calendar-organize) |
+| ✅ 完了 | **Phase D: UI磨き込み** (GlobalWorkspaceSwitcher / EmptyState / Skeleton / ErrorBanner / 各画面統合) |
+| **🔥 次** | **実機統合テスト** (config.json で起動 → ブラウザで /dashboard/chat → 「カレンダー整理して」→ Playwright実機実行 → 結果Realtime表示) |
 
 ---
 
