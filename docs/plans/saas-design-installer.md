@@ -59,7 +59,7 @@
   │ 接続したいMac miniのターミナルで以下を実行:    │
   │                                                  │
   │ ┌────────────────────────────────────────────┐ │
-  │ │ curl -sSL https://focusmap.app/install.sh \│ │
+  │ │ curl -sSL https://focusmap-official.com/install.sh \│ │
   │ │   | sh -s -- ws_xxx_token_yyy             │ │
   │ │                                       [コピー] │ │
   │ └────────────────────────────────────────────┘ │
@@ -102,19 +102,19 @@ mkdir -p "$INSTALL_DIR"
 cat > "$INSTALL_DIR/config.json" <<EOF
 {
   "agent_token": "$AGENT_TOKEN",
-  "api_url": "https://focusmap.app/api",
+  "api_url": "https://focusmap-official.com/api",
   "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
 
 # 5. launchd plist を登録 (起動時自動起動)
-PLIST_PATH="$HOME/Library/LaunchAgents/app.focusmap.agent.plist"
+PLIST_PATH="$HOME/Library/LaunchAgents/com.focusmap-official.agent.plist"
 cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>app.focusmap.agent</string>
+  <key>Label</key><string>com.focusmap-official.agent</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/focusmap-agent</string>

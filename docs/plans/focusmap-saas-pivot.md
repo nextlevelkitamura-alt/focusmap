@@ -135,7 +135,7 @@ grill-me セッションで以下の論点を詰めた。
 
 主な確定事項:
 - **Node.js CLI（`@focusmap/agent`）+ launchd + npm**（Tauri/Electron 不採用）
-- 導入は `curl -sSL focusmap.app/install.sh | sh -s -- <token>` ワンライナー
+- 導入は `curl -sSL focusmap-official.com/install.sh | sh -s -- <token>` ワンライナー
 - Apple Developer / 公証は当面不要（Node.jsモジュールのため）
 - Webアプリ ↔ エージェントは Supabase Realtime（既存資産活用）
 - Windows対応はPhase 4以降
@@ -240,7 +240,7 @@ grill-me セッションで以下の論点を詰めた。
 - [ ] **Gemini Flash ベンチマーク**: 代表3スキル（カレンダー / 競合巡回 / メール要約）の実コスト・成功率を実測（[saas-design-api-billing.md §7](./saas-design-api-billing.md)）
 - [ ] 個人事業主開業届 + 適格請求書発行事業者登録
 - [ ] 弁護士相談（利用規約・特商法・プライバシーポリシー）
-- [ ] focusmap.app ドメイン取得
+- [x] ~~focusmap-official.com ドメイン取得~~ → 既に取得済み・LP稼働中
 - [ ] @focusmap/agent npm package 名空き確認
 - [ ] 週15時間の開発時間確保の本業との合意
 

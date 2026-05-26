@@ -228,7 +228,7 @@ create table audit_logs (
 1. Webアプリ > 管理画面 > エージェント追加
 2. Workspaceに紐づく `agent_token` 発行
 3. ターミナルで以下を実行 (Webアプリにコマンドが表示される):
-   curl -sSL https://focusmap.app/install.sh | sh -s -- <agent_token>
+   curl -sSL https://focusmap-official.com/install.sh | sh -s -- <agent_token>
 4. install.sh が:
    - Node + Playwright + Chromiumをインストール
    - focusmap-agentパッケージをセットアップ

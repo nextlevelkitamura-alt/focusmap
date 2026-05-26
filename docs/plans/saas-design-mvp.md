@@ -160,7 +160,7 @@ Phase 3 = 2026年6月 〜 2026年11月 (6ヶ月)
 
 ```
 [ ] 公開ローンチ (Producthunt, Hacker News, Zenn, note)
-[ ] LP制作 (focusmap.app)
+[ ] LP改修 (focusmap-official.com 既存LPに、SaaS価格表・スキル紹介・差別化メッセージ・比較表 vs Zapier/Lindy・セキュリティ訴求を追加)
 [ ] 紹介動画 (1分、スキル実行デモ)
 [ ] 初期マーケ: Twitter (旧X) / LinkedIn / 副業界隈
 [ ] 課金開始 (Free + Personal + Team)
@@ -298,7 +298,7 @@ Phase 3 = 2026年6月 〜 2026年11月 (6ヶ月)
 
 ## 8. 残課題
 
-- [ ] focusmap.app ドメイン取得確認
+- [x] ~~focusmap-official.com ドメイン取得確認~~ → 取得済み (LP稼働中)
 - [ ] @focusmap/agent の npm package 名空き確認
 - [ ] 北村の本業との時間配分の合意 (週15時間を守れるか)
 - [ ] Phase 3 Month 1 着手の正式GO判断
