@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import type { LucideIcon } from "lucide-react"
-import { Bot, Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound } from "lucide-react"
+import { Bot, Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound, Workflow } from "lucide-react"
 import { SettingsShell } from "@/components/settings/settings-shell"
 import { cn } from "@/lib/utils"
 
@@ -21,6 +21,13 @@ const PRIMARY_ITEMS: OverviewItem[] = [
     description: "モデル選択と、AIに渡す自分・プロジェクト情報を管理",
     icon: Bot,
     iconClass: "bg-violet-500 text-white",
+  },
+  {
+    href: "/dashboard/settings/automation",
+    title: "自動化",
+    description: "PC実行、GWS、Playwright、認証状態を管理",
+    icon: Workflow,
+    iconClass: "bg-cyan-500 text-white",
   },
   {
     href: "/dashboard/settings/integrations",

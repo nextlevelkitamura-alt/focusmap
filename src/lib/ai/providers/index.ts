@@ -12,12 +12,11 @@ import type { AgentId } from '../agents/index'
 // import { openai } from '@ai-sdk/openai'
 // import { anthropic } from '@ai-sdk/anthropic'
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview'
-export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite'
+export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-v4-pro'
 
 const REMOVED_OR_INVALID_GEMINI_MODELS = new Set([
   'gemini-3.0-flash',
-  'gemini-3.1-flash-lite',
   'gemini-3.5-flash',
 ])
 

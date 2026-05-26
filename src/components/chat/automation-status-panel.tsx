@@ -26,6 +26,7 @@ interface Runner {
   display_name: string | null
   executors: string[]
   available_secret_names?: string[]
+  metadata?: Record<string, unknown> | null
   last_heartbeat_at: string | null
 }
 
@@ -140,6 +141,16 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
     () => new Set(runners.flatMap(runner => runner.available_secret_names ?? [])),
     [runners],
   )
+  const hasGws = useMemo(
+    () => runners.some(runner => {
+      const metadata = runner.metadata ?? {}
+      return runnerSecrets.has("GWS_AUTH") ||
+        runnerSecrets.has("GOOGLE_WORKSPACE_MCP") ||
+        metadata.gws_installed === true ||
+        metadata.google_workspace_mcp === true
+    }),
+    [runnerSecrets, runners],
+  )
 
   const testAi = async () => {
     setCheckingAi(true)
@@ -231,6 +242,13 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
       level: loading ? "checking" : calendar?.isConnected && !calendar.needsReconnect ? "ok" : "missing",
     },
     {
+      key: "gws",
+      icon: ShieldCheck,
+      label: "GWS / MCP",
+      detail: hasGws ? "Google Workspace MCP確認済み" : "設定画面で導入・認証",
+      level: loading ? "checking" : hasGws ? "ok" : "warn",
+    },
+    {
       key: "browser",
       icon: ShieldCheck,
       label: "ブラウザ認証",
@@ -284,7 +302,7 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
         </div>
       </div>
 
-      <div className="mt-3 grid max-h-[126px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 md:max-h-none md:grid-cols-4 md:overflow-visible md:pr-0 xl:grid-cols-7">
+      <div className="mt-3 grid max-h-[126px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 md:max-h-none md:grid-cols-4 md:overflow-visible md:pr-0 xl:grid-cols-4 2xl:grid-cols-8">
         {rows.map(row => {
           const Icon = row.icon
           return (

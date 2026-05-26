@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
-import { ArrowLeft, Bot, Calendar, ChevronLeft, FolderKanban, KeyRound, Palette, Settings } from "lucide-react"
+import { ArrowLeft, Bot, Calendar, ChevronLeft, FolderKanban, KeyRound, Palette, Settings, Workflow } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface SettingsNavItem {
@@ -16,6 +16,7 @@ interface SettingsNavItem {
 const NAV_ITEMS: SettingsNavItem[] = [
   { href: "/dashboard/settings", label: "一般", icon: Settings },
   { href: "/dashboard/settings/ai", label: "AI", icon: Bot },
+  { href: "/dashboard/settings/automation", label: "自動化", icon: Workflow },
   { href: "/dashboard/settings/integrations", label: "連携", icon: Calendar },
   { href: "/dashboard/settings/projects", label: "プロジェクト", icon: FolderKanban },
   { href: "/dashboard/settings/access", label: "アクセス", icon: KeyRound },

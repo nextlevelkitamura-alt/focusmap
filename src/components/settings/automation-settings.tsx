@@ -1,0 +1,146 @@
+"use client"
+
+import Link from "next/link"
+import type { ComponentType, ReactNode } from "react"
+import { Bot, Chrome, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Workflow } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
+import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
+
+function SettingBlock({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  icon: ComponentType<{ className?: string }>
+  title: string
+  description: string
+  children?: ReactNode
+}) {
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-blue-300">
+          <Icon className="h-4.5 w-4.5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-semibold text-zinc-50">{title}</h2>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">{description}</p>
+        </div>
+      </div>
+      {children && <div className="mt-4">{children}</div>}
+    </section>
+  )
+}
+
+export function AutomationSettings() {
+  return (
+    <div className="space-y-5">
+      <AutomationStatusPanel spaceId={null} />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SettingBlock
+          icon={Workflow}
+          title="自動化チャット"
+          description="自動化の指示は DeepSeek V4 Pro で判定し、ai_tasks に投入してMac側のランナーがバックグラウンド実行します。"
+        >
+          <div className="flex flex-wrap gap-2">
+            <Button asChild className="h-10 gap-1.5">
+              <Link href="/dashboard">
+                <Play className="h-4 w-4" />
+                自動化タブを開く
+              </Link>
+            </Button>
+            <Button variant="outline" className="h-10 gap-1.5" onClick={() => window.location.reload()}>
+              <RefreshCw className="h-4 w-4" />
+              状態を再読込
+            </Button>
+          </div>
+        </SettingBlock>
+
+        <SettingBlock
+          icon={Bot}
+          title="モデル設定"
+          description="通常チャットは Gemini 3.1 Flash Lite、自動化チャットは DeepSeek V4 Pro を既定にしています。"
+        >
+          <div className="grid gap-2 text-sm">
+            <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
+              <div className="text-zinc-500">通常チャット</div>
+              <div className="font-mono text-zinc-100">gemini-3.1-flash-lite</div>
+            </div>
+            <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
+              <div className="text-zinc-500">自動化チャット</div>
+              <div className="font-mono text-zinc-100">deepseek-v4-pro</div>
+            </div>
+          </div>
+        </SettingBlock>
+      </div>
+
+      <SettingBlock
+        icon={Cloud}
+        title="GWS / Google Workspace MCP"
+        description="Googleカレンダー、スプレッドシート、Drive、Docs などをMac側のAI実行から扱うためのMCP導入・認証をここで確認します。"
+      >
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-md border border-white/[0.08] bg-black/30 p-3">
+            <div className="mb-1 flex items-center gap-2 text-sm font-medium text-zinc-100">
+              <DownloadCloud className="h-4 w-4 text-blue-300" />
+              1. ダウンロード
+            </div>
+            <p className="text-xs leading-5 text-zinc-500">
+              Mac側のランナーに GWS / Google Workspace MCP を入れて、Sheets と Calendar を扱える状態にします。
+            </p>
+          </div>
+          <div className="rounded-md border border-white/[0.08] bg-black/30 p-3">
+            <div className="mb-1 flex items-center gap-2 text-sm font-medium text-zinc-100">
+              <KeyRound className="h-4 w-4 text-blue-300" />
+              2. OAuth認証
+            </div>
+            <p className="text-xs leading-5 text-zinc-500">
+              書き込み権限が必要なアカウントで認証します。認証情報はMac側に置く前提です。
+            </p>
+          </div>
+          <div className="rounded-md border border-white/[0.08] bg-black/30 p-3">
+            <div className="mb-1 flex items-center gap-2 text-sm font-medium text-zinc-100">
+              <ShieldCheck className="h-4 w-4 text-blue-300" />
+              3. 実行確認
+            </div>
+            <p className="text-xs leading-5 text-zinc-500">
+              ランナーの heartbeat で GWS 認証状態を検出し、未設定なら自動化チャット起動時に案内します。
+            </p>
+          </div>
+        </div>
+      </SettingBlock>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SettingBlock
+          icon={Chrome}
+          title="Playwright / ブラウザ権限"
+          description="ログインが必要なサイト巡回や入力自動化は、Mac側のPlaywright実行環境とブラウザ認証状態を使います。"
+        >
+          <p className="text-xs leading-5 text-zinc-500">
+            認証切れやブラウザ権限不足が検出された場合は、自動化チャット起動時に設定案内を出します。
+          </p>
+        </SettingBlock>
+
+        <SettingBlock
+          icon={Cloud}
+          title="Googleカレンダー認証"
+          description="Focusmap本体の予定連携です。GWSとは別に、画面表示とカレンダー同期で使用します。"
+        >
+          <Button asChild className="h-10 gap-1.5">
+            <a href="/api/calendar/connect?next=/dashboard/settings/automation">
+              <KeyRound className="h-4 w-4" />
+              Google認証を更新
+            </a>
+          </Button>
+        </SettingBlock>
+      </div>
+
+      <section className="rounded-xl border border-white/[0.08] bg-[#1c1c1e] p-2 md:p-3">
+        <ScanSettingsSection />
+      </section>
+    </div>
+  )
+}

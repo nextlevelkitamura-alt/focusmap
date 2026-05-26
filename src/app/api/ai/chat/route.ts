@@ -1301,6 +1301,7 @@ export async function POST(request: Request) {
       skillId: activeSkillId,
       contextUpdate,
       projectContextUpdated,
+      model_label: 'gemini-3.1-flash-lite',
       ...(toolsExecuted ? { toolResults: allToolResults } : {}),
     })
   } catch (error) {

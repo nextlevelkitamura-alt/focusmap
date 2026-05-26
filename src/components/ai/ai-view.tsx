@@ -1,8 +1,8 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { AiChatPanel } from "./ai-chat-panel"
 import { AutoChatView } from "@/components/chat/auto-chat-view"
+import { ChatWorkspace } from "@/components/chat/chat-workspace"
 import { MindMap } from "@/components/dashboard/mind-map"
 import { Project, Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
@@ -64,6 +64,8 @@ export function AiView({
   const handleMindmapUpdated = useCallback(() => {
     refreshFromServer()
   }, [refreshFromServer])
+  void handleMindmapUpdated
+  void onCalendarEventCreated
 
   return (
     <div className="flex h-full w-full">
@@ -95,14 +97,14 @@ export function AiView({
         </div>
         <div className="min-h-0 flex-1">
           {chatMode === "normal" ? (
-            <AiChatPanel
-              mode="fullscreen"
-              activeProjectId={selectedProjectId}
-              onMindmapUpdated={handleMindmapUpdated}
-              onCalendarEventCreated={onCalendarEventCreated}
+            <ChatWorkspace
+              mode="normal"
+              spaceId={selectedSpaceId}
+              projectId={selectedProjectId}
+              title="通常チャット"
             />
           ) : (
-            <AutoChatView spaceId={selectedSpaceId} />
+            <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
           )}
         </div>
       </div>

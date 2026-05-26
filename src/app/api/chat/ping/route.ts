@@ -29,8 +29,8 @@ export async function GET() {
   const hasDeepSeek = Boolean(process.env.DEEPSEEK_API_KEY);
   const provider = hasDeepSeek ? 'deepseek' : 'gemini';
   const modelId = hasDeepSeek
-    ? process.env.DEEPSEEK_INTENT_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash'
-    : 'gemini-2.5-flash-lite';
+    ? process.env.DEEPSEEK_AUTOMATION_MODEL ?? process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-pro'
+    : 'gemini-3.1-flash-lite';
 
   const model = hasDeepSeek ? deepseek(modelId) : google(modelId);
 

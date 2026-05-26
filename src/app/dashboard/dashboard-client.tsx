@@ -1196,7 +1196,7 @@ export function DashboardClient({
 
                 {isViewReady && isMobileViewport && activeView === 'automation' && (
                     <div className="flex-1 md:hidden overflow-hidden">
-                        <AutoChatView spaceId={selectedSpaceId} />
+                        <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
                     </div>
                 )}
 
@@ -1266,7 +1266,7 @@ export function DashboardClient({
 
                 {!isMobileViewport && activeView === 'automation' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
-                        <AutoChatView spaceId={selectedSpaceId} />
+                        <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
                     </div>
                 )}
 

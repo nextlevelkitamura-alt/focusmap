@@ -1,8 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { AiChatPanel } from "@/components/ai/ai-chat-panel"
 import { AutoChatView } from "@/components/chat/auto-chat-view"
+import { ChatWorkspace } from "@/components/chat/chat-workspace"
 import { cn } from "@/lib/utils"
 
 interface MobileAiExecutionViewProps {
@@ -24,6 +24,8 @@ export function MobileAiExecutionView({
   onMindmapUpdated,
   onCalendarEventCreated,
 }: MobileAiExecutionViewProps) {
+  void onMindmapUpdated
+  void onCalendarEventCreated
   const [chatMode, setChatMode] = useState<"normal" | "automation">("normal")
 
   return (
@@ -54,14 +56,14 @@ export function MobileAiExecutionView({
       </div>
 
       {chatMode === "normal" ? (
-        <AiChatPanel
-          mode="fullscreen"
-          activeProjectId={selectedProjectId}
-          onMindmapUpdated={onMindmapUpdated}
-          onCalendarEventCreated={onCalendarEventCreated}
+        <ChatWorkspace
+          mode="normal"
+          spaceId={selectedSpaceId}
+          projectId={selectedProjectId}
+          title="通常チャット"
         />
       ) : (
-        <AutoChatView spaceId={selectedSpaceId} />
+        <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
       )}
     </div>
   )

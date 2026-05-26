@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
     const { data: runners, error } = await supabase
       .from("ai_runners")
-      .select("id, user_id, hostname, display_name, executors, available_repo_keys, last_heartbeat_at, created_at, updated_at")
+      .select("id, user_id, hostname, display_name, executors, available_repo_keys, available_secret_names, repo_paths, metadata, last_heartbeat_at, created_at, updated_at")
       .in("id", runnerIds)
       .order("last_heartbeat_at", { ascending: false })
 
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from("ai_runners")
-    .select("id, user_id, hostname, display_name, executors, available_repo_keys, last_heartbeat_at, created_at, updated_at")
+    .select("id, user_id, hostname, display_name, executors, available_repo_keys, available_secret_names, repo_paths, metadata, last_heartbeat_at, created_at, updated_at")
     .eq("user_id", user.id)
     .order("last_heartbeat_at", { ascending: false })
 
