@@ -41,7 +41,43 @@ export async function upsertRunner(
   if (error || !data) {
     throw new Error(`ai_runners upsert failed: ${error?.message ?? 'no data'}`);
   }
+
+  // 全所有 space に自動紐付け (まだ未紐付けのものだけ)
+  // これにより agent が claim 可能になる
+  await ensureRunnerSpacesBindings(supabase, data.id, config.user_id);
+
   return data.id;
+}
+
+/**
+ * 起動時に自動で「ユーザー所有の全 space」へ runner を紐付ける。
+ * 既存 binding は維持 (ON CONFLICT で no-op)。
+ */
+async function ensureRunnerSpacesBindings(
+  supabase: SupabaseClient,
+  runnerId: string,
+  userId: string,
+): Promise<void> {
+  const { data: spaces } = await supabase
+    .from('spaces')
+    .select('id')
+    .eq('user_id', userId);
+
+  if (!spaces || spaces.length === 0) return;
+
+  const rows = spaces.map((s) => ({
+    runner_id: runnerId,
+    space_id: (s as { id: string }).id,
+    enabled: true,
+  }));
+
+  const { error } = await supabase
+    .from('ai_runner_spaces')
+    .upsert(rows, { onConflict: 'runner_id,space_id' });
+
+  if (error) {
+    logError('ai_runner_spaces upsert failed', error.message);
+  }
 }
 
 export function startHeartbeatLoop(
