@@ -110,13 +110,16 @@ grill-me セッションで以下の論点を詰めた。
 ### c. APIキー・課金実装 ✅
 
 詳細: [saas-design-api-billing.md](./saas-design-api-billing.md)
+ベンチマーク結果: [benchmark-results-2026-05-26.md](./benchmark-results-2026-05-26.md)
 
 主な確定事項:
-- 月額込みプランは **Gemini Flash** を採用（粗利率74-89%）
+- **ハイブリッドモデル戦略**: スキル定義の `model_tier` で動的選択
+  - `simple` tier (要約・分類・整理): **Gemini 2.5 Flash-Lite** (粗利率95-97%、ベンチマーク済)
+  - `agent` tier (Browser automation): **DeepSeek V3.1 / Kimi K2.6 / Haiku 4.5 から Phase 3 Month 3 で実機検証して決定**
 - Claude Sonnet は BYOK (Enterprise) のみ
 - Pay-as-you-go超過: Personal $0.20/実行、Team $0.10/実行
 - Stripe Subscriptions + Metered Billing + Customer Portal
-- **必須ベンチマーク**: Gemini Flash で代表5スキルの精度・コスト実測
+- ミニベンチマーク (simple tier) 済: Flash-Lite で価格設計成立を確認
 
 ### e. MVP定義（Phase 3 計画） ✅
 

@@ -70,21 +70,50 @@
 
 → **Sonnet を月額に含めるのは不可能**。
 
-### 2.3 結論: モデル選定 (2026-05-26 ミニベンチマーク後に更新)
+### 2.3 結論: ハイブリッドモデル戦略 (2026-05-26 ミニベンチマーク後)
 
-| 用途 | 採用モデル | 理由 |
-|---|---|---|
-| **Free / Personal / Team の月額込み実行 (デフォルト)** | **Gemini 2.5 Flash-Lite** | プロキシタスクで100%成功、Flashの半額、レイテンシも速い |
-| 精度オプション (有料アップグレード) | Gemini 2.5 Flash | Flash-Lite で精度不足のスキルに切替可 |
-| Enterprise / BYOK | Sonnet 4.6 / Haiku 4.5 / 任意 | ユーザーが自分でキーを持つので原価リスクなし |
-| Browser automation 精度が要るスキル | Sonnet (BYOK) または Haiku 加算オプション | 「精度オプション」で別途課金 |
+スキル定義の `model_tier` で2タイプに分けてモデルを動的選択:
 
-**ミニベンチマーク結果** ([benchmark-results-2026-05-26.md](./benchmark-results-2026-05-26.md)):
-- Flash-Lite: 完全成功率 100%, 平均 $0.00008/呼び出し, レイテンシ 2.5-3.0s
-- Flash: 完全成功率 44% (※Free tier rate limit、Paid tier では別の結果になる見込み)
+| model_tier | 採用モデル (現時点) | コスト想定 | 用途 |
+|---|---|---|---|
+| **`simple`** | **Gemini 2.5 Flash-Lite** | $0.001-$0.01/実行 | 要約・分類・整理・情報抽出 (DOM操作なし) |
+| **`agent`** | **Phase 3 Month 3 で実機検証して決定** | $0.05-$0.30/実行 | Browser automation / Tool use 連鎖 / マルチターン推論 |
+| Enterprise BYOK | Claude Sonnet 4.6 / 任意 | ユーザー負担 | 高精度が必要な業務 |
+
+### 2.3.1 `agent` モデル候補の比較表
+
+| モデル | 入力/出力 $/M | コンテキスト | キャッシュ | エージェント能力評価 | 採用判断 |
+|---|---|---|---|---|---|
+| **DeepSeek V4 Pro** (2026-04リリース) | **$0.435 / $0.87** | **1M tokens** | Cache hit $0.003625/M (超激安) | Browser automationの長尺DOM処理に有利、Kimi K2.6の半額以下 | **第一候補** |
+| DeepSeek V3.1 (Terminus) | $0.27 / $1.10 | 128K | — | Function calling 強い、入力単価最安 | 第二候補 (短尺タスク用) |
+| Kimi K2.6 | $0.95 / $4.00 | — | $0.16/M | Moonshot公式が「agent workload」と訴求 | 第三候補 (高品質枠) |
+| GLM-4.6 | $0.50 / $1.50 | — | — | 中国系、要検証 | 第四候補 |
+| Claude Haiku 4.5 | $1.00 / $5.00 | — | — | Anthropic Tool use の事実上標準 | リファレンス比較用 |
+| Claude Sonnet 4.6 | $3.00 / $15.00 | — | — | Browser automation 最強クラス | Enterprise BYOK のみ |
+
+**DeepSeek V4 Pro が第一候補となる理由:**
+1. **1M token コンテキスト**: Browser automation で複数DOMスナップショット保持可、長尺マルチターンに強い
+2. **Cache hit $0.003625/M**: システムプロンプト固定で繰り返し呼ぶ運用ならほぼタダ同然
+3. **Kimi K2.6 の半額以下** で同等以上のエージェント能力 (公式リファレンス)
+4. **2026-04リリースの最新世代**、価格戦略も攻撃的 (75%割引が永続化)
+
+**判定基準** (Phase 3 Month 3 で実機検証時に適用):
+- Playwright + 実DOM操作で 80%以上の成功率
+- 1実行あたり $0.30 以下
+- レイテンシ 平均 5分以内
+
+### 2.3.2 ミニベンチマーク結果 (simple tier の確認)
+
+[benchmark-results-2026-05-26.md](./benchmark-results-2026-05-26.md):
+- Flash-Lite: 完全成功率 100%, 平均 $0.00008/呼び出し → **simple tier のデフォルトに確定**
+- Flash: 完全成功率 44% (※Free tier rate limit)
 - Groq Llama 3.3 70B: 完全成功率 56% (※TPM制限)
 
-**残る検証必要事項**: Playwrightでの実DOM操作精度。プロキシタスクで100%でも、実Browser automationでは別物。Phase 3 Month 3でフルベンチマーク再実施。
+### 2.3.3 残る検証必要事項
+
+- Playwrightでの実DOM操作精度 (agent tier 候補の本番ベンチマーク)
+- DeepSeek V4 Pro が出ているか確認 (より安価な選択肢の可能性)
+- 各候補モデルでの Tool use の挙動 (関数呼び出しエラー率)
 
 ---
 

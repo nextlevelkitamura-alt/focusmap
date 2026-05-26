@@ -48,15 +48,23 @@
 
 ### 2.1 一覧
 
-| # | スキル名 | カテゴリ | approval_type | 認証 |
-|---|---|---|---|---|
-| 1 | 📧 **メール要約** | 朝の準備 | auto | Gmail / Outlook |
-| 2 | 📅 **今日のカレンダー整理** | 朝の準備 | auto | Google Calendar |
-| 3 | 💬 **未読メッセージ集約** | 朝の準備 | auto | LINE / Slack |
-| 4 | 🌐 **競合・情報サイト巡回** | 情報収集 | auto | (認証不要) |
-| 5 | 📝 **議事録要約** | 文書化 | confirm | (録音アップロード) |
-| 6 | 📊 **問い合わせフォーム集約** | 営業/CS | confirm | Webサイト管理画面 |
-| 7 | 🌅 **朝のブリーフィング** | 統合 | auto | 上記の1-3を統合 |
+| # | スキル名 | カテゴリ | approval_type | 認証 | **model_tier** |
+|---|---|---|---|---|---|
+| 1 | 📧 **メール要約** | 朝の準備 | auto | Gmail / Outlook | `simple` |
+| 2 | 📅 **今日のカレンダー整理** | 朝の準備 | auto | Google Calendar | `simple` |
+| 3 | 💬 **未読メッセージ集約** | 朝の準備 | auto | LINE / Slack | **`agent`** (返信ドラフト + 複数サービス操作) |
+| 4 | 🌐 **競合・情報サイト巡回** | 情報収集 | auto | (認証不要) | `simple` (情報抽出のみ) |
+| 5 | 📝 **議事録要約** | 文書化 | confirm | (録音アップロード) | `simple` |
+| 6 | 📊 **問い合わせフォーム集約** | 営業/CS | confirm | Webサイト管理画面 | **`agent`** (管理画面ログイン + 操作 + 転記) |
+| 7 | 🌅 **朝のブリーフィング** | 統合 | auto | 上記の1-3を統合 | 統合 (内部で simple + agent を組み合わせ) |
+
+### 2.1.1 model_tier の判別基準
+
+| tier | 該当条件 | 採用モデル候補 |
+|---|---|---|
+| **`simple`** | 入力テキスト → 構造化出力のみ。DOM操作・複数ステップ判断・Tool use連鎖が不要 | Gemini 2.5 Flash-Lite (デフォルト) / Gemini Flash (フォールバック) |
+| **`agent`** | Browser automation (DOM探索・クリック・入力) / 複数 Tool use 連鎖 / エラーリカバリ判断 / 長尺マルチターン | **Phase 3 Month 3 で実機検証**: DeepSeek V3.1/V4系 / Kimi K2.6 / Haiku 4.5 から選定 |
+| `mixed` (統合) | 1スキル内で simple と agent を組み合わせ | スキル内部でステップ毎に切替 |
 
 ### 2.2 各スキルの詳細
 
@@ -210,6 +218,9 @@
   "approval_type": "auto",           // auto / confirm / interactive
   "default_schedule": "0 7 * * 1-5", // 平日朝7時 (オプション)
 
+  "model_tier": "simple",            // simple / agent / mixed
+  "fallback_model_tier": null,        // 精度不足時の昇格先 (mixed のみ)
+
   "required_auths": [                // 必要な認証
     {
       "service": "gmail",
@@ -240,19 +251,25 @@
   },
 
   "steps": [
-    { "label": "メールサービスにログイン", "auto": true },
-    { "label": "未読メール取得", "auto": true },
-    { "label": "AI要約 + 重要度判定", "auto": true },
+    { "label": "メールサービスにログイン", "auto": true, "model_tier": "agent" },
+    { "label": "未読メール取得", "auto": true, "model_tier": "simple" },
+    { "label": "AI要約 + 重要度判定", "auto": true, "model_tier": "simple" },
     { "label": "Webアプリに結果表示", "auto": true }
   ],
 
   "prompt_template": "scripts/email-summary を実行。lookback_hours={lookback_hours}, max_emails={max_emails}。日本語で3行要約、重要度を高/中/低で分類。",
 
   "estimated_cost_usd": 0.08,        // 1実行平均原価
-  "estimated_duration_sec": 180,
-  "model_recommendation": "gemini-flash"
+  "estimated_duration_sec": 180
 }
 ```
+
+### 3.2.1 model_tier の解釈
+
+- `model_tier` は **スキル全体のデフォルト**
+- `steps[].model_tier` で各ステップ毎の上書き可能 (ログイン操作だけ agent、要約だけ simple など)
+- 未指定ステップは スキルレベルの `model_tier` を継承
+- **モデル選定はエージェント実行時に動的解決**: ワークスペース設定 + tier + フォールバックで決定
 
 ### 3.2 スキーマの設計原則
 
