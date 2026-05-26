@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+import { assertCanExecute } from '@/lib/usage-guard'
+import { formatBillingCycle } from '@/lib/format'
 
 // GET /api/ai-tasks — 自分のAIタスク一覧取得
 export async function GET(req: NextRequest) {
@@ -94,6 +96,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: resolved.error }, { status: 403 })
   }
 
+  // プラン上限check (スキル実行系のみ。pure 壁打ち=skill_idなし は無制限扱い)
+  if (skill_id) {
+    const usageCheck = await assertCanExecute(supabase, resolved.spaceId, user.id)
+    if (!usageCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: usageCheck.message ?? '使用量上限に達しました',
+          reason: usageCheck.reason,
+          usage: usageCheck.usage,
+        },
+        { status: 402 },
+      )
+    }
+  }
+
   const { data, error } = await supabase
     .from('ai_tasks')
     .insert({
@@ -109,6 +126,7 @@ export async function POST(req: NextRequest) {
       cwd: cwd ?? null,
       executor: selectedExecutor,
       run_visibility: normalizeVisibility(run_visibility, resolved.spaceId ? 'space' : 'private'),
+      billing_cycle: formatBillingCycle(),
     })
     .select()
     .single()

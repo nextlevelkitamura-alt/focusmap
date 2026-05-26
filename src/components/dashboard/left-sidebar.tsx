@@ -23,6 +23,7 @@ import {
     DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, normalizeColor,
 } from "@/lib/color-utils"
 import { SpaceCreateDialog } from "./space-create-dialog"
+import { UsageCard } from "@/components/usage/usage-card"
 
 const EXPAND_KEY = "focusmap:sidebarExpandedSpaces"
 
@@ -513,6 +514,10 @@ export function LeftSidebar({
                     })}
                 </div>
             </ScrollArea>
+
+            <div className="border-t border-border/40 p-2.5">
+                <UsageCard spaceId={selectedSpaceId} compact />
+            </div>
 
             <SpaceCreateDialog
                 open={showSpaceDialog}

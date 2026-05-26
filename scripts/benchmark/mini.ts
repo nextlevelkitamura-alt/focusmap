@@ -45,7 +45,7 @@ type ModelConfig =
   | { provider: 'gemini'; modelId: string; apiKey: string; inputPriceUsdPerM: number; outputPriceUsdPerM: number }
   | { provider: 'openai-compat'; endpoint: string; modelId: string; apiKey: string; inputPriceUsdPerM: number; outputPriceUsdPerM: number };
 
-const MODELS: Record<string, ModelConfig> = {
+const MODELS: BenchRecord<string, ModelConfig> = {
   'gemini-2.5-flash': {
     provider: 'gemini',
     modelId: 'gemini-2.5-flash',
@@ -172,7 +172,7 @@ async function callOpenAICompat(endpoint: string, modelId: string, apiKey: strin
   };
 }
 
-interface Record {
+interface BenchBenchRecord {
   ts: string;
   modelName: string;
   task: string;
@@ -204,7 +204,7 @@ async function run() {
     }
   }
 
-  const records: Record[] = [];
+  const records: BenchRecord[] = [];
 
   for (const [modelName, cfg] of Object.entries(MODELS)) {
     if (!cfg.apiKey) continue;
@@ -253,7 +253,7 @@ async function run() {
         const estimatedCostUsd =
           (inputTokens * cfg.inputPriceUsdPerM + outputTokens * cfg.outputPriceUsdPerM) / 1_000_000;
 
-        const rec: Record = {
+        const rec: BenchRecord = {
           ts: new Date().toISOString(),
           modelName,
           task: task.name,
@@ -287,8 +287,8 @@ async function run() {
   console.log(`\n📄 サマリを書き出し: ${SUMMARY_PATH}\n`);
 }
 
-function makeSummary(records: Record[]): string {
-  const byModelTask = new Map<string, Record[]>();
+function makeSummary(records: BenchRecord[]): string {
+  const byModelTask = new Map<string, BenchRecord[]>();
   for (const r of records) {
     const key = `${r.modelName}__${r.task}`;
     if (!byModelTask.has(key)) byModelTask.set(key, []);

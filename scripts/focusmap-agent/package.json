@@ -1,0 +1,41 @@
+{
+  "name": "@focusmap/agent",
+  "version": "0.1.0",
+  "description": "Focusmap ローカル実行エージェント (Mac mini 等で常駐し、Webアプリからの自動化タスクをPlaywright経由で実行)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "focusmap-agent": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js start",
+    "dev": "tsx src/cli.ts start"
+  },
+  "keywords": [
+    "automation",
+    "playwright",
+    "focusmap",
+    "saas"
+  ],
+  "author": "Naohiro Kitamura <hello@focusmap-official.com>",
+  "license": "UNLICENSED",
+  "private": false,
+  "homepage": "https://focusmap-official.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/focusmap-official/focusmap-agent"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,11 +1,12 @@
 'use client'
 
-import { Play, Loader2, CheckCircle2, AlertCircle, Clock } from 'lucide-react'
+import { Play, Loader2, CheckCircle2, AlertCircle, Clock, Sparkles, Brain, Layers } from 'lucide-react'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import type { FocusmapSkill, SkillExecution, StepStatus } from '@/types/skill'
+import type { FocusmapSkill, ModelTier, SkillExecution, StepStatus } from '@/types/skill'
 import { cn } from '@/lib/utils'
+import { formatCurrency } from '@/lib/format'
 
 interface SkillCardProps {
   skill: FocusmapSkill
@@ -58,6 +59,29 @@ function approvalVariant(type: FocusmapSkill['approval_type']): 'default' | 'sec
   }
 }
 
+function tierMeta(tier: ModelTier | undefined): { label: string; Icon: typeof Sparkles; className: string } {
+  switch (tier) {
+    case 'agent':
+      return {
+        label: 'エージェント',
+        Icon: Brain,
+        className: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-900',
+      }
+    case 'mixed':
+      return {
+        label: 'ハイブリッド',
+        Icon: Layers,
+        className: 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900',
+      }
+    default:
+      return {
+        label: 'シンプル',
+        Icon: Sparkles,
+        className: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900',
+      }
+  }
+}
+
 export function SkillCard({ skill, execution, onRun, onApprove }: SkillCardProps) {
   const isRunning = execution?.status === 'running'
   const isAwaitingApproval = execution?.status === 'awaiting_approval'
@@ -70,14 +94,26 @@ export function SkillCard({ skill, execution, onRun, onApprove }: SkillCardProps
       isFailed && 'border-red-400 bg-red-50/50 dark:bg-red-950/20',
     )}>
       <CardHeader className="gap-1 px-4 pb-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-base">
             <span className="text-xl">{skill.icon}</span>
             {skill.name}
           </CardTitle>
-          <Badge variant={approvalVariant(skill.approval_type)} className="text-[10px]">
-            {approvalLabel(skill.approval_type)}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            {(() => {
+              const tier = tierMeta(skill.model_tier)
+              const Icon = tier.Icon
+              return (
+                <Badge variant="outline" className={cn('text-[10px] gap-0.5', tier.className)}>
+                  <Icon className="h-2.5 w-2.5" />
+                  {tier.label}
+                </Badge>
+              )
+            })()}
+            <Badge variant={approvalVariant(skill.approval_type)} className="text-[10px]">
+              {approvalLabel(skill.approval_type)}
+            </Badge>
+          </div>
         </div>
         <p className="text-sm text-muted-foreground">{skill.description}</p>
       </CardHeader>
@@ -140,11 +176,18 @@ export function SkillCard({ skill, execution, onRun, onApprove }: SkillCardProps
             )}
           </Button>
         )}
-        <span className="text-xs text-muted-foreground">
-          {execution?.lastRunAt
-            ? `最終: ${formatLastRun(execution.lastRunAt)}`
-            : '未実行'}
-        </span>
+        <div className="flex flex-col items-end text-right gap-0.5">
+          <span className="text-xs text-muted-foreground">
+            {execution?.lastRunAt
+              ? `最終: ${formatLastRun(execution.lastRunAt)}`
+              : '未実行'}
+          </span>
+          {skill.estimated_cost_usd !== undefined && skill.estimated_cost_usd > 0 && (
+            <span className="text-[10px] text-muted-foreground/70">
+              1回あたり {formatCurrency(skill.estimated_cost_usd, 'USD', true)}
+            </span>
+          )}
+        </div>
       </CardFooter>
     </Card>
   )
