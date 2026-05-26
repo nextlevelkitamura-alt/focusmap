@@ -12,8 +12,8 @@ export const metadata = {
 export default function Home() {
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center px-6 py-12">
-        <div className="max-w-3xl space-y-8">
+      <section className="mx-auto w-full max-w-5xl px-6 py-16 sm:py-20">
+        <div className="max-w-3xl space-y-10">
           <div className="space-y-4">
             <p className="text-sm font-medium text-muted-foreground">AI 業務自動化プラットフォーム</p>
             <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
