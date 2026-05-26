@@ -50,6 +50,8 @@ export async function GET(request: NextRequest) {
     scope: [
       'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      // Phase 4: メール要約スキル用 (focusmap-agent が読み取りのみ実行)
+      'https://www.googleapis.com/auth/gmail.readonly',
       // 連携アカウントの表示用（メール/名前/picture）。non-sensitiveなのでOAuth verification申請不要
       'openid',
       'https://www.googleapis.com/auth/userinfo.email',
