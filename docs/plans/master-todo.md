@@ -18,7 +18,8 @@
 | ✅ 完了 | DeepSeek V4 Pro = agent tier 第一候補 |
 | ✅ 完了 | **既存実装の調査** → Workspace構造 + ai_runners + ai_task_packages 等が既に実装済みと判明 |
 | ✅ 完了 | 各設計docs に「既存実装の活用」セクション追記 |
-| **🔥 次** | **差分migration SQL 作成** (列追加 + audit_logs新規) |
+| ✅ 完了 | **Stage 1-8 実装 (差分migration / lib / 使用量UI / スキルカード改修 / プラン上限check / Stripe / BUYER管理画面 / seed+install.sh+LP)** |
+| **🔥 次** | **本番セットアップ** (Stripe APIキー設定 / Supabase migration適用 / focusmap-agent npm publish) |
 
 ---
 
@@ -52,42 +53,44 @@
 
 詳細: [saas-design-mvp.md §2.2](./saas-design-mvp.md)
 
-### Month 1 (6月): 基盤整備 + Workspace構造 【**大幅削減: 既存実装活用**】
+### Month 1 (6月): 基盤整備 + Workspace構造 【**大幅削減: 既存実装活用**】 ✅ 実装完了
 
 **既存活用するもの**: spaces / space_members / space_invites / RLS用ヘルパー関数 (全部実装済み)
 
-- [ ] **差分migration**: `spaces.plan` / `spaces.billing_customer_id` 列追加
-- [ ] **差分migration**: `ai_task_packages.model_tier` / `approval_type` / `description` / `icon` / `category` / `metadata` 列追加
-- [ ] **差分migration**: `ai_usage.space_id` 列追加
-- [ ] **新規migration**: `audit_logs` テーブル
-- [ ] Workspace 切替UI の既存実装確認 + 必要なら拡張 (現状の `/api/spaces` を活用)
-- [ ] Role 表示: 既存 owner/editor/commenter/viewer を SaaS UI で Owner/Admin/Member の3層に圧縮
+- [x] **差分migration**: `spaces.plan` / `spaces.billing_customer_id` 列追加
+- [x] **差分migration**: `ai_task_packages.model_tier` / `approval_type` / `description` / `icon` / `category` / `metadata` 列追加
+- [x] **差分migration**: `ai_usage.space_id` 列追加
+- [x] **新規migration**: `audit_logs` テーブル + `user_byok_keys` テーブル + ヘルパー関数
+- [x] Workspace 切替UI (WorkspaceSelector + WorkspaceTabs)
+- [x] Role 表示: 既存 owner/editor/commenter/viewer を SaaS UI で Owner/Admin/Member の3層に圧縮
 - [ ] 既存実装の動作確認 (実際に動いているか、空殻か)
+- [ ] Supabase 本番 DB に migration 適用
 
-### Month 2 (7月): 課金 + 利用者UI 【ほぼ新規】
+### Month 2 (7月): 課金 + 利用者UI 【ほぼ新規】 ✅ コード実装完了
 
-- [ ] Stripe アカウント開設
-- [ ] Stripe Subscriptions: Free / Personal / Team プラン作成
-- [ ] Customer Portal 統合
-- [ ] Webhook で `spaces.plan` を同期
-- [ ] 使用量バー UI (個人 + Workspace、Claude Code 型) ← 既存 `ai_usage` を集計
-- [ ] プラン上限check (ai_tasks INSERT前にTrigger or アプリ層で)
-- [ ] プラン超過時の挙動 (自動停止 or 自動課金)
-- [ ] スキルカード UI 改修 (`model_tier` 表示、`approval_type` 表示)
-- [ ] BUYER管理画面 (メンバー一覧 / 利用Analytics / 課金ページ)
+- [ ] Stripe アカウント開設 (北村本人作業)
+- [x] Stripe SDK 統合 + 環境変数定義 (.env.example)
+- [x] Checkout / Portal / Webhook の3エンドポイント
+- [x] 使用量バー UI (個人 + Workspace、Claude Code 型)
+- [x] プラン上限check (ai-tasks API で 402 Payment Required)
+- [x] プラン超過時のUX (UpgradeModal)
+- [x] スキルカード UI 改修 (`model_tier` 表示、`approval_type` 表示、コスト表示)
+- [x] BUYER管理画面 (/dashboard/workspace 配下5ページ)
+- [ ] Stripe で Product / Price を作成 (北村本人作業、Price ID を .env.local に設定)
+- [ ] Stripe Webhook endpoint を本番に登録
 
-### Month 3 (8月): エージェント配布 + スキル2個 【**大幅削減**】
+### Month 3 (8月): エージェント配布 + スキル2個 【**大幅削減**】 ✅ 雛形完了
 
 **既存活用**: `ai_runners` / `ai_runner_spaces` / `/api/ai-runners/claim` / `/api/ai-runners/heartbeat` / `claim_ai_task_for_runner` 関数
 
-- [ ] **既存 `scripts/` 配下** (`codex-rpc-bridge.ts` / `task-runner.plist` 等) を **汎用化 → npm package 化**
-- [ ] install.sh 作成 (既存スクリプトのインストーラ化)
-- [ ] install.sh ホスティング (focusmap-official.com/install.sh)
-- [ ] エージェント追加UI (agent_token 発行 → install.shコピペ → 接続確認)
-- [ ] **Playwright実行用 executor 追加** (現状の claude/codex/codex_app に加え `playwright` を)
-- [ ] スキル2 (今日のカレンダー整理) を ai_task_packages に登録
-- [ ] スキル4 (競合・情報サイト巡回) を ai_task_packages に登録
+- [x] focusmap-agent npm パッケージ雛形 (`scripts/focusmap-agent/`)
+- [x] install.sh 作成 + 実行権限付与
+- [ ] install.sh ホスティング (Cloud Run / focusmap-official.com 配信設定)
+- [x] エージェント追加UI (AgentInstallPanel — install.sh ワンライナーコピー対応)
+- [x] スキル seed (system_skill_templates: カレンダー整理 / 競合巡回 / メール要約)
+- [ ] Playwright executor の実装 (focusmap-agent の本体ロジック)
 - [ ] **フルベンチマーク再実施** (Playwright + 全モデル比較、agent tier 決定)
+- [ ] @focusmap/agent を npm publish (北村本人作業)
 
 ### Month 4 (9月): スキル追加 + 暴走対策
 - [ ] スキル1 (メール要約) 実装: Gmail OAuth
