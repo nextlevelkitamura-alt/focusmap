@@ -93,40 +93,77 @@ grill-me セッションで以下の論点を詰めた。
 
 ---
 
-## 5. 残る詰めるべき5論点（a → c → e → b → d の順で進める）
+## 5. 詰めた5論点（すべて完了 ✅）
 
-### a. BUYER/USER 分離設計【最優先】
+### a. BUYER/USER 分離設計 ✅
 
-- 管理画面（決裁者向け） vs 利用者UI の分離
-- 課金単位（席数 / 実行回数 / API消費量）
-- 決裁者がROI・利用状況を可視化できる仕組み
-- 利用者の習熟支援（オンボーディング）
-- これを最初に決めないと後で全部やり直しになる SaaS設計の核心
+詳細: [saas-design-buyer-user.md](./saas-design-buyer-user.md)
 
-### c. APIキー問題の詳細詰め
+主な確定事項:
+- Workspace構造: Notion型（個人=1人Workspace、Team化で同Workspaceに招待）
+- Role: Owner / Admin / Member の3種
+- 課金プラン: Free $0 / Personal $19 / Team $39/seat（最低3）/ Enterprise Custom
+- 実行上限: Free 5 / Personal 100 / Team 500/seat
+- 認証情報はクラウドに保存しない（差別化の核心）
+- 暴走対策3層（実行上限 / 最小間隔 / --max-budget-usd強制）
 
-- カスタマー: 月額こみで Focusmap が代理
-- 法人: 選択式
-- 月額にAPIコストをどう含めるか（上限制、課金プラン構造）
-- 暴走防止の具体実装
+### c. APIキー・課金実装 ✅
 
-### e. MVP定義
+詳細: [saas-design-api-billing.md](./saas-design-api-billing.md)
 
-- 半年〜1年で何を出す? **全部は絶対終わらない**
-- スコープ絞り込み
-- フェーズ計画（Phase 3として位置付け）
+主な確定事項:
+- 月額込みプランは **Gemini Flash** を採用（粗利率74-89%）
+- Claude Sonnet は BYOK (Enterprise) のみ
+- Pay-as-you-go超過: Personal $0.20/実行、Team $0.10/実行
+- Stripe Subscriptions + Metered Billing + Customer Portal
+- **必須ベンチマーク**: Gemini Flash で代表5スキルの精度・コスト実測
 
-### b. 「ボタン1つでローカルセットアップ」技術選定
+### e. MVP定義（Phase 3 計画） ✅
 
-- Tauri / Electron / npm one-liner / Homebrew のどれを採用
-- Webアプリ ↔ ローカルエージェント の紐付け方式
-- 認証フロー（Cookie取得、各サービスログイン）
+詳細: [saas-design-mvp.md](./saas-design-mvp.md)
 
-### d. スキルテンプレの中身
+主な確定事項:
+- Phase 3 = 2026年6月〜11月（6ヶ月）
+- Month 1-2: 基盤+課金、Month 3-4: エージェント+スキル3個、Month 5: クローズドβ、Month 6: 公開ローンチ
+- MVPに入れる: Workspace / 3 Role / Free+Personal+Team / Gemini Flash / install.sh / スキル3個（カレンダー/競合巡回/メール要約）/ 使用量バー / 暴走対策
+- MVPに入れない: Enterprise / BYOK / 議事録/問い合わせフォーム/朝ブリーフィング / LINE/Slack / Windows / Tauri / マーケットプレイス
+- ローンチ3ヶ月後の目標: MRR $5,800 = 月収約87万円
 
-- 初期5〜10個、何を出す?
-- 「AI浸透してない社員」が「これ便利」と感じる具体例
-- 汎用テンプレ + 業界別テンプレ集（テンプレ単位では業界別あり、プラットフォーム自体は汎用）
+### b. ローカルセットアップ技術選定 ✅
+
+詳細: [saas-design-installer.md](./saas-design-installer.md)
+
+主な確定事項:
+- **Node.js CLI（`@focusmap/agent`）+ launchd + npm**（Tauri/Electron 不採用）
+- 導入は `curl -sSL focusmap.app/install.sh | sh -s -- <token>` ワンライナー
+- Apple Developer / 公証は当面不要（Node.jsモジュールのため）
+- Webアプリ ↔ エージェントは Supabase Realtime（既存資産活用）
+- Windows対応はPhase 4以降
+
+### d. スキルテンプレの初期セット ✅
+
+詳細: [saas-design-skills.md](./saas-design-skills.md)
+
+主な確定事項:
+- MVP は **3スキル**（Phase 3 内で実装）:
+  1. 📅 今日のカレンダー整理（既存Google Calendar連携を活用）
+  2. 🌐 競合・情報サイト巡回（認証不要、精度検証に適）
+  3. 📧 メール要約（Gmail OAuth）
+- Phase 4以降に追加: 未読メッセージ集約 / 議事録要約 / 問い合わせフォーム集約 / 朝のブリーフィング
+- スキル定義JSONスキーマ確定（configurable / approval_type / required_auths / estimated_cost_usd）
+- テンプレマーケットプレイスは Phase 5以降
+
+---
+
+## 5b. 競合分析サマリ
+
+詳細: [competitive-analysis.md](./competitive-analysis.md)
+
+- 個人向け価格相場: $9〜$20（Make/Bardeen/Zapier）
+- AI特化（Lindy）は $49.99 〜
+- 軽量管理画面 $29-50帯（Make Teams / n8n Pro）に Focusmap を置く
+- 「**ローカル実行 × 軽量管理画面 × 非エンジニア向け**」は構造的に空白 = 取れるポジション
+- 最大リスク: n8n がローカル+軽量管理画面を出してきたら一瞬で潰される
 
 ---
 
@@ -196,13 +233,27 @@ grill-me セッションで以下の論点を詰めた。
 
 ## 8. 次のアクション
 
-- [ ] 論点a（BUYER/USER分離設計）を詰める
-- [ ] 論点c（APIキー詳細、コスト構造、暴走対策）を詰める
-- [ ] 論点e（MVP定義、Phase 3の具体スコープ）を詰める
-- [ ] 論点b（ローカルセットアップ技術選定）を詰める
-- [ ] 論点d（スキルテンプレ初期セット）を詰める
+5論点（a〜e）は **すべて設計完了**。実装フェーズ（Phase 3）に着手可能な状態。
 
-各論点を詰める際は、必ず本ドキュメントの **「却下した選択肢と理由」** および **「楽観バイアスへの注意」** に立ち戻ること。
+### 着手前の必須準備
+
+- [ ] **Gemini Flash ベンチマーク**: 代表3スキル（カレンダー / 競合巡回 / メール要約）の実コスト・成功率を実測（[saas-design-api-billing.md §7](./saas-design-api-billing.md)）
+- [ ] 個人事業主開業届 + 適格請求書発行事業者登録
+- [ ] 弁護士相談（利用規約・特商法・プライバシーポリシー）
+- [ ] focusmap.app ドメイン取得
+- [ ] @focusmap/agent npm package 名空き確認
+- [ ] 週15時間の開発時間確保の本業との合意
+
+### Phase 3 着手
+
+準備が整い次第、[saas-design-mvp.md §2](./saas-design-mvp.md) の月別タスクに沿って Month 1 から実行。
+
+### 立ち戻るべき原則
+
+各論点を実装する際は、必ず本ドキュメントの以下に立ち戻ること:
+- **「却下した選択肢と理由」**（同じ罠を繰り返さないため）
+- **「楽観バイアスへの注意」**（AI並列効果の過大評価、激安APIの幻想、base44ミスリーディング）
+- **「grill-meで露呈したパターン」**（質問スルー、気合いでいける、矛盾の組み合わせ）
 
 ---
 
