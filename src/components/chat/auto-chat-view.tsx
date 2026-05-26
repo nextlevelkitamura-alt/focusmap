@@ -6,6 +6,7 @@ import { Send, Loader2, Sparkles, Activity, Check, X } from 'lucide-react';
 import { ChatMessage } from './chat-message';
 import { SkillSuggestion } from './skill-suggestion';
 import { TaskResultCard } from './task-result-card';
+import { AutomationStatusPanel } from './automation-status-panel';
 import type { IntentResult } from '@/lib/ai/intent-classifier';
 
 interface PingResult {
@@ -19,6 +20,7 @@ interface PingResult {
 
 interface AutoChatViewProps {
   spaceId: string | null;
+  showStatusPanel?: boolean;
 }
 
 interface Message {
@@ -37,7 +39,7 @@ const SAMPLE_PROMPTS = [
   '未読メールを3行で要約して',
 ];
 
-export function AutoChatView({ spaceId }: AutoChatViewProps) {
+export function AutoChatView({ spaceId, showStatusPanel = true }: AutoChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -168,7 +170,7 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
+      <header className="flex min-h-14 items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
         <h1 className="flex items-center gap-2 text-base font-semibold">
           <Sparkles className="h-4 w-4 text-primary" />
           自動化チャット
@@ -192,7 +194,7 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
             size="sm"
             onClick={handlePing}
             disabled={pinging}
-            className="h-7 gap-1 text-[11px]"
+            className="h-9 gap-1 text-[11px] md:h-7"
           >
             {pinging ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -203,6 +205,8 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
           </Button>
         </div>
       </header>
+
+      {showStatusPanel && <AutomationStatusPanel spaceId={spaceId} />}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 px-4 py-4">
         {messages.length === 0 && (
@@ -216,7 +220,7 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
                   key={p}
                   type="button"
                   onClick={() => sendMessage(p)}
-                  className="rounded-full border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted/60"
+                  className="min-h-11 rounded-full border border-border bg-background px-3 py-2 text-xs hover:bg-muted/60 md:min-h-8 md:py-1.5"
                   disabled={sending}
                 >
                   {p}
@@ -262,7 +266,7 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
         )}
       </div>
 
-      <div className="border-t border-border/40 p-3">
+      <div className="border-t border-border/40 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -278,7 +282,7 @@ export function AutoChatView({ spaceId }: AutoChatViewProps) {
             disabled={sending}
             className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
           />
-          <Button type="submit" size="icon" disabled={sending || !input.trim()}>
+          <Button type="submit" size="icon" className="h-11 w-11 md:h-10 md:w-10" disabled={sending || !input.trim()}>
             {sending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (

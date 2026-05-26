@@ -1,13 +1,16 @@
 "use client"
 
-import { useCallback } from "react"
+import { useCallback, useState } from "react"
 import { AiChatPanel } from "./ai-chat-panel"
+import { AutoChatView } from "@/components/chat/auto-chat-view"
 import { MindMap } from "@/components/dashboard/mind-map"
 import { Project, Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
+import { cn } from "@/lib/utils"
 
 interface AiViewProps {
   projects: Project[]
+  selectedSpaceId: string | null
   selectedProjectId: string | null
   onSelectProject: (id: string) => void
   // MindMap 用
@@ -35,6 +38,7 @@ interface AiViewProps {
 
 export function AiView({
   projects,
+  selectedSpaceId,
   selectedProjectId,
   onSelectProject,
   selectedProject,
@@ -56,6 +60,7 @@ export function AiView({
   onRemoveOptimisticEvent,
   onOpenLinkedMemos,
 }: AiViewProps) {
+  const [chatMode, setChatMode] = useState<"normal" | "automation">("normal")
   const handleMindmapUpdated = useCallback(() => {
     refreshFromServer()
   }, [refreshFromServer])
@@ -63,13 +68,43 @@ export function AiView({
   return (
     <div className="flex h-full w-full">
       {/* 左: AI チャット */}
-      <div className="flex-1 min-w-0 border-r">
-        <AiChatPanel
-          mode="fullscreen"
-          activeProjectId={selectedProjectId}
-          onMindmapUpdated={handleMindmapUpdated}
-          onCalendarEventCreated={onCalendarEventCreated}
-        />
+      <div className="flex flex-1 min-w-0 flex-col border-r">
+        <div className="shrink-0 border-b bg-background px-4 py-2">
+          <div className="inline-grid min-h-9 grid-cols-2 rounded-md border bg-muted/30 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setChatMode("normal")}
+              className={cn(
+                "rounded px-3 py-1.5 font-medium transition-colors",
+                chatMode === "normal" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              通常チャット
+            </button>
+            <button
+              type="button"
+              onClick={() => setChatMode("automation")}
+              className={cn(
+                "rounded px-3 py-1.5 font-medium transition-colors",
+                chatMode === "automation" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              自動化チャット
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1">
+          {chatMode === "normal" ? (
+            <AiChatPanel
+              mode="fullscreen"
+              activeProjectId={selectedProjectId}
+              onMindmapUpdated={handleMindmapUpdated}
+              onCalendarEventCreated={onCalendarEventCreated}
+            />
+          ) : (
+            <AutoChatView spaceId={selectedSpaceId} />
+          )}
+        </div>
       </div>
 
       {/* 右: マインドマップ (デスクトップのみ) */}

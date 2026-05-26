@@ -14,7 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut, Settings, User as UserIcon, Network, CalendarDays, Sparkles, StickyNote } from "lucide-react"
+import { Bot, LogOut, Settings, User as UserIcon, Network, CalendarDays, Sparkles, StickyNote, Workflow } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -83,6 +83,8 @@ export function Header({
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Today', icon: <CalendarDays className="h-3.5 w-3.5" /> },
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
+        { id: 'ai',        label: 'AI',    icon: <Bot className="h-3.5 w-3.5" /> },
+        { id: 'automation', label: '自動化', icon: <Workflow className="h-3.5 w-3.5" /> },
         { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
     ]
 
@@ -155,7 +157,7 @@ export function Header({
                             variant={activeView === tab.id ? "secondary" : "ghost"}
                             size="sm"
                             className={cn(
-                                "gap-1.5 h-7 px-3 text-xs font-medium transition-all",
+                                "gap-1.5 h-7 px-2.5 text-xs font-medium transition-all",
                                 activeView === tab.id
                                     ? "bg-background shadow-sm"
                                     : "text-muted-foreground hover:text-foreground"

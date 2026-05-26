@@ -2,10 +2,10 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, startTransition } from 'react'
 
-export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'ideal' | 'long-term' | 'ai-todos'
+export type DashboardView = 'today' | 'map' | 'habits' | 'ai' | 'automation' | 'ideal' | 'long-term' | 'ai-todos'
 
 const STORAGE_KEY = 'focusmap:activeView'
-const VALID_VIEWS: DashboardView[] = ['today', 'map', 'habits', 'ai', 'ideal', 'long-term', 'ai-todos']
+const VALID_VIEWS: DashboardView[] = ['today', 'map', 'habits', 'ai', 'automation', 'ideal', 'long-term', 'ai-todos']
 
 interface ViewContextType {
     activeView: DashboardView

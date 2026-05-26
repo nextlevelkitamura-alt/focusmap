@@ -39,7 +39,7 @@ export function BottomNav() {
                 {mainNavItems.map((item) => {
                     const isActive = item.type === "settings"
                         ? isSettingsPage
-                        : !isSettingsPage && activeView === item.id
+                        : !isSettingsPage && (activeView === item.id || (item.id === "ai" && activeView === "automation"))
                     return (
                         <button
                             key={item.type === "settings" ? "settings" : item.id}

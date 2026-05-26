@@ -67,6 +67,10 @@ const AiView = dynamic(
     () => import("@/components/ai/ai-view").then(mod => ({ default: mod.AiView })),
     { loading: DashboardPaneFallback, ssr: false },
 )
+const AutoChatView = dynamic(
+    () => import("@/components/chat/auto-chat-view").then(mod => ({ default: mod.AutoChatView })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
 const IdealView = dynamic(
     () => import("@/components/ideal/ideal-view").then(mod => ({ default: mod.IdealView })),
     { loading: DashboardPaneFallback, ssr: false },
@@ -1182,10 +1186,17 @@ export function DashboardClient({
                 {isViewReady && isMobileViewport && activeView === 'ai' && (
                     <div className="flex-1 md:hidden overflow-hidden">
                         <MobileAiExecutionView
+                            selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
                             onMindmapUpdated={refreshFromServer}
                             onCalendarEventCreated={handleCalendarEventCreated}
                         />
+                    </div>
+                )}
+
+                {isViewReady && isMobileViewport && activeView === 'automation' && (
+                    <div className="flex-1 md:hidden overflow-hidden">
+                        <AutoChatView spaceId={selectedSpaceId} />
                     </div>
                 )}
 
@@ -1228,6 +1239,7 @@ export function DashboardClient({
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
                         <AiView
                             projects={filteredProjects}
+                            selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
                             onSelectProject={setSelectedProjectId}
                             selectedProject={selectedProject}
@@ -1252,6 +1264,12 @@ export function DashboardClient({
                     </div>
                 )}
 
+                {!isMobileViewport && activeView === 'automation' && (
+                    <div className="flex-1 w-full overflow-hidden hidden md:flex">
+                        <AutoChatView spaceId={selectedSpaceId} />
+                    </div>
+                )}
+
                 {/* === Desktop: AI Todos View === */}
                 {!isMobileViewport && activeView === 'ai-todos' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
@@ -1265,7 +1283,7 @@ export function DashboardClient({
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     "hidden md:flex",
-                    (activeView === 'ai' || activeView === 'ideal' || activeView === 'ai-todos' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
+                    (activeView === 'ai' || activeView === 'automation' || activeView === 'ideal' || activeView === 'ai-todos' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Today タブでは非表示。サイドバーが常に折りたたまれているため不要) */}
                 {activeView !== 'today' && (
@@ -1496,11 +1514,11 @@ export function DashboardClient({
             </TodayDateProvider>
                 )}
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
-            {isAiChatOpen && activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
+            {isAiChatOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <AiChatPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
-            {isSchedulingOpen && activeView !== 'ai' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
+            {isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             </TimerProvider>

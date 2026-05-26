@@ -39,6 +39,11 @@ export function preloadDashboardView(view: DashboardView) {
     return
   }
 
+  if (view === "automation") {
+    preloadOnce("auto-chat", () => import("@/components/chat/auto-chat-view"))
+    return
+  }
+
   if (view === "map") {
     preloadOnce("mobile-ai-map", () => import("@/components/ai/mobile-ai-map-view"))
     preloadOnce("center-pane", () => import("@/components/dashboard/center-pane"))
