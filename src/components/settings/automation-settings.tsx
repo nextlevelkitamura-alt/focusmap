@@ -1,11 +1,18 @@
 "use client"
 
 import Link from "next/link"
+import { useEffect, useState } from "react"
 import type { ComponentType, ReactNode } from "react"
-import { Bot, Chrome, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Terminal, Workflow } from "lucide-react"
+import { Bot, CheckCircle2, Chrome, Clipboard, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Terminal, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
+
+interface SpaceOption {
+  id: string
+  title?: string | null
+  name?: string | null
+}
 
 function SettingBlock({
   icon: Icon,
@@ -19,7 +26,7 @@ function SettingBlock({
   children?: ReactNode
 }) {
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
+    <section className="rounded-lg border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
       <div className="flex items-start gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-blue-300">
           <Icon className="h-4.5 w-4.5" />
@@ -34,10 +41,116 @@ function SettingBlock({
   )
 }
 
+function FocusmapLiteInstallPanel() {
+  const [spaces, setSpaces] = useState<SpaceOption[]>([])
+  const [spaceId, setSpaceId] = useState("")
+  const [command, setCommand] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    void fetch("/api/spaces", { cache: "no-store" })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!mounted) return
+        const rows = Array.isArray(data) ? data : Array.isArray(data?.spaces) ? data.spaces : []
+        setSpaces(rows)
+        if (rows[0]?.id) setSpaceId(rows[0].id)
+      })
+      .catch(() => undefined)
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const issueToken = async () => {
+    if (!spaceId) {
+      setMessage("Workspaceを選択してください。")
+      return
+    }
+    setLoading(true)
+    setMessage(null)
+    try {
+      const res = await fetch("/api/agents/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ space_id: spaceId, name: "Focusmap Lite" }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "トークン発行に失敗しました")
+      setCommand(data.install_command)
+      setMessage("このコマンドでMacを接続できます。実行後、数十秒で上の状態がオンラインになります。")
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "トークン発行に失敗しました")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const copyCommand = async () => {
+    if (!command) return
+    await navigator.clipboard.writeText(command)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1800)
+  }
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-end">
+        <label className="grid gap-1 text-xs text-zinc-400">
+          Workspace
+          <select
+            value={spaceId}
+            onChange={event => setSpaceId(event.target.value)}
+            className="h-10 rounded-md border border-white/[0.08] bg-black/40 px-3 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-400"
+          >
+            {spaces.length === 0 ? (
+              <option value="">Workspaceを読み込み中</option>
+            ) : spaces.map(space => (
+              <option key={space.id} value={space.id}>{space.title ?? space.name ?? space.id}</option>
+            ))}
+          </select>
+        </label>
+        <Button className="h-10 gap-1.5" onClick={issueToken} disabled={loading || !spaceId}>
+          <DownloadCloud className="h-4 w-4" />
+          {loading ? "発行中..." : "導入コマンドを発行"}
+        </Button>
+      </div>
+
+      {command && (
+        <div className="rounded-md border border-white/[0.08] bg-black/40 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-zinc-300">Macのターミナルで1回だけ実行</span>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={copyCommand}>
+              {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clipboard className="h-3.5 w-3.5" />}
+              {copied ? "コピー済み" : "コピー"}
+            </Button>
+          </div>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-100">
+            {command}
+          </pre>
+        </div>
+      )}
+
+      {message && <p className="text-xs leading-5 text-zinc-400">{message}</p>}
+    </div>
+  )
+}
+
 export function AutomationSettings() {
   return (
     <div className="space-y-5">
       <AutomationStatusPanel spaceId={null} />
+
+      <SettingBlock
+        icon={DownloadCloud}
+        title="Focusmap Liteを導入"
+        description="このMacに常駐エージェントを入れると、Webからの指示でPlaywright、ブラウザ起動、ターミナル実行、GWS認証チェックをバックグラウンド実行できます。"
+      >
+        <FocusmapLiteInstallPanel />
+      </SettingBlock>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <SettingBlock
@@ -148,7 +261,7 @@ export function AutomationSettings() {
         </SettingBlock>
       </div>
 
-      <section className="rounded-xl border border-white/[0.08] bg-[#1c1c1e] p-2 md:p-3">
+      <section className="rounded-lg border border-white/[0.08] bg-[#1c1c1e] p-2 md:p-3">
         <ScanSettingsSection />
       </section>
     </div>

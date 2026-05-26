@@ -15,18 +15,19 @@ Web アプリ (`focusmap-official.com`) からの自動化タスクを Playwrigh
 curl -sSL https://focusmap-official.com/install.sh | sh -s -- <agent_token>
 ```
 
-`<agent_token>` は Web アプリの `/dashboard/workspace/agents` から発行できる。
+`<agent_token>` は Web アプリの `/dashboard/settings/automation` から発行できる。
+Mac側に Supabase service role key は置かない。
 
 ## 仕組み
 
 ```
 [Webアプリ: focusmap-official.com]
-  ↕ Supabase Realtime (WebSocket)
-[Supabase: ai_tasks テーブル]
-  ↕ claim_ai_task_for_runner RPC
+  ↕ Focusmap Agent API (Bearer agent_token)
+[Supabase: ai_tasks / agent_commands]
+  ↕ claim_ai_task_for_runner RPC / command queue
 [ローカル: focusmap-agent]
   → Playwright で Browser automation
-  → 結果を Supabase に書き戻し
+  → 結果を Focusmap API 経由で書き戻し
 ```
 
 ## 設定ファイル
@@ -37,11 +38,21 @@ curl -sSL https://focusmap-official.com/install.sh | sh -s -- <agent_token>
 {
   "agent_token": "...",
   "api_url": "https://focusmap-official.com/api",
-  "hostname": "your-mac-mini.local"
+  "hostname": "your-mac-mini.local",
+  "shell_enabled": true
 }
 ```
 
 `chmod 600` でユーザー専用に保護される。
+
+## できること
+
+- `ai_tasks` の `executor=playwright|browser|terminal|simple` を claim
+- Playwright で URL を巡回して本文取得
+- `open` でブラウザ/認証URLを起動
+- `agent_commands` 経由で `open_url` / `open_google_auth` / `open_gws_auth` / `run_shell` / `scan_capabilities`
+- Google Workspace CLI (`npm install -g @googleworkspace/cli`) と `gws auth login` の導線
+- ハートビートで GWS / Playwright / terminal / Codex / Claude の検出状態を Web に返す
 
 ## ログ
 
@@ -58,8 +69,8 @@ launchctl load   ~/Library/LaunchAgents/com.focusmap-official.agent.plist
 ## 開発
 
 ```bash
-git clone https://github.com/focusmap-official/focusmap-agent
-cd focusmap-agent
+git clone https://github.com/nextlevelkitamura-alt/focusmap
+cd focusmap/scripts/focusmap-agent
 npm install
 npm run dev
 ```

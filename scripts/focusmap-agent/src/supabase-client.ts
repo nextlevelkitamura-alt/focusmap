@@ -9,6 +9,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AgentConfig } from './types.js';
 
 export function createServiceClient(config: AgentConfig): SupabaseClient {
+  if (!config.supabase_url || !config.supabase_service_role_key) {
+    throw new Error('Legacy service-role Supabase mode requires supabase_url and supabase_service_role_key');
+  }
   return createClient(config.supabase_url, config.supabase_service_role_key, {
     auth: {
       autoRefreshToken: false,

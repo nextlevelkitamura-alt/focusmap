@@ -95,6 +95,7 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
   const [loading, setLoading] = useState(true)
   const [checkingAi, setCheckingAi] = useState(false)
   const [scanMessage, setScanMessage] = useState<string | null>(null)
+  const [commandMessage, setCommandMessage] = useState<string | null>(null)
 
   const refreshStatus = useCallback(async () => {
     setLoading(true)
@@ -184,6 +185,29 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
       await refreshStatus()
     } catch (error) {
       setScanMessage(error instanceof Error ? error.message : "確認依頼に失敗しました")
+    }
+  }
+
+  const sendAgentCommand = async (type: string, payload: Record<string, unknown> = {}) => {
+    if (!latestRunner) {
+      setCommandMessage("先にFocusmap Liteを接続してください")
+      return
+    }
+    setCommandMessage("Macへ指示を送信中...")
+    try {
+      const res = await fetch("/api/agent-commands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runner_id: latestRunner.id,
+          type,
+          payload,
+        }),
+      })
+      const data = await res.json()
+      setCommandMessage(res.ok ? "Mac側へ指示しました。数秒後に状態が更新されます。" : data.error || "送信に失敗しました")
+    } catch (error) {
+      setCommandMessage(error instanceof Error ? error.message : "送信に失敗しました")
     }
   }
 
@@ -293,6 +317,14 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
             <DownloadCloud className="h-3.5 w-3.5" />
             PC内容・更新確認
           </Button>
+          <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs" onClick={() => sendAgentCommand("open_url", { url: "https://focusmap-official.com/dashboard/settings/automation" })} disabled={!latestRunner}>
+            <Cloud className="h-3.5 w-3.5" />
+            Macで開く
+          </Button>
+          <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs" onClick={() => sendAgentCommand("scan_capabilities")} disabled={!latestRunner}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            権限再スキャン
+          </Button>
           <Button asChild size="sm" className="h-9 gap-1.5 text-xs">
             <a href="/api/calendar/connect?next=/dashboard/chat">
               <ShieldCheck className="h-3.5 w-3.5" />
@@ -301,6 +333,10 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
           </Button>
         </div>
       </div>
+
+      {commandMessage && (
+        <p className="mt-2 text-xs text-muted-foreground">{commandMessage}</p>
+      )}
 
       <div className="mt-3 grid max-h-[126px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 md:max-h-none md:grid-cols-4 md:overflow-visible md:pr-0 xl:grid-cols-4 2xl:grid-cols-8">
         {rows.map(row => {

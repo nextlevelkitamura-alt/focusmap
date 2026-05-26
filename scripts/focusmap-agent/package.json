@@ -24,7 +24,8 @@
   "homepage": "https://focusmap-official.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/focusmap-official/focusmap-agent"
+    "url": "https://github.com/nextlevelkitamura-alt/focusmap",
+    "directory": "scripts/focusmap-agent"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.90.1",

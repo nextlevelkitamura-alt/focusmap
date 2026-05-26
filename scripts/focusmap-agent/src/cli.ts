@@ -8,7 +8,7 @@
  * 処理フロー:
  *   1. ANTHROPIC_API_KEY check (起動時拒否)
  *   2. Config 読み込み + 検証
- *   3. Supabase service role 接続
+ *   3. Focusmap API client 作成 (agent_token認証)
  *   4. ai_runners に登録 → runner_id 取得
  *   5. 30秒ごとに heartbeat ループ
  *   6. 10秒ごとに claim_ai_task_for_runner で task pull
@@ -18,10 +18,11 @@
 
 import { assertNoAnthropicKey } from './safety.js';
 import { loadConfig, ConfigError } from './config.js';
-import { createServiceClient } from './supabase-client.js';
 import { upsertRunner, startHeartbeatLoop } from './heartbeat.js';
 import { startClaimLoop } from './claim.js';
+import { startCommandLoop } from './command-loop.js';
 import { executeTask } from './executor.js';
+import { AgentApiClient } from './api-client.js';
 import { info, error as logError } from './logger.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -54,16 +55,16 @@ async function main(): Promise<void> {
     }
     throw e;
   }
-  info(`config loaded — user_id=${config.user_id}, hostname=${config.hostname}`);
+  info(`config loaded — hostname=${config.hostname}, api=${config.api_url}`);
 
-  // 3. Supabase
-  const supabase = createServiceClient(config);
-  info('supabase connected');
+  // 3. Focusmap API
+  const api = new AgentApiClient(config);
+  info('focusmap api client ready');
 
   // 4. Runner 登録
   let runnerId: string;
   try {
-    runnerId = await upsertRunner(supabase, config);
+    runnerId = await upsertRunner(api, config);
   } catch (e) {
     logError('runner登録失敗:', e instanceof Error ? e.message : e);
     process.exit(1);
@@ -71,17 +72,18 @@ async function main(): Promise<void> {
   info(`runner registered id=${runnerId}`);
 
   // 5. Heartbeat ループ (30s)
-  const heartbeatTimer = startHeartbeatLoop(supabase, config, HEARTBEAT_INTERVAL_MS);
+  const heartbeatTimer = startHeartbeatLoop(api, config, HEARTBEAT_INTERVAL_MS);
 
   // 6. Claim ループ (10s)
   const claimTimer = startClaimLoop(
-    supabase,
+    api,
     runnerId,
     async (task) => {
-      await executeTask(task, supabase, config);
+      await executeTask(task, api, config, runnerId);
     },
     CLAIM_INTERVAL_MS,
   );
+  const commandTimer = startCommandLoop(api, runnerId, config);
 
   info(
     `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s / claim poll ${CLAIM_INTERVAL_MS / 1000}s`,
@@ -92,6 +94,7 @@ async function main(): Promise<void> {
     info(`received ${signal}, shutting down...`);
     clearInterval(heartbeatTimer);
     clearInterval(claimTimer);
+    clearInterval(commandTimer);
     process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
