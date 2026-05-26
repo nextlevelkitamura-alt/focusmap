@@ -134,9 +134,18 @@ CREATE TABLE IF NOT EXISTS user_byok_keys (
   is_active BOOLEAN NOT NULL DEFAULT true,
   last_used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (COALESCE(space_id, '00000000-0000-0000-0000-000000000000'::uuid), user_id, provider)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 1 user + 1 space + 1 provider で1キーまで (Workspace 紐付けあり)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_byok_keys_unique_per_space
+  ON user_byok_keys(space_id, user_id, provider)
+  WHERE space_id IS NOT NULL;
+
+-- 1 user + 1 provider で1キーまで (個人用、Workspace 紐付けなし)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_byok_keys_unique_personal
+  ON user_byok_keys(user_id, provider)
+  WHERE space_id IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_byok_keys_space
   ON user_byok_keys(space_id, provider, is_active)
