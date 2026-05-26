@@ -17,6 +17,56 @@
 
 ---
 
+## ⚠️ 0. 既存実装の活用 (2026-05-26 追記)
+
+**使用量計測テーブル `ai_usage` と BYOK基盤 `api_keys` が既に実装済み**。
+
+### 既存スキーマ
+
+```sql
+-- ai_usage: AI使用量ログ
+CREATE TABLE ai_usage (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL,
+  feature TEXT NOT NULL,            -- 'memo_to_mindmap' 等
+  model TEXT NOT NULL,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cost_usd NUMERIC(10,6) DEFAULT 0,
+  metadata JSONB,
+  created_at TIMESTAMPTZ
+);
+
+-- api_keys: BYOK基盤
+CREATE TABLE api_keys (...);  -- 詳細は supabase/migrations/20260311_create_api_keys.sql
+```
+
+### 設計と既存の対応
+
+| 本ドキュメントの記述 | 既存実装 | 状態 |
+|---|---|---|
+| usage_metrics (月集計) | `ai_usage` (1行=1実行、月集計はクエリで) | ✅ 既存活用 |
+| プラン上限check | 未実装 (記録のみ) | ❌ **新規追加必要** |
+| BYOK | `api_keys` テーブル既存 | ✅ 既存活用 (詳細実装は要確認) |
+| Stripe Subscriptions | 未実装 | ❌ 新規追加必要 |
+| Metered Billing | 未実装 | ❌ 新規追加必要 |
+| 暴走対策 (`--max-budget-usd` 強制) | 一部実装の可能性、要確認 | △ |
+
+### 差分追加が必要なもの
+
+1. **`spaces.plan` 列**: free / personal / team / enterprise
+2. **`spaces.billing_customer_id`** 列: Stripe Customer ID
+3. **`ai_usage` への `space_id` 列追加** (現在は user_id のみ)
+4. **月間使用量ビュー or 集計関数**: usage_monthly_summary(space_id, month)
+5. **プラン上限check ロジック**: ai_tasks INSERT前に上限check (Trigger or アプリ層)
+6. **Stripe Subscriptions / Webhook / Customer Portal** 統合
+
+### 残る本文の扱い
+
+§1〜§7 のモデル選定・原価試算・課金プラン設計はそのまま有効。実装時は **既存 `ai_usage` を上限check付きで活用** する。
+
+---
+
 ## 1. AIモデル別 原価試算
 
 ### 1.1 各モデルの単価 (2026-05時点の公開価格)

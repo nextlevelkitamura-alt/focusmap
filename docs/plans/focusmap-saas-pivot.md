@@ -285,4 +285,66 @@ grill-me セッションで以下の論点を詰めた。
 
 ---
 
+---
+
+## 10. ⚠️ 重大な認識訂正 (2026-05-26 追記)
+
+設計セッション完了後、既存実装を調査した結果、**SaaS化に必要なインフラの大部分が既に実装済み** であることが判明した。
+
+### 既存実装の実態
+
+| 設計で「新規作成」と書いた | 既存テーブル/API | 状態 |
+|---|---|---|
+| workspaces (Workspace) | **spaces** | ✅ 実装済み |
+| workspace_members | **space_members** (owner/editor/commenter/viewer) | ✅ 実装済み |
+| workspace_invites | **space_invites** (14日有効期限) | ✅ 実装済み |
+| agents (Mac mini) | **ai_runners** (hostname/executors/heartbeat/repo_keys/secrets) | ✅ 実装済み |
+| Runner ↔ Workspace 紐付け | **ai_runner_spaces** (enable/disable可) | ✅ 実装済み |
+| skills (スキルテンプレ) | **ai_task_packages** (prompt_template/schedule/input_schema/visibility) | ✅ 実装済み |
+| (スキルバージョン) | **ai_task_package_versions** | ✅ 実装済み |
+| (Workspace内アクセス制御) | **ai_package_permissions** | ✅ 実装済み |
+| (Runner用パッケージキャッシュ) | **ai_runner_package_cache** | ✅ 実装済み |
+| usage_metrics | **ai_usage** (user_id/feature/model/tokens/cost) | ✅ 実装済み (記録のみ、上限強制は未) |
+| (BYOK基盤) | **api_keys** | ✅ 実装済み |
+| (タスクClaim処理) | **`claim_ai_task_for_runner` 関数** | ✅ 5分Claim + 権限チェック + SKIP LOCKED 実装済み |
+| API: ai-runners/{claim, heartbeat, sync-package} | 同名エンドポイント | ✅ 実装済み |
+| API: ai-tasks/{schedule, skills, status} | 同名エンドポイント | ✅ 実装済み |
+| API: spaces | 同名エンドポイント | ✅ 実装済み |
+| audit_logs | (なし) | ❌ 新規必要 |
+
+### grill-me 判定の訂正
+
+grill-me セッションで「『2ヶ月でここまで作った』を根拠にしない」と「楽観バイアス」として批判したが、**これは私 (Claude) の誤判定** だった。
+既存実装の規模を大幅に過小評価していた。
+
+### 本当に不足しているもの (Phase 3 で着手すべきこと)
+
+| 項目 | 状態 |
+|---|---|
+| Stripe Subscriptions / Customer Portal | ❌ |
+| プラン上限の強制 (ai_usage はカウント済、上限check未) | ❌ |
+| 使用量バー UI (Claude Code型) | ❌ |
+| Free / Personal / Team プラン定義 + spaces.plan列 | ❌ |
+| audit_logs テーブル + 記録機構 | ❌ |
+| BUYER管理画面 (利用Analytics / 課金) | ❌ |
+| install.sh ホスティング (ai_runners のセットアップを誰でも使えるように汎化) | ❌ |
+| LP改修 (価格表・差別化メッセージ) | ❌ |
+| ai_task_packages に `model_tier` 列追加 (simple/agent) | ❌ |
+| 利用規約・特商法・プライバシーポリシー | ❌ |
+| 個人事業主開業届 + インボイス登録 + 弁護士相談 | ❌ |
+
+### 設計書の扱い (今後の方針)
+
+- 各 `saas-design-*.md` には **「既存実装の活用」セクション** を追記済み
+- 設計本文は「将来追加すべき機能の参考」として残す
+- 実装時は既存資産 (spaces / ai_runners / ai_task_packages / ai_usage / api_keys) を **そのまま使う**
+- master-todo.md の Phase 3 Month 1-3 タスクは大幅に削減可能
+
+### 教訓
+
+「設計を先に書く」より「既存コードを先に読む」が正解だった。
+Phase 3 着手前の必須プロセスとして、**既存DB/APIの全体把握** を加える必要。
+
+---
+
 最終更新: 2026-05-26

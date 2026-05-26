@@ -16,6 +16,43 @@
 
 ---
 
+## ⚠️ 0. 既存実装の活用 (2026-05-26 追記)
+
+**ai_runners テーブル + API 一式が既に実装済み**。本ドキュメントの「focusmap-agent を新規作成」は実態と異なる。
+
+### 既存実装の概要
+
+| 機能 | 既存実装 | 状態 |
+|---|---|---|
+| Runner登録 (Mac mini相当) | `ai_runners` テーブル (hostname/executors/repo_keys/secrets/heartbeat) | ✅ |
+| Runner ↔ Workspace 紐付け | `ai_runner_spaces` (複数Space対応、enable/disable可) | ✅ |
+| ハートビート | `last_heartbeat_at` 更新、2分以内のみactive扱い | ✅ |
+| タスクClaim | `claim_ai_task_for_runner(p_runner_id, p_claim_ttl_seconds)` 関数 | ✅ |
+| API: `/api/ai-runners/claim` | 実装済み | ✅ |
+| API: `/api/ai-runners/heartbeat` | 実装済み | ✅ |
+| API: `/api/ai-runners/sync-package` | 実装済み | ✅ |
+| パッケージキャッシュ | `ai_runner_package_cache` | ✅ |
+| 既存常駐スクリプト | `scripts/codex-rpc-bridge.ts` / `scripts/com.focusmap.task-runner.plist` | ✅ |
+
+### 設計との差分
+
+| 本ドキュメントの記述 | 既存実装 | 対応 |
+|---|---|---|
+| agents テーブル新規 | `ai_runners` 既存 | 既存活用 |
+| Runner = Workspace所有 | Runner = User所有 + 複数Space登録 | **既存設計の方が柔軟、これに合わせる** |
+| `focusmap-agent` npm package | 既存に `codex-rpc-bridge.ts` 等の常駐スクリプトあり | **既存をパッケージ化する形に変更** |
+| install.sh ワンライナー | 未実装 | **新規追加必要 (既存スクリプトをラップする形)** |
+
+### 本当に不足しているもの (Phase 3 着手分)
+
+1. **install.sh のホスティング** (focusmap-official.com/install.sh)
+2. **install.sh の中身**: 既存 `scripts/` 配下のスクリプト群をパッケージとして公開できる形に整理
+3. **agent_token 発行UI** (現状は North 開発者本人のキー設定で動作している可能性)
+4. **Workspace 切替UI** (現状の管理画面が個人前提の可能性)
+5. **Browser automation 用の Playwright** (現状の executors は claude/codex/codex_app だけで、Playwright直接実行系のexecutorがない可能性 → 要追加)
+
+---
+
 ## 1. 実装技術の比較
 
 | 案 | サイズ | 開発工数 | UX | クロスプラットフォーム |

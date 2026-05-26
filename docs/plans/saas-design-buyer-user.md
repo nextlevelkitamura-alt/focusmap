@@ -18,6 +18,47 @@
 
 ---
 
+## ⚠️ 0. 既存実装の活用 (2026-05-26 追記)
+
+設計時点で見落としていたが、**Workspace構造は既存に実装済み**。本ドキュメントの「新規作成」記述は実態と異なる。
+
+### 設計と既存の対応
+
+| 本ドキュメントの記述 | 既存テーブル | 採用 |
+|---|---|---|
+| `workspaces` (新規) | **`spaces`** | 既存を活用 (DB名は spaces のまま、UIラベルは「Workspace」or 「Space」) |
+| `workspace_members` (新規) | **`space_members`** | 既存を活用 (Role: owner/editor/commenter/viewer) |
+| `workspace_invites` (新規) | **`space_invites`** (14日有効) | 既存を活用 |
+| RLS用ヘルパー関数 (新規) | `space_member_role` / `can_view_space` / `can_edit_space` / `can_own_space` | 既存を活用 |
+| `agents` (新規) | **`ai_runners`** | 既存を活用 (詳細: [saas-design-installer.md](./saas-design-installer.md)) |
+| `skills` (新規) | **`ai_task_packages`** | 既存を活用 (詳細: [saas-design-skills.md](./saas-design-skills.md)) |
+| `usage_metrics` (新規) | **`ai_usage`** | 既存を活用 (詳細: [saas-design-api-billing.md](./saas-design-api-billing.md)) |
+| `audit_logs` (新規) | (なし) | **新規追加が必要** |
+
+### Role の対応 (既存4種 → SaaS 3層へUI圧縮)
+
+| 既存 Role | SaaS UI表示 | 権限 |
+|---|---|---|
+| `owner` | **Owner** | 全権 + 課金管理 |
+| `editor` | **Admin** | スキル管理 + メンバー招待 + 利用Analytics |
+| `commenter` | **Member** | 実行 + 自分の履歴のみ (※コメント機能は将来) |
+| `viewer` | **Member** | 実行 + 自分の履歴のみ |
+
+DBスキーマ自体は変更せず、UI表示で `commenter` と `viewer` を1つの「Member」として表示する。
+
+### 新規追加が必要なテーブル (差分)
+
+1. **`audit_logs`**: 操作ログ
+2. **`spaces.plan`** 列: プラン情報 (free / personal / team / enterprise)
+3. **`spaces.billing_customer_id`** 列: Stripe Customer ID
+4. **`ai_task_packages.model_tier`** 列: simple / agent
+
+### 設計本文の扱い
+
+§1〜§9 は **設計の意図と方針** を記述したもの。実装時は本セクションの「既存活用」を優先し、本文は参考資料として扱う。
+
+---
+
 ## 1. Workspace 構造設計
 
 ### 1.1 基本ルール

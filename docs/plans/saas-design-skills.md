@@ -15,6 +15,80 @@
 
 ---
 
+## ⚠️ 0. 既存実装の活用 (2026-05-26 追記)
+
+**スキル管理テーブル `ai_task_packages` が既に実装済み**。本ドキュメントの設計と8割一致。
+
+### 既存スキーマ (ai_task_packages)
+
+```sql
+CREATE TABLE ai_task_packages (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL,
+  space_id UUID REFERENCES spaces(id),
+  title TEXT NOT NULL,
+  prompt_template TEXT NOT NULL,
+  executor TEXT DEFAULT 'claude' CHECK (executor IN ('claude', 'codex', 'codex_app')),
+  schedule JSONB DEFAULT '{}'::jsonb,
+  required_repo_key TEXT,
+  required_secret_names TEXT[],
+  input_schema JSONB,
+  default_visibility TEXT DEFAULT 'space' CHECK (default_visibility IN ('private', 'space')),
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+);
+```
+
+### 設計と既存の対応
+
+| 本ドキュメントの記述 | 既存列 | 差分 |
+|---|---|---|
+| `id` / `name` / `prompt_template` | id / title / prompt_template | ✅ 一致 (name → title) |
+| `default_schedule` | schedule (JSONB) | ✅ 一致 |
+| `configurable` | input_schema (JSONB) | ✅ 一致 |
+| Workspace所属 | space_id | ✅ 一致 |
+| プライベート/共有 | default_visibility | ✅ 一致 |
+| 認証要件 | required_repo_key + required_secret_names | ✅ 一致 |
+| **model_tier (simple/agent)** | **無し** | ❌ **新規追加が必要** |
+| `approval_type` (auto/confirm/interactive) | 無し | ❌ 新規追加が必要 (or input_schema に埋める) |
+| `description` / `icon` / `category` | 無し | ❌ 新規追加 (or metadata JSONB) |
+| `steps` | 無し | ❌ 新規追加 (or metadata JSONB) |
+| `cache_strategy` | 無し | ❌ 新規追加 (or metadata JSONB) |
+| `estimated_cost_usd` / `estimated_duration_sec` | 無し | ❌ 新規追加 (or metadata JSONB) |
+
+### 差分追加 migration の方針
+
+```sql
+-- 案A: 新規列を追加
+ALTER TABLE ai_task_packages
+  ADD COLUMN IF NOT EXISTS model_tier TEXT NOT NULL DEFAULT 'simple'
+    CHECK (model_tier IN ('simple', 'agent', 'mixed')),
+  ADD COLUMN IF NOT EXISTS approval_type TEXT NOT NULL DEFAULT 'auto'
+    CHECK (approval_type IN ('auto', 'confirm', 'interactive')),
+  ADD COLUMN IF NOT EXISTS description TEXT,
+  ADD COLUMN IF NOT EXISTS icon TEXT,
+  ADD COLUMN IF NOT EXISTS category TEXT,
+  ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;  -- steps / cache_strategy / estimated_cost 等
+
+-- 案B: metadata JSONB だけ追加して、全部そこに入れる (拡張柔軟)
+ALTER TABLE ai_task_packages
+  ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+```
+
+**推奨: 案A** (重要属性は列で型保証、その他は metadata に)
+
+### executor フィールドの拡張
+
+既存の executor は `claude / codex / codex_app` の3種だが、本設計では `model_tier` で抽象化する。
+**対応**: executor は「実行エンジン」、model_tier は「使うモデルの種類」として共存。
+- executor='claude' + model_tier='simple' → Gemini Flash-Lite 経由で実行
+- executor='codex' + model_tier='agent' → DeepSeek V4 Pro 経由で実行
+
+(将来的に executor='playwright' を追加して、純粋なBrowser automation も可能にする)
+
+---
+
 ## 1. 初期テンプレの選定基準
 
 ### 1.1 grill-meで合意した「汎用」の制約

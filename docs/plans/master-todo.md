@@ -11,23 +11,27 @@
 | ステータス | 内容 |
 |---|---|
 | ✅ 完了 | grill-me 9問 → ターゲット・アーキ確定 |
-| ✅ 完了 | 競合分析 (Zapier/Lindy/Bardeen/n8n/Make) |
+| ✅ 完了 | 競合分析 (Zapier/Lindy/Bardeen/n8n/Member) |
 | ✅ 完了 | 論点a〜e 設計 (5ドキュメント) |
 | ✅ 完了 | ミニベンチマーク (Flash-Lite で粗利率99%実証) |
 | ✅ 完了 | ハイブリッドモデル戦略 (simple + agent + Cache hit) |
 | ✅ 完了 | DeepSeek V4 Pro = agent tier 第一候補 |
-| **🔥 次** | **Supabaseマイグレーション SQL 設計** |
+| ✅ 完了 | **既存実装の調査** → Workspace構造 + ai_runners + ai_task_packages 等が既に実装済みと判明 |
+| ✅ 完了 | 各設計docs に「既存実装の活用」セクション追記 |
+| **🔥 次** | **差分migration SQL 作成** (列追加 + audit_logs新規) |
 
 ---
 
 ## 📋 直近やるべき (Phase 3 着手前、6月までに完了)
 
 ### 実装系
-- [ ] **Supabaseマイグレーション SQL 設計** ← 次にやる
-  - workspaces / workspace_members / agents / skills / usage_metrics / audit_logs
-  - 既存 ai_tasks に workspace_id 追加
-  - RLS ポリシー設計
-  - 詳細: [saas-design-buyer-user.md §1.3](./saas-design-buyer-user.md)
+- [ ] **差分migration SQL 作成** ← 次にやる
+  - `spaces.plan` / `spaces.billing_customer_id` 列追加
+  - `ai_task_packages` に `model_tier` / `approval_type` / `description` / `icon` / `category` / `metadata` 列追加
+  - `ai_usage` に `space_id` 列追加
+  - `audit_logs` テーブル新規作成
+  - 詳細: 各 saas-design-*.md の「§0 既存実装の活用」セクション
+- [ ] 既存実装の動作確認 (テーブルは存在するが実際に動くか、空殻か)
 - [ ] focusmap-agent npm package を空状態で予約 publish (名前確保)
 - [ ] Gemini API を Paid tier に切替 (Free tier だと rate limit 多発)
 - [ ] 月間ハードキャップ設定 ($100/月など、暴走対策)
@@ -48,32 +52,41 @@
 
 詳細: [saas-design-mvp.md §2.2](./saas-design-mvp.md)
 
-### Month 1 (6月): 基盤整備 + Workspace構造
-- [ ] Supabaseマイグレーション実行
-- [ ] RLS ポリシー適用
-- [ ] Workspace 切替UI
-- [ ] 招待フロー (メール招待 + Role割当)
-- [ ] Owner/Admin/Member 権限ガード
-- [ ] 既存 北村Workspace を Personal 扱いに移行
+### Month 1 (6月): 基盤整備 + Workspace構造 【**大幅削減: 既存実装活用**】
 
-### Month 2 (7月): 課金 + 利用者UI
+**既存活用するもの**: spaces / space_members / space_invites / RLS用ヘルパー関数 (全部実装済み)
+
+- [ ] **差分migration**: `spaces.plan` / `spaces.billing_customer_id` 列追加
+- [ ] **差分migration**: `ai_task_packages.model_tier` / `approval_type` / `description` / `icon` / `category` / `metadata` 列追加
+- [ ] **差分migration**: `ai_usage.space_id` 列追加
+- [ ] **新規migration**: `audit_logs` テーブル
+- [ ] Workspace 切替UI の既存実装確認 + 必要なら拡張 (現状の `/api/spaces` を活用)
+- [ ] Role 表示: 既存 owner/editor/commenter/viewer を SaaS UI で Owner/Admin/Member の3層に圧縮
+- [ ] 既存実装の動作確認 (実際に動いているか、空殻か)
+
+### Month 2 (7月): 課金 + 利用者UI 【ほぼ新規】
+
 - [ ] Stripe アカウント開設
 - [ ] Stripe Subscriptions: Free / Personal / Team プラン作成
 - [ ] Customer Portal 統合
-- [ ] Webhook で Supabase の workspaces.plan 同期
-- [ ] 使用量バー UI (個人 + Workspace、Claude Code 型)
-- [ ] 使用量カウンタ実装
+- [ ] Webhook で `spaces.plan` を同期
+- [ ] 使用量バー UI (個人 + Workspace、Claude Code 型) ← 既存 `ai_usage` を集計
+- [ ] プラン上限check (ai_tasks INSERT前にTrigger or アプリ層で)
 - [ ] プラン超過時の挙動 (自動停止 or 自動課金)
-- [ ] スキルカード UI 改修
-- [ ] 管理画面の枠組み
+- [ ] スキルカード UI 改修 (`model_tier` 表示、`approval_type` 表示)
+- [ ] BUYER管理画面 (メンバー一覧 / 利用Analytics / 課金ページ)
 
-### Month 3 (8月): エージェント配布 + スキル2個
-- [ ] focusmap-agent パッケージ (Node.js) 切り出し
-- [ ] install.sh ホスティング (Cloud Run)
-- [ ] エージェント追加フロー: token発行 → install.sh実行 → 接続確認
-- [ ] agents テーブルのハートビート機構
-- [ ] スキル2 (今日のカレンダー整理) 実装
-- [ ] スキル4 (競合・情報サイト巡回) 実装
+### Month 3 (8月): エージェント配布 + スキル2個 【**大幅削減**】
+
+**既存活用**: `ai_runners` / `ai_runner_spaces` / `/api/ai-runners/claim` / `/api/ai-runners/heartbeat` / `claim_ai_task_for_runner` 関数
+
+- [ ] **既存 `scripts/` 配下** (`codex-rpc-bridge.ts` / `task-runner.plist` 等) を **汎用化 → npm package 化**
+- [ ] install.sh 作成 (既存スクリプトのインストーラ化)
+- [ ] install.sh ホスティング (focusmap-official.com/install.sh)
+- [ ] エージェント追加UI (agent_token 発行 → install.shコピペ → 接続確認)
+- [ ] **Playwright実行用 executor 追加** (現状の claude/codex/codex_app に加え `playwright` を)
+- [ ] スキル2 (今日のカレンダー整理) を ai_task_packages に登録
+- [ ] スキル4 (競合・情報サイト巡回) を ai_task_packages に登録
 - [ ] **フルベンチマーク再実施** (Playwright + 全モデル比較、agent tier 決定)
 
 ### Month 4 (9月): スキル追加 + 暴走対策
