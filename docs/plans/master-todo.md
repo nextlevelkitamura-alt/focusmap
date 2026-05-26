@@ -26,7 +26,10 @@
 | ✅ 完了 | **Phase B: AIチャット + DeepSeek V4 Pro** (intent classifier + /dashboard/chat + Realtime hook) |
 | ✅ 完了 | **Phase C: Playwright + 実GCal連携** (google-calendar.ts + Playwright executor + web-research / email-summary / 実GCal化 calendar-organize) |
 | ✅ 完了 | **Phase D: UI磨き込み** (GlobalWorkspaceSwitcher / EmptyState / Skeleton / ErrorBanner / 各画面統合) |
-| **🔥 次** | **実機統合テスト** (config.json で起動 → ブラウザで /dashboard/chat → 「カレンダー整理して」→ Playwright実機実行 → 結果Realtime表示) |
+| ✅ 完了 | **DeepSeek V4 + 実機統合テスト一気通貫** (Top-up済 / config.json自動生成 / focusmap-agent並走 / intent判定95% / agent claim 10秒で完走) |
+| ✅ 完了 | **Gmail scope削除 + MCP方針確定** (Composio 経由で Gmail/Sheets/Notion 連携、 [mcp-integration.md](./mcp-integration.md)) |
+| ✅ 完了 | **本番デプロイ** (Cloud Run、 GitHub Actions main push トリガー) |
+| **🔥 次** | **Phase E: MCP統合 (Composio)** + Stripe本番接続 + 個人事業主開業 (北村本人作業) |
 
 ---
 
