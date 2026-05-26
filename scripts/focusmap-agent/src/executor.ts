@@ -1,17 +1,17 @@
 /**
- * task実行ハンドラ
+ * task実行ハンドラ (Phase C: 3スキル対応)
  *
- * - claim したタスクの status を 'running' に更新
- * - skill_id に応じてスキル実装にディスパッチ
- * - 結果を ai_tasks.result に書き戻し
- * - ai_usage にログを記録 (使用量計測)
- * - 失敗時は status='failed' + error メッセージ
+ * - skill_id で動的ディスパッチ
+ * - 結果を ai_tasks に書き戻し
+ * - ai_usage にログ記録
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AgentConfig, AiTask, TaskResultJson } from './types.js';
 import { runCalendarOrganize } from './skills/calendar-organize.js';
-import { error as logError, info, warn } from './logger.js';
+import { runWebResearch } from './skills/web-research.js';
+import { runEmailSummary } from './skills/email-summary.js';
+import { error as logError, info } from './logger.js';
 
 export async function executeTask(
   task: AiTask,
@@ -21,19 +21,26 @@ export async function executeTask(
   // 1. status を running に
   await supabase
     .from('ai_tasks')
-    .update({
-      status: 'running',
-      started_at: new Date().toISOString(),
-    })
+    .update({ status: 'running', started_at: new Date().toISOString() })
     .eq('id', task.id);
 
   let result: TaskResultJson;
   try {
-    // 2. skill_id でディスパッチ (MVP: 1つだけ)
-    if (task.skill_id === 'calendar-organize') {
-      result = await runCalendarOrganize(task, config);
-    } else {
-      throw new Error(`Unsupported skill_id: ${task.skill_id ?? '<null>'} (MVPで対応するのは calendar-organize のみ)`);
+    // 2. skill_id でディスパッチ
+    switch (task.skill_id) {
+      case 'calendar-organize':
+        result = await runCalendarOrganize(task, config, supabase);
+        break;
+      case 'web-research':
+        result = await runWebResearch(task, config);
+        break;
+      case 'email-summary':
+        result = await runEmailSummary(task, config, supabase);
+        break;
+      default:
+        throw new Error(
+          `Unsupported skill_id: ${task.skill_id ?? '<null>'} (対応: calendar-organize, web-research, email-summary)`,
+        );
     }
 
     // 3. ai_tasks に書き戻し
@@ -47,8 +54,8 @@ export async function executeTask(
       .eq('id', task.id);
 
     // 4. ai_usage にログ
-    if (result.usage) {
-      const cycle = new Date().toISOString().slice(0, 7); // YYYY-MM
+    if (result.usage && result.usage.input_tokens > 0) {
+      const cycle = new Date().toISOString().slice(0, 7);
       await supabase.from('ai_usage').insert({
         user_id: task.user_id,
         space_id: task.space_id,
@@ -63,7 +70,7 @@ export async function executeTask(
       });
     }
 
-    info(`task ${task.id} 完了`);
+    info(`task ${task.id} 完了 (${task.skill_id})`);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logError(`task ${task.id} 失敗:`, message);
