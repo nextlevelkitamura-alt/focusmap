@@ -1,5 +1,6 @@
 "use client"
 
+import { Suspense } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
@@ -30,7 +31,9 @@ export function DashboardBrandBar() {
                     <MessageSquare className="h-3 w-3" />
                     <span className="hidden sm:inline">自動化チャット</span>
                 </Link>
-                <GlobalWorkspaceSwitcher />
+                <Suspense fallback={null}>
+                    <GlobalWorkspaceSwitcher />
+                </Suspense>
             </div>
         </header>
     )
