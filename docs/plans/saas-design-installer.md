@@ -16,6 +16,13 @@
 
 ---
 
+## 0.1 現在の正本
+
+2026-05-27 時点の最終方針は **Focusmap Lite.app + Mac常駐エージェント + Web主UI**。
+このドキュメントは CLI / npm one-liner 中心の旧設計を含むため、以後の実装判断は [focusmap-lite-mac-agent.md](./focusmap-lite-mac-agent.md) を正本にする。
+
+---
+
 ## ⚠️ 0. 既存実装の活用 (2026-05-26 追記)
 
 **ai_runners テーブル + API 一式が既に実装済み**。本ドキュメントの「focusmap-agent を新規作成」は実態と異なる。

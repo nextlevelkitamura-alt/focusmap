@@ -29,13 +29,19 @@
 | ✅ 完了 | **DeepSeek V4 + 実機統合テスト一気通貫** (Top-up済 / config.json自動生成 / focusmap-agent並走 / intent判定95% / agent claim 10秒で完走) |
 | ✅ 完了 | **Gmail scope削除 + MCP方針確定** (Composio 経由で Gmail/Sheets/Notion 連携、 [mcp-integration.md](./mcp-integration.md)) |
 | ✅ 完了 | **本番デプロイ** (Cloud Run、 GitHub Actions main push トリガー) |
-| **🔥 次** | **Phase E: MCP統合 (Composio)** + Stripe本番接続 + 個人事業主開業 (北村本人作業) |
+| ✅ 完了 | **Focusmap Lite 方針確定** (Mac常駐エージェント + Web主UI、 [focusmap-lite-mac-agent.md](./focusmap-lite-mac-agent.md)) |
+| **🔥 次** | **Focusmap Lite Phase 1**: agent_tokenだけで接続できる導入導線 + Web設定CTA + GWS/Playwright状態反映 |
 
 ---
 
 ## 📋 直近やるべき (Phase 3 着手前、6月までに完了)
 
 ### 実装系
+- [ ] **Focusmap Lite Phase 1 着手**: 詳細は [focusmap-lite-mac-agent.md](./focusmap-lite-mac-agent.md)
+  - [ ] `scripts/install.sh` から service role key 入力をなくす
+  - [ ] `agent_token` だけで heartbeat / claim / result update できるAPIへ整理
+  - [ ] `/dashboard/settings/automation` に「Focusmap Liteを導入」CTA
+  - [ ] GWS / Playwright / terminal 状態を `ai_runners.metadata` に反映
 - [ ] **差分migration SQL 作成** ← 次にやる
   - `spaces.plan` / `spaces.billing_customer_id` 列追加
   - `ai_task_packages` に `model_tier` / `approval_type` / `description` / `icon` / `category` / `metadata` 列追加

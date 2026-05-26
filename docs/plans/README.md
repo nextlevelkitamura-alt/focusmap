@@ -12,3 +12,7 @@
 ## テンプレート
 
 新しいプランを作成する際は [TEMPLATE.md](./TEMPLATE.md) を使用してください。
+
+## 重要計画
+
+- [focusmap-lite-mac-agent.md](./focusmap-lite-mac-agent.md) — Focusmap Lite.app / Mac常駐エージェント方式の正本
