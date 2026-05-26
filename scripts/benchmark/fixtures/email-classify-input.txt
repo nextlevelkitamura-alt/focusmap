@@ -1,0 +1,41 @@
+以下は本日受信したメール5通の本文です。それぞれを優先度判定 + 3行要約してJSONで返してください。
+
+【メール1】
+From: tanaka@client-corp.jp
+Subject: 【至急】明日の会議資料の差し替えをお願いします
+本文: お世話になっております、田中です。明日10時の会議資料ですが、p.5のグラフが古いバージョンでした。
+本日中に差し替え版をお送りいただけますでしょうか。会議には弊社CEOも参加するため、ご対応お願いします。
+
+【メール2】
+From: noreply@github.com
+Subject: [GitHub] Your weekly digest
+本文: This week on GitHub: 5 new PRs in your starred repos. 2 issues mentioning you.
+Click here to see your full digest. You can manage these notifications in settings.
+
+【メール3】
+From: hr@e-nextlevel.co.jp
+Subject: 12月の有給取得状況のお知らせ
+本文: 北村様、12月の有給取得状況をお知らせします。残日数: 14日。年内消化推奨日数: 5日。
+詳細は社内ポータルからご確認ください。
+
+【メール4】
+From: support@stripe.com
+Subject: Action required: Verify your business identity within 7 days
+本文: Hi Naohiro, To continue accepting payments, please verify your business identity
+within 7 days. This is required by regulations. Click here to start verification.
+
+【メール5】
+From: newsletter@techcrunch.com
+Subject: AI Weekly: OpenAI releases new model, Anthropic raises Series F
+本文: This week in AI: Major announcements from OpenAI and Anthropic.
+Plus: GitHub Copilot pricing changes, Cursor IDE updates, and more.
+
+【出力フォーマット】
+必ず以下のキーを含むJSONを返してください:
+{
+  "emails": [
+    {"index": 1, "priority": "high" | "medium" | "low", "summary": "3行要約", "category": "業務/通知/個人/請求/ニュース"}
+  ],
+  "must_reply_today_count": 数値,
+  "spam_or_low_count": 数値
+}

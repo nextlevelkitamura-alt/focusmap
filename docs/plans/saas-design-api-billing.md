@@ -70,16 +70,21 @@
 
 → **Sonnet を月額に含めるのは不可能**。
 
-### 2.3 結論: モデル選定
+### 2.3 結論: モデル選定 (2026-05-26 ミニベンチマーク後に更新)
 
 | 用途 | 採用モデル | 理由 |
 |---|---|---|
-| **Free / Personal / Team の月額込み実行** | **Gemini 2.5 Flash** | 粗利率74-89%、競合と戦える |
+| **Free / Personal / Team の月額込み実行 (デフォルト)** | **Gemini 2.5 Flash-Lite** | プロキシタスクで100%成功、Flashの半額、レイテンシも速い |
+| 精度オプション (有料アップグレード) | Gemini 2.5 Flash | Flash-Lite で精度不足のスキルに切替可 |
 | Enterprise / BYOK | Sonnet 4.6 / Haiku 4.5 / 任意 | ユーザーが自分でキーを持つので原価リスクなし |
 | Browser automation 精度が要るスキル | Sonnet (BYOK) または Haiku 加算オプション | 「精度オプション」で別途課金 |
 
-**重要な懸念**: Gemini Flash の Browser automation 精度は未検証。Claude や Sonnet と比べて誤動作・リトライが多発する可能性あり。
-→ **最優先タスク: Gemini Flash で代表スキル5つを実行し、原価と成功率を実測する**
+**ミニベンチマーク結果** ([benchmark-results-2026-05-26.md](./benchmark-results-2026-05-26.md)):
+- Flash-Lite: 完全成功率 100%, 平均 $0.00008/呼び出し, レイテンシ 2.5-3.0s
+- Flash: 完全成功率 44% (※Free tier rate limit、Paid tier では別の結果になる見込み)
+- Groq Llama 3.3 70B: 完全成功率 56% (※TPM制限)
+
+**残る検証必要事項**: Playwrightでの実DOM操作精度。プロキシタスクで100%でも、実Browser automationでは別物。Phase 3 Month 3でフルベンチマーク再実施。
 
 ---
 

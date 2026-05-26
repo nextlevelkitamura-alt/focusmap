@@ -1,0 +1,28 @@
+以下はSaaS自動化ツール「Zapier」のpricingページから抽出した内容です。
+このページから、各プランの価格と主要な特徴を抽出して、JSON形式で出力してください。
+
+【入力HTML本文 (簡略版)】
+Zapier Plans Pricing
+
+Free Plan: $0/month, 100 tasks per month, two-step Zaps only.
+Limited to one trigger and one action. Includes Zapier Copilot with daily message limits.
+
+Professional Plan: Starting at $19.99/month (billed annually). 750 tasks per month.
+Premium app access included. Unlimited Zaps. Multi-step Zaps. Webhooks.
+
+Team Plan: Starting at $69/month (billed annually). Includes 25 users.
+Shared Zaps and folders. Shared app connections. SAML SSO support. Premier Support.
+
+Enterprise Plan: Contact for pricing. Unlimited users. Advanced admin permissions
+and app controls. VPC Peering. Annual task limits. Observability tools.
+Technical Account Manager dedicated.
+
+【出力フォーマット】
+必ず以下のキーを含むJSONを返してください:
+{
+  "plans": [
+    {"name": "プラン名", "price_usd_monthly": 数値 or null, "tasks_per_month": 数値 or null, "key_features": ["特徴1", "特徴2"]}
+  ],
+  "lowest_paid_plan": "プラン名",
+  "team_plan_min_seats": 数値 or null
+}
