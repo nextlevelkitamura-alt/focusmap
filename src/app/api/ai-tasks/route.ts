@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'prompt is required' }, { status: 400 })
   }
   const selectedExecutor = executor ?? 'claude'
-  if (!['claude', 'codex', 'codex_app'].includes(selectedExecutor)) {
+  if (!['claude', 'codex', 'codex_app', 'playwright', 'simple', 'browser', 'terminal'].includes(selectedExecutor)) {
     return NextResponse.json({ error: 'Invalid executor' }, { status: 400 })
   }
 

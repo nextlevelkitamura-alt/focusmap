@@ -5,20 +5,26 @@
  */
 
 export interface AgentConfig {
-  /** ユーザーID (Workspace所属) */
-  user_id: string;
+  /** Legacy fields kept for local dev only. User installs must not require these. */
+  user_id?: string;
+  supabase_url?: string;
+  supabase_service_role_key?: string;
   /** ホスト名 (ai_runners.hostname、 user_id と組み合わせて unique) */
   hostname: string;
   /** 表示名 (任意) */
   display_name?: string;
-  /** Supabase URL (NEXT_PUBLIC_SUPABASE_URL) */
-  supabase_url: string;
-  /** Supabase service role key */
-  supabase_service_role_key: string;
+  /** Focusmap Lite agent token. Service role key はMacへ置かない。 */
+  agent_token: string;
   /** Gemini API key (Google AI Studio) */
   gemini_api_key?: string;
-  /** API base URL (現状未使用、将来 BYOK API endpoint等に) */
+  /** DeepSeek API key (optional) */
+  deepseek_api_key?: string;
+  /** API base URL */
   api_url?: string;
+  /** Shell execution toggle. Destructive patterns are still blocked. */
+  shell_enabled?: boolean;
+  /** Extra PATH for launchd environments. */
+  path?: string;
 }
 
 export type AiTaskStatus =
@@ -53,7 +59,7 @@ export interface StepLog {
 }
 
 export interface TaskResultJson {
-  executor: 'playwright' | 'simple';
+  executor: 'playwright' | 'simple' | 'browser' | 'terminal';
   steps: StepLog[];
   output: string;
   error?: string;
@@ -64,4 +70,25 @@ export interface TaskResultJson {
     model: string;
   };
   meta?: Record<string, unknown>;
+}
+
+export interface AgentCommand {
+  id: string;
+  runner_id: string;
+  user_id: string;
+  space_id: string | null;
+  task_id: string | null;
+  type:
+    | 'open_url'
+    | 'open_google_auth'
+    | 'open_gws_auth'
+    | 'open_browser_auth'
+    | 'run_shell'
+    | 'restart_agent'
+    | 'pause_agent'
+    | 'resume_agent'
+    | 'upload_logs'
+    | 'scan_capabilities';
+  payload: Record<string, unknown>;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 }

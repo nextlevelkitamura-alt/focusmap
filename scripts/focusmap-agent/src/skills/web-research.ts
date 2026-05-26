@@ -43,6 +43,49 @@ export async function runWebResearch(
   // Step 2: AI で各ページ要約
   steps.push({ label: 'AIで要約 + キーワードフィルタ', status: 'running', at: new Date().toISOString() });
 
+  if (!config.gemini_api_key) {
+    steps[1] = {
+      ...steps[1],
+      status: 'done',
+      at: new Date().toISOString(),
+      detail: 'Gemini API key 未設定のため、Playwright取得結果をそのまま返しました',
+    };
+
+    const fallback = {
+      summaries: pages.map((p) => ({
+        url: p.url,
+        title: p.title,
+        key_points: [p.textContent.slice(0, 700)],
+        matched_keywords: keywords.filter((keyword) =>
+          p.textContent.toLowerCase().includes(keyword.toLowerCase()),
+        ),
+        ok: p.status >= 200 && p.status < 400,
+      })),
+      overall_summary:
+        'AI要約キーが未設定のため、Webページ取得結果の抜粋のみを返しています。詳細要約を使う場合はエージェント設定に gemini_api_key を追加してください。',
+      fetch_status: pages.map((p) => ({ url: p.url, ok: p.status >= 200 && p.status < 400 })),
+    };
+
+    return {
+      executor: 'playwright',
+      steps,
+      output: JSON.stringify(fallback, null, 2),
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cost_usd: 0,
+        model: 'playwright-only',
+      },
+      meta: {
+        skill_id: 'web-research',
+        started_at: startedAt,
+        url_count: urls.length,
+        success_count: successCount,
+        ai_summary_skipped: true,
+      },
+    };
+  }
+
   const summaryPrompt = `以下のWebページ群から、 新着情報・主要事項を ${keywords.length > 0 ? `特に「${keywords.join(', ')}」 に関連する内容を優先して、` : ''}サマリしてください。
 
 ${pages

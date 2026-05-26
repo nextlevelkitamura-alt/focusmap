@@ -3,11 +3,10 @@
  *
  * 期待する config.json 形式:
  * {
- *   "user_id": "uuid-of-supabase-user",
+ *   "agent_token": "fma_...",
  *   "hostname": "my-mac-mini",
  *   "display_name": "Office Mac mini",
- *   "supabase_url": "https://xxx.supabase.co",
- *   "supabase_service_role_key": "eyJ...",
+ *   "api_url": "https://focusmap-official.com/api",
  *   "gemini_api_key": "AIza..."
  * }
  */
@@ -34,21 +33,17 @@ export async function loadConfig(path: string): Promise<AgentConfig> {
 
   // 環境変数で上書き可能 (CI / コンテナ向け)
   const cfg: AgentConfig = {
-    user_id: fromFile.user_id ?? process.env.FOCUSMAP_USER_ID ?? '',
     hostname: fromFile.hostname ?? process.env.FOCUSMAP_HOSTNAME ?? osHostname(),
     display_name: fromFile.display_name ?? process.env.FOCUSMAP_DISPLAY_NAME,
-    supabase_url:
-      fromFile.supabase_url ??
-      process.env.NEXT_PUBLIC_SUPABASE_URL ??
-      process.env.SUPABASE_URL ??
-      '',
-    supabase_service_role_key:
-      fromFile.supabase_service_role_key ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+    agent_token: fromFile.agent_token ?? process.env.FOCUSMAP_AGENT_TOKEN ?? '',
     gemini_api_key:
       fromFile.gemini_api_key ??
       process.env.GOOGLE_GENERATIVE_AI_API_KEY ??
       process.env.GEMINI_API_KEY,
-    api_url: fromFile.api_url ?? process.env.FOCUSMAP_API_URL ?? 'http://localhost:3001/api',
+    deepseek_api_key: fromFile.deepseek_api_key ?? process.env.DEEPSEEK_API_KEY,
+    api_url: fromFile.api_url ?? process.env.FOCUSMAP_API_URL ?? 'https://focusmap-official.com/api',
+    shell_enabled: fromFile.shell_enabled ?? process.env.FOCUSMAP_SHELL_ENABLED === 'true',
+    path: fromFile.path ?? process.env.PATH,
   };
 
   validate(cfg);
@@ -57,9 +52,8 @@ export async function loadConfig(path: string): Promise<AgentConfig> {
 
 function validate(cfg: AgentConfig): void {
   const missing: string[] = [];
-  if (!cfg.user_id) missing.push('user_id');
-  if (!cfg.supabase_url) missing.push('supabase_url (NEXT_PUBLIC_SUPABASE_URL)');
-  if (!cfg.supabase_service_role_key) missing.push('supabase_service_role_key (SUPABASE_SERVICE_ROLE_KEY)');
+  if (!cfg.agent_token) missing.push('agent_token (FOCUSMAP_AGENT_TOKEN)');
+  if (!cfg.api_url) missing.push('api_url (FOCUSMAP_API_URL)');
   if (missing.length > 0) {
     throw new ConfigError(`必須設定が不足: ${missing.join(', ')}`);
   }
