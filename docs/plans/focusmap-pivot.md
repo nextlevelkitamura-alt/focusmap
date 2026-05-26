@@ -3,6 +3,8 @@
 > shikumika → Focusmap 方向転換計画
 > 作成: 2026-04-03
 > ステータス: Phase 1 ほぼ完了（DBマイグレーション適用待ち）
+>
+> **発展構想**: SaaS化（配布版・マルチユーザー化）は [focusmap-saas-pivot.md](./focusmap-saas-pivot.md) を参照
 
 ---
 
