@@ -19,7 +19,10 @@
 | ✅ 完了 | **既存実装の調査** → Workspace構造 + ai_runners + ai_task_packages 等が既に実装済みと判明 |
 | ✅ 完了 | 各設計docs に「既存実装の活用」セクション追記 |
 | ✅ 完了 | **Stage 1-8 実装 (差分migration / lib / 使用量UI / スキルカード改修 / プラン上限check / Stripe / BUYER管理画面 / seed+install.sh+LP)** |
-| **🔥 次** | **本番セットアップ** (Stripe APIキー設定 / Supabase migration適用 / focusmap-agent npm publish) |
+| ✅ 完了 | **本番DB へ差分migration適用** (spaces.plan等 + audit_logs + user_byok_keys + system_skill_templates + helper関数3個) |
+| ✅ 完了 | **LP動作検証 + 価格表レイアウト修正** (Preview MCP で snapshot 確認、4プラン表示OK) |
+| ✅ 完了 | **focusmap-agent MVP本体実装** (config / heartbeat / claim / executor / calendar-organize / Gemini Flash-Lite / safety) |
+| **🔥 次** | **実機統合テスト** (北村本人の config.json でローカル起動 → ai_runners 登録 → calendar-organize 完走確認) |
 
 ---
 
