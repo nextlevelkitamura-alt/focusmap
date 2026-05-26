@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Users } from 'lucide-react';
 import { MembersClient } from '@/components/workspace/members-client';
 
 export const dynamic = 'force-dynamic';
@@ -79,7 +81,12 @@ export default async function MembersPage({ searchParams }: PageProps) {
         </CardHeader>
         <CardContent className="space-y-2">
           {(members ?? []).length === 0 && (
-            <p className="text-sm text-muted-foreground">メンバーがいません。</p>
+            <EmptyState
+              icon={Users}
+              title="メンバーがまだいません"
+              description="招待してチームで自動化を使いましょう"
+              variant="compact"
+            />
           )}
           {(members ?? []).map((m) => (
             <div

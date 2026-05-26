@@ -89,7 +89,7 @@ export function SkillCard({ skill, execution, onRun, onApprove }: SkillCardProps
 
   return (
     <Card className={cn(
-      'gap-3 py-4 transition-colors',
+      'gap-3 py-4 transition-all duration-200 hover:border-primary/30 hover:shadow-sm',
       isAwaitingApproval && 'border-amber-400 bg-amber-50/50 dark:bg-amber-950/20',
       isFailed && 'border-red-400 bg-red-50/50 dark:bg-red-950/20',
     )}>

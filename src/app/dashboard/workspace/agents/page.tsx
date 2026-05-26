@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
 import { AgentInstallPanel } from '@/components/workspace/agent-install-panel';
 import { Server, Wifi, WifiOff } from 'lucide-react';
 
@@ -56,9 +57,14 @@ export default async function AgentsPage({ searchParams }: PageProps) {
         </CardHeader>
         <CardContent className="space-y-2">
           {enriched.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              まだエージェントが接続されていません。上のインストール手順に従って Mac mini にセットアップしてください。
-            </p>
+            <EmptyState
+              icon={Server}
+              title="エージェント未接続"
+              description="Mac mini に focusmap-agent を導入すると、ここに表示されます"
+              ctaLabel="セットアップ手順を見る"
+              ctaHref="/dashboard/workspace/setup"
+              variant="compact"
+            />
           )}
           {enriched.map((r) => (
             <div
