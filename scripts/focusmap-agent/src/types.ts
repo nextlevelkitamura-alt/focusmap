@@ -79,6 +79,7 @@ export interface AgentCommand {
   space_id: string | null;
   task_id: string | null;
   type:
+    // legacy command types (Phase A-E)
     | 'open_url'
     | 'open_google_auth'
     | 'open_gws_auth'
@@ -88,7 +89,19 @@ export interface AgentCommand {
     | 'pause_agent'
     | 'resume_agent'
     | 'upload_logs'
-    | 'scan_capabilities';
+    | 'scan_capabilities'
+    // Phase F: Claude Code 級の自由実行
+    | 'file_read'
+    | 'file_write'
+    | 'file_list'
+    | 'file_delete'
+    | 'browser_navigate'
+    | 'browser_click'
+    | 'browser_fill'
+    | 'browser_screenshot'
+    | 'browser_text'
+    | 'browser_close_session'
+    | 'cancel_command';
   payload: Record<string, unknown>;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 }

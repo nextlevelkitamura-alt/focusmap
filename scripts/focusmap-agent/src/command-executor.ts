@@ -3,6 +3,24 @@ import { platform } from 'node:os';
 import type { AgentCommand, AgentConfig } from './types.js';
 import { collectCapabilities } from './capabilities.js';
 import { webOriginFromApiUrl } from './api-client.js';
+import {
+  fileRead,
+  fileWrite,
+  fileList,
+  fileDelete,
+} from './executors/file-io.js';
+import {
+  browserNavigate,
+  browserClick,
+  browserFill,
+  browserScreenshot,
+  browserText,
+  browserCloseSession,
+} from './executors/playwright-interactive.js';
+
+function payloadAs<T>(command: AgentCommand): T {
+  return (command.payload ?? {}) as T;
+}
 
 const DANGEROUS_SHELL_PATTERN = /\b(rm\s+-rf|sudo\s+rm|mkfs|diskutil\s+erase|shutdown|reboot|:(){|dd\s+if=|chmod\s+-R\s+777)\b/i;
 
@@ -103,6 +121,103 @@ export async function executeCommand(command: AgentCommand, config: AgentConfig)
     case 'resume_agent':
     case 'upload_logs':
       return { message: `${command.type} is accepted but not implemented in this MVP` };
+
+    // ─────────────────────────────────────────────────────
+    // Phase F: ファイルI/O
+    // ─────────────────────────────────────────────────────
+    case 'file_read': {
+      const { path } = payloadAs<{ path: string }>(command);
+      if (!path) throw new Error('payload.path is required');
+      return (await fileRead(path)) as unknown as Record<string, unknown>;
+    }
+    case 'file_write': {
+      const { path, content, mode, mkdirs } = payloadAs<{
+        path: string;
+        content: string;
+        mode?: 'overwrite' | 'append';
+        mkdirs?: boolean;
+      }>(command);
+      if (!path) throw new Error('payload.path is required');
+      if (typeof content !== 'string') throw new Error('payload.content (string) is required');
+      return (await fileWrite(path, content, { mode, mkdirs })) as unknown as Record<string, unknown>;
+    }
+    case 'file_list': {
+      const { path } = payloadAs<{ path: string }>(command);
+      if (!path) throw new Error('payload.path is required');
+      return (await fileList(path)) as unknown as Record<string, unknown>;
+    }
+    case 'file_delete': {
+      const { path } = payloadAs<{ path: string }>(command);
+      if (!path) throw new Error('payload.path is required');
+      return (await fileDelete(path)) as unknown as Record<string, unknown>;
+    }
+
+    // ─────────────────────────────────────────────────────
+    // Phase F: ブラウザ インタラクション
+    // ─────────────────────────────────────────────────────
+    case 'browser_navigate': {
+      const opts = payloadAs<{
+        session_id?: string;
+        url: string;
+        wait_for?: 'load' | 'domcontentloaded' | 'networkidle';
+        timeout_ms?: number;
+      }>(command);
+      if (!opts.url) throw new Error('payload.url is required');
+      return (await browserNavigate(opts)) as unknown as Record<string, unknown>;
+    }
+    case 'browser_click': {
+      const opts = payloadAs<{
+        session_id?: string;
+        selector: string;
+        timeout_ms?: number;
+        click_count?: number;
+      }>(command);
+      if (!opts.selector) throw new Error('payload.selector is required');
+      return (await browserClick(opts)) as unknown as Record<string, unknown>;
+    }
+    case 'browser_fill': {
+      const opts = payloadAs<{
+        session_id?: string;
+        selector: string;
+        value: string;
+        press_enter?: boolean;
+        timeout_ms?: number;
+      }>(command);
+      if (!opts.selector) throw new Error('payload.selector is required');
+      if (typeof opts.value !== 'string') throw new Error('payload.value (string) is required');
+      return (await browserFill(opts)) as unknown as Record<string, unknown>;
+    }
+    case 'browser_screenshot': {
+      const opts = payloadAs<{
+        session_id?: string;
+        url?: string;
+        selector?: string;
+        full_page?: boolean;
+        type?: 'png' | 'jpeg';
+      }>(command);
+      return (await browserScreenshot(opts)) as unknown as Record<string, unknown>;
+    }
+    case 'browser_text': {
+      const opts = payloadAs<{
+        session_id?: string;
+        url?: string;
+        selector?: string;
+        max_chars?: number;
+      }>(command);
+      return (await browserText(opts)) as unknown as Record<string, unknown>;
+    }
+    case 'browser_close_session': {
+      const { session_id } = payloadAs<{ session_id?: string }>(command);
+      return (await browserCloseSession(session_id ?? 'default')) as unknown as Record<string, unknown>;
+    }
+
+    // ─────────────────────────────────────────────────────
+    // Phase F: タスク中止 (今は ack のみ)
+    // ─────────────────────────────────────────────────────
+    case 'cancel_command': {
+      return { message: 'cancel acknowledged (graceful kill not implemented yet)' };
+    }
+
     default:
       throw new Error(`unsupported command: ${command.type}`);
   }
