@@ -2,6 +2,11 @@ import { createClient } from "@/utils/supabase/server"
 import { redirect } from "next/navigation"
 import { DashboardLoader } from "./dashboard-loader"
 
+export const metadata = {
+    title: "ダッシュボード",
+    description: "Focusmapのダッシュボード",
+}
+
 export default async function DashboardPage() {
     const supabase = await createClient()
 
