@@ -12,6 +12,9 @@ import {
   Terminal,
   TriangleAlert,
   WifiOff,
+  Bot,
+  Workflow,
+  HelpCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -26,6 +29,41 @@ interface Runner {
   available_secret_names?: string[];
   metadata?: Record<string, unknown> | null;
 }
+
+/**
+ * エージェント種別判定:
+ * - codex-rpc-bridge (旧): executors に claude/codex/codex_app
+ * - focusmap-agent (Phase F): executors に playwright/simple、 metadata.agent === 'focusmap-agent'
+ * - 不明: それ以外
+ */
+type AgentKind = 'focusmap-lite' | 'codex-bridge' | 'unknown';
+
+function detectAgentKind(r: Runner): AgentKind {
+  const meta = r.metadata as { agent?: string; app?: string } | null;
+  if (meta?.agent === 'focusmap-agent' || meta?.app === 'focusmap-lite') return 'focusmap-lite';
+  const exec = r.executors ?? [];
+  if (exec.includes('playwright') || exec.includes('simple')) return 'focusmap-lite';
+  if (exec.includes('claude') || exec.includes('codex') || exec.includes('codex_app')) return 'codex-bridge';
+  return 'unknown';
+}
+
+const KIND_META: Record<AgentKind, { label: string; icon: typeof Bot; color: string }> = {
+  'focusmap-lite': {
+    label: 'Focusmap Lite',
+    icon: Workflow,
+    color: 'text-blue-600 dark:text-blue-400',
+  },
+  'codex-bridge': {
+    label: 'Claude / Codex Bridge (既存)',
+    icon: Bot,
+    color: 'text-purple-600 dark:text-purple-400',
+  },
+  unknown: {
+    label: '不明 (executor未識別)',
+    icon: HelpCircle,
+    color: 'text-muted-foreground',
+  },
+};
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 2 * 60 * 1000; // 2分以内なら ONLINE
 const POLL_INTERVAL_MS = 5_000;
@@ -77,11 +115,14 @@ export function AgentStatusBadge() {
     const lastSeenAt = r.last_heartbeat_at ? new Date(r.last_heartbeat_at).getTime() : 0;
     const ageMs = lastSeenAt > 0 ? now - lastSeenAt : Infinity;
     const isOnline = ageMs < HEARTBEAT_ONLINE_WINDOW_MS;
-    return { ...r, isOnline, ageMs };
+    const kind = detectAgentKind(r);
+    return { ...r, isOnline, ageMs, kind };
   });
   const onlineCount = annotated.filter((r) => r.isOnline).length;
   const totalCount = annotated.length;
   const hasOnline = onlineCount > 0;
+  const hasFocusmapLiteOnline = annotated.some((r) => r.isOnline && r.kind === 'focusmap-lite');
+  const hasCodexBridgeOnline = annotated.some((r) => r.isOnline && r.kind === 'codex-bridge');
 
   if (loading) {
     return (
@@ -181,53 +222,89 @@ export function AgentStatusBadge() {
         </div>
       )}
 
+      {/* Focusmap Lite が未起動の警告 */}
+      {totalCount > 0 && !hasFocusmapLiteOnline && (
+        <div className="rounded-md border border-amber-300/50 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/30 px-3 py-2 text-[11px] space-y-1.5">
+          <p className="flex items-center gap-1 font-medium text-amber-800 dark:text-amber-200">
+            <TriangleAlert className="h-3.5 w-3.5" />
+            Focusmap Lite (Phase F の新機能) は未起動
+          </p>
+          <p className="text-amber-700/90 dark:text-amber-300/90">
+            ファイル操作 / ブラウザ自動操作 / Playwright を使うには Focusmap Lite が必要です。
+            {hasCodexBridgeOnline && '現在オンラインの Claude/Codex Bridge は別エージェントで、 Phase F の新コマンドには対応していません。'}
+          </p>
+          <Button asChild size="sm" className="h-7 gap-1 text-[11px]">
+            <Link href="/dashboard/workspace/setup?step=2">
+              <Workflow className="h-3 w-3" />
+              Focusmap Lite をセットアップ
+            </Link>
+          </Button>
+        </div>
+      )}
+
       {/* 各 runner の一覧 */}
       {annotated.length > 0 && (
         <ul className="space-y-1.5">
-          {annotated.map((r) => (
-            <li
-              key={r.id}
-              className={cn(
-                'flex items-start justify-between gap-3 rounded-md border bg-background/60 px-3 py-2 text-xs',
-                r.isOnline ? 'border-emerald-300/50 dark:border-emerald-900/40' : 'border-border/40',
-              )}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <Laptop
-                  className={cn(
-                    'h-3.5 w-3.5 shrink-0',
-                    r.isOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground',
-                  )}
-                />
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-foreground">
-                    {r.display_name ?? r.hostname}
-                  </p>
-                  <p className="truncate text-[10px] text-muted-foreground">
-                    {r.hostname} ・ executors: {r.executors.join(', ') || '-'}
+          {annotated.map((r) => {
+            const kindMeta = KIND_META[r.kind];
+            const KindIcon = kindMeta.icon;
+            return (
+              <li
+                key={r.id}
+                className={cn(
+                  'flex items-start justify-between gap-3 rounded-md border bg-background/60 px-3 py-2 text-xs',
+                  r.isOnline ? 'border-emerald-300/50 dark:border-emerald-900/40' : 'border-border/40',
+                )}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <Laptop
+                    className={cn(
+                      'h-3.5 w-3.5 shrink-0',
+                      r.isOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground',
+                    )}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <p className="truncate font-medium text-foreground">
+                        {r.display_name ?? r.hostname}
+                      </p>
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-0.5 rounded border border-border/40 bg-muted/40 px-1 py-0.5 text-[9px]',
+                          kindMeta.color,
+                        )}
+                        title={`エージェント種別: ${kindMeta.label}`}
+                      >
+                        <KindIcon className="h-2.5 w-2.5" />
+                        {kindMeta.label}
+                      </span>
+                    </div>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {r.hostname} ・ executors: {r.executors.join(', ') || '-'}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px]',
+                      r.isOnline
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                        : 'bg-muted text-muted-foreground',
+                    )}
+                  >
+                    {r.isOnline ? <Activity className="h-2.5 w-2.5 animate-pulse" /> : <WifiOff className="h-2.5 w-2.5" />}
+                    {r.isOnline ? 'オンライン' : 'オフライン'}
+                  </span>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">
+                    {r.last_heartbeat_at
+                      ? `最終 ${formatAge(r.ageMs)}`
+                      : 'heartbeat なし'}
                   </p>
                 </div>
-              </div>
-              <div className="text-right shrink-0">
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px]',
-                    r.isOnline
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                      : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {r.isOnline ? <Activity className="h-2.5 w-2.5 animate-pulse" /> : <WifiOff className="h-2.5 w-2.5" />}
-                  {r.isOnline ? 'オンライン' : 'オフライン'}
-                </span>
-                <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">
-                  {r.last_heartbeat_at
-                    ? `最終 ${formatAge(r.ageMs)}`
-                    : 'heartbeat なし'}
-                </p>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 
