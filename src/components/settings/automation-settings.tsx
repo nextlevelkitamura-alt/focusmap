@@ -7,6 +7,7 @@ import { Bot, CheckCircle2, Chrome, Clipboard, Cloud, DownloadCloud, KeyRound, P
 import { Button } from "@/components/ui/button"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
+import { AgentStatusBadge } from "@/components/settings/agent-status-badge"
 
 interface SpaceOption {
   id: string
@@ -142,6 +143,9 @@ function FocusmapLiteInstallPanel() {
 export function AutomationSettings() {
   return (
     <div className="space-y-5">
+      {/* 常駐エージェントの最上位ステータス (5秒polling) */}
+      <AgentStatusBadge />
+
       <AutomationStatusPanel spaceId={null} />
 
       <SettingBlock
