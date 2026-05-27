@@ -31,6 +31,11 @@ interface MemoToMindmapDialogProps {
   defaultSpaceId: string | null
   /** 選択メモが単一プロジェクトに属する場合、そのID（追記先の初期値） */
   defaultProjectId: string | null
+  /**
+   * 各メモの現在の所属プロジェクト ID マップ (任意)
+   * 渡されていれば、最頻プロジェクトを保存先の初期値として自動選択する
+   */
+  noteProjects?: Record<string, string | null>
   onClose: () => void
   onSuccess: (projectId: string) => void
 }
@@ -45,6 +50,7 @@ export function MemoToMindmapDialog({
   spaces,
   defaultSpaceId,
   defaultProjectId,
+  noteProjects,
   onClose,
   onSuccess,
 }: MemoToMindmapDialogProps) {
@@ -54,7 +60,32 @@ export function MemoToMindmapDialog({
   const [projectTitle, setProjectTitle] = useState("")
   const [error, setError] = useState<string | null>(null)
 
-  const [target, setTarget] = useState<string>(defaultProjectId || NEW_PROJECT)
+  // 選択されたメモが「最も多く所属する」プロジェクトを計算
+  const mostFrequentProjectId = useMemo(() => {
+    if (!noteProjects || noteIds.length === 0) return null
+    const counts = new Map<string, number>()
+    for (const id of noteIds) {
+      const pid = noteProjects[id]
+      if (!pid) continue
+      counts.set(pid, (counts.get(pid) ?? 0) + 1)
+    }
+    let bestId: string | null = null
+    let bestCount = 0
+    for (const [pid, count] of counts) {
+      if (count > bestCount) {
+        bestId = pid
+        bestCount = count
+      }
+    }
+    // 候補が現在の projects に存在する場合のみ採用
+    if (bestId && projects.some(p => p.id === bestId)) return bestId
+    return null
+  }, [noteIds, noteProjects, projects])
+
+  // 初期 target: 明示的 defaultProjectId > 最頻 > 新規作成
+  const initialTarget = defaultProjectId || mostFrequentProjectId || NEW_PROJECT
+
+  const [target, setTarget] = useState<string>(initialTarget)
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || spaces[0]?.id || "")
   const { pushAction } = useUndoRedo()
   const firstSpaceId = spaces[0]?.id || ""
@@ -65,9 +96,9 @@ export function MemoToMindmapDialog({
     setNodes([])
     setProjectTitle("")
     setError(null)
-    setTarget(defaultProjectId || NEW_PROJECT)
+    setTarget(defaultProjectId || mostFrequentProjectId || NEW_PROJECT)
     setSpaceId(defaultSpaceId || firstSpaceId)
-  }, [defaultProjectId, defaultSpaceId, firstSpaceId])
+  }, [defaultProjectId, mostFrequentProjectId, defaultSpaceId, firstSpaceId])
 
   useEffect(() => {
     if (!open) return
@@ -268,6 +299,47 @@ export function MemoToMindmapDialog({
             <p className="text-sm text-muted-foreground">
               選択した {noteIds.length} 件のメモを、AIがロジックツリーに整理します。
             </p>
+
+            {/* 保存先プロジェクト選択 (config 段階で必ず決める) */}
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">保存先プロジェクト</span>
+              <select
+                value={target}
+                onChange={e => setTarget(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value={NEW_PROJECT} disabled={!canCreateNew}>
+                  ＋ 新規プロジェクトとして作成
+                </option>
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.id === mostFrequentProjectId ? "⭐ " : ""}既存マップに追加: {p.title}
+                  </option>
+                ))}
+              </select>
+              {target === NEW_PROJECT && spaces.length > 1 && (
+                <select
+                  value={spaceId}
+                  onChange={e => setSpaceId(e.target.value)}
+                  className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  {spaces.map(s => (
+                    <option key={s.id} value={s.id}>スペース: {s.title}</option>
+                  ))}
+                </select>
+              )}
+              {mostFrequentProjectId && target === mostFrequentProjectId && (
+                <p className="rounded-md border border-primary/30 bg-primary/[0.04] px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                  ⭐ 選択したメモの多くが「
+                  {projects.find(p => p.id === mostFrequentProjectId)?.title}
+                  」に紐付いているため、自動選択しました
+                </p>
+              )}
+              <p className="text-[11px] text-muted-foreground/80">
+                ※ 確定すると、選択した {noteIds.length} 件のメモ全てがこのプロジェクトに紐付け直されます。
+              </p>
+            </div>
+
             <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">整理の深さ</span>
               <div className="flex gap-2">

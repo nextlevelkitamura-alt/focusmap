@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronDown, Check, Plus, Layers, FolderKanban } from "lucide-react"
+import { ChevronDown, Check, Plus, Layers, FolderKanban, Pencil } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import {
   Popover,
@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/utils"
 import { DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
 import { CreateProjectDialog } from "./create-project-dialog"
+import { SpaceFormDialog, type SpaceFormMode } from "./space-form-dialog"
 
 interface SpaceProjectSwitcherProps {
   spaces: Space[]
@@ -21,6 +22,8 @@ interface SpaceProjectSwitcherProps {
   onSelectProject: (id: string | null) => void
   /** 新規作成されたプロジェクトを親 (lists) に反映するコールバック (任意) */
   onProjectCreated?: (project: Project) => void
+  /** スペース作成・更新を親に反映するコールバック (任意) */
+  onSpaceSaved?: (space: Space) => void
   showAllProjectsOption?: boolean
   className?: string
 }
@@ -43,12 +46,16 @@ export function SpaceProjectSwitcher({
   onSelectSpace,
   onSelectProject,
   onProjectCreated,
+  onSpaceSaved,
   showAllProjectsOption = false,
   className,
 }: SpaceProjectSwitcherProps) {
   const [spaceOpen, setSpaceOpen] = useState(false)
   const [projectOpen, setProjectOpen] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [spaceFormOpen, setSpaceFormOpen] = useState(false)
+  const [spaceFormMode, setSpaceFormMode] = useState<SpaceFormMode>("create")
+  const [editingSpace, setEditingSpace] = useState<Space | null>(null)
 
   const currentProject = projects.find((p) => p.id === selectedProjectId) || null
   const currentSpace =
@@ -78,6 +85,28 @@ export function SpaceProjectSwitcher({
     onSelectProject(project.id)
     setCreateDialogOpen(false)
     setProjectOpen(false)
+  }
+
+  const openCreateSpace = () => {
+    setSpaceFormMode("create")
+    setEditingSpace(null)
+    setSpaceFormOpen(true)
+    setSpaceOpen(false)
+  }
+
+  const openEditSpace = (space: Space) => {
+    setSpaceFormMode("edit")
+    setEditingSpace(space)
+    setSpaceFormOpen(true)
+    setSpaceOpen(false)
+  }
+
+  const handleSpaceSaved = (space: Space) => {
+    onSpaceSaved?.(space)
+    if (spaceFormMode === "create") {
+      onSelectSpace(space.id)
+    }
+    setSpaceFormOpen(false)
   }
 
   return (
@@ -131,23 +160,51 @@ export function SpaceProjectSwitcher({
             {spaces.map((space) => {
               const active = space.id === currentSpace?.id
               return (
-                <button
+                <div
                   key={space.id}
-                  onClick={() => handlePickSpace(space.id)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
-                    active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/60",
+                    "group flex w-full items-center gap-1 rounded transition-colors",
+                    active ? "bg-primary/10" : "hover:bg-muted/60",
                   )}
                 >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
-                  />
-                  <span className="truncate flex-1">{space.title}</span>
-                  {active && <Check className="w-3.5 h-3.5 shrink-0" />}
-                </button>
+                  <button
+                    onClick={() => handlePickSpace(space.id)}
+                    className={cn(
+                      "flex flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm",
+                      active ? "text-primary font-medium" : "",
+                    )}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
+                    />
+                    <span className="truncate flex-1">{space.title}</span>
+                    {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openEditSpace(space)
+                    }}
+                    aria-label={`${space.title} を編集`}
+                    title="名前・色を編集"
+                    className="mr-1 inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground transition-opacity focus:opacity-100"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
               )
             })}
+          </div>
+          <div className="mt-1 border-t border-border/40 pt-1">
+            <button
+              onClick={openCreateSpace}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-primary hover:bg-primary/10 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate flex-1">新しいスペース</span>
+            </button>
           </div>
         </PopoverContent>
       </Popover>
@@ -250,6 +307,14 @@ export function SpaceProjectSwitcher({
         defaultSpaceId={selectedSpaceId ?? currentSpace?.id ?? null}
         onClose={() => setCreateDialogOpen(false)}
         onCreated={handleProjectCreated}
+      />
+
+      <SpaceFormDialog
+        open={spaceFormOpen}
+        mode={spaceFormMode}
+        space={editingSpace}
+        onClose={() => setSpaceFormOpen(false)}
+        onSaved={handleSpaceSaved}
       />
     </div>
   )

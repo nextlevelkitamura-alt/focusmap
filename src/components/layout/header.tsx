@@ -61,6 +61,7 @@ export function Header({
     const [supabase] = useState(() => createClient())
     const [organizeDialogOpen, setOrganizeDialogOpen] = useState(false)
     const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
+    const [organizeMemoProjects, setOrganizeMemoProjects] = useState<Record<string, string | null>>({})
     const [organizeError, setOrganizeError] = useState<string | null>(null)
     const [isLoadingOrganizeMemos, setIsLoadingOrganizeMemos] = useState(false)
 
@@ -99,24 +100,34 @@ export function Header({
             const res = await fetch(`/api/wishlist?project_id=${encodeURIComponent(selectedProjectId)}`, { cache: "no-store" })
             const data = await res.json()
             if (!res.ok) throw new Error(data?.error || "メモの取得に失敗しました")
-            const ids = ((data.items || []) as Array<{
+            const items = ((data.items || []) as Array<{
                 id: string
                 memo_status?: string | null
                 is_completed?: boolean | null
                 google_event_id?: string | null
+                project_id?: string | null
             }>)
                 .filter(item =>
                     !item.is_completed &&
                     !item.google_event_id &&
                     (item.memo_status ?? "unsorted") === "unsorted",
                 )
-                .map(item => item.id)
+
+            const ids = items.map(item => item.id)
+            const projectMap: Record<string, string | null> = {}
+            for (const item of items) {
+                projectMap[item.id] = item.project_id ?? null
+            }
 
             if (ids.length === 0) {
                 setOrganizeError("このプロジェクトに未整理メモがありません")
                 return
             }
-            setOrganizeMemoIds(ids.slice(0, 50))
+            const slicedIds = ids.slice(0, 50)
+            setOrganizeMemoIds(slicedIds)
+            setOrganizeMemoProjects(
+                Object.fromEntries(slicedIds.map(id => [id, projectMap[id] ?? null])),
+            )
             setOrganizeDialogOpen(true)
         } catch (error) {
             setOrganizeError(error instanceof Error ? error.message : "メモの取得に失敗しました")
@@ -284,6 +295,7 @@ export function Header({
             <MemoToMindmapDialog
                 open={organizeDialogOpen}
                 noteIds={organizeMemoIds}
+                noteProjects={organizeMemoProjects}
                 source="wishlist"
                 projects={projects.map(p => ({ id: p.id, title: p.title }))}
                 spaces={spaces.map(s => ({ id: s.id, title: s.title }))}
