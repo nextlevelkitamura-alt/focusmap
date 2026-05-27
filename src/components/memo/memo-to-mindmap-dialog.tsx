@@ -327,14 +327,14 @@ export function MemoToMindmapDialog({
               )}
             </div>
             <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">保存先</span>
+              <span className="text-xs font-medium text-muted-foreground">保存先プロジェクト</span>
               <select
                 value={target}
                 onChange={e => setTarget(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 <option value={NEW_PROJECT} disabled={!canCreateNew}>
-                  新規プロジェクトとして作成
+                  ＋ 新規プロジェクトとして作成
                 </option>
                 {projects.map(p => (
                   <option key={p.id} value={p.id}>
@@ -358,6 +358,13 @@ export function MemoToMindmapDialog({
                   スペースがないため新規作成できません。既存マップを選んでください。
                 </p>
               )}
+              <p className="rounded-md border border-primary/30 bg-primary/[0.04] px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                ℹ️ 確定すると、選択した {noteIds.length} 件のメモは
+                {target === NEW_PROJECT
+                  ? '新しく作成されるプロジェクト'
+                  : `既存プロジェクト「${projects.find(p => p.id === target)?.title ?? '...'}」`}
+                {' '}に紐付けられ、メモ側の所属も上書きされます。
+              </p>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>

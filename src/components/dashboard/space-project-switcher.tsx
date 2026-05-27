@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronRight, ChevronDown, Check } from "lucide-react"
+import { ChevronDown, Check, Plus, Layers, FolderKanban } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import {
   Popover,
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
+import { CreateProjectDialog } from "./create-project-dialog"
 
 interface SpaceProjectSwitcherProps {
   spaces: Space[]
@@ -18,6 +19,8 @@ interface SpaceProjectSwitcherProps {
   selectedProjectId: string | null
   onSelectSpace: (id: string | null) => void
   onSelectProject: (id: string | null) => void
+  /** 新規作成されたプロジェクトを親 (lists) に反映するコールバック (任意) */
+  onProjectCreated?: (project: Project) => void
   showAllProjectsOption?: boolean
   className?: string
 }
@@ -27,8 +30,10 @@ function isArchived(p: Project) {
 }
 
 /**
- * 中央ペイン上部のパンくず＝現在地表示 + 切替ポップオーバー。
- * サイドバーを開かずにスペース/プロジェクトを切り替える主導線。
+ * Space と Project を **別々のポップオーバー** で切り替える UI。
+ *
+ * 旧版は1つのポップオーバー内に両方並べていたが、スマホでも操作しやすいよう分離。
+ * Project側には「+ 新規プロジェクト」ボタンを内蔵し、その場で追加可能。
  */
 export function SpaceProjectSwitcher({
   spaces,
@@ -37,62 +42,85 @@ export function SpaceProjectSwitcher({
   selectedProjectId,
   onSelectSpace,
   onSelectProject,
+  onProjectCreated,
   showAllProjectsOption = false,
   className,
 }: SpaceProjectSwitcherProps) {
-  const [open, setOpen] = useState(false)
+  const [spaceOpen, setSpaceOpen] = useState(false)
+  const [projectOpen, setProjectOpen] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
-  const currentProject = projects.find(p => p.id === selectedProjectId) || null
+  const currentProject = projects.find((p) => p.id === selectedProjectId) || null
   const currentSpace =
-    spaces.find(s => s.id === (currentProject?.space_id ?? selectedSpaceId)) || null
+    spaces.find((s) => s.id === (currentProject?.space_id ?? selectedSpaceId)) || null
+
+  // Project switcher に表示する候補: 現在の space に属するもの (未選択時は全体)
+  const visibleProjects = selectedSpaceId
+    ? projects.filter((p) => p.space_id === selectedSpaceId && !isArchived(p))
+    : projects.filter((p) => !isArchived(p))
+
+  const handlePickSpace = (id: string | null) => {
+    onSelectSpace(id)
+    // Space切替時は project 選択を解除 (showAll の時のみ。それ以外は維持)
+    if (showAllProjectsOption) onSelectProject(null)
+    setSpaceOpen(false)
+  }
 
   const handlePickProject = (project: Project) => {
     onSelectProject(project.id)
     if (project.space_id !== selectedSpaceId) onSelectSpace(project.space_id)
-    setOpen(false)
+    setProjectOpen(false)
+  }
+
+  const handleProjectCreated = (project: Project) => {
+    onProjectCreated?.(project)
+    onSelectSpace(project.space_id)
+    onSelectProject(project.id)
+    setCreateDialogOpen(false)
+    setProjectOpen(false)
   }
 
   return (
-    <div className={cn("shrink-0 border-b bg-background px-2 py-1", className)}>
-      <Popover open={open} onOpenChange={setOpen}>
+    <div className={cn("flex shrink-0 items-center gap-1.5 px-2 py-1", className)}>
+      {/* Space switcher */}
+      <Popover open={spaceOpen} onOpenChange={setSpaceOpen}>
         <PopoverTrigger asChild>
-          <button className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-muted transition-colors">
+          <button
+            className="flex min-w-0 max-w-[180px] items-center gap-1.5 rounded-md border border-border/50 px-2 py-1 text-sm hover:bg-muted transition-colors"
+            title="スペースを切替"
+          >
             <span
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: normalizeColor(currentSpace?.color, DEFAULT_SPACE_COLOR) }}
             />
-            <span className="min-w-0 text-muted-foreground truncate max-w-[140px]">
+            <span className="min-w-0 truncate text-muted-foreground">
               {currentSpace?.title ?? "全体"}
             </span>
-            <ChevronRight className="w-3 h-3 text-muted-foreground/50 shrink-0" />
-            <span className="min-w-0 font-medium truncate max-w-[200px]">
-              {currentProject?.title ?? (showAllProjectsOption ? "全プロジェクト" : "プロジェクト未選択")}
-            </span>
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <ChevronDown className="w-3 h-3 text-muted-foreground/60 shrink-0" />
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-72 p-1.5" align="start" sideOffset={4}>
-          <div className="max-h-[60vh] overflow-y-auto">
+        <PopoverContent className="w-60 p-1" align="start" sideOffset={4}>
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+            <Layers className="h-3 w-3" />
+            スペース
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto">
             {showAllProjectsOption && (
               <button
-                onClick={() => {
-                  onSelectSpace(null)
-                  onSelectProject(null)
-                  setOpen(false)
-                }}
+                onClick={() => handlePickSpace(null)}
                 className={cn(
-                  "mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
-                  selectedSpaceId === null && selectedProjectId === null
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                  selectedSpaceId === null
                     ? "bg-primary/10 text-primary"
-                    : "hover:bg-muted/50",
+                    : "hover:bg-muted/60",
                 )}
               >
                 <span
                   className="w-2.5 h-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: DEFAULT_SPACE_COLOR }}
                 />
-                <span className="min-w-0 flex-1 truncate">全体 / 全プロジェクト</span>
-                {selectedSpaceId === null && selectedProjectId === null && <Check className="w-3.5 h-3.5 shrink-0" />}
+                <span className="truncate flex-1">全体</span>
+                {selectedSpaceId === null && <Check className="w-3.5 h-3.5 shrink-0" />}
               </button>
             )}
             {spaces.length === 0 && (
@@ -100,65 +128,129 @@ export function SpaceProjectSwitcher({
                 スペースがありません
               </div>
             )}
-            {spaces.map(space => {
-              const spaceProjects = projects.filter(
-                p => p.space_id === space.id && !isArchived(p),
-              )
+            {spaces.map((space) => {
+              const active = space.id === currentSpace?.id
               return (
-                <div key={space.id} className="mb-1.5 last:mb-0">
-                  <button
-                    onClick={() => {
-                      onSelectSpace(space.id)
-                      if (showAllProjectsOption) {
-                        onSelectProject(null)
-                        setOpen(false)
-                      }
-                    }}
-                    className={cn(
-                      "flex items-center gap-1.5 w-full px-1.5 py-1 rounded text-left hover:bg-muted/60 transition-colors",
-                      showAllProjectsOption && selectedSpaceId === space.id && selectedProjectId === null && "bg-primary/10 text-primary",
-                    )}
-                  >
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
-                    />
-                    <span className="text-sm font-semibold truncate flex-1">{space.title}</span>
-                    {showAllProjectsOption && selectedSpaceId === space.id && selectedProjectId === null && (
-                      <Check className="w-3.5 h-3.5 shrink-0" />
-                    )}
-                  </button>
-                  {spaceProjects.map(p => {
-                    const active = p.id === selectedProjectId
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => handlePickProject(p)}
-                        className={cn(
-                          "flex items-center gap-2 w-full pl-6 pr-2 py-1.5 rounded text-left text-sm transition-colors",
-                          active ? "bg-primary/10 text-primary" : "hover:bg-muted/50",
-                        )}
-                      >
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: normalizeColor(p.color_theme, DEFAULT_PROJECT_COLOR) }}
-                        />
-                        <span className="truncate flex-1">{p.title}</span>
-                        {active && <Check className="w-3.5 h-3.5 shrink-0" />}
-                      </button>
-                    )
-                  })}
-                  {spaceProjects.length === 0 && (
-                    <div className="pl-6 pr-2 py-1 text-xs text-muted-foreground/50">
-                      プロジェクトなし
-                    </div>
+                <button
+                  key={space.id}
+                  onClick={() => handlePickSpace(space.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                    active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/60",
                   )}
-                </div>
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
+                  />
+                  <span className="truncate flex-1">{space.title}</span>
+                  {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                </button>
               )
             })}
           </div>
         </PopoverContent>
       </Popover>
+
+      <span className="text-muted-foreground/40 text-xs select-none">/</span>
+
+      {/* Project switcher */}
+      <Popover open={projectOpen} onOpenChange={setProjectOpen}>
+        <PopoverTrigger asChild>
+          <button
+            className="flex min-w-0 max-w-[220px] items-center gap-1.5 rounded-md border border-border/50 px-2 py-1 text-sm hover:bg-muted transition-colors"
+            title="プロジェクトを切替"
+          >
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{
+                backgroundColor: normalizeColor(currentProject?.color_theme, DEFAULT_PROJECT_COLOR),
+              }}
+            />
+            <span className="min-w-0 font-medium truncate">
+              {currentProject?.title ?? (showAllProjectsOption ? "全プロジェクト" : "プロジェクトを選択")}
+            </span>
+            <ChevronDown className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64 p-1" align="start" sideOffset={4}>
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+            <FolderKanban className="h-3 w-3" />
+            プロジェクト {currentSpace && <span className="normal-case">({currentSpace.title})</span>}
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto">
+            {showAllProjectsOption && (
+              <button
+                onClick={() => {
+                  onSelectProject(null)
+                  setProjectOpen(false)
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                  selectedProjectId === null
+                    ? "bg-primary/10 text-primary"
+                    : "hover:bg-muted/60",
+                )}
+              >
+                <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/30" />
+                <span className="truncate flex-1">全プロジェクト</span>
+                {selectedProjectId === null && <Check className="w-3.5 h-3.5 shrink-0" />}
+              </button>
+            )}
+            {visibleProjects.length === 0 && (
+              <div className="px-2 py-3 text-xs text-muted-foreground/70 text-center">
+                プロジェクトがありません
+              </div>
+            )}
+            {visibleProjects.map((p) => {
+              const active = p.id === selectedProjectId
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => handlePickProject(p)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                    active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/60",
+                  )}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: normalizeColor(p.color_theme, DEFAULT_PROJECT_COLOR) }}
+                  />
+                  <span className="truncate flex-1">{p.title}</span>
+                  {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                </button>
+              )
+            })}
+          </div>
+          <div className="mt-1 border-t border-border/40 pt-1">
+            <button
+              onClick={() => {
+                setProjectOpen(false)
+                setCreateDialogOpen(true)
+              }}
+              disabled={spaces.length === 0}
+              className={cn(
+                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                spaces.length === 0
+                  ? "text-muted-foreground/40 cursor-not-allowed"
+                  : "text-primary hover:bg-primary/10",
+              )}
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate flex-1">新しいプロジェクト</span>
+            </button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <CreateProjectDialog
+        open={createDialogOpen}
+        spaces={spaces}
+        defaultSpaceId={selectedSpaceId ?? currentSpace?.id ?? null}
+        onClose={() => setCreateDialogOpen(false)}
+        onCreated={handleProjectCreated}
+      />
     </div>
   )
 }
