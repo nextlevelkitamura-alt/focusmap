@@ -77,7 +77,12 @@ jobs:
             --set-env-vars EXTERNAL_AI_API_BASE_URL=https://opencode.ai/zen/go/v1/chat/completions \
             --set-env-vars EXTERNAL_AI_MODEL=kimi-k2.6 \
             --set-env-vars EXTERNAL_AI_DISABLE_THINKING=false \
-            --set-env-vars GOOGLE_REDIRECT_URI=${PUBLIC_URL}/api/calendar/callback
+            --set-env-vars GOOGLE_REDIRECT_URI=${PUBLIC_URL}/api/calendar/callback \
+            --set-env-vars DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }} \
+            --set-env-vars DEEPSEEK_MODEL=deepseek-v4-flash \
+            --set-env-vars DEEPSEEK_INTENT_MODEL=deepseek-v4-flash \
+            --set-env-vars DEEPSEEK_AUTOMATION_MODEL=deepseek-v4-pro \
+            --set-env-vars DEEPSEEK_AGENT_MODEL=deepseek-v4-pro
 
       - name: Show service URL
         run: |
