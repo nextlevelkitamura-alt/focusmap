@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/server';
 import { PLAN_DEFINITIONS, getMonthlyExecutionLimit, type PlanId } from '@/lib/plans';
 import { formatCurrency, formatBillingCycle } from '@/lib/format';
 import { Users, CreditCard, BarChart3, Server, ArrowRight, Sparkles } from 'lucide-react';
+import { UsageCard } from '@/components/usage/usage-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -115,6 +116,9 @@ export default async function WorkspaceOverviewPage({ searchParams }: PageProps)
           <Stat label="稼働中エージェント" value={`${activeRunnerCount} 台`} />
         </CardContent>
       </Card>
+
+      {/* 使用量バー (Claude Code 型、 残量・警告アイコン付き) */}
+      <UsageCard spaceId={spaceId} userId={user.id} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <ShortcutCard
