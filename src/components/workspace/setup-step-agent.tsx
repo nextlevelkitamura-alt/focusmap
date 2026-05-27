@@ -16,6 +16,9 @@ import {
   Sparkles,
   CornerDownLeft,
   PartyPopper,
+  Download,
+  MousePointerClick,
+  ShieldAlert,
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import { cn } from '@/lib/utils';
@@ -39,8 +42,11 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
   const [error, setError] = useState<string | null>(null);
   const [guideStep, setGuideStep] = useState<GuideStep>(1);
   const [showRawCommand, setShowRawCommand] = useState<boolean>(false);
+  const [downloading, setDownloading] = useState<boolean>(false);
+  const [downloaded, setDownloaded] = useState<boolean>(false);
+  const [mode, setMode] = useState<'easy' | 'classic'>('easy');
 
-  // トークン発行
+  // トークン発行 (classic mode 用、 1度だけ)
   const issueToken = async () => {
     if (!spaceId) {
       setError('Workspace が選択されていません');
@@ -66,10 +72,10 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
   };
 
   useEffect(() => {
-    if (!token && spaceId) {
+    if (!token && spaceId && mode === 'classic') {
       void issueToken();
     }
-  }, [spaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [spaceId, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 接続待機: Realtime でai_runners 監視 + 接続検知時に Step4 へ
   useEffect(() => {
@@ -96,19 +102,54 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
     };
   }, [spaceId, connected]);
 
-  // ボタン: コピー + 次ステップに進める
+  // classic: コピー + 次ステップに進める
   const handleCopyAndAdvance = async () => {
     if (!installCmd) return;
     try {
       await navigator.clipboard.writeText(installCmd);
       setCopied(true);
-      // Step 1 (コピー) → Step 2 (Spotlight) に自動進める
       if (guideStep < 2) setGuideStep(2);
       setTimeout(() => setCopied(false), 2500);
     } catch {
-      // クリップボード非対応環境 → 手動でコピーしてもらう
       setError('クリップボードに自動コピーできませんでした。 下の「コマンドを見る」から手動でコピーしてください。');
       setShowRawCommand(true);
+    }
+  };
+
+  // easy: .command ファイル ダウンロード
+  const handleDownloadScript = async () => {
+    if (!spaceId) {
+      setError('Workspace が選択されていません');
+      return;
+    }
+    setDownloading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/agents/setup-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ space_id: spaceId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error ?? 'スクリプト生成に失敗しました');
+      }
+      const blob = await res.blob();
+      const tokenShort = res.headers.get('X-Token-Short') ?? 'setup';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Focusmap-Setup-${tokenShort}.command`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDownloaded(true);
+      if (guideStep < 2) setGuideStep(2);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ダウンロードに失敗しました');
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -123,102 +164,234 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
         </p>
       </div>
 
-      {/* メインCTA: ワンクリックでコピー */}
-      <div className="rounded-lg border border-primary/30 bg-primary/[0.04] p-4 space-y-3">
-        <Button
-          size="lg"
-          className="w-full h-auto py-4 flex flex-col items-center gap-1"
-          onClick={handleCopyAndAdvance}
-          disabled={!isInstallReady}
-        >
-          {loading ? (
-            <>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="text-xs">トークンを発行中…</span>
-            </>
-          ) : copied ? (
-            <>
-              <Check className="h-5 w-5" />
-              <span className="text-sm font-semibold">コピーしました ✓</span>
-              <span className="text-[10px] opacity-90">次は ⌘+Space → 「ターミナル」</span>
-            </>
-          ) : (
-            <>
-              <Copy className="h-5 w-5" />
-              <span className="text-sm font-semibold">ワンクリックでコマンドをコピー</span>
-              <span className="text-[10px] opacity-90">セットアップ用のコマンドが自動でコピーされます</span>
-            </>
+      {/* モード切替 */}
+      <div className="inline-flex rounded-md border border-border/60 bg-muted/30 p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => setMode('easy')}
+          className={cn(
+            'rounded px-3 py-1 font-medium transition-colors',
+            mode === 'easy' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
           )}
-        </Button>
-
-        {error && (
-          <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
-        )}
-
-        <details
-          className="text-[11px] text-muted-foreground"
-          open={showRawCommand}
-          onToggle={(e) => setShowRawCommand((e.target as HTMLDetailsElement).open)}
         >
-          <summary className="cursor-pointer select-none hover:text-foreground">
-            コマンドを見る (上級者向け)
-          </summary>
-          {installCmd && (
-            <pre className="mt-1.5 overflow-x-auto rounded border border-border/40 bg-background px-2 py-1.5 font-mono text-[10px]">
-              {installCmd}
-            </pre>
+          <Download className="mr-1 inline h-3 w-3" />
+          かんたん (推奨)
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('classic')}
+          className={cn(
+            'rounded px-3 py-1 font-medium transition-colors',
+            mode === 'classic' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
           )}
-        </details>
+        >
+          <Terminal className="mr-1 inline h-3 w-3" />
+          コピペ (上級)
+        </button>
       </div>
+
+      {/* メインCTA */}
+      {mode === 'easy' ? (
+        <div className="rounded-lg border border-primary/30 bg-primary/[0.04] p-4 space-y-3">
+          <Button
+            size="lg"
+            className="w-full h-auto py-4 flex flex-col items-center gap-1"
+            onClick={handleDownloadScript}
+            disabled={downloading || !spaceId}
+          >
+            {downloading ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-xs">スクリプトを生成中…</span>
+              </>
+            ) : downloaded ? (
+              <>
+                <Check className="h-5 w-5" />
+                <span className="text-sm font-semibold">ダウンロード完了 ✓</span>
+                <span className="text-[10px] opacity-90">
+                  次は Downloads フォルダで .command ファイルをダブルクリック
+                </span>
+              </>
+            ) : (
+              <>
+                <Download className="h-5 w-5" />
+                <span className="text-sm font-semibold">セットアップファイルをダウンロード</span>
+                <span className="text-[10px] opacity-90">
+                  ダブルクリックでターミナルが自動起動&セットアップ実行
+                </span>
+              </>
+            )}
+          </Button>
+
+          {downloaded && (
+            <div className="rounded-md border border-amber-300/50 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/30 px-3 py-2 text-[11px] space-y-1.5">
+              <p className="flex items-center gap-1 font-medium text-amber-800 dark:text-amber-200">
+                <ShieldAlert className="h-3.5 w-3.5" />
+                初回は「開発元未確認」 警告が出ます
+              </p>
+              <ol className="space-y-0.5 pl-4 list-decimal text-amber-700 dark:text-amber-300">
+                <li>
+                  Downloads フォルダで{' '}
+                  <code className="bg-amber-100/60 dark:bg-amber-900/40 px-1 rounded">
+                    Focusmap-Setup-*.command
+                  </code>{' '}
+                  を <strong>control + クリック</strong>
+                </li>
+                <li>
+                  メニューから「<strong>開く</strong>」を選択
+                </li>
+                <li>
+                  確認ダイアログで「<strong>開く</strong>」を再度クリック
+                </li>
+              </ol>
+              <p className="text-[10px] text-amber-700/70 dark:text-amber-300/70">
+                ※ Apple Developer 署名は将来対応。 現状この警告承認が必要です (毎回ではなく初回のみ)。
+              </p>
+            </div>
+          )}
+
+          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-primary/30 bg-primary/[0.04] p-4 space-y-3">
+          <Button
+            size="lg"
+            className="w-full h-auto py-4 flex flex-col items-center gap-1"
+            onClick={handleCopyAndAdvance}
+            disabled={!isInstallReady}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-xs">トークンを発行中…</span>
+              </>
+            ) : copied ? (
+              <>
+                <Check className="h-5 w-5" />
+                <span className="text-sm font-semibold">コピーしました ✓</span>
+                <span className="text-[10px] opacity-90">次は ⌘+Space → 「ターミナル」</span>
+              </>
+            ) : (
+              <>
+                <Copy className="h-5 w-5" />
+                <span className="text-sm font-semibold">ワンクリックでコマンドをコピー</span>
+                <span className="text-[10px] opacity-90">セットアップ用のコマンドが自動でコピーされます</span>
+              </>
+            )}
+          </Button>
+
+          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+
+          <details
+            className="text-[11px] text-muted-foreground"
+            open={showRawCommand}
+            onToggle={(e) => setShowRawCommand((e.target as HTMLDetailsElement).open)}
+          >
+            <summary className="cursor-pointer select-none hover:text-foreground">
+              コマンドを見る (上級者向け)
+            </summary>
+            {installCmd && (
+              <pre className="mt-1.5 overflow-x-auto rounded border border-border/40 bg-background px-2 py-1.5 font-mono text-[10px]">
+                {installCmd}
+              </pre>
+            )}
+          </details>
+        </div>
+      )}
 
       {/* 4ステップ視覚ガイド */}
       <div className="space-y-2">
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">セットアップ手順</p>
 
-        <GuideStepRow
-          step={1}
-          active={guideStep === 1}
-          done={guideStep > 1}
-          icon={Copy}
-          title="上のボタンを押す"
-          desc="コマンドが自動的にクリップボードへコピーされます"
-        />
-
-        <GuideStepRow
-          step={2}
-          active={guideStep === 2}
-          done={guideStep > 2}
-          icon={Search}
-          title="⌘ + Space → 「ターミナル」と入力 → Enter"
-          desc="macOS の Spotlight検索でターミナル.app が起動します"
-          onClick={() => guideStep >= 2 && setGuideStep(3)}
-          actionLabel={guideStep === 2 ? '開いたら次へ' : undefined}
-        />
-
-        <GuideStepRow
-          step={3}
-          active={guideStep === 3}
-          done={guideStep > 3}
-          icon={ClipboardPaste}
-          title="ターミナルで ⌘ + V → Enter"
-          desc="貼り付けた後に Enter で実行。 5-10分待つと自動完了します"
-          onClick={() => guideStep >= 3 && setGuideStep(4)}
-          actionLabel={guideStep === 3 ? '実行中→次へ' : undefined}
-        />
-
-        <GuideStepRow
-          step={4}
-          active={guideStep === 4}
-          done={connected}
-          icon={connected ? PartyPopper : Sparkles}
-          title={connected ? 'セットアップ完了！' : 'エージェントの接続を待機中…'}
-          desc={
-            connected
-              ? 'Mac mini が Focusmap に接続されました。次のステップへ進めます。'
-              : 'コマンド実行後、自動で「✓ 完了」表示に切り替わります (最大10分)。'
-          }
-          waiting={!connected && guideStep === 4}
-        />
+        {mode === 'easy' ? (
+          <>
+            <GuideStepRow
+              step={1}
+              active={guideStep === 1}
+              done={guideStep > 1}
+              icon={Download}
+              title="上のボタンでファイルをダウンロード"
+              desc="セットアップ用の .command ファイル がDownloadsに保存されます"
+            />
+            <GuideStepRow
+              step={2}
+              active={guideStep === 2}
+              done={guideStep > 2}
+              icon={MousePointerClick}
+              title="ファイルをダブルクリック (初回は control+クリック →「開く」)"
+              desc="ターミナルが自動的に起動して セットアップが始まります"
+              onClick={() => guideStep >= 2 && setGuideStep(3)}
+              actionLabel={guideStep === 2 ? '開いたら次へ' : undefined}
+            />
+            <GuideStepRow
+              step={3}
+              active={guideStep === 3}
+              done={guideStep > 3}
+              icon={Loader2}
+              title="そのまま待つだけ (5-10分)"
+              desc="Node.js / Playwright を自動でインストールします。何もする必要はありません。"
+              onClick={() => guideStep >= 3 && setGuideStep(4)}
+              actionLabel={guideStep === 3 ? '進行中→次へ' : undefined}
+            />
+            <GuideStepRow
+              step={4}
+              active={guideStep === 4}
+              done={connected}
+              icon={connected ? PartyPopper : Sparkles}
+              title={connected ? 'セットアップ完了！' : 'エージェントの接続を待機中…'}
+              desc={
+                connected
+                  ? 'Mac mini が Focusmap に接続されました。次のステップへ進めます。'
+                  : '接続検知次第、自動で「✓ 完了」表示に切り替わります (最大10分)。'
+              }
+              waiting={!connected && guideStep === 4}
+            />
+          </>
+        ) : (
+          <>
+            <GuideStepRow
+              step={1}
+              active={guideStep === 1}
+              done={guideStep > 1}
+              icon={Copy}
+              title="上のボタンを押す"
+              desc="コマンドが自動的にクリップボードへコピーされます"
+            />
+            <GuideStepRow
+              step={2}
+              active={guideStep === 2}
+              done={guideStep > 2}
+              icon={Search}
+              title="⌘ + Space → 「ターミナル」と入力 → Enter"
+              desc="macOS の Spotlight検索でターミナル.app が起動します"
+              onClick={() => guideStep >= 2 && setGuideStep(3)}
+              actionLabel={guideStep === 2 ? '開いたら次へ' : undefined}
+            />
+            <GuideStepRow
+              step={3}
+              active={guideStep === 3}
+              done={guideStep > 3}
+              icon={ClipboardPaste}
+              title="ターミナルで ⌘ + V → Enter"
+              desc="貼り付けた後に Enter で実行。 5-10分待つと自動完了します"
+              onClick={() => guideStep >= 3 && setGuideStep(4)}
+              actionLabel={guideStep === 3 ? '実行中→次へ' : undefined}
+            />
+            <GuideStepRow
+              step={4}
+              active={guideStep === 4}
+              done={connected}
+              icon={connected ? PartyPopper : Sparkles}
+              title={connected ? 'セットアップ完了！' : 'エージェントの接続を待機中…'}
+              desc={
+                connected
+                  ? 'Mac mini が Focusmap に接続されました。次のステップへ進めます。'
+                  : 'コマンド実行後、自動で「✓ 完了」表示に切り替わります (最大10分)。'
+              }
+              waiting={!connected && guideStep === 4}
+            />
+          </>
+        )}
       </div>
 
       {/* 接続状況バナー */}
@@ -250,16 +423,17 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
         )}
       </div>
 
-      {/* よくある質問 / トラブル */}
+      {/* トラブルシューティング */}
       <details className="text-xs text-muted-foreground">
         <summary className="cursor-pointer select-none font-medium hover:text-foreground">
           うまくいかない場合
         </summary>
         <ul className="mt-2 space-y-1.5 pl-4 list-disc">
-          <li>10分経っても接続にならない → 「トークンを再発行」 ボタンで新しい token を取得</li>
+          <li>10分経っても接続にならない → 「ファイル再ダウンロード」 ボタンで token 新発行</li>
+          <li>「開発元未確認」 警告が消えない → control+クリック → 「開く」 を選択 (初回のみ)</li>
           <li>ターミナルでエラーが出た → エラーメッセージをコピーして サポートに連絡</li>
-          <li>Mac mini をお持ちでない → ご自分の Mac で常時起動できる環境が必要 (動作中は閉じない設定推奨)</li>
-          <li>Windowsをお使いの方 → 現状 Windows非対応。 Mac mini導入をご検討ください</li>
+          <li>Mac mini をお持ちでない → 常時起動できるMac環境推奨</li>
+          <li>Windows 非対応 → 現状 macOS のみ対応</li>
         </ul>
       </details>
 
@@ -269,10 +443,17 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
           戻る
         </Button>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={issueToken} disabled={loading || !spaceId}>
-            <RefreshCw className={cn('mr-1 h-3.5 w-3.5', loading && 'animate-spin')} />
-            トークン再発行
-          </Button>
+          {mode === 'easy' ? (
+            <Button variant="outline" size="sm" onClick={handleDownloadScript} disabled={downloading || !spaceId}>
+              <RefreshCw className={cn('mr-1 h-3.5 w-3.5', downloading && 'animate-spin')} />
+              ファイル再発行
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={issueToken} disabled={loading || !spaceId}>
+              <RefreshCw className={cn('mr-1 h-3.5 w-3.5', loading && 'animate-spin')} />
+              トークン再発行
+            </Button>
+          )}
           <Button onClick={onNext} disabled={!connected}>
             次へ: 最初のスキル試行
             <CornerDownLeft className="ml-1 h-3.5 w-3.5 rotate-180" />
@@ -342,7 +523,13 @@ function GuideStepRow({
               waiting && 'animate-pulse',
             )}
           />
-          <p className={cn('text-sm font-medium', active && 'text-foreground', !active && !done && 'text-muted-foreground')}>
+          <p
+            className={cn(
+              'text-sm font-medium',
+              active && 'text-foreground',
+              !active && !done && 'text-muted-foreground',
+            )}
+          >
             {title}
           </p>
         </div>
