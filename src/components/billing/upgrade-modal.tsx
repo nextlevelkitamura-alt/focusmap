@@ -22,6 +22,8 @@ interface UpgradeModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentPlan?: PlanId;
+  /** Stripe checkout に必要。 未指定なら billing ページに fallback */
+  spaceId?: string | null;
   reason?: string;
 }
 
@@ -34,6 +36,7 @@ export function UpgradeModal({
   open,
   onOpenChange,
   currentPlan = 'free',
+  spaceId,
   reason,
 }: UpgradeModalProps) {
   const initialPlan: PlanId =
@@ -44,19 +47,26 @@ export function UpgradeModal({
 
   const handleCheckout = async () => {
     if (selectedPlan === 'enterprise') return;
+
+    // space_id が無いと Stripe checkout API は 400 を返すため、 直接 billing にfallback
+    if (!spaceId) {
+      window.location.href = `/dashboard/workspace/billing?plan=${selectedPlan}`;
+      return;
+    }
+
     setCheckingOut(true);
     setCheckoutError(null);
     try {
       const res = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: selectedPlan }),
+        body: JSON.stringify({ space_id: spaceId, plan: selectedPlan }),
       });
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 503) {
           // Stripe未設定: billing ページにフォールバック
-          window.location.href = `/dashboard/workspace/billing?plan=${selectedPlan}`;
+          window.location.href = `/dashboard/workspace/billing?space=${encodeURIComponent(spaceId)}&plan=${selectedPlan}`;
           return;
         }
         throw new Error(data?.error || 'Checkout に失敗しました');
@@ -65,8 +75,7 @@ export function UpgradeModal({
         window.location.href = data.url as string;
         return;
       }
-      // url 取れず → billing ページへ
-      window.location.href = `/dashboard/workspace/billing?plan=${selectedPlan}`;
+      window.location.href = `/dashboard/workspace/billing?space=${encodeURIComponent(spaceId)}&plan=${selectedPlan}`;
     } catch (e) {
       setCheckoutError(e instanceof Error ? e.message : 'Checkout に失敗しました');
     } finally {

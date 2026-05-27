@@ -149,6 +149,7 @@ export function UsageCard({ spaceId, userId: userIdProp, compact }: UsageCardPro
         open={upgradeOpen}
         onOpenChange={setUpgradeOpen}
         currentPlan={currentPlan}
+        spaceId={spaceId}
         reason={
           showStrongPrompt
             ? '今月の実行上限に到達しました。プランを切り替えると、すぐに自動化を再開できます。'
