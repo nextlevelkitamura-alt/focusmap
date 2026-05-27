@@ -2,12 +2,80 @@
 
 import { useAiTaskStream } from '@/hooks/use-ai-task-stream';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Check, X, Activity } from 'lucide-react';
+import { Loader2, Check, X, Activity, TriangleAlert, Workflow } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 interface TaskResultCardProps {
   taskId: string;
+}
+
+interface RunnerSnapshot {
+  id: string;
+  hostname: string;
+  display_name: string | null;
+  executors: string[];
+  last_heartbeat_at: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+const ONLINE_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * Focusmap Lite (Phase F) のオンラインランナーが居るかどうかを軽量にpoll する。
+ *
+ * pending 状態のタスクが進まない最大の理由は executor='playwright' を claim できる Mac側
+ * Focusmap Lite agent が起動していないこと。 ここで明示警告を出して「自動化チャットがハングしてる」
+ * と誤解されるのを防ぐ。
+ */
+function useFocusmapLiteOnline(): { hasOnline: boolean | null; lastSeenMinutesAgo: number | null } {
+  const [snapshot, setSnapshot] = useState<{ hasOnline: boolean | null; lastSeenMinutesAgo: number | null }>(
+    { hasOnline: null, lastSeenMinutesAgo: null },
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOnce = async () => {
+      try {
+        const res = await fetch('/api/ai-runners', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json()) as { runners?: RunnerSnapshot[] };
+        const runners = data.runners ?? [];
+        const now = Date.now();
+        const liteRunners = runners.filter((r) => {
+          const meta = r.metadata as { agent?: string; app?: string } | null;
+          if (meta?.agent === 'focusmap-agent' || meta?.app === 'focusmap-lite') return true;
+          const exec = r.executors ?? [];
+          return exec.includes('playwright') || exec.includes('simple');
+        });
+        const onlineLite = liteRunners.filter((r) => {
+          if (!r.last_heartbeat_at) return false;
+          return now - new Date(r.last_heartbeat_at).getTime() < ONLINE_WINDOW_MS;
+        });
+        const latestHeartbeatMs = liteRunners.reduce<number>((max, r) => {
+          if (!r.last_heartbeat_at) return max;
+          const t = new Date(r.last_heartbeat_at).getTime();
+          return t > max ? t : max;
+        }, 0);
+        const minutesAgo = latestHeartbeatMs > 0 ? Math.round((now - latestHeartbeatMs) / 60_000) : null;
+        if (!cancelled) {
+          setSnapshot({ hasOnline: onlineLite.length > 0, lastSeenMinutesAgo: minutesAgo });
+        }
+      } catch {
+        if (!cancelled) setSnapshot({ hasOnline: null, lastSeenMinutesAgo: null });
+      }
+    };
+    void fetchOnce();
+    const id = window.setInterval(() => void fetchOnce(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  return snapshot;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -31,6 +99,7 @@ export function TaskResultCard({ taskId }: TaskResultCardProps) {
   const { task, loading } = useAiTaskStream(taskId);
   const [showRaw, setShowRaw] = useState(false);
   const [liveLog, setLiveLog] = useState<string>('');
+  const liteStatus = useFocusmapLiteOnline();
 
   useEffect(() => {
     if (!taskId) return;
@@ -93,6 +162,38 @@ export function TaskResultCard({ taskId }: TaskResultCardProps) {
         </div>
         <span className="text-[10px] text-muted-foreground font-mono">{taskId.slice(0, 8)}</span>
       </div>
+
+      {/* Focusmap Lite が居ない → 待機中の理由を明示 (pending が 5秒以上続いたら表示) */}
+      {task.status === 'pending' && liteStatus.hasOnline === false && (
+        <div className="rounded-md border border-amber-300/50 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/30 p-2.5 text-[11px] space-y-1.5">
+          <p className="flex items-center gap-1 font-medium text-amber-800 dark:text-amber-200">
+            <TriangleAlert className="h-3.5 w-3.5" />
+            Focusmap Lite が起動していないため待機中
+          </p>
+          <p className="text-amber-700/90 dark:text-amber-300/90 leading-5">
+            このタスクは Mac 側の Focusmap Lite (Playwright 実行担当) が claim します。
+            {liteStatus.lastSeenMinutesAgo !== null
+              ? ` 最終 heartbeat は ${liteStatus.lastSeenMinutesAgo} 分前です。`
+              : ' まだ heartbeat を受信していません。'}
+          </p>
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            <Button asChild size="sm" className="h-7 gap-1 text-[11px]">
+              <Link href="/dashboard/settings/automation">
+                <Workflow className="h-3 w-3" />
+                セットアップを開く
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="h-7 gap-1 text-[11px]">
+              <Link href="/dashboard/workspace/setup?step=2">
+                エージェント導入
+              </Link>
+            </Button>
+          </div>
+          <p className="text-[10px] text-amber-700/70 dark:text-amber-300/70">
+            ヒント: ターミナルで <code className="bg-amber-100/60 dark:bg-amber-900/40 px-1 rounded">launchctl list | grep focusmap</code> で常駐状態を確認できます。
+          </p>
+        </div>
+      )}
 
       {/* Steps progress */}
       {result?.steps && result.steps.length > 0 && (
