@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Sparkles, Activity, AlertTriangle, ArrowUpRight } from 'lucide-react';
+import { Sparkles, Activity, AlertTriangle, ArrowUpRight, RefreshCw } from 'lucide-react';
 import { UsageBar } from '@/components/usage/usage-bar';
 import { useUsage } from '@/hooks/use-usage';
 import { formatCurrency } from '@/lib/format';
@@ -23,6 +23,7 @@ interface UsageCardProps {
 export function UsageCard({ spaceId, userId: userIdProp, compact }: UsageCardProps) {
   const [userId, setUserId] = useState<string | null>(userIdProp ?? null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (userIdProp !== undefined) {
@@ -40,7 +41,17 @@ export function UsageCard({ spaceId, userId: userIdProp, compact }: UsageCardPro
     };
   }, [userIdProp]);
 
-  const { personal, workspace, loading, error } = useUsage(spaceId, userId);
+  const { personal, workspace, loading, error, refresh } = useUsage(spaceId, userId);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      // animation feedback for at least 400ms
+      setTimeout(() => setRefreshing(false), 400);
+    }
+  };
 
   if (loading) {
     return (
@@ -56,9 +67,15 @@ export function UsageCard({ spaceId, userId: userIdProp, compact }: UsageCardPro
   if (error || !personal) {
     return (
       <Card className={compact ? 'p-4' : undefined}>
-        <CardContent className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-          <AlertTriangle className="h-4 w-4" />
-          使用量の取得に失敗しました
+        <CardContent className="space-y-2 py-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            使用量の取得に失敗しました
+          </div>
+          <Button size="sm" variant="outline" onClick={handleRefresh} className="gap-1">
+            <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+            再試行
+          </Button>
         </CardContent>
       </Card>
     );
@@ -89,14 +106,34 @@ export function UsageCard({ spaceId, userId: userIdProp, compact }: UsageCardPro
               <Activity className="h-4 w-4 text-primary" />
               今月の使用量
             </span>
-            <Badge variant="secondary" className="text-[10px]">
-              {personal.planName}
-            </Badge>
+            <span className="flex items-center gap-1">
+              <Badge variant="secondary" className="text-[10px]">
+                {personal.planName}
+              </Badge>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                aria-label="使用量を更新"
+                title="使用量を更新"
+                className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+              </button>
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <UsageBar label="あなた" usage={personal} compact={compact} />
-          {workspace && <UsageBar label="Workspace全体" usage={workspace} compact={compact} />}
+          {workspace ? (
+            <UsageBar label="Workspace全体" usage={workspace} compact={compact} />
+          ) : (
+            !compact && spaceId && (
+              <div className="rounded-md border border-dashed border-border/40 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+                Workspaceの集計はメンバー2人以上から表示されます。
+              </div>
+            )
+          )}
 
           {!compact && (
             <div className="flex flex-col gap-1 rounded-md border border-dashed border-border/50 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">

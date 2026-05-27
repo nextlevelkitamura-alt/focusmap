@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { Sparkles, Check, Zap, AlertTriangle, Loader2 } from 'lucide-react';
+import { Sparkles, Check, Zap, AlertTriangle, Loader2, TrendingUp } from 'lucide-react';
 import Link from 'next/link';
 import { PLAN_DEFINITIONS, PLAN_ORDER, type PlanId } from '@/lib/plans';
 import { formatCurrency } from '@/lib/format';
@@ -106,10 +106,26 @@ export function UpgradeModal({
         <div className="grid gap-3 sm:grid-cols-3">
           {UPGRADE_TARGETS.map((planId) => {
             const plan = PLAN_DEFINITIONS[planId];
+            const currentPlanDef = PLAN_DEFINITIONS[currentPlan];
             const isSelected = selectedPlan === planId;
             const isCurrent = currentPlan === planId;
             const isHighlight = planId === 'team';
             const isContact = planId === 'enterprise';
+
+            // 現プランからの差分 (実行数の追加)
+            const execDiff =
+              !isContact && !isCurrent && isFinite(plan.monthlyExecutionsPerSeat) && isFinite(currentPlanDef.monthlyExecutionsPerSeat)
+                ? plan.monthlyExecutionsPerSeat - currentPlanDef.monthlyExecutionsPerSeat
+                : null;
+
+            // 解禁される機能
+            const unlockedFeatures: string[] = [];
+            if (!isCurrent && !isContact) {
+              if (plan.features.macMiniSupport && !currentPlanDef.features.macMiniSupport) unlockedFeatures.push('Mac mini連携');
+              if (plan.features.teamSharing && !currentPlanDef.features.teamSharing) unlockedFeatures.push('チーム共有');
+              if (plan.features.adminDashboard && !currentPlanDef.features.adminDashboard) unlockedFeatures.push('管理画面');
+              if (plan.features.auditLog && !currentPlanDef.features.auditLog) unlockedFeatures.push('監査ログ');
+            }
 
             return (
               <Card
@@ -171,6 +187,26 @@ export function UpgradeModal({
                 {!isContact && plan.minSeats > 1 && (
                   <p className="text-[10px] text-muted-foreground">最低 {plan.minSeats} seat〜</p>
                 )}
+
+                {/* 現プランからの差分バッジ */}
+                {(execDiff !== null && execDiff > 0) || unlockedFeatures.length > 0 ? (
+                  <div className="space-y-1 rounded-md border border-emerald-300/50 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20 px-2 py-1.5">
+                    <p className="flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                      <TrendingUp className="h-2.5 w-2.5" />
+                      現プランから
+                    </p>
+                    {execDiff !== null && execDiff > 0 && (
+                      <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                        + 月 {execDiff}回 実行可能
+                      </p>
+                    )}
+                    {unlockedFeatures.length > 0 && (
+                      <p className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                        + {unlockedFeatures.join(' / ')}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
 
                 <ul className="space-y-1 text-xs">
                   <li className="flex items-start gap-1.5">

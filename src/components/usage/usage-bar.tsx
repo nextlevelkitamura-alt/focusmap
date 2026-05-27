@@ -8,7 +8,7 @@ import {
   getUsageBarColor,
   getUsageTextColor,
 } from '@/lib/format';
-import { AlertTriangle, AlertCircle, Infinity as InfinityIcon } from 'lucide-react';
+import { AlertTriangle, AlertCircle, Infinity as InfinityIcon, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface UsageBarProps {
@@ -26,6 +26,7 @@ export function UsageBar({ label, usage, compact }: UsageBarProps) {
 
   const isCritical = !isInfinite && ratio >= 0.95;
   const isWarning = !isInfinite && ratio >= 0.8 && ratio < 0.95;
+  const isOver = !isInfinite && ratio >= 1.0;
 
   return (
     <div className={compact ? 'space-y-1' : 'space-y-1.5'}>
@@ -46,24 +47,63 @@ export function UsageBar({ label, usage, compact }: UsageBarProps) {
           )}
         </span>
       </div>
-      <Progress
-        value={Math.min(ratio * 100, 100)}
-        indicatorClassName={cn(
-          isInfinite ? 'bg-emerald-500' : barColor,
-          'transition-all duration-500',
+
+      {/* プログレスバー + しきい値ティック (80% / 95%) */}
+      <div className="relative">
+        <Progress
+          value={Math.min(ratio * 100, 100)}
+          indicatorClassName={cn(
+            isInfinite ? 'bg-emerald-500' : barColor,
+            'transition-all duration-700 ease-out',
+            isOver && 'animate-pulse',
+          )}
+        />
+        {!isInfinite && (
+          <>
+            {/* 80% (warning しきい値) */}
+            <span
+              aria-hidden
+              className="absolute top-0 h-full w-px bg-amber-500/50"
+              style={{ left: '80%' }}
+            />
+            {/* 95% (critical しきい値) */}
+            <span
+              aria-hidden
+              className="absolute top-0 h-full w-px bg-red-500/60"
+              style={{ left: '95%' }}
+            />
+          </>
         )}
-      />
+      </div>
+
       {!compact && (
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span className={cn('tabular-nums', isCritical && 'font-medium text-red-600 dark:text-red-400')}>
+          <span
+            className={cn(
+              'tabular-nums',
+              isCritical && 'font-medium text-red-600 dark:text-red-400',
+              isOver && 'font-semibold text-red-700 dark:text-red-300',
+            )}
+          >
             {isInfinite
               ? ''
+              : isOver
+              ? '⛔ 上限超過 (実行不可)'
               : remaining === 0
               ? '⛔ 残量なし'
               : `残り ${remaining} 回 (${formatPercent(ratio, 0)} 使用)`}
           </span>
-          <span>あと {usage.daysUntilReset}日でリセット</span>
+          <span className="inline-flex items-center gap-0.5">
+            <Clock className="h-2.5 w-2.5" />
+            あと {usage.daysUntilReset}日でリセット
+          </span>
         </div>
+      )}
+
+      {compact && !isInfinite && remaining === 0 && (
+        <p className="text-[10px] font-medium text-red-600 dark:text-red-400">
+          ⛔ 残量なし — アップグレード推奨
+        </p>
       )}
     </div>
   );

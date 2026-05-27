@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
+import { UsageStickyBanner } from "@/components/chat/usage-sticky-banner"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { cn } from "@/lib/utils"
 import {
@@ -269,6 +270,8 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
             )}
           </div>
         </header>
+
+        {mode === "automation" && <UsageStickyBanner spaceId={spaceId} />}
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
           {!activeSession || activeSession.messages.length === 0 ? (
