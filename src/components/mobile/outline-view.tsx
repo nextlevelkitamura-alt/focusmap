@@ -292,7 +292,7 @@ function OutlineContent({
         }
     }, [])
 
-    const bottomPadding = isKeyboardOpen ? keyboardHeight + 48 : 80
+    const bottomPadding = isKeyboardOpen ? keyboardHeight + 56 : 80
 
     return (
         <>

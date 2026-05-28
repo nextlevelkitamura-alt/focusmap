@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { describe, expect, test, vi } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { CustomMindMapView } from "./custom-mind-map-view"
 import type { Project, Task } from "@/types/database"
 
@@ -52,6 +52,44 @@ const getNode = (label: string, id: string) => {
   if (!(node instanceof HTMLElement)) throw new Error(`Node ${id} not found`)
   return node
 }
+
+const originalInnerHeight = window.innerHeight
+
+const installOpenKeyboardViewport = () => {
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>()
+  const addEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+    const set = listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>()
+    set.add(listener)
+    listeners.set(type, set)
+  })
+  const removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+    listeners.get(type)?.delete(listener)
+  })
+  const visualViewport = {
+    height: 500,
+    offsetTop: 0,
+    addEventListener,
+    removeEventListener,
+  } as unknown as VisualViewport
+
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 })
+  Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+
+  return {
+    dispatch(type: string) {
+      const event = new Event(type)
+      listeners.get(type)?.forEach(listener => {
+        if (typeof listener === "function") listener(event)
+        else listener.handleEvent(event)
+      })
+    },
+  }
+}
+
+afterEach(() => {
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
+  Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined })
+})
 
 describe("CustomMindMapView keyboard operations", () => {
   test("adds a child with Tab and a sibling with Enter", async () => {
@@ -150,5 +188,66 @@ describe("CustomMindMapView keyboard operations", () => {
     })
     const committedWidth = onResizeNode.mock.calls.at(-1)?.[1] as number
     expect(committedWidth).toBeGreaterThan(initialWidth)
+  })
+
+  test("shows the mobile keyboard accessory while editing and saves before adding a child", async () => {
+    installOpenKeyboardViewport()
+    const onAddChildNode = vi.fn()
+    const onSaveTitle = vi.fn()
+
+    renderMap({
+      isMobile: true,
+      pendingEditNodeId: "root-1",
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+      onAddChildNode,
+      onSaveTitle,
+    })
+
+    const input = await screen.findByDisplayValue("Root task")
+    fireEvent.change(input, { target: { value: "Renamed root" } })
+
+    fireEvent.click(await screen.findByRole("button", { name: "子ノード追加" }))
+
+    await waitFor(() => {
+      expect(onSaveTitle).toHaveBeenCalledWith("root-1", "Renamed root")
+      expect(onAddChildNode).toHaveBeenCalledWith("root-1")
+    })
+  })
+
+  test("routes the mobile keyboard accessory sibling action to the active node", async () => {
+    installOpenKeyboardViewport()
+    const onAddSiblingNode = vi.fn()
+
+    renderMap({
+      isMobile: true,
+      pendingEditNodeId: "root-1",
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+      onAddSiblingNode,
+    })
+
+    await screen.findByDisplayValue("Root task")
+    fireEvent.click(await screen.findByRole("button", { name: "兄弟ノード追加" }))
+
+    await waitFor(() => expect(onAddSiblingNode).toHaveBeenCalledWith("root-1"))
+  })
+
+  test("routes the mobile keyboard accessory delete action to the active node", async () => {
+    installOpenKeyboardViewport()
+    const onDeleteNode = vi.fn()
+
+    renderMap({
+      isMobile: true,
+      pendingEditNodeId: "child-1",
+      selectedNodeId: "child-1",
+      selectedNodeIds: new Set(["child-1"]),
+      onDeleteNode,
+    })
+
+    await screen.findByDisplayValue("Child task")
+    fireEvent.click(await screen.findByRole("button", { name: "ノード削除" }))
+
+    await waitFor(() => expect(onDeleteNode).toHaveBeenCalledWith("child-1"))
   })
 })

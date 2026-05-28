@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import type { Project, Task } from "@/types/database"
 
@@ -25,13 +25,18 @@ export function MobileMindMap({
     project,
     groups,
     tasks,
+    onCreateGroup,
+    onDeleteGroup,
+    onCreateTask,
     onUpdateTask,
+    onDeleteTask,
     onReorderTask,
     onOpenLinkedMemos,
 }: MobileMindMapProps) {
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
+    const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
 
     const taskMap = useMemo(() => {
         const map = new Map<string, Task>()
@@ -75,6 +80,131 @@ export function MobileMindMap({
             return next
         })
     }, [])
+
+    useEffect(() => {
+        if (!pendingEditNodeId) return
+        const timer = window.setTimeout(() => setPendingEditNodeId(null), 800)
+        return () => window.clearTimeout(timer)
+    }, [pendingEditNodeId])
+
+    const selectSingleTask = useCallback((taskId: string | null) => {
+        setSelectedNodeId(taskId)
+        setSelectedNodeIds(taskId && taskId !== "project-root" ? new Set([taskId]) : new Set())
+    }, [])
+
+    const findRootTaskId = useCallback((taskId: string) => {
+        let current = taskMap.get(taskId)
+        const visited = new Set<string>()
+        while (current?.parent_task_id && !visited.has(current.parent_task_id)) {
+            visited.add(current.parent_task_id)
+            current = taskMap.get(current.parent_task_id)
+        }
+        return current?.id ?? taskId
+    }, [taskMap])
+
+    const calculateNextFocus = useCallback((taskId: string): string | null => {
+        const task = taskMap.get(taskId)
+        if (!task) return null
+
+        if (!task.parent_task_id) {
+            const roots = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+            const index = roots.findIndex(root => root.id === taskId)
+            if (index === -1) return "project-root"
+            return roots[index + 1]?.id ?? roots[index - 1]?.id ?? "project-root"
+        }
+
+        const siblings = tasks
+            .filter(candidate => candidate.parent_task_id === task.parent_task_id)
+            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        const index = siblings.findIndex(sibling => sibling.id === taskId)
+        return siblings[index + 1]?.id ?? siblings[index - 1]?.id ?? task.parent_task_id
+    }, [groups, taskMap, tasks])
+
+    const handleAddRootNode = useCallback(async () => {
+        if (!onCreateGroup) return
+        const newTask = await onCreateGroup("")
+        if (!newTask?.id) return
+        setPendingEditNodeId(newTask.id)
+        selectSingleTask(newTask.id)
+    }, [onCreateGroup, selectSingleTask])
+
+    const handleAddChildNode = useCallback(async (parentTaskId: string) => {
+        if (!onCreateTask) return
+        setCollapsedTaskIds(prev => {
+            if (!prev.has(parentTaskId)) return prev
+            const next = new Set(prev)
+            next.delete(parentTaskId)
+            return next
+        })
+
+        const newTask = await onCreateTask(findRootTaskId(parentTaskId), "", parentTaskId)
+        if (!newTask?.id) return
+        setPendingEditNodeId(newTask.id)
+        selectSingleTask(newTask.id)
+    }, [findRootTaskId, onCreateTask, selectSingleTask])
+
+    const handleAddSiblingNode = useCallback(async (taskId: string) => {
+        const task = taskMap.get(taskId)
+        if (!task) return
+
+        if (!task.parent_task_id) {
+            await handleAddRootNode()
+            return
+        }
+
+        if (!onCreateTask) return
+        const newTask = await onCreateTask(findRootTaskId(task.parent_task_id), "", task.parent_task_id)
+        if (!newTask?.id) return
+        setPendingEditNodeId(newTask.id)
+        selectSingleTask(newTask.id)
+    }, [findRootTaskId, handleAddRootNode, onCreateTask, selectSingleTask, taskMap])
+
+    const handlePromoteNode = useCallback(async (taskId: string) => {
+        if (!onUpdateTask) return
+        const task = taskMap.get(taskId)
+        if (!task?.parent_task_id) return
+
+        const parent = taskMap.get(task.parent_task_id)
+        if (!parent) return
+
+        if (parent.parent_task_id) {
+            await onUpdateTask(taskId, { parent_task_id: parent.parent_task_id })
+        } else {
+            await onUpdateTask(taskId, { parent_task_id: null, project_id: project.id })
+        }
+        selectSingleTask(taskId)
+    }, [onUpdateTask, project.id, selectSingleTask, taskMap])
+
+    const handleDeleteNode = useCallback(async (taskId: string) => {
+        const task = taskMap.get(taskId)
+        if (!task) return
+
+        const hasChildren = tasks.some(candidate => candidate.parent_task_id === taskId)
+        if (hasChildren && typeof window !== "undefined") {
+            const confirmed = window.confirm("子タスクを含むタスクを削除しますか？\nすべての子タスクも削除されます。")
+            if (!confirmed) return
+        }
+
+        const nextFocusId = calculateNextFocus(taskId)
+        if (!task.parent_task_id) {
+            await onDeleteGroup?.(taskId)
+        } else {
+            await onDeleteTask?.(taskId)
+        }
+
+        if (nextFocusId === "project-root") {
+            setSelectedNodeId("project-root")
+            setSelectedNodeIds(new Set())
+        } else {
+            selectSingleTask(nextFocusId)
+        }
+    }, [calculateNextFocus, onDeleteGroup, onDeleteTask, selectSingleTask, taskMap, tasks])
+
+    const handleSaveTitle = useCallback(async (taskId: string, title: string) => {
+        const trimmed = title.trim()
+        if (!trimmed || !onUpdateTask) return
+        await onUpdateTask(taskId, { title: trimmed })
+    }, [onUpdateTask])
 
     const handleMoveTask = useCallback(async ({
         taskId,
@@ -146,6 +276,13 @@ export function MobileMindMap({
             onSelectNode={handleSelectNode}
             onSelectNodes={handleSelectNodes}
             onToggleCollapse={handleToggleCollapse}
+            pendingEditNodeId={pendingEditNodeId}
+            onAddRootNode={handleAddRootNode}
+            onAddChildNode={handleAddChildNode}
+            onAddSiblingNode={handleAddSiblingNode}
+            onPromoteNode={handlePromoteNode}
+            onDeleteNode={handleDeleteNode}
+            onSaveTitle={handleSaveTitle}
             onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
             onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
             onOpenLinkedMemos={onOpenLinkedMemos}
