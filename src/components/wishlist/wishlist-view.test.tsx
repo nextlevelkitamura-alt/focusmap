@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WishlistView } from './wishlist-view'
 import type { IdealGoalWithItems } from '@/types/database'
-import { TODAY_DURATION_DEFAULT } from '@/lib/calendar-constants'
+import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT } from '@/lib/calendar-constants'
 import { invalidateWishlistItemsCache } from '@/lib/wishlist-cache'
 
 const calendarEvents = vi.hoisted(() => ({
@@ -381,6 +381,50 @@ describe('WishlistView calendar D&D', () => {
     await waitFor(() => {
       expect(onLinkedTaskStatusChange).toHaveBeenCalledWith('task-1', 'todo')
       expect(onLinkedTaskStatusChange).toHaveBeenCalledWith('task-2', 'todo')
+    })
+  })
+
+  test('マインドマップノードの完了切り替えを関連メモのチェックへ即時反映する', async () => {
+    const serverItem = createMemoItem({
+      id: 'memo-linked',
+      title: 'Linked memo',
+      memo_status: 'organized',
+      is_completed: false,
+      mindmap_task_ids: ['task-1'],
+    } as Partial<IdealGoalWithItems>)
+    const fetchMock = vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist') return jsonResponse({ items: [serverItem] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Linked memo')).toBeInTheDocument()
+      expect(screen.getByTitle('完了にする')).toBeInTheDocument()
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LINKED_TASK_STATUS_EVENT, {
+        detail: { taskId: 'task-1', status: 'done' },
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTitle('完了済み')).toBeInTheDocument()
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LINKED_TASK_STATUS_EVENT, {
+        detail: { taskId: 'task-1', status: 'todo' },
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTitle('完了にする')).toBeInTheDocument()
     })
   })
 })

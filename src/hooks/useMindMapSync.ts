@@ -6,6 +6,7 @@ import { Task } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
 import { deriveStageUpdate } from '@/lib/stage-utils'
+import { LINKED_TASK_STATUS_EVENT } from '@/lib/calendar-constants'
 
 interface UseMindMapSyncProps {
     projectId: string | null
@@ -39,6 +40,13 @@ interface UseMindMapSyncReturn {
     redo: () => Promise<string | null>
     canUndo: () => boolean
     canRedo: () => boolean
+}
+
+function dispatchLinkedTaskStatus(taskId: string, status: string) {
+    if (typeof window === 'undefined') return
+    window.dispatchEvent(new CustomEvent(LINKED_TASK_STATUS_EVENT, {
+        detail: { taskId, status },
+    }))
 }
 
 export function useMindMapSync({
@@ -669,6 +677,9 @@ export function useMindMapSync({
         let parentAutoCompleteUndo: { parentId: string; beforeStatus: string } | null = null
 
         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updatesWithStage } : t))
+        if (typeof updatesWithStage.status === 'string') {
+            dispatchLinkedTaskStatus(taskId, updatesWithStage.status)
+        }
 
         let didSave = false
 
@@ -695,6 +706,9 @@ export function useMindMapSync({
                     if (isLatestUpdate()) {
                         onSyncError?.(`保存に失敗しました: ${errorData.message || response.statusText}`)
                         setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+                        if (typeof beforeValues.status === 'string') {
+                            dispatchLinkedTaskStatus(taskId, beforeValues.status)
+                        }
                     }
                     return
                 }
@@ -721,6 +735,7 @@ export function useMindMapSync({
                                 setAllTasks(prev => prev.map(t =>
                                     t.id === task.parent_task_id ? { ...t, status: 'done' } : t
                                 ));
+                                dispatchLinkedTaskStatus(task.parent_task_id, 'done')
                                 try {
                                     const parentRes = await enqueueTaskSave(task.parent_task_id, async () => {
                                         const res = await fetch(`/api/tasks/${task.parent_task_id}`, {
@@ -736,6 +751,7 @@ export function useMindMapSync({
                                     setAllTasks(prev => prev.map(t =>
                                         t.id === task.parent_task_id ? { ...t, status: parent.status } : t
                                     ))
+                                    dispatchLinkedTaskStatus(task.parent_task_id, parent.status)
                                     parentAutoCompleteUndo = null
                                 }
                             }
@@ -759,6 +775,7 @@ export function useMindMapSync({
                             setAllTasks(prev => prev.map(t =>
                                 t.id === task.parent_task_id ? { ...t, ...parentUpdates } : t
                             ));
+                            dispatchLinkedTaskStatus(task.parent_task_id, parentUpdates.status)
                             try {
                                 const parentRes = await enqueueTaskSave(task.parent_task_id, async () => {
                                     const res = await fetch(`/api/tasks/${task.parent_task_id}`, {
@@ -774,6 +791,7 @@ export function useMindMapSync({
                                 setAllTasks(prev => prev.map(t =>
                                     t.id === task.parent_task_id ? { ...t, status: parent.status, stage: parent.stage } : t
                                 ))
+                                dispatchLinkedTaskStatus(task.parent_task_id, parent.status)
                                 parentAutoCompleteUndo = null
                             }
                         }
@@ -784,6 +802,9 @@ export function useMindMapSync({
                 if (isLatestUpdate()) {
                     onSyncError?.('タスクの更新に失敗しました: ネットワークエラー')
                     setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+                    if (typeof beforeValues.status === 'string') {
+                        dispatchLinkedTaskStatus(taskId, beforeValues.status)
+                    }
                 }
             }
         })
@@ -795,6 +816,9 @@ export function useMindMapSync({
             description: `「${beforeTask?.title || 'タスク'}」を変更`,
             undo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...beforeValues } : t))
+                if (typeof beforeValues.status === 'string') {
+                    dispatchLinkedTaskStatus(taskId, beforeValues.status)
+                }
                 try {
                     await fetch(`/api/tasks/${taskId}`, {
                         method: 'PATCH',
@@ -808,6 +832,7 @@ export function useMindMapSync({
                     setAllTasks(prev => prev.map(t =>
                         t.id === capturedParentUndo.parentId ? { ...t, status: capturedParentUndo.beforeStatus } : t
                     ))
+                    dispatchLinkedTaskStatus(capturedParentUndo.parentId, capturedParentUndo.beforeStatus)
                     try {
                         await fetch(`/api/tasks/${capturedParentUndo.parentId}`, {
                             method: 'PATCH',
@@ -821,6 +846,9 @@ export function useMindMapSync({
             },
             redo: async () => {
                 setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t))
+                if (typeof updates.status === 'string') {
+                    dispatchLinkedTaskStatus(taskId, updates.status)
+                }
                 try {
                     await fetch(`/api/tasks/${taskId}`, {
                         method: 'PATCH',
@@ -835,6 +863,7 @@ export function useMindMapSync({
                     setAllTasks(prev => prev.map(t =>
                         t.id === capturedParentUndo.parentId ? { ...t, status: newStatus } : t
                     ))
+                    dispatchLinkedTaskStatus(capturedParentUndo.parentId, newStatus)
                     try {
                         await fetch(`/api/tasks/${capturedParentUndo.parentId}`, {
                             method: 'PATCH',

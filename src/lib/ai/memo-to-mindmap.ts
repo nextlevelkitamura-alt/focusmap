@@ -22,7 +22,7 @@ export const MindmapDraftSchema = z.object({
           .describe('親ノードの tempId。ルートノードは null'),
         sourceNoteIds: z
           .array(z.string())
-          .describe('このノードの根拠になったメモID（0件以上）'),
+          .describe('このノードが直接表す元メモID。分類・要約・橋渡し用の追加ノードは空配列'),
       }),
     )
     .describe('ツリーを構成する全ノード。階層は parentTempId で表現'),
@@ -46,10 +46,12 @@ const SYSTEM_PROMPT = `あなたは、散らばったメモを整理して論理
 2. 階層は3〜4段までに収める（深くしすぎない）。
 3. 主旨が近いメモは同じ枝にまとめる。
 4. 抽象 → 具体 の順で親子関係を作る（上位ほど大きな概念）。
-5. 与えられた全てのメモIDを、いずれかのノードの sourceNoteIds に必ず割り当てる。取りこぼし禁止。
+5. 与えられた全てのメモIDを、いずれかの「元メモそのものを直接表す具体ノード」の sourceNoteIds に必ず割り当てる。取りこぼし禁止。
 6. tempId は "n1","n2",... と一意に振る。ルートノードの parentTempId は null。
 7. ノードの title は簡潔に（長文にしない）。メモ本文そのままのコピーは避け、見出しとして要約する。
-8. 1つのメモが複数のノードに関係する場合は、最も主たるノードの sourceNoteIds に入れる。`
+8. 1つのメモが複数のノードに関係する場合は、最も主たる具体ノードの sourceNoteIds に入れる。
+9. 複数メモを束ねるために新しく作る分類・要約・橋渡し・論点整理ノードは sourceNoteIds を必ず [] にする。これはメモではなく、ただの構造ノード。
+10. title に「メモ」「ノード」「まとめ用ノード」など管理上の呼称を入れず、内容の見出しだけを書く。`
 
 interface BuildPromptArgs {
   notes: MemoInput[]
@@ -70,7 +72,29 @@ function buildUserPrompt({ notes, existingTree }: BuildPromptArgs): string {
 # メモ一覧（全${notes.length}件）
 ${noteList}${existingSection}
 
-全てのメモIDを sourceNoteIds に割り当てた、ツリー構造の JSON を出力してください。`
+全てのメモIDを具体ノードの sourceNoteIds に割り当て、分類・要約・橋渡し用の追加ノードは sourceNoteIds: [] にした、ツリー構造の JSON を出力してください。`
+}
+
+export function buildDraftChildMap(nodes: MindmapDraftNode[]): Map<string, string[]> {
+  const ids = new Set(nodes.map(node => node.tempId))
+  const childMap = new Map<string, string[]>()
+
+  for (const node of nodes) {
+    if (!node.parentTempId || !ids.has(node.parentTempId)) continue
+    const children = childMap.get(node.parentTempId) ?? []
+    children.push(node.tempId)
+    childMap.set(node.parentTempId, children)
+  }
+
+  return childMap
+}
+
+export function isSourceBackedDraftNode(
+  node: MindmapDraftNode,
+  childMap: Map<string, string[]>,
+): boolean {
+  if (node.sourceNoteIds.length === 0) return false
+  return (childMap.get(node.tempId)?.length ?? 0) === 0
 }
 
 export interface GenerateDraftResult {

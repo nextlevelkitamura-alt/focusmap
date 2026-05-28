@@ -1,7 +1,12 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { MindmapDraftSchema, type MindmapDraftNode } from '@/lib/ai/memo-to-mindmap'
+import {
+  MindmapDraftSchema,
+  buildDraftChildMap,
+  isSourceBackedDraftNode,
+  type MindmapDraftNode,
+} from '@/lib/ai/memo-to-mindmap'
 
 // POST /api/ai/memo-to-mindmap/commit — ドラフトを tasks ツリーとして保存し、メモを紐付ける
 export async function POST(request: Request) {
@@ -78,12 +83,14 @@ export async function POST(request: Request) {
     // --- ドラフト → tasks 行へ変換 ---
     const nodeByTempId = new Map<string, MindmapDraftNode>()
     for (const node of draft.nodes) nodeByTempId.set(node.tempId, node)
+    const draftChildMap = buildDraftChildMap(draft.nodes)
 
     const realIdByTempId = new Map<string, string>()
     for (const node of draft.nodes) realIdByTempId.set(node.tempId, randomUUID())
 
     const allDraftNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
     const sourceNoteContentById = new Map<string, { content: string; image_urls: string[] | null }>()
+    const sourceWishlistCompletionById = new Map<string, boolean>()
     if (source === 'notes' && allDraftNoteIds.length > 0) {
       const { data: sourceNotes, error: sourceNotesError } = await supabase
         .from('notes')
@@ -100,6 +107,20 @@ export async function POST(request: Request) {
             content: note.content || '',
             image_urls: Array.isArray(note.image_urls) ? note.image_urls : null,
           })
+        }
+      }
+    } else if (source === 'wishlist' && allDraftNoteIds.length > 0) {
+      const { data: sourceMemos, error: sourceMemosError } = await supabase
+        .from('ideal_goals')
+        .select('id, is_completed, memo_status')
+        .in('id', allDraftNoteIds)
+        .eq('user_id', user.id)
+
+      if (sourceMemosError) {
+        console.warn('[memo-to-mindmap/commit] source wishlist fetch failed:', sourceMemosError.message)
+      } else {
+        for (const memo of sourceMemos || []) {
+          sourceWishlistCompletionById.set(memo.id, memo.is_completed === true || memo.memo_status === 'completed')
         }
       }
     }
@@ -135,28 +156,36 @@ export async function POST(request: Request) {
       const groupKey = parentTempId ?? '__root__'
       const orderIndex = orderCounter.get(groupKey) ?? 0
       orderCounter.set(groupKey, orderIndex + 1)
-      const sourceNotes = node.sourceNoteIds
-        .map(noteId => sourceNoteContentById.get(noteId))
-        .filter((note): note is { content: string; image_urls: string[] | null } => !!note)
+      const isSourceBacked = isSourceBackedDraftNode(node, draftChildMap)
+      const sourceNotes = isSourceBacked
+        ? node.sourceNoteIds
+          .map(noteId => sourceNoteContentById.get(noteId))
+          .filter((note): note is { content: string; image_urls: string[] | null } => !!note)
+        : []
       const sourceMemo = sourceNotes
         .map(note => note.content.trim())
         .filter(Boolean)
         .join('\n\n---\n\n')
       const sourceImages = sourceNotes.flatMap(note => note.image_urls || []).filter(Boolean)
+      const sourceBackedDone = isSourceBacked &&
+        source === 'wishlist' &&
+        node.sourceNoteIds.length > 0 &&
+        node.sourceNoteIds.every(noteId => sourceWishlistCompletionById.get(noteId) === true)
       return {
         id: realIdByTempId.get(node.tempId)!,
         user_id: user.id,
         project_id: projectId,
         parent_task_id: parentTempId ? realIdByTempId.get(parentTempId)! : null,
         title: node.title.trim() || '無題',
-        status: 'todo',
+        status: sourceBackedDone ? 'done' : 'todo',
+        stage: sourceBackedDone ? 'done' : 'plan',
         order_index: orderIndex,
         estimated_time: 0,
         actual_time_minutes: 0,
         is_group: hasChildren.has(node.tempId),
-        source: source === 'notes' ? 'memo' : 'wishlist',
-        memo: sourceMemo || null,
-        memo_images: sourceImages.length > 0 ? sourceImages : null,
+        source: isSourceBacked ? (source === 'notes' ? 'memo' : 'wishlist') : 'manual',
+        memo: isSourceBacked ? sourceMemo || null : null,
+        memo_images: isSourceBacked && sourceImages.length > 0 ? sourceImages : null,
         _depth: depthOf(node.tempId),
       }
     })
@@ -180,6 +209,7 @@ export async function POST(request: Request) {
     const taskTitleByNoteId = new Map<string, string>()
     const taskLinksByNoteId = new Map<string, Array<{ task_id: string; task_title: string }>>()
     for (const node of draft.nodes) {
+      if (!isSourceBackedDraftNode(node, draftChildMap)) continue
       const realId = realIdByTempId.get(node.tempId)!
       const title = node.title.trim() || '無題'
       for (const noteId of node.sourceNoteIds) {
@@ -218,6 +248,7 @@ export async function POST(request: Request) {
       } else {
         await Promise.all(
           (memos || []).map(memo => {
+            const isCompleted = sourceWishlistCompletionById.get(memo.id) === true
             const payload = normalizePayload(memo.ai_source_payload)
             const existingLinks = Array.isArray(payload.mindmap_links) ? payload.mindmap_links : []
             const newLinks = (taskLinksByNoteId.get(memo.id) || []).map(link => ({
@@ -239,7 +270,9 @@ export async function POST(request: Request) {
                   mindmap_links: nextLinks,
                 },
                 project_id: projectId,
-                memo_status: 'organized',
+                is_completed: isCompleted,
+                memo_status: isCompleted ? 'completed' : 'organized',
+                ...(isCompleted ? { is_today: false } : {}),
                 updated_at: linkedAt,
               })
               .eq('id', memo.id)

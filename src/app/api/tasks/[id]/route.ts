@@ -8,6 +8,17 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
+function hasMindmapTaskLink(payload: unknown, taskId: string): boolean {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const links = (payload as { mindmap_links?: unknown }).mindmap_links;
+  if (!Array.isArray(links)) return false;
+  return links.some(link =>
+    !!link &&
+    typeof link === 'object' &&
+    (link as { task_id?: unknown }).task_id === taskId
+  );
+}
+
 function normalizeTokyoDateString(value: unknown): string | null {
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return value;
@@ -396,11 +407,23 @@ export async function PATCH(
       const linkedMemoStatus = updatedTask.status === 'done'
         ? 'done'
         : (updatedTask.scheduled_at ? 'scheduled' : 'task');
+      const linkedWishlistCompleted = updatedTask.status === 'done';
+      const linkedWishlistMemoStatus = linkedWishlistCompleted
+        ? 'completed'
+        : (updatedTask.scheduled_at ? 'scheduled' : 'organized');
+      const linkedWishlistUpdates: Record<string, unknown> = {
+        is_completed: linkedWishlistCompleted,
+        memo_status: linkedWishlistMemoStatus,
+        updated_at: new Date().toISOString(),
+      };
+      if (linkedWishlistCompleted) {
+        linkedWishlistUpdates.is_today = false;
+      }
 
       try {
         const { data: memoLinks, error: memoLinksError } = await supabase
           .from('memo_node_links')
-          .select('memo_item_id')
+          .select('memo_item_id, source_type, source_id')
           .eq('user_id', user.id)
           .eq('task_id', taskId)
           .eq('link_type', 'mindmap_node')
@@ -414,6 +437,12 @@ export async function PATCH(
               .map(link => link.memo_item_id)
               .filter((memoItemId): memoItemId is string => typeof memoItemId === 'string' && memoItemId.length > 0)
           ));
+          const wishlistSourceIds = new Set(
+            (memoLinks ?? [])
+              .filter(link => link.source_type === 'wishlist')
+              .map(link => link.source_id)
+              .filter((sourceId): sourceId is string => typeof sourceId === 'string' && sourceId.length > 0)
+          );
 
           if (memoItemIds.length > 0) {
             const { error: memoItemUpdateError } = await supabase
@@ -427,6 +456,46 @@ export async function PATCH(
 
             if (memoItemUpdateError) {
               console.error('[tasks/[id] PATCH] Failed to sync structured memo status:', memoItemUpdateError);
+            }
+          }
+
+          if (wishlistSourceIds.size > 0) {
+            const { error: wishlistUpdateError } = await supabase
+              .from('ideal_goals')
+              .update(linkedWishlistUpdates)
+              .eq('user_id', user.id)
+              .in('id', [...wishlistSourceIds]);
+
+            if (wishlistUpdateError) {
+              console.error('[tasks/[id] PATCH] Failed to sync linked wishlist status:', wishlistUpdateError);
+            }
+          }
+        }
+
+        const { data: legacyLinkedMemos, error: legacyLinkedMemosError } = await supabase
+          .from('ideal_goals')
+          .select('id, ai_source_payload')
+          .eq('user_id', user.id)
+          .in('status', ['wishlist', 'memo'])
+          .not('ai_source_payload', 'is', null);
+
+        if (legacyLinkedMemosError) {
+          console.error('[tasks/[id] PATCH] Failed to load legacy linked wishlist items:', legacyLinkedMemosError);
+        } else {
+          const legacyWishlistIds = (legacyLinkedMemos ?? [])
+            .filter(memo => hasMindmapTaskLink(memo.ai_source_payload, taskId))
+            .map(memo => memo.id)
+            .filter((memoId): memoId is string => typeof memoId === 'string' && memoId.length > 0);
+
+          if (legacyWishlistIds.length > 0) {
+            const { error: legacyWishlistUpdateError } = await supabase
+              .from('ideal_goals')
+              .update(linkedWishlistUpdates)
+              .eq('user_id', user.id)
+              .in('id', legacyWishlistIds);
+
+            if (legacyWishlistUpdateError) {
+              console.error('[tasks/[id] PATCH] Failed to sync legacy linked wishlist status:', legacyWishlistUpdateError);
             }
           }
         }

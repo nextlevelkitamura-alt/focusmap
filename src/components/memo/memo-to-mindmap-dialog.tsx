@@ -11,7 +11,12 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { MindmapDraft, MindmapDraftNode } from "@/lib/ai/memo-to-mindmap"
+import {
+  buildDraftChildMap,
+  isSourceBackedDraftNode,
+  type MindmapDraft,
+  type MindmapDraftNode,
+} from "@/lib/ai/memo-to-mindmap"
 import { useUndoRedo } from "@/hooks/useUndoRedo"
 
 type Mode = "quick" | "deep"
@@ -172,9 +177,11 @@ export function MemoToMindmapDialog({
     }
     return map
   }, [nodes])
+  const childIdMap = useMemo(() => buildDraftChildMap(nodes), [nodes])
 
   const renderNodeEditor = (node: MindmapDraftNode): ReactNode => {
     const children = childrenMap.get(node.tempId) || []
+    const isSourceBacked = isSourceBackedDraftNode(node, childIdMap)
     return (
       <div key={node.tempId} className="flex items-center gap-3">
         <div className="relative w-40 shrink-0 rounded-lg border bg-background p-1.5 shadow-sm sm:w-48">
@@ -190,7 +197,7 @@ export function MemoToMindmapDialog({
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
-          {node.sourceNoteIds.length > 0 && (
+          {isSourceBacked && (
             <div className="mt-1 truncate text-[10px] text-muted-foreground">
               メモ {node.sourceNoteIds.length}
             </div>

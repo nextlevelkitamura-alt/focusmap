@@ -49,6 +49,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const parentTaskId = body.parent_task_id === null ? null : (text(body.parent_task_id) || null)
   const title = text(body.title) || item.title
   const memo = text(body.memo) || item.body || null
+  const itemIsCompleted = item.status === 'done'
 
   if (!projectId && !existingTaskId) {
     return NextResponse.json({ error: 'マインドマップに投入するには project_id が必要です' }, { status: 400 })
@@ -92,8 +93,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         is_group: parentTaskId ? false : item.item_kind === 'summary' || item.item_kind === 'theme',
         title,
         memo,
-        status: 'todo',
-        stage: 'plan',
+        status: itemIsCompleted ? 'done' : 'todo',
+        stage: itemIsCompleted ? 'done' : 'plan',
         source: item.source_type === 'wishlist' ? 'wishlist' : 'memo',
         order_index: nextOrderIndex,
         estimated_time: typeof body.estimated_time === 'number' ? body.estimated_time : 0,
@@ -144,11 +145,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: linkError.message }, { status: 500 })
   }
 
+  const linkedTask = task && typeof task === 'object' ? task as { status?: unknown; scheduled_at?: unknown } : null
+  const linkedTaskDone = linkedTask?.status === 'done'
+  const linkedMemoItemStatus = linkedTaskDone ? 'done' : (body.scheduled_at ? 'scheduled' : 'task')
+
   await supabase
     .from('memo_items')
-    .update({ status: body.scheduled_at ? 'scheduled' : 'task', project_id: projectId })
+    .update({ status: linkedMemoItemStatus, project_id: projectId })
     .eq('id', item.id)
     .eq('user_id', user.id)
+
+  if (item.source_type === 'wishlist') {
+    await supabase
+      .from('ideal_goals')
+      .update({
+        project_id: projectId,
+        is_completed: linkedTaskDone,
+        memo_status: linkedTaskDone ? 'completed' : 'organized',
+        ...(linkedTaskDone ? { is_today: false } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', item.source_id)
+      .eq('user_id', user.id)
+  }
 
   return NextResponse.json({ link, task, reused: false }, { status: 201 })
 }

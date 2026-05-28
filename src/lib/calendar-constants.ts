@@ -41,6 +41,9 @@ export const MEMO_DRAG_MIME = "application/x-focusmap-memo" as const
 /** Custom event name for refetching wishlist items across views */
 export const WISHLIST_REFRESH_EVENT = "wishlist:refresh" as const
 
+/** Custom event name for optimistic linked memo checkbox sync */
+export const LINKED_TASK_STATUS_EVENT = "wishlist:linked-task-status" as const
+
 /** Zoom configuration */
 export const ZOOM_CONFIG = {
   MIN_HOUR_HEIGHT: 32,     // 最小（50%ズームアウト）

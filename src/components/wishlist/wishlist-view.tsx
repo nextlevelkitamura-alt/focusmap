@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
-import { TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
+import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -175,6 +175,12 @@ function getCompletionUpdate(updates: Record<string, unknown>): boolean | null {
     return false
   }
   return null
+}
+
+function getMemoStatusForTaskStatus(item: MemoItem, taskStatus: string): MemoStatus {
+  if (taskStatus === "done") return "completed"
+  if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
+  return "organized"
 }
 
 // Asia/Tokyo の本日 0:00 / 翌日 0:00 を返す（UTC ミリ秒）
@@ -781,6 +787,46 @@ export function WishlistView({
     const status = isCompleted ? "done" : "todo"
     await Promise.all(taskIds.map(taskId => onLinkedTaskStatusChange(taskId, status)))
   }, [getLinkedTaskIdsForMemo, onLinkedTaskStatusChange])
+
+  useEffect(() => {
+    const handleLinkedTaskStatus = (event: Event) => {
+      const detail = (event as CustomEvent<{ taskId?: unknown; status?: unknown }>).detail
+      const taskId = typeof detail?.taskId === "string" ? detail.taskId : ""
+      const status = typeof detail?.status === "string" ? detail.status : ""
+      if (!taskId || !status) return
+
+      const focusedSourceIds = new Set<string>()
+      if (linkedMemoFocus?.taskId === taskId) {
+        for (const item of linkedMemoFocus.items) focusedSourceIds.add(item.id)
+        for (const item of linkedMemoFocus.structuredItems) focusedSourceIds.add(item.sourceId)
+      }
+
+      const shouldUpdateItem = (item: MemoItem) =>
+        extractMindmapTaskIds(item).includes(taskId) || focusedSourceIds.has(item.id)
+
+      const applyTaskStatus = (item: MemoItem): MemoItem => {
+        if (!shouldUpdateItem(item)) return item
+        const isCompleted = status === "done"
+        return {
+          ...item,
+          is_completed: isCompleted,
+          memo_status: getMemoStatusForTaskStatus(item, status),
+          ...(isCompleted ? { is_today: false } : {}),
+          updated_at: new Date().toISOString(),
+        }
+      }
+
+      setItems(prev => prev.map(applyTaskStatus))
+      setSelectedItem(prev => prev ? applyTaskStatus(prev) : prev)
+      setLinkedMemoFocus(prev => prev ? {
+        ...prev,
+        items: prev.items.map(applyTaskStatus),
+      } : prev)
+    }
+
+    window.addEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus)
+    return () => window.removeEventListener(LINKED_TASK_STATUS_EVENT, handleLinkedTaskStatus)
+  }, [linkedMemoFocus])
 
   const restoreMemoItem = useCallback(async (item: MemoItem) => {
     const res = await fetch("/api/wishlist", {
