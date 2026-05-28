@@ -30,13 +30,22 @@ import { cn } from "@/lib/utils"
 import {
   countRunningMessages,
   createChatSession,
+  cancelChatAction,
   deleteChatSession,
+  executeChatAction,
   getChatState,
+  markChatOptionUsed,
+  markProposalUsed,
   selectChatSession,
+  selectChatCalendarChoice,
   sendChatMessage,
+  setBestProposalStatus,
+  resetChatSession,
   subscribeChatRuntime,
   type FocusmapChatMessage,
   type FocusmapChatMode,
+  type FocusmapChatOption,
+  type FocusmapProposalCard,
   type FocusmapChatSession,
 } from "@/lib/chat-runtime"
 import { TaskResultCard } from "@/components/chat/task-result-card"
@@ -100,6 +109,22 @@ function formatTime(value: string) {
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
+}
+
+function formatDateTimeRange(startAt: string, endAt: string) {
+  const start = new Date(startAt)
+  const end = new Date(endAt)
+  const days = ["日", "月", "火", "水", "木", "金", "土"]
+  const month = start.getMonth() + 1
+  const day = start.getDate()
+  const dow = days[start.getDay()]
+  const startTime = start.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })
+  const endTime = end.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" })
+  return `${month}/${day}(${dow}) ${startTime}-${endTime}`
+}
+
+function visibleMessageCount(session: FocusmapChatSession) {
+  return session.messages.filter(message => !message.hidden && !message.isSummaryDivider).length
 }
 
 function statusIcon(message: FocusmapChatMessage) {
@@ -181,9 +206,14 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeSession = useMemo(
     () => state.sessions.find(session => session.id === state.activeSessionId) ?? state.sessions[0] ?? null,
     [state.activeSessionId, state.sessions],
+  )
+  const visibleMessages = useMemo(
+    () => activeSession?.messages.filter(message => !message.hidden) ?? [],
+    [activeSession?.messages],
   )
   const runningCount = countRunningMessages(mode)
   const setupPrompt = useAutomationSetupPrompt(mode === "automation")
@@ -201,7 +231,7 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [activeSession?.messages.length, activeSession?.updatedAt])
 
-  const submitText = useCallback((text: string) => {
+  const submitText = useCallback((text: string, silent = false) => {
     const trimmed = text.trim()
     if (!trimmed) return
     const result = sendChatMessage({
@@ -210,9 +240,77 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
       text: trimmed,
       spaceId,
       projectId,
+      silent,
     })
     if (result) setInput("")
   }, [activeSession?.id, mode, projectId, spaceId])
+
+  const handleOptionSelect = useCallback((messageId: string, option: FocusmapChatOption) => {
+    if (!activeSession) return
+    markChatOptionUsed(mode, activeSession.id, messageId, option.label)
+
+    if (option.action === "reset") {
+      resetChatSession(mode, activeSession.id)
+      return
+    }
+
+    if (option.action === "restore_input") {
+      setInput(option.value)
+      setTimeout(() => inputRef.current?.focus(), 0)
+      return
+    }
+
+    if (!option.value) {
+      inputRef.current?.focus()
+      return
+    }
+
+    submitText(option.value, option.silent === true)
+  }, [activeSession, mode, submitText])
+
+  const handleExecuteAction = useCallback((messageId: string) => {
+    if (!activeSession) return
+    void executeChatAction(mode, activeSession.id, messageId)
+  }, [activeSession, mode])
+
+  const handleCancelAction = useCallback((messageId: string) => {
+    if (!activeSession) return
+    cancelChatAction(mode, activeSession.id, messageId)
+  }, [activeSession, mode])
+
+  const handleCalendarChoice = useCallback((messageId: string, choiceId: string) => {
+    if (!activeSession) return
+    const message = activeSession.messages.find(item => item.id === messageId)
+    const choice = message?.calendarChoices?.find(item => item.id === choiceId)
+    if (!choice) return
+    void selectChatCalendarChoice(mode, activeSession.id, messageId, choice)
+  }, [activeSession, mode])
+
+  const handleAcceptProposal = useCallback((message: FocusmapChatMessage) => {
+    if (!activeSession || !message.bestProposal) return
+    setBestProposalStatus(mode, activeSession.id, message.id, "accepted")
+    const proposal = message.bestProposal
+    submitText(`${proposal.title}を${formatDateTimeRange(proposal.startAt, proposal.endAt)}で登録して`)
+  }, [activeSession, mode, submitText])
+
+  const handleEditProposal = useCallback((messageId: string) => {
+    if (!activeSession) return
+    setBestProposalStatus(mode, activeSession.id, messageId, "editing")
+    setInput("変更したい内容: ")
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }, [activeSession, mode])
+
+  const handleRequestAlternatives = useCallback((messageId: string) => {
+    if (!activeSession) return
+    setBestProposalStatus(mode, activeSession.id, messageId, "accepted")
+    submitText("他の候補を見せて")
+  }, [activeSession, mode, submitText])
+
+  const handleProposalSelect = useCallback((messageId: string, proposal: FocusmapProposalCard) => {
+    if (!activeSession) return
+    markProposalUsed(mode, activeSession.id, messageId)
+    submitText(proposal.value || `${proposal.title}を${proposal.startAt}開始で登録して`)
+  }, [activeSession, mode, submitText])
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey) return
@@ -222,7 +320,6 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
     submitText(input)
   }
 
-  const modelLabel = mode === "automation" ? "DeepSeek V4 Pro" : "Gemini 3.1 Flash Lite"
   const resolvedTitle = title ?? (mode === "automation" ? "自動化チャット" : "通常チャット")
 
   return (
@@ -249,9 +346,11 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
               {mode === "automation" ? <Workflow className="h-4 w-4 text-primary" /> : <Bot className="h-4 w-4 text-primary" />}
               <div className="min-w-0">
                 <h1 className="truncate text-sm font-semibold md:text-base">{resolvedTitle}</h1>
-                <p className="truncate text-[10px] text-muted-foreground md:text-xs">
-                  {modelLabel}{runningCount > 0 ? ` / 実行中 ${runningCount}` : ""}
-                </p>
+                {runningCount > 0 && (
+                  <p className="truncate text-[10px] text-muted-foreground md:text-xs">
+                    実行中 {runningCount}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -274,12 +373,23 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
         {mode === "automation" && <UsageStickyBanner spaceId={spaceId} />}
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-6">
-          {!activeSession || activeSession.messages.length === 0 ? (
+          {!activeSession || visibleMessages.length === 0 ? (
             <EmptyChat mode={mode} onPrompt={submitText} />
           ) : (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-              {activeSession.messages.map(message => (
-                <ChatBubble key={message.id} message={message} />
+              {visibleMessages.map(message => (
+                <ChatBubble
+                  key={message.id}
+                  message={message}
+                  onOptionSelect={handleOptionSelect}
+                  onExecuteAction={handleExecuteAction}
+                  onCancelAction={handleCancelAction}
+                  onCalendarChoice={handleCalendarChoice}
+                  onAcceptProposal={handleAcceptProposal}
+                  onEditProposal={handleEditProposal}
+                  onRequestAlternatives={handleRequestAlternatives}
+                  onProposalSelect={handleProposalSelect}
+                />
               ))}
             </div>
           )}
@@ -308,6 +418,7 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
                 {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
               </Button>
               <textarea
+                ref={inputRef}
                 value={input}
                 onChange={event => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
@@ -420,7 +531,7 @@ function ChatHistorySidebar({
                 >
                   <span className="w-[200px] truncate text-sm font-medium">{session.title}</span>
                   <span className="mt-0.5 text-[10px] text-muted-foreground">
-                    {formatDate(session.updatedAt)} / {session.messages.length}件
+                    {formatDate(session.updatedAt)} / {visibleMessageCount(session)}件
                   </span>
                 </button>
                 <button
@@ -449,7 +560,7 @@ function EmptyChat({ mode, onPrompt }: { mode: FocusmapChatMode; onPrompt: (text
         </div>
         <h2 className="text-lg font-semibold">{mode === "automation" ? "何を自動化しますか？" : "何を整理しますか？"}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {mode === "automation" ? "送信するとバックグラウンド実行に投入されます。" : "通常チャットは低コストモデルで軽く相談できます。"}
+          {mode === "automation" ? "送信するとバックグラウンド実行に投入されます。" : "軽い相談や整理に使えます。"}
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
@@ -468,8 +579,47 @@ function EmptyChat({ mode, onPrompt }: { mode: FocusmapChatMode; onPrompt: (text
   )
 }
 
-function ChatBubble({ message }: { message: FocusmapChatMessage }) {
+function ChatBubble({
+  message,
+  onOptionSelect,
+  onExecuteAction,
+  onCancelAction,
+  onCalendarChoice,
+  onAcceptProposal,
+  onEditProposal,
+  onRequestAlternatives,
+  onProposalSelect,
+}: {
+  message: FocusmapChatMessage
+  onOptionSelect: (messageId: string, option: FocusmapChatOption) => void
+  onExecuteAction: (messageId: string) => void
+  onCancelAction: (messageId: string) => void
+  onCalendarChoice: (messageId: string, choiceId: string) => void
+  onAcceptProposal: (message: FocusmapChatMessage) => void
+  onEditProposal: (messageId: string) => void
+  onRequestAlternatives: (messageId: string) => void
+  onProposalSelect: (messageId: string, proposal: FocusmapProposalCard) => void
+}) {
+  if (message.isSummaryDivider) {
+    return (
+      <div className="py-1">
+        <div className="flex items-center gap-2">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-[11px] text-muted-foreground">会話を要約しました</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+        <p className="mt-1.5 px-2 text-[11px] leading-relaxed text-muted-foreground">{message.content}</p>
+      </div>
+    )
+  }
+
   const isUser = message.role === "user"
+  const hasAction = message.action && message.actionStatus === "pending"
+  const hasCalendarChoices = message.pendingAction && message.calendarChoices?.length && message.actionStatus === "pending" && !message.calendarChoiceUsed
+  const hasOptions = message.options && message.options.length > 0 && !message.optionsUsed
+  const hasProposal = message.bestProposal && message.bestProposalStatus === "pending"
+  const hasProposalCards = message.proposalCards && message.proposalCards.length > 0 && !message.proposalUsed
+
   return (
     <div className={cn("flex gap-3", isUser && "flex-row-reverse")}>
       {!isUser && (
@@ -487,10 +637,161 @@ function ChatBubble({ message }: { message: FocusmapChatMessage }) {
           {message.status === "running" && !message.taskId && (
             <ThinkingTrace automation={message.modelLabel === "deepseek-v4-pro"} />
           )}
+
+          {message.toolResults && message.toolResults.length > 0 && (
+            <div className="mt-3 space-y-1.5 border-t border-border/50 pt-2">
+              {message.toolResults.map((result, index) => {
+                const output = result.output as { success?: boolean; message?: string }
+                const ok = output?.success !== false
+                return (
+                  <div key={`${result.toolName}-${index}`} className={cn("flex items-center gap-1.5 text-xs", ok ? "text-emerald-500" : "text-red-500")}>
+                    {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                    <span>{output?.message || result.toolName}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {hasCalendarChoices && (
+            <div className="mt-3 space-y-2 border-t border-border/50 pt-2">
+              <p className="text-xs text-muted-foreground">保存先カレンダーを選んでください</p>
+              <div className="flex flex-wrap gap-1.5">
+                {message.calendarChoices!.map(choice => (
+                  <Button
+                    key={choice.id}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => onCalendarChoice(message.id, choice.id)}
+                  >
+                    {choice.name}{choice.isDefault ? " (既定)" : ""}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {hasAction && (
+            <div className="mt-3 space-y-2 border-t border-border/50 pt-2">
+              <p className="text-xs text-muted-foreground">{message.action?.description || "この内容で実行します。"}</p>
+              <div className="flex flex-wrap gap-1.5">
+                <Button type="button" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => onExecuteAction(message.id)}>
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  実行する
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => onCancelAction(message.id)}>
+                  <XCircle className="h-3.5 w-3.5" />
+                  やめる
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {message.actionStatus === "executing" && (
+            <div className="mt-3 flex items-center gap-1.5 border-t border-border/50 pt-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              実行中
+            </div>
+          )}
+
+          {message.actionStatus === "success" && (
+            <div className="mt-3 flex items-center gap-1.5 border-t border-border/50 pt-2 text-xs text-emerald-500">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              完了
+            </div>
+          )}
+
+          {message.actionStatus === "failed" && (
+            <div className="mt-3 flex items-center gap-1.5 border-t border-border/50 pt-2 text-xs text-red-500">
+              <XCircle className="h-3.5 w-3.5" />
+              失敗
+            </div>
+          )}
+
+          {hasProposal && (
+            <div className="mt-3 space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
+              <p className="text-xs font-medium text-primary">{message.bestProposal!.title}</p>
+              <p className="text-sm font-semibold">{formatDateTimeRange(message.bestProposal!.startAt, message.bestProposal!.endAt)}</p>
+              {message.bestProposal!.reason && (
+                <p className="text-xs text-muted-foreground">{message.bestProposal!.reason}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                <Button type="button" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => onAcceptProposal(message)}>
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  この予定で登録
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => onEditProposal(message.id)}>
+                  変更する
+                </Button>
+                <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={() => onRequestAlternatives(message.id)}>
+                  他の候補
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {message.bestProposal && message.bestProposalStatus === "accepted" && (
+            <div className="mt-3 rounded-md border bg-background/50 p-2 text-xs text-muted-foreground">
+              {formatDateTimeRange(message.bestProposal.startAt, message.bestProposal.endAt)} を選択済み
+            </div>
+          )}
+
+          {message.bestProposal && message.bestProposalStatus === "editing" && (
+            <div className="mt-3 rounded-md border bg-background/50 p-2 text-xs text-muted-foreground">
+              変更したい内容を入力してください。
+            </div>
+          )}
+
+          {hasProposalCards && (
+            <div className="mt-3 space-y-1.5 border-t border-border/50 pt-2">
+              {message.proposalCards!.map(proposal => (
+                <button
+                  key={proposal.id}
+                  type="button"
+                  onClick={() => onProposalSelect(message.id, proposal)}
+                  className="w-full rounded-md border bg-background/60 px-3 py-2 text-left text-xs transition hover:bg-background"
+                >
+                  <span className="block font-medium">{proposal.title}</span>
+                  <span className="mt-0.5 block text-muted-foreground">
+                    {formatDateTimeRange(proposal.startAt, proposal.endAt)}
+                  </span>
+                  {proposal.reason && <span className="mt-0.5 block text-muted-foreground">{proposal.reason}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {message.proposalUsed && message.proposalCards && (
+            <p className="mt-2 text-xs text-muted-foreground">候補選択済み</p>
+          )}
+
+          {hasOptions && (
+            <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/50 pt-2">
+              {message.options!.map((option, index) => (
+                <Button
+                  key={`${option.label}-${index}`}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => onOptionSelect(message.id, option)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          {message.optionsUsed && message.options && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {message.selectedOption ? `${message.selectedOption} を選択済み` : "選択済み"}
+            </p>
+          )}
         </div>
         <div className={cn("flex items-center gap-1.5 text-[10px] text-muted-foreground", isUser && "justify-end")}>
           {statusIcon(message)}
-          {message.modelLabel && <span>{message.modelLabel}</span>}
           <span>{formatTime(message.createdAt)}</span>
         </div>
         {message.taskId && <TaskResultCard taskId={message.taskId} />}
@@ -502,7 +803,7 @@ function ChatBubble({ message }: { message: FocusmapChatMessage }) {
 function ThinkingTrace({ automation }: { automation: boolean }) {
   const steps = automation
     ? ["自動化の意図を判定", "使うスキルと実行権限を確認", "バックグラウンド実行へ投入"]
-    : ["会話履歴を整理", "モデルへ送信", "回答を生成"]
+    : ["会話履歴を整理", "回答を準備", "回答を生成"]
 
   return (
     <div className="mt-3 space-y-1.5 rounded-md border border-border/60 bg-background/50 p-2 text-xs text-muted-foreground">

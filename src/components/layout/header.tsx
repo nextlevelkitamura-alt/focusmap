@@ -29,6 +29,9 @@ interface HeaderProps {
     selectedProjectId?: string | null
     onSelectSpace?: (id: string | null) => void
     onSelectProject?: (id: string | null) => void
+    onProjectCreated?: (project: Project) => void
+    onProjectSaved?: (project: Project) => void
+    onSpaceSaved?: (space: Space) => void
     showTaskListToggle?: boolean
     isTaskListVisible?: boolean
     onToggleTaskList?: () => void
@@ -39,6 +42,7 @@ interface HeaderProps {
     isMemoSplitVisible?: boolean
     onToggleMemoSplit?: () => void
     onMindmapUpdated?: () => void
+    onLogoClick?: () => void
 }
 
 export function Header({
@@ -48,6 +52,9 @@ export function Header({
     selectedProjectId = null,
     onSelectSpace,
     onSelectProject,
+    onProjectCreated,
+    onProjectSaved,
+    onSpaceSaved,
     showCalendarSplitToggle = false,
     isCalendarSplitVisible = false,
     onToggleCalendarSplit,
@@ -55,6 +62,7 @@ export function Header({
     isMemoSplitVisible = false,
     onToggleMemoSplit,
     onMindmapUpdated,
+    onLogoClick,
 }: HeaderProps) {
     const router = useRouter()
     const [user, setUser] = useState<User | null>(null)
@@ -140,7 +148,15 @@ export function Header({
         <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
             {/* Left: Logo & current workspace */}
             <div className="flex min-w-0 max-w-[440px] items-center gap-3">
-                <FocusmapLogo className="h-9 w-auto text-foreground" />
+                <button
+                    type="button"
+                    onClick={onLogoClick ?? (() => setActiveView('today'))}
+                    className="inline-flex min-h-11 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label="Todayボードへ移動"
+                    title="Today"
+                >
+                    <FocusmapLogo className="h-9 w-auto text-foreground" />
+                </button>
 
                 {onSelectSpace && onSelectProject && (
                     <>
@@ -152,6 +168,9 @@ export function Header({
                             selectedProjectId={selectedProjectId}
                             onSelectSpace={onSelectSpace}
                             onSelectProject={onSelectProject}
+                            onProjectCreated={onProjectCreated}
+                            onProjectSaved={onProjectSaved}
+                            onSpaceSaved={onSpaceSaved}
                             showAllProjectsOption={activeView === 'long-term'}
                             className="max-w-[280px] border-b-0 bg-transparent px-0 py-0"
                         />

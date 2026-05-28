@@ -250,11 +250,11 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
     {
       key: "ai",
       icon: Activity,
-      label: "DeepSeek / Gemini",
+      label: "AIキー",
       detail: aiPing
-        ? `${aiPing.model}${aiPing.ok ? ` / ${aiPing.latency_ms}ms` : " / エラー"}`
+        ? `接続${aiPing.ok ? `OK / ${aiPing.latency_ms}ms` : "エラー"}`
         : runnerSecrets.has("DEEPSEEK_API_KEY")
-          ? "DeepSeekキーあり"
+          ? "APIキーあり"
           : "接続テスト未実行",
       level: checkingAi ? "checking" : aiPing ? (aiPing.ok ? "ok" : "missing") : "unknown",
     },

@@ -7,7 +7,6 @@ import type { IntentResult } from '@/lib/ai/intent-classifier';
 
 interface SkillSuggestionProps {
   intent: IntentResult;
-  modelLabel: string;
   onExecute: () => void;
   onCancel: () => void;
   loading?: boolean;
@@ -27,7 +26,6 @@ const SKILL_LABELS: Record<string, string> = {
 
 export function SkillSuggestion({
   intent,
-  modelLabel,
   onExecute,
   onCancel,
   loading,
@@ -57,7 +55,6 @@ export function SkillSuggestion({
             信頼度 {(intent.confidence * 100).toFixed(0)}%
           </Badge>
         </div>
-        <span className="text-[10px] text-muted-foreground">{modelLabel}</span>
       </div>
 
       <div className="flex items-center gap-2">

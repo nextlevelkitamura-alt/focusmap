@@ -160,7 +160,7 @@ export function AutomationSettings() {
         <SettingBlock
           icon={Workflow}
           title="自動化チャット"
-          description="自動化の指示は DeepSeek V4 Pro で判定し、ai_tasks に投入してMac側のランナーがバックグラウンド実行します。"
+          description="自動化の指示を判定し、ai_tasks に投入してMac側のランナーがバックグラウンド実行します。"
         >
           <div className="flex flex-wrap gap-2">
             <Button asChild className="h-10 gap-1.5">
@@ -179,7 +179,7 @@ export function AutomationSettings() {
         <SettingBlock
           icon={Bot}
           title="モデル設定"
-          description="通常チャットは Gemini 3.1 Flash Lite、自動化チャットは DeepSeek V4 Pro を既定にしています。"
+          description="通常チャットと自動化チャットのAI実行設定を管理します。"
         >
           <div className="grid gap-2 text-sm">
             <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">

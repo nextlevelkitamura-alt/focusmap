@@ -6,7 +6,7 @@ import { CalendarEvent } from "@/types/calendar"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
 import { useClickOutside } from "@/hooks/useClickOutside"
-import { Play, Pause, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp, X } from "lucide-react"
+import { Play, Pause, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
@@ -24,8 +24,6 @@ const QUICK_CREATE_MINUTES = 15
 const QUICK_CREATE_DEFAULT_MINUTES = 30
 const TOUCH_LONG_PRESS_MS = 260
 const TOUCH_MOVE_CANCEL_PX = 10
-const DENSE_CLUSTER_THRESHOLD = 4
-const DENSE_CLUSTER_VISIBLE_COUNT = 2
 const DENSE_CLUSTER_COLUMNS = 3
 
 // --- Types ---
@@ -70,23 +68,6 @@ interface TodayTimelineCalendarProps {
     scrollToHourRequest?: { hour: number; requestKey: number }
 }
 
-type LayoutItem = TimeBlock & {
-    top: number
-    height: number
-    column: number
-    totalColumns: number
-}
-
-interface DenseOverflowGroup {
-    id: string
-    top: number
-    height: number
-    column: number
-    totalColumns: number
-    items: LayoutItem[]
-    hiddenItems: LayoutItem[]
-}
-
 // --- Helpers ---
 function getMinutesFromMidnight(date: Date): number {
     return date.getHours() * 60 + date.getMinutes()
@@ -111,104 +92,6 @@ function snapDown(minutes: number): number {
 
 function snapUp(minutes: number): number {
     return Math.ceil(minutes / QUICK_CREATE_MINUTES) * QUICK_CREATE_MINUTES
-}
-
-function itemKey(item: Pick<TimeBlock, 'source' | 'id'>): string {
-    return `${item.source}-${item.id}`
-}
-
-function truncateTitle(title: string, maxLength: number): string {
-    const chars = Array.from(title)
-    return chars.length > maxLength ? `${chars.slice(0, maxLength).join('')}…` : title
-}
-
-function buildDenseTimelineLayout(items: LayoutItem[]): {
-    visibleItems: LayoutItem[]
-    overflowGroups: DenseOverflowGroup[]
-} {
-    if (items.length === 0) return { visibleItems: [], overflowGroups: [] }
-
-    const sorted = items
-        .map((item, index) => ({ item, index }))
-        .sort((a, b) => {
-            const startDiff = a.item.startTime.getTime() - b.item.startTime.getTime()
-            if (startDiff !== 0) return startDiff
-            const durationDiff =
-                (b.item.endTime.getTime() - b.item.startTime.getTime()) -
-                (a.item.endTime.getTime() - a.item.startTime.getTime())
-            if (durationDiff !== 0) return durationDiff
-            return a.index - b.index
-        })
-
-    const clusters: Array<Array<{ item: LayoutItem; index: number }>> = []
-    let currentCluster: Array<{ item: LayoutItem; index: number }> = []
-    let currentClusterEnd = Number.NEGATIVE_INFINITY
-
-    for (const entry of sorted) {
-        const start = entry.item.startTime.getTime()
-        const end = entry.item.endTime.getTime()
-
-        if (currentCluster.length === 0 || start < currentClusterEnd) {
-            currentCluster.push(entry)
-            currentClusterEnd = Math.max(currentClusterEnd, end)
-            continue
-        }
-
-        clusters.push(currentCluster)
-        currentCluster = [entry]
-        currentClusterEnd = end
-    }
-
-    if (currentCluster.length > 0) clusters.push(currentCluster)
-
-    const hiddenKeys = new Set<string>()
-    const adjustedLayout = new Map<string, Pick<LayoutItem, 'column' | 'totalColumns'>>()
-    const overflowGroups: DenseOverflowGroup[] = []
-
-    clusters.forEach((cluster, clusterIndex) => {
-        const maxColumns = Math.max(...cluster.map(entry => entry.item.totalColumns))
-        if (maxColumns < DENSE_CLUSTER_THRESHOLD) return
-
-        const orderedItems = [...cluster].sort((a, b) => {
-            const startDiff = a.item.startTime.getTime() - b.item.startTime.getTime()
-            if (startDiff !== 0) return startDiff
-            return a.index - b.index
-        })
-        const visibleEntries = orderedItems.slice(0, DENSE_CLUSTER_VISIBLE_COUNT)
-        const hiddenEntries = orderedItems.slice(DENSE_CLUSTER_VISIBLE_COUNT)
-        if (hiddenEntries.length === 0) return
-
-        visibleEntries.forEach((entry, visibleIndex) => {
-            adjustedLayout.set(itemKey(entry.item), {
-                column: visibleIndex,
-                totalColumns: DENSE_CLUSTER_COLUMNS,
-            })
-        })
-        hiddenEntries.forEach(entry => hiddenKeys.add(itemKey(entry.item)))
-
-        const top = Math.min(...cluster.map(entry => entry.item.top))
-        const bottom = Math.max(...cluster.map(entry => entry.item.top + entry.item.height))
-
-        overflowGroups.push({
-            id: `dense-${clusterIndex}-${orderedItems.map(entry => entry.item.id).join('-')}`,
-            top,
-            height: Math.max(bottom - top, HOUR_HEIGHT * 0.65),
-            column: DENSE_CLUSTER_COLUMNS - 1,
-            totalColumns: DENSE_CLUSTER_COLUMNS,
-            items: orderedItems.map(entry => entry.item),
-            hiddenItems: hiddenEntries.map(entry => entry.item),
-        })
-    })
-
-    return {
-        visibleItems: items
-            .filter(item => !hiddenKeys.has(itemKey(item)))
-            .map(item => {
-                const adjusted = adjustedLayout.get(itemKey(item))
-                return adjusted ? { ...item, ...adjusted } : item
-            }),
-        overflowGroups,
-    }
 }
 
 // --- Main Component ---
@@ -243,7 +126,6 @@ export function TodayTimelineCalendar({
     const lastTouchYRef = useRef<number | null>(null)
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
     const expandedTaskRef = useRef<HTMLDivElement>(null)
-    const [selectedDenseGroup, setSelectedDenseGroup] = useState<DenseOverflowGroup | null>(null)
     useClickOutside(
         expandedTaskRef,
         () => setExpandedTaskId(null),
@@ -564,11 +446,6 @@ export function TodayTimelineCalendar({
             minHeight: HOUR_HEIGHT * 0.4,
         })
     }, [timelineItems])
-
-    const { visibleItems: visibleLayoutItems, overflowGroups } = useMemo(
-        () => buildDenseTimelineLayout(layoutItems),
-        [layoutItems]
-    )
 
     // 日付をまたぐアイテムは today-view.tsx 側でクランプ済み
 
@@ -1042,7 +919,7 @@ export function TodayTimelineCalendar({
                         )}
 
                         {/* Calendar Events & Tasks */}
-                        {visibleLayoutItems.map((item) => {
+                        {layoutItems.map((item) => {
                             const isEvent = !!item.originalEvent
                             const id = item.id
 
@@ -1135,31 +1012,6 @@ export function TodayTimelineCalendar({
                             )
                         })}
 
-                        {overflowGroups.map((group) => {
-                            const leftPercent = (group.column / group.totalColumns) * 100
-                            const widthPercent = (1 / group.totalColumns) * 100
-
-                            return (
-                                <div
-                                    key={group.id}
-                                    className="absolute z-[25] select-none touch-pan-y"
-                                    data-time-item="true"
-                                    style={{
-                                        top: group.top,
-                                        height: group.height,
-                                        left: `calc((100% - ${GUTTER_WIDTH}px) * ${leftPercent / 100} + 2px)`,
-                                        width: `calc((100% - ${GUTTER_WIDTH}px) * ${widthPercent / 100} - 4px)`,
-                                    }}
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                >
-                                    <DenseOverflowBlock
-                                        group={group}
-                                        onOpen={() => setSelectedDenseGroup(group)}
-                                    />
-                                </div>
-                            )
-                        })}
-
                         {/* Drag Preview Ghost */}
                         {dragState.isDragging && dragState.dragItem && dragState.previewStartTime && (
                             <DragPreview
@@ -1194,16 +1046,6 @@ export function TodayTimelineCalendar({
                     </div>
                 </div>
             </div>
-
-            {selectedDenseGroup && (
-                <DenseOverflowSheet
-                    group={selectedDenseGroup}
-                    onClose={() => setSelectedDenseGroup(null)}
-                    onToggleTask={onToggleTask}
-                    onToggleEvent={onToggleEvent}
-                    onItemTap={onItemTap}
-                />
-            )}
         </div>
     )
 }
@@ -1218,158 +1060,6 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 function getEventColor(event: CalendarEvent) {
     const hex = event.background_color || event.color || '#039BE5'
     return hex
-}
-
-function formatItemTimeRange(item: TimeBlock): string {
-    return `${format(item.startTime, 'HH:mm')} - ${format(item.endTime, 'HH:mm')}`
-}
-
-function DenseOverflowBlock({
-    group,
-    onOpen,
-}: {
-    group: DenseOverflowGroup
-    onOpen: () => void
-}) {
-    const previewItems = group.hiddenItems.slice(0, 2)
-    const isCompact = group.height < 80
-
-    return (
-        <button
-            type="button"
-            onClick={(e) => {
-                e.stopPropagation()
-                onOpen()
-            }}
-            className="h-full w-full overflow-hidden rounded-md border border-dashed border-blue-300/45 bg-blue-500/15 px-2 py-1 text-left text-blue-100 transition active:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-            aria-label={`重なっている予定${group.hiddenItems.length}件を表示`}
-        >
-            <div className="text-[11px] font-semibold leading-tight">
-                +{group.hiddenItems.length}件
-            </div>
-            {!isCompact && (
-                <div className="mt-1 space-y-0.5">
-                    {previewItems.map(item => (
-                        <div key={itemKey(item)} className="truncate text-[10px] leading-tight text-blue-100/80">
-                            {truncateTitle(item.title, 10)}
-                        </div>
-                    ))}
-                </div>
-            )}
-        </button>
-    )
-}
-
-function DenseOverflowSheet({
-    group,
-    onClose,
-    onToggleTask,
-    onToggleEvent,
-    onItemTap,
-}: {
-    group: DenseOverflowGroup
-    onClose: () => void
-    onToggleTask: (taskId: string) => void
-    onToggleEvent?: (eventId: string) => void
-    onItemTap?: (item: TimeBlock) => void
-}) {
-    const sortedItems = [...group.items].sort((a, b) => {
-        const startDiff = a.startTime.getTime() - b.startTime.getTime()
-        if (startDiff !== 0) return startDiff
-        return a.title.localeCompare(b.title, 'ja')
-    })
-
-    return (
-        <>
-            <button
-                type="button"
-                className="fixed inset-0 z-[80] bg-black/40"
-                aria-label="予定一覧を閉じる"
-                onClick={onClose}
-            />
-            <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] z-[81] max-h-[62dvh] overflow-hidden rounded-t-2xl border border-white/10 bg-[#1c1c1e] shadow-2xl md:left-1/2 md:max-w-md md:-translate-x-1/2 md:rounded-2xl">
-                <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
-                    <div>
-                        <div className="text-sm font-semibold text-zinc-50">重なっている予定</div>
-                        <div className="mt-0.5 text-xs text-zinc-500">
-                            {formatItemTimeRange(sortedItems[0])} 付近 · {sortedItems.length}件
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.08] text-zinc-300 active:bg-white/[0.14]"
-                        aria-label="閉じる"
-                    >
-                        <X className="h-4 w-4" />
-                    </button>
-                </div>
-                <div className="max-h-[calc(62dvh-61px)] overflow-y-auto overscroll-contain px-3 py-2">
-                    {sortedItems.map(item => {
-                        const isEvent = !!item.originalEvent
-                        const isPendingEvent = item.originalEvent?.sync_status === "pending"
-                        const canToggleEvent = isEvent && !isPendingEvent && !!onToggleEvent
-                        const canToggle = !isEvent || canToggleEvent
-                        const canTap = !!onItemTap && !isPendingEvent
-
-                        return (
-                            <div
-                                key={itemKey(item)}
-                                className="flex min-h-[58px] items-center gap-3 rounded-xl px-2 py-2 active:bg-white/[0.06]"
-                                role={canTap ? "button" : undefined}
-                                tabIndex={canTap ? 0 : undefined}
-                                onClick={() => {
-                                    if (!canTap) return
-                                    onClose()
-                                    onItemTap?.(item)
-                                }}
-                                onKeyDown={(e) => {
-                                    if (!canTap) return
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                        e.preventDefault()
-                                        onClose()
-                                        onItemTap?.(item)
-                                    }
-                                }}
-                            >
-                                <button
-                                    type="button"
-                                    disabled={!canToggle}
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        if (isEvent) {
-                                            if (canToggleEvent) onToggleEvent?.(item.id)
-                                            return
-                                        }
-                                        onToggleTask(item.id)
-                                    }}
-                                    className="no-tap-highlight flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-300 disabled:opacity-30"
-                                    aria-label={item.isCompleted ? `${item.title}を未完了に戻す` : `${item.title}を完了にする`}
-                                >
-                                    {item.isCompleted ? (
-                                        <CheckSquare className="h-5 w-5 text-blue-300" />
-                                    ) : (
-                                        <Square className="h-5 w-5" style={{ color: item.color }} />
-                                    )}
-                                </button>
-                                <div className="min-w-0 flex-1">
-                                    <div className={cn(
-                                        "truncate text-[15px] font-medium leading-5 text-zinc-50",
-                                        item.isCompleted && "line-through text-zinc-500"
-                                    )}>
-                                        {item.title}
-                                    </div>
-                                    <div className="mt-0.5 text-xs text-zinc-500">
-                                        {formatItemTimeRange(item)}
-                                    </div>
-                                </div>
-                            </div>
-                        )
-                    })}
-                </div>
-            </div>
-        </>
-    )
 }
 
 // --- Event Block (Calendar event in the grid) ---
@@ -1399,8 +1089,8 @@ function EventBlock({
     const isNow = currentTime >= startTime && currentTime < endTime
     const isCompact = height < 40
     const eventTitleLines = height >= 150 ? 5 : height >= 110 ? 4 : height >= 80 ? 3 : height >= 60 ? 2 : 1
+    const compactTitleLines = height >= 34 ? 2 : 1
     const isDone = !!isCompleted
-    const displayTitle = isDense ? truncateTitle(event.title, 10) : event.title
     const showInlineActions = !isDense
 
     const isPendingSync = event.sync_status === "pending"
@@ -1427,12 +1117,12 @@ function EventBlock({
             data-syncing={isPendingSync || undefined}
         >
             {isCompact ? (
-                <div className="flex items-center gap-1.5 h-full min-w-0">
+                <div className="flex items-start gap-1.5 h-full min-w-0">
                     {onToggle && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onToggle() }}
                             aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
-                            className="no-tap-highlight flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
+                            className="no-tap-highlight mt-0.5 flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
                         >
                             {isDone ? (
                                 <CheckSquare className="w-4 h-4 text-primary" />
@@ -1442,10 +1132,18 @@ function EventBlock({
                         </button>
                     )}
                     <span className={cn(
-                        "text-[11px] font-medium truncate flex-1 min-w-0 max-w-full",
+                        "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
+                        compactTitleLines === 1
+                            ? "truncate"
+                            : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
                         isDone ? "line-through text-muted-foreground" : "text-foreground"
-                    )}>
-                        {displayTitle}
+                    )}
+                        style={{
+                            overflowWrap: "anywhere",
+                            ...(compactTitleLines > 1 ? { WebkitLineClamp: compactTitleLines } : {}),
+                        }}
+                    >
+                        {event.title}
                     </span>
                     <div className="ml-auto flex-shrink-0 flex items-center gap-1">
                         {showInlineActions && onStartTimer && (
@@ -1497,7 +1195,7 @@ function EventBlock({
                                 ...(eventTitleLines > 1 ? { WebkitLineClamp: eventTitleLines } : {}),
                             }}
                         >
-                            {displayTitle}
+                            {event.title}
                         </span>
                     </div>
                     {!isDense && event.location && height > 55 && (
@@ -1577,8 +1275,8 @@ function TaskBlock({
     const isDenseCard = totalColumns >= DENSE_CLUSTER_COLUMNS
     const isCompact = height < 36 || (totalColumns >= 2 && height < 52)
     const isTallCard = height >= 56
-    const titleLines = isDenseCard ? 1 : height >= 160 ? 6 : height >= 128 ? 5 : height >= 96 ? 4 : height >= 72 ? 3 : height >= 56 ? 2 : 1
-    const displayTitle = isDenseCard ? truncateTitle(task.title, 10) : task.title
+    const titleLines = height >= 160 ? 6 : height >= 128 ? 5 : height >= 96 ? 4 : height >= 72 ? 3 : height >= 56 ? 2 : 1
+    const compactTitleLines = height >= 42 ? 2 : 1
     const showInlineActions = !isDenseCard
 
     // Google由来タスクはカレンダー色、通常タスクは既存オレンジ
@@ -1617,11 +1315,11 @@ function TaskBlock({
             style={finalStyle}
         >
             {isCompact ? (
-                <div className="flex items-center gap-1.5 h-full min-w-0">
+                <div className="flex items-start gap-1.5 h-full min-w-0">
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
                         aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
-                        className="no-tap-highlight flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
+                        className="no-tap-highlight mt-0.5 flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
                     >
                         {isDone ? (
                             <CheckSquare className="w-4 h-4 text-primary" />
@@ -1630,10 +1328,18 @@ function TaskBlock({
                         )}
                     </button>
                     <span className={cn(
-                        "text-[11px] font-medium truncate flex-1 min-w-0 max-w-full",
+                        "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
+                        compactTitleLines === 1
+                            ? "truncate"
+                            : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
                         isDone ? "line-through text-muted-foreground" : "text-foreground"
-                    )}>
-                        {displayTitle}
+                    )}
+                        style={{
+                            overflowWrap: "anywhere",
+                            ...(compactTitleLines > 1 ? { WebkitLineClamp: compactTitleLines } : {}),
+                        }}
+                    >
+                        {task.title}
                     </span>
                     {showInlineActions && (
                         <div className="ml-auto flex-shrink-0 flex items-center gap-1">
@@ -1704,7 +1410,7 @@ function TaskBlock({
                                     ...(titleLines > 1 ? { WebkitLineClamp: titleLines } : {}),
                                 }}
                             >
-                                {displayTitle}
+                                {task.title}
                             </span>
                         </div>
                     </div>

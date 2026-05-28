@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
-import { CreateProjectDialog } from "./create-project-dialog"
+import { ProjectFormDialog, type ProjectFormMode } from "./create-project-dialog"
 import { SpaceFormDialog, type SpaceFormMode } from "./space-form-dialog"
 
 interface SpaceProjectSwitcherProps {
@@ -22,6 +22,8 @@ interface SpaceProjectSwitcherProps {
   onSelectProject: (id: string | null) => void
   /** 新規作成されたプロジェクトを親 (lists) に反映するコールバック (任意) */
   onProjectCreated?: (project: Project) => void
+  /** 更新されたプロジェクトを親に反映するコールバック (任意) */
+  onProjectSaved?: (project: Project) => void
   /** スペース作成・更新を親に反映するコールバック (任意) */
   onSpaceSaved?: (space: Space) => void
   showAllProjectsOption?: boolean
@@ -46,20 +48,24 @@ export function SpaceProjectSwitcher({
   onSelectSpace,
   onSelectProject,
   onProjectCreated,
+  onProjectSaved,
   onSpaceSaved,
   showAllProjectsOption = false,
   className,
 }: SpaceProjectSwitcherProps) {
   const [spaceOpen, setSpaceOpen] = useState(false)
   const [projectOpen, setProjectOpen] = useState(false)
-  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [projectFormOpen, setProjectFormOpen] = useState(false)
+  const [projectFormMode, setProjectFormMode] = useState<ProjectFormMode>("create")
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [spaceFormOpen, setSpaceFormOpen] = useState(false)
   const [spaceFormMode, setSpaceFormMode] = useState<SpaceFormMode>("create")
   const [editingSpace, setEditingSpace] = useState<Space | null>(null)
 
-  const currentProject = projects.find((p) => p.id === selectedProjectId) || null
+  const currentProject =
+    projects.find((p) => p.id === selectedProjectId && (!selectedSpaceId || p.space_id === selectedSpaceId)) || null
   const currentSpace =
-    spaces.find((s) => s.id === (currentProject?.space_id ?? selectedSpaceId)) || null
+    spaces.find((s) => s.id === (selectedSpaceId ?? currentProject?.space_id)) || null
 
   // Project switcher に表示する候補: 現在の space に属するもの (未選択時は全体)
   const visibleProjects = selectedSpaceId
@@ -68,8 +74,15 @@ export function SpaceProjectSwitcher({
 
   const handlePickSpace = (id: string | null) => {
     onSelectSpace(id)
-    // Space切替時は project 選択を解除 (showAll の時のみ。それ以外は維持)
-    if (showAllProjectsOption) onSelectProject(null)
+    if (showAllProjectsOption || !id) {
+      onSelectProject(null)
+    } else {
+      const currentProjectInSpace = projects.find(
+        (p) => p.id === selectedProjectId && p.space_id === id && !isArchived(p),
+      )
+      const firstProjectInSpace = projects.find((p) => p.space_id === id && !isArchived(p))
+      onSelectProject(currentProjectInSpace?.id ?? firstProjectInSpace?.id ?? null)
+    }
     setSpaceOpen(false)
   }
 
@@ -83,7 +96,29 @@ export function SpaceProjectSwitcher({
     onProjectCreated?.(project)
     onSelectSpace(project.space_id)
     onSelectProject(project.id)
-    setCreateDialogOpen(false)
+    setProjectFormOpen(false)
+    setProjectOpen(false)
+  }
+
+  const handleProjectSaved = (project: Project) => {
+    onProjectSaved?.(project)
+    if (project.id === selectedProjectId && project.space_id !== selectedSpaceId) {
+      onSelectSpace(project.space_id)
+    }
+    setProjectFormOpen(false)
+  }
+
+  const openCreateProject = () => {
+    setProjectFormMode("create")
+    setEditingProject(null)
+    setProjectFormOpen(true)
+    setProjectOpen(false)
+  }
+
+  const openEditProject = (project: Project) => {
+    setProjectFormMode("edit")
+    setEditingProject(project)
+    setProjectFormOpen(true)
     setProjectOpen(false)
   }
 
@@ -163,14 +198,15 @@ export function SpaceProjectSwitcher({
                 <div
                   key={space.id}
                   className={cn(
-                    "group flex w-full items-center gap-1 rounded transition-colors",
+                    "group relative flex w-full items-center rounded transition-colors",
                     active ? "bg-primary/10" : "hover:bg-muted/60",
                   )}
                 >
                   <button
+                    type="button"
                     onClick={() => handlePickSpace(space.id)}
                     className={cn(
-                      "flex flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm",
+                      "flex min-h-9 w-full items-center gap-2 rounded px-2 py-1.5 pr-16 text-left text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                       active ? "text-primary font-medium" : "",
                     )}
                   >
@@ -189,7 +225,7 @@ export function SpaceProjectSwitcher({
                     }}
                     aria-label={`${space.title} を編集`}
                     title="名前・色を編集"
-                    className="mr-1 inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground transition-opacity focus:opacity-100"
+                    className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
                   >
                     <Pencil className="h-3 w-3" />
                   </button>
@@ -262,30 +298,44 @@ export function SpaceProjectSwitcher({
             {visibleProjects.map((p) => {
               const active = p.id === selectedProjectId
               return (
-                <button
+                <div
                   key={p.id}
-                  onClick={() => handlePickProject(p)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                    "group relative flex w-full items-center rounded text-left text-sm transition-colors",
                     active ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/60",
                   )}
                 >
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: normalizeColor(p.color_theme, DEFAULT_PROJECT_COLOR) }}
-                  />
-                  <span className="truncate flex-1">{p.title}</span>
-                  {active && <Check className="w-3.5 h-3.5 shrink-0" />}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePickProject(p)}
+                    className="flex min-h-9 w-full items-center gap-2 rounded px-2 py-1.5 pr-16 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: normalizeColor(p.color_theme, DEFAULT_PROJECT_COLOR) }}
+                    />
+                    <span className="truncate flex-1">{p.title}</span>
+                    {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openEditProject(p)
+                    }}
+                    aria-label={`${p.title} を編集`}
+                    title="名前・色を編集"
+                    className="pointer-events-auto absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 opacity-100 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 md:pointer-events-none md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
               )
             })}
           </div>
           <div className="mt-1 border-t border-border/40 pt-1">
             <button
-              onClick={() => {
-                setProjectOpen(false)
-                setCreateDialogOpen(true)
-              }}
+              onClick={openCreateProject}
               disabled={spaces.length === 0}
               className={cn(
                 "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
@@ -301,12 +351,14 @@ export function SpaceProjectSwitcher({
         </PopoverContent>
       </Popover>
 
-      <CreateProjectDialog
-        open={createDialogOpen}
+      <ProjectFormDialog
+        open={projectFormOpen}
+        mode={projectFormMode}
         spaces={spaces}
+        project={editingProject}
         defaultSpaceId={selectedSpaceId ?? currentSpace?.id ?? null}
-        onClose={() => setCreateDialogOpen(false)}
-        onCreated={handleProjectCreated}
+        onClose={() => setProjectFormOpen(false)}
+        onSaved={projectFormMode === "create" ? handleProjectCreated : handleProjectSaved}
       />
 
       <SpaceFormDialog

@@ -3,6 +3,52 @@
 export type FocusmapChatMode = "normal" | "automation"
 export type FocusmapChatRole = "user" | "assistant" | "system"
 export type FocusmapChatStatus = "idle" | "running" | "completed" | "failed"
+export type FocusmapActionStatus = "pending" | "executing" | "success" | "failed"
+export type FocusmapPlannerState = "capture_intent" | "propose" | "resolve_conflict" | "confirm_and_execute"
+
+export interface FocusmapChatOption {
+  label: string
+  value: string
+  silent?: boolean
+  action?: "restore_input" | "reset"
+}
+
+export interface FocusmapChatAction {
+  type: string
+  params: Record<string, unknown>
+  description?: string
+}
+
+export interface FocusmapCalendarChoice {
+  id: string
+  name: string
+  isDefault?: boolean
+}
+
+export interface FocusmapBestProposal {
+  title: string
+  startAt: string
+  endAt: string
+  calendarId?: string
+  duration?: number
+  reason?: string
+}
+
+export interface FocusmapProposalCard {
+  id: string
+  title: string
+  startAt: string
+  endAt: string
+  calendarId?: string
+  reason?: string
+  value?: string
+}
+
+export interface FocusmapToolResult {
+  toolName: string
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+}
 
 export interface FocusmapChatMessage {
   id: string
@@ -13,6 +59,22 @@ export interface FocusmapChatMessage {
   modelLabel?: string
   taskId?: string | null
   error?: string | null
+  hidden?: boolean
+  isSummaryDivider?: boolean
+  options?: FocusmapChatOption[]
+  optionsUsed?: boolean
+  selectedOption?: string
+  action?: FocusmapChatAction
+  pendingAction?: FocusmapChatAction
+  actionStatus?: FocusmapActionStatus
+  calendarChoices?: FocusmapCalendarChoice[]
+  calendarChoiceUsed?: boolean
+  plannerState?: FocusmapPlannerState
+  bestProposal?: FocusmapBestProposal
+  bestProposalStatus?: "pending" | "accepted" | "editing"
+  proposalCards?: FocusmapProposalCard[]
+  proposalUsed?: boolean
+  toolResults?: FocusmapToolResult[]
 }
 
 export interface FocusmapChatSession {
@@ -20,6 +82,7 @@ export interface FocusmapChatSession {
   mode: FocusmapChatMode
   title: string
   messages: FocusmapChatMessage[]
+  summaryContext?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -35,6 +98,47 @@ interface SendOptions {
   text: string
   spaceId?: string | null
   projectId?: string | null
+  silent?: boolean
+}
+
+interface ChatApiResponse {
+  reply?: string
+  action?: FocusmapChatAction
+  pendingAction?: FocusmapChatAction
+  calendarChoices?: FocusmapCalendarChoice[]
+  options?: FocusmapChatOption[]
+  plannerState?: FocusmapPlannerState
+  bestProposal?: FocusmapBestProposal
+  proposalCards?: FocusmapProposalCard[]
+  shouldSummarize?: boolean
+  skillId?: string
+  skillSelector?: Array<{ id: string; label: string; icon?: string; description?: string }>
+  contextUpdate?: { category?: string; content?: string }
+  projectContextUpdated?: boolean
+  toolResults?: FocusmapToolResult[]
+  model_label?: string
+  error?: string
+}
+
+interface ExecuteActionResponse {
+  success?: boolean
+  message?: string
+  eventData?: {
+    id: string
+    title: string
+    scheduled_at: string
+    estimated_time: number
+    calendar_id?: string | null
+  }
+  taskData?: {
+    id: string
+    title: string
+    project_id?: string | null
+    parent_task_id?: string | null
+  }
+  continueOptions?: FocusmapChatOption[]
+  actionType?: string
+  error?: string
 }
 
 const STORAGE_PREFIX = "focusmap:chat-runtime:"
@@ -81,6 +185,42 @@ function cloneState(state: RuntimeState): RuntimeState {
       messages: session.messages.map(message => ({ ...message })),
     })),
   }
+}
+
+function visibleConversationMessages(session: FocusmapChatSession) {
+  return session.messages
+    .filter(message => !message.isSummaryDivider && (message.role === "user" || message.role === "assistant"))
+    .map(message => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content }))
+}
+
+function normalizeOptions(data: ChatApiResponse): FocusmapChatOption[] | undefined {
+  if (Array.isArray(data.options) && data.options.length > 0) return data.options.slice(0, 4)
+  if (Array.isArray(data.skillSelector) && data.skillSelector.length > 0) {
+    return data.skillSelector.slice(0, 6).map(skill => ({
+      label: skill.label,
+      value: `${skill.label}をしたい`,
+    }))
+  }
+  return undefined
+}
+
+function applyNormalResponse(target: FocusmapChatMessage, data: ChatApiResponse) {
+  target.content = data.reply || "応答を取得しました。"
+  target.status = "completed"
+  target.modelLabel = data.model_label || "gemini-3.1-flash-lite"
+  target.action = data.action
+  target.pendingAction = data.pendingAction
+  target.calendarChoices = data.calendarChoices?.length ? data.calendarChoices : undefined
+  target.actionStatus = data.action || data.pendingAction ? "pending" : undefined
+  target.options = normalizeOptions(data)
+  target.optionsUsed = false
+  target.selectedOption = undefined
+  target.plannerState = data.plannerState
+  target.bestProposal = data.bestProposal
+  target.bestProposalStatus = data.bestProposal ? "pending" : undefined
+  target.proposalCards = data.proposalCards?.length ? data.proposalCards : undefined
+  target.proposalUsed = false
+  target.toolResults = data.toolResults?.length ? data.toolResults : undefined
 }
 
 function ensureBrowserSync() {
@@ -258,6 +398,7 @@ export function sendChatMessage(options: SendOptions) {
     content: text,
     createdAt: nowIso(),
     status: "completed",
+    hidden: options.silent === true,
   }
   const assistantMessage: FocusmapChatMessage = {
     id: createId("msg"),
@@ -287,9 +428,12 @@ export function sendChatMessage(options: SendOptions) {
 async function runNormalMessage(options: SendOptions & { sessionId: string; assistantMessageId: string }) {
   try {
     const session = findSession("normal", options.sessionId)
-    const history = (session?.messages ?? [])
-      .filter(message => message.id !== options.assistantMessageId && message.role !== "system")
-      .map(message => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content }))
+    const history = session
+      ? visibleConversationMessages({
+        ...session,
+        messages: session.messages.filter(message => message.id !== options.assistantMessageId),
+      })
+      : []
 
     const res = await fetch("/api/ai/chat", {
       method: "POST",
@@ -300,18 +444,21 @@ async function runNormalMessage(options: SendOptions & { sessionId: string; assi
         context: {
           activeProjectId: options.projectId || undefined,
         },
+        summaryContext: session?.summaryContext || undefined,
       }),
     })
-    const data = await res.json()
+    const data = await res.json() as ChatApiResponse
     if (!res.ok) throw new Error(data?.error || "AI応答に失敗しました")
 
     updateSession("normal", options.sessionId, session => {
       const target = session.messages.find(message => message.id === options.assistantMessageId)
       if (!target) return
-      target.content = data.reply || "応答を取得しました。"
-      target.status = "completed"
-      target.modelLabel = data.model_label || "gemini-3.1-flash-lite"
+      applyNormalResponse(target, data)
     })
+
+    if (data.shouldSummarize) {
+      await summarizeChatSession("normal", options.sessionId)
+    }
   } catch (error) {
     updateSession("normal", options.sessionId, session => {
       const target = session.messages.find(message => message.id === options.assistantMessageId)
@@ -319,6 +466,10 @@ async function runNormalMessage(options: SendOptions & { sessionId: string; assi
       target.content = "AI応答の取得に失敗しました。履歴には残しているので、再送信できます。"
       target.status = "failed"
       target.error = error instanceof Error ? error.message : "unknown"
+      target.options = [
+        { label: "リトライ", value: options.text },
+        { label: "入力を編集", value: options.text, action: "restore_input" },
+      ]
     })
   }
 }
@@ -354,6 +505,214 @@ async function runAutomationMessage(options: SendOptions & { sessionId: string; 
       target.content = "自動化タスクの投入に失敗しました。接続設定を確認してください。"
       target.status = "failed"
       target.error = error instanceof Error ? error.message : "unknown"
+      target.options = [
+        { label: "リトライ", value: options.text },
+        { label: "入力を編集", value: options.text, action: "restore_input" },
+      ]
     })
+  }
+}
+
+async function summarizeChatSession(mode: FocusmapChatMode, sessionId: string) {
+  const session = findSession(mode, sessionId)
+  if (!session) return
+  const messages = visibleConversationMessages(session)
+  if (messages.length < 2) return
+
+  try {
+    const res = await fetch("/api/ai/chat/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    })
+    const data = await res.json().catch(() => null) as { summary?: string } | null
+    if (!res.ok || !data?.summary) return
+
+    updateSession(mode, sessionId, current => {
+      current.summaryContext = data.summary ?? null
+      current.messages.push({
+        id: createId("msg"),
+        role: "assistant",
+        content: data.summary ?? "",
+        createdAt: nowIso(),
+        status: "completed",
+        isSummaryDivider: true,
+      })
+    })
+  } catch {
+    // 要約に失敗しても会話自体は継続する。
+  }
+}
+
+export function resetChatSession(mode: FocusmapChatMode, sessionId: string) {
+  updateSession(mode, sessionId, session => {
+    session.title = initialTitle(mode)
+    session.messages = []
+    session.summaryContext = null
+  })
+}
+
+export function markChatOptionUsed(
+  mode: FocusmapChatMode,
+  sessionId: string,
+  messageId: string,
+  selectedOption?: string,
+) {
+  updateSession(mode, sessionId, session => {
+    const target = session.messages.find(message => message.id === messageId)
+    if (!target) return
+    target.optionsUsed = true
+    target.selectedOption = selectedOption
+  })
+}
+
+export function cancelChatAction(mode: FocusmapChatMode, sessionId: string, messageId: string) {
+  updateSession(mode, sessionId, session => {
+    const target = session.messages.find(message => message.id === messageId)
+    if (!target) return
+    target.action = undefined
+    target.pendingAction = undefined
+    target.calendarChoices = undefined
+    target.actionStatus = undefined
+  })
+}
+
+export function setBestProposalStatus(
+  mode: FocusmapChatMode,
+  sessionId: string,
+  messageId: string,
+  status: "pending" | "accepted" | "editing",
+) {
+  updateSession(mode, sessionId, session => {
+    const target = session.messages.find(message => message.id === messageId)
+    if (!target?.bestProposal) return
+    target.bestProposalStatus = status
+  })
+}
+
+export function markProposalUsed(mode: FocusmapChatMode, sessionId: string, messageId: string) {
+  updateSession(mode, sessionId, session => {
+    const target = session.messages.find(message => message.id === messageId)
+    if (!target) return
+    target.proposalUsed = true
+  })
+}
+
+export async function executeChatAction(
+  mode: FocusmapChatMode,
+  sessionId: string,
+  messageId: string,
+): Promise<ExecuteActionResponse | null> {
+  const session = findSession(mode, sessionId)
+  const target = session?.messages.find(message => message.id === messageId)
+  if (!target?.action) return null
+
+  updateSession(mode, sessionId, current => {
+    const message = current.messages.find(item => item.id === messageId)
+    if (message) message.actionStatus = "executing"
+  })
+
+  try {
+    const res = await fetch("/api/ai/chat/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: target.action }),
+    })
+    const data = await res.json().catch(() => ({})) as ExecuteActionResponse
+    const success = res.ok && data.success !== false
+
+    updateSession(mode, sessionId, current => {
+      const message = current.messages.find(item => item.id === messageId)
+      if (message) message.actionStatus = success ? "success" : "failed"
+      current.messages.push({
+        id: createId("msg"),
+        role: "assistant",
+        content: data.message || (success ? "実行しました。" : "実行に失敗しました。"),
+        createdAt: nowIso(),
+        status: success ? "completed" : "failed",
+        options: data.continueOptions?.length ? data.continueOptions : undefined,
+      })
+    })
+
+    return data
+  } catch (error) {
+    updateSession(mode, sessionId, current => {
+      const message = current.messages.find(item => item.id === messageId)
+      if (message) message.actionStatus = "failed"
+      current.messages.push({
+        id: createId("msg"),
+        role: "assistant",
+        content: "実行に失敗しました。もう一度試してください。",
+        createdAt: nowIso(),
+        status: "failed",
+        error: error instanceof Error ? error.message : "unknown",
+      })
+    })
+    return null
+  }
+}
+
+export async function selectChatCalendarChoice(
+  mode: FocusmapChatMode,
+  sessionId: string,
+  messageId: string,
+  choice: FocusmapCalendarChoice,
+): Promise<ExecuteActionResponse | null> {
+  const session = findSession(mode, sessionId)
+  const target = session?.messages.find(message => message.id === messageId)
+  if (!target?.pendingAction) return null
+
+  const action: FocusmapChatAction = {
+    ...target.pendingAction,
+    params: {
+      ...(target.pendingAction.params || {}),
+      calendar_id: choice.id,
+    },
+  }
+
+  updateSession(mode, sessionId, current => {
+    const message = current.messages.find(item => item.id === messageId)
+    if (!message) return
+    message.calendarChoiceUsed = true
+    message.actionStatus = "executing"
+  })
+
+  try {
+    const res = await fetch("/api/ai/chat/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    })
+    const data = await res.json().catch(() => ({})) as ExecuteActionResponse
+    const success = res.ok && data.success !== false
+
+    updateSession(mode, sessionId, current => {
+      const message = current.messages.find(item => item.id === messageId)
+      if (message) message.actionStatus = success ? "success" : "failed"
+      current.messages.push({
+        id: createId("msg"),
+        role: "assistant",
+        content: data.message || (success ? "実行しました。" : "実行に失敗しました。"),
+        createdAt: nowIso(),
+        status: success ? "completed" : "failed",
+        options: data.continueOptions?.length ? data.continueOptions : undefined,
+      })
+    })
+
+    return data
+  } catch (error) {
+    updateSession(mode, sessionId, current => {
+      const message = current.messages.find(item => item.id === messageId)
+      if (message) message.actionStatus = "failed"
+      current.messages.push({
+        id: createId("msg"),
+        role: "assistant",
+        content: "実行に失敗しました。もう一度試してください。",
+        createdAt: nowIso(),
+        status: "failed",
+        error: error instanceof Error ? error.message : "unknown",
+      })
+    })
+    return null
   }
 }

@@ -240,6 +240,14 @@ export function DashboardClient({
         updateTodaySubView('memo')
         setActiveView('today')
     }, [setActiveView, updateTodaySubView])
+    const openTodayBoard = useCallback(() => {
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+        setTodaySelectedDate(today)
+        setTodayMemoScheduleFocus(null)
+        updateTodaySubView('memo')
+        setActiveView('today')
+    }, [setActiveView, updateTodaySubView])
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
     const [mindmapMemoFocus, setMindmapMemoFocus] = useState<{ taskId: string; requestKey: number } | null>(null)
@@ -419,6 +427,14 @@ export function DashboardClient({
         await fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
     }, [selectedProjectId, projects])
 
+    const handleProjectSavedFromSwitcher = useCallback((project: Project) => {
+        setProjects(prev => (
+            prev.some(p => p.id === project.id)
+                ? prev.map(p => p.id === project.id ? project : p)
+                : [project, ...prev]
+        ))
+    }, [])
+
     // --- Space CRUD ---
     const handleCreateSpace = useCallback(async (title: string, color?: string) => {
         const res = await fetch('/api/spaces', {
@@ -450,6 +466,14 @@ export function DashboardClient({
         }
         await fetch(`/api/spaces/${spaceId}`, { method: 'DELETE' })
     }, [selectedSpaceId])
+
+    const handleSpaceSavedFromSwitcher = useCallback((space: Space) => {
+        setSpaces(prev => (
+            prev.some(s => s.id === space.id)
+                ? prev.map(s => s.id === space.id ? space : s)
+                : [space, ...prev]
+        ))
+    }, [])
 
     // --- Quick Task Creation (for TodayView FAB) ---
     const [quickTasks, setQuickTasks] = useState<Task[]>([])
@@ -1094,6 +1118,9 @@ export function DashboardClient({
                     selectedProjectId={selectedProjectId}
                     onSelectSpace={setSelectedSpaceId}
                     onSelectProject={setSelectedProjectId}
+                    onProjectCreated={handleProjectSavedFromSwitcher}
+                    onProjectSaved={handleProjectSavedFromSwitcher}
+                    onSpaceSaved={handleSpaceSavedFromSwitcher}
                     showCalendarSplitToggle={activeView === 'map'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
@@ -1101,6 +1128,7 @@ export function DashboardClient({
                     isMemoSplitVisible={isMemoSplitVisible}
                     onToggleMemoSplit={toggleMemoSplit}
                     onMindmapUpdated={refreshFromServer}
+                    onLogoClick={openTodayBoard}
                 />
 
                 {/* Google カレンダー連携完了の一時通知（?calendar_connected=true を検知して3秒表示） */}
@@ -1216,6 +1244,9 @@ export function DashboardClient({
                             selectedProjectId={selectedProjectId}
                             onSelectSpace={setSelectedSpaceId}
                             onSelectProject={setSelectedProjectId}
+                            onProjectCreated={handleProjectSavedFromSwitcher}
+                            onProjectSaved={handleProjectSavedFromSwitcher}
+                            onSpaceSaved={handleSpaceSavedFromSwitcher}
                             showAllProjectsOption
                             className="md:hidden"
                         />
@@ -1238,28 +1269,8 @@ export function DashboardClient({
                 {!isMobileViewport && activeView === 'ai' && (
                     <div className="flex-1 w-full overflow-hidden hidden md:flex">
                         <AiView
-                            projects={filteredProjects}
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
-                            onSelectProject={setSelectedProjectId}
-                            selectedProject={selectedProject}
-                            groups={currentGroups}
-                            tasks={currentTasks}
-                            onCreateGroup={handleCreateGroup}
-                            onDeleteGroup={handleDeleteGroup}
-                            onReorderGroup={reorderGroup}
-                            onUpdateProject={handleUpdateProjectTitle}
-                            onCreateTask={createTask}
-                            onUpdateTask={updateTask}
-                            onDeleteTask={handleDeleteTask}
-                            onBulkDelete={bulkDelete}
-                            onReorderTask={reorderTask}
-                            refreshFromServer={refreshFromServer}
-                            onCalendarEventCreated={handleCalendarEventCreated}
-                            onRefreshCalendar={handleRefreshCalendar}
-                            onAddOptimisticEvent={handleAddOptimisticEvent}
-                            onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
-                            onOpenLinkedMemos={openMindmapLinkedMemos}
                         />
                     </div>
                 )}

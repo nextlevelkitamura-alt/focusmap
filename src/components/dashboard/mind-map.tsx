@@ -1,23 +1,18 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useLayoutEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
-import ReactFlow, {
+import {
     Node,
     Edge,
-    Controls,
-    Background,
-    BackgroundVariant,
     Handle,
     Position,
     NodeProps,
     ReactFlowProvider,
     NodeMouseHandler,
-    SelectionMode,
     useReactFlow,
     applyNodeChanges,
     NodeChange,
 } from 'reactflow';
-import 'reactflow/dist/style.css';
 import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, X, GripVertical, StickyNote, ImagePlus, Check, ChevronDown, ChevronRight } from "lucide-react";
@@ -33,7 +28,6 @@ import {
     estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements,
     NODE_MIN_WIDTH, NODE_RESIZE_MAX_WIDTH,
 } from "@/lib/mindmap-layout";
-import { BranchEdge } from "@/components/mindmap/branch-edge";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { getMindMapViewportBounds, getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
@@ -1058,13 +1052,8 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
 });
 TaskNode.displayName = 'TaskNode';
 
-const nodeTypes = { projectNode: ProjectNode, taskNode: TaskNode };
-const edgeTypes = { branch: BranchEdge };
-const defaultViewport = { x: 0, y: 0, zoom: 0.75 };
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
-const MINDMAP_RENDERER_KEY = 'focusmap:mindmap-renderer';
 const MINDMAP_WHEEL_ZOOM_SENSITIVITY = 0.0035;
-type MindMapRenderer = 'reactflow' | 'custom';
 
 type MindMapClipboardNode = {
     title: string;
@@ -1132,20 +1121,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // MindMap Display Settings (consistent default for SSR, restore from localStorage after mount)
     const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(DEFAULT_SETTINGS);
     useEffect(() => { setDisplaySettings(loadSettings()) }, []);
-    const [renderer, setRenderer] = useState<MindMapRenderer>('reactflow');
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const stored = window.localStorage.getItem(MINDMAP_RENDERER_KEY);
-        if (stored === 'reactflow' || stored === 'custom') {
-            setRenderer(stored);
-        }
-    }, []);
-    const updateRenderer = useCallback((nextRenderer: MindMapRenderer) => {
-        setRenderer(nextRenderer);
-        if (typeof window !== 'undefined') {
-            window.localStorage.setItem(MINDMAP_RENDERER_KEY, nextRenderer);
-        }
-    }, []);
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
@@ -2907,30 +2882,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             onPasteCapture={handleContainerPasteCapture}
             onMouseDown={markUserAction}
         >
-            <div className="absolute left-3 top-3 z-20 inline-flex rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur">
-                {([
-                    { value: 'reactflow', label: 'React Flow' },
-                    { value: 'custom', label: '自作' },
-                ] as const).map(option => (
-                    <button
-                        key={option.value}
-                        type="button"
-                        className={cn(
-                            "h-8 rounded-md px-3 text-xs font-medium transition-colors",
-                            renderer === option.value
-                                ? "bg-foreground text-background"
-                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            updateRenderer(option.value);
-                        }}
-                    >
-                        {option.label}
-                    </button>
-                ))}
-            </div>
-
             {/* MindMap Display Settings Button (Top Right) */}
             <div className="absolute top-3 right-3 z-10">
                 <MindMapDisplaySettingsPopover
@@ -2939,69 +2890,31 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 />
             </div>
 
-            {renderer === 'custom' ? (
-                <CustomMindMapView
-                    project={project}
-                    groups={groups}
-                    tasks={tasks}
-                    isMobile={isNarrow}
-                    collapsedTaskIds={collapsedTaskIds}
-                    selectedNodeId={selectedNodeId}
-                    selectedNodeIds={selectedNodeIds}
-                    onSelectNode={handleCustomSelectNode}
-                    onSelectNodes={handleCustomSelectNodes}
-                    onToggleCollapse={toggleTaskCollapse}
-                    pendingEditNodeId={pendingEditNodeId}
-                    onAddRootNode={() => callbacks.createRootTaskAndFocus("New Task")}
-                    onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
-                    onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
-                    onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}
-                    onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
-                    onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
-                    onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
-                    onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
-                    onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
-                    onOpenLinkedMemos={onOpenLinkedMemos}
-                    onMoveTask={handleCustomMoveTask}
-                    onMoveTasks={handleCustomMoveTasks}
-                />
-            ) : (
-                <ReactFlow
-                    nodes={nodes}
-                    onNodesChange={onNodesChange}
-                    edges={edges}
-                    nodeTypes={nodeTypes}
-                    edgeTypes={edgeTypes}
-                    defaultViewport={defaultViewport}
-                    onNodeClick={handleNodeClick}
-                    onNodeDragStart={handleNodeDragStart}
-                    onNodeDrag={handleNodeDrag}
-                    onNodeDragStop={handleNodeDragStop}
-                    onSelectionDragStart={handleSelectionDragStart}
-                    onSelectionDrag={handleSelectionDrag}
-                    onSelectionDragStop={handleSelectionDragStop}
-                    onPaneClick={handlePaneClick}
-                    onSelectionChange={handleSelectionChange}
-                    onWheel={handlePaneWheel}
-                    fitView
-                    fitViewOptions={{ padding: 0.35 }}
-                    deleteKeyCode={null}
-                    nodesConnectable={false}
-                    nodesDraggable={true}
-                    selectionOnDrag={true}
-                    selectionMode={SelectionMode.Partial}
-                    panOnDrag={[1, 2]}
-                    panOnScroll={true}
-                    zoomOnScroll={false}
-                    minZoom={zoomBounds.minZoom}
-                    maxZoom={zoomBounds.maxZoom}
-                    selectNodesOnDrag={true}
-                    multiSelectionKeyCode="Shift"
-                >
-                    <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255, 255, 255, 0.15)" />
-                    <Controls showInteractive={false} />
-                </ReactFlow>
-            )}
+            <CustomMindMapView
+                project={project}
+                groups={groups}
+                tasks={tasks}
+                isMobile={isNarrow}
+                collapsedTaskIds={collapsedTaskIds}
+                selectedNodeId={selectedNodeId}
+                selectedNodeIds={selectedNodeIds}
+                onSelectNode={handleCustomSelectNode}
+                onSelectNodes={handleCustomSelectNodes}
+                onToggleCollapse={toggleTaskCollapse}
+                pendingEditNodeId={pendingEditNodeId}
+                onAddRootNode={() => callbacks.createRootTaskAndFocus("New Task")}
+                onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
+                onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
+                onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}
+                onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
+                onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
+                onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
+                onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
+                onOpenLinkedMemos={onOpenLinkedMemos}
+                onMoveTask={handleCustomMoveTask}
+                onMoveTasks={handleCustomMoveTasks}
+            />
 
             {selectedNodeId && selectedNodeId !== 'project-root' && (
                 <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur border rounded-lg p-2 text-xs text-muted-foreground shadow-lg">

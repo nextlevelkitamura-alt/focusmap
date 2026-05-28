@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Loader2, FolderPlus } from "lucide-react"
+import { FolderKanban, FolderPlus, Loader2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -14,12 +14,16 @@ import { Project, Space } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
 
-interface CreateProjectDialogProps {
+export type ProjectFormMode = "create" | "edit"
+
+interface ProjectFormDialogProps {
   open: boolean
+  mode?: ProjectFormMode
   spaces: Space[]
   defaultSpaceId: string | null
+  project?: Project | null
   onClose: () => void
-  onCreated: (project: Project) => void
+  onSaved: (project: Project) => void
 }
 
 const PROJECT_COLOR_PRESETS = [
@@ -27,21 +31,24 @@ const PROJECT_COLOR_PRESETS = [
 ]
 
 /**
- * プロジェクト新規作成ダイアログ。
+ * プロジェクト作成・編集ダイアログ。
  * - スペースを選択 (現在の spaceId が初期値)
  * - タイトル入力
  * - 任意で色選択
- * - POST /api/projects → onCreated(project)
+ * - create: POST /api/projects
+ * - edit:   PATCH /api/projects/[id]
  *
  * スマホ・PC 両対応 (DialogContent が自動で max-w + viewport対応)。
  */
-export function CreateProjectDialog({
+export function ProjectFormDialog({
   open,
+  mode = "create",
   spaces,
   defaultSpaceId,
+  project,
   onClose,
-  onCreated,
-}: CreateProjectDialogProps) {
+  onSaved,
+}: ProjectFormDialogProps) {
   const [title, setTitle] = useState("")
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || spaces[0]?.id || "")
   const [colorTheme, setColorTheme] = useState<string>(PROJECT_COLOR_PRESETS[0])
@@ -50,12 +57,18 @@ export function CreateProjectDialog({
 
   useEffect(() => {
     if (!open) return
-    setTitle("")
-    setSpaceId(defaultSpaceId || spaces[0]?.id || "")
-    setColorTheme(PROJECT_COLOR_PRESETS[0])
+    if (mode === "edit" && project) {
+      setTitle(project.title)
+      setSpaceId(project.space_id)
+      setColorTheme(normalizeColor(project.color_theme, PROJECT_COLOR_PRESETS[0]))
+    } else {
+      setTitle("")
+      setSpaceId(defaultSpaceId || spaces[0]?.id || "")
+      setColorTheme(PROJECT_COLOR_PRESETS[0])
+    }
     setError(null)
     setSubmitting(false)
-  }, [open, defaultSpaceId, spaces])
+  }, [open, mode, project, defaultSpaceId, spaces])
 
   const canSubmit = title.trim().length > 0 && Boolean(spaceId) && !submitting
 
@@ -64,35 +77,48 @@ export function CreateProjectDialog({
     setSubmitting(true)
     setError(null)
     try {
-      const res = await fetch("/api/projects", {
-        method: "POST",
+      const url = mode === "edit" && project ? `/api/projects/${project.id}` : "/api/projects"
+      const method = mode === "edit" ? "PATCH" : "POST"
+      const payload =
+        mode === "edit"
+          ? {
+              space_id: spaceId,
+              title: title.trim(),
+              color_theme: colorTheme,
+            }
+          : {
+              space_id: spaceId,
+              title: title.trim(),
+              status: "active",
+              priority: 3,
+              color_theme: colorTheme,
+            }
+
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          space_id: spaceId,
-          title: title.trim(),
-          status: "active",
-          priority: 3,
-          color_theme: colorTheme,
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || "作成に失敗しました")
-      onCreated(data as Project)
+      if (!res.ok) throw new Error(data?.error || (mode === "edit" ? "更新に失敗しました" : "作成に失敗しました"))
+      onSaved(data as Project)
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "作成に失敗しました")
+      setError(e instanceof Error ? e.message : mode === "edit" ? "更新に失敗しました" : "作成に失敗しました")
     } finally {
       setSubmitting(false)
     }
   }
+
+  const Icon = mode === "edit" ? FolderKanban : FolderPlus
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !submitting && onClose()}>
       <DialogContent className="w-[calc(100vw-1rem)] max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
-            <FolderPlus className="h-4 w-4 text-primary" />
-            新しいプロジェクト
+            <Icon className="h-4 w-4 text-primary" />
+            {mode === "edit" ? "プロジェクト名を変更" : "新しいプロジェクト"}
           </DialogTitle>
         </DialogHeader>
 
@@ -165,10 +191,17 @@ export function CreateProjectDialog({
           </Button>
           <Button onClick={handleSubmit} disabled={!canSubmit}>
             {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            作成
+            {mode === "edit" ? "保存" : "作成"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
+}
+
+export function CreateProjectDialog(props: Omit<ProjectFormDialogProps, "mode" | "onSaved"> & {
+  onCreated: (project: Project) => void
+}) {
+  const { onCreated, ...rest } = props
+  return <ProjectFormDialog {...rest} mode="create" onSaved={onCreated} />
 }
