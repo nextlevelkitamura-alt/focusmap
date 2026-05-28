@@ -1,6 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { generateMindmapDraft } from '@/lib/ai/memo-to-mindmap'
+import {
+  MAX_CONVERSATION_LOG_CHARS,
+  generateMindmapDraft,
+  type MindmapDraftInputKind,
+} from '@/lib/ai/memo-to-mindmap'
 import { loadMindmapStructure } from '@/lib/ai/context/mindmap-context'
 import { logAiUsage } from '@/lib/ai/usage'
 import type { MemoMindmapMode } from '@/lib/ai/providers'
@@ -19,7 +23,8 @@ export async function POST(request: Request) {
     const body = await request.json()
     const noteIds: unknown = body?.noteIds
     const source: 'notes' | 'wishlist' = body?.source === 'wishlist' ? 'wishlist' : 'notes'
-    const mode: MemoMindmapMode = body?.mode === 'deep' ? 'deep' : 'quick'
+    const inputKind: MindmapDraftInputKind = body?.inputKind === 'conversation_log' ? 'conversation_log' : 'memo'
+    const mode: MemoMindmapMode = inputKind === 'conversation_log' || body?.mode === 'deep' ? 'deep' : 'quick'
     const targetProjectId: string | undefined = body?.targetProjectId || undefined
 
     if (!Array.isArray(noteIds) || noteIds.length === 0) {
@@ -45,7 +50,9 @@ export async function POST(request: Request) {
       validNotes = (memos || [])
         .map(m => ({
           id: m.id,
-          content: [m.title, m.description].filter(Boolean).join('\n\n'),
+          content: inputKind === 'conversation_log'
+            ? (m.description || m.title || '')
+            : [m.title, m.description].filter(Boolean).join('\n\n'),
         }))
         .filter(n => n.content.trim().length > 0)
     } else {
@@ -63,6 +70,15 @@ export async function POST(request: Request) {
     }
     if (validNotes.length === 0) {
       return NextResponse.json({ error: '有効なメモがありません' }, { status: 400 })
+    }
+    if (inputKind === 'conversation_log') {
+      const totalChars = validNotes.reduce((sum, note) => sum + note.content.length, 0)
+      if (totalChars > MAX_CONVERSATION_LOG_CHARS) {
+        return NextResponse.json(
+          { error: `会話ログは${MAX_CONVERSATION_LOG_CHARS}文字までです` },
+          { status: 400 },
+        )
+      }
     }
 
     // 既存マップへの追記時は、既存ツリーをコンテキストとして渡す
@@ -88,6 +104,7 @@ export async function POST(request: Request) {
       notes: validNotes.map(n => ({ id: n.id, content: n.content })),
       mode,
       existingTree,
+      inputKind,
     })
 
     const { costUsd } = await logAiUsage(supabase, {
@@ -96,7 +113,7 @@ export async function POST(request: Request) {
       modelName,
       inputTokens,
       outputTokens,
-      metadata: { noteCount: validNotes.length, mode, source, targetProjectId: targetProjectId ?? null },
+      metadata: { noteCount: validNotes.length, mode, source, inputKind, targetProjectId: targetProjectId ?? null },
     })
 
     return NextResponse.json({

@@ -9,7 +9,9 @@ const PRICING: { match: string; input: number; output: number }[] = [
   { match: 'gemini-3', input: 0.25, output: 1.5 },
   { match: 'gemini-2.5-flash-lite', input: 0.1, output: 0.4 },
   { match: 'gemini', input: 0.1, output: 0.4 },
-  { match: 'deepseek', input: 0.14, output: 0.28 },
+  { match: 'deepseek-v4-pro', input: 0.435, output: 0.87 },
+  { match: 'deepseek-v4-flash', input: 0.14, output: 0.28 },
+  { match: 'deepseek', input: 0.435, output: 0.87 },
 ]
 
 export function estimateCostUsd(modelName: string, inputTokens: number, outputTokens: number): number {

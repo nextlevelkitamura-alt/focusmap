@@ -127,10 +127,6 @@ export function Header({
                 projectMap[item.id] = item.project_id ?? null
             }
 
-            if (ids.length === 0) {
-                setOrganizeError("このプロジェクトに未整理メモがありません")
-                return
-            }
             const slicedIds = ids.slice(0, 50)
             setOrganizeMemoIds(slicedIds)
             setOrganizeMemoProjects(
@@ -326,6 +322,7 @@ export function Header({
                     setOrganizeMemoIds([])
                     onMindmapUpdated?.()
                 }}
+                allowTextImport
             />
         </header>
     )
