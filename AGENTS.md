@@ -38,6 +38,14 @@ main              ← 本番（Cloud Run自動デプロイ）
 3. 1つの機能が完成したら main にマージ
 4. **迷ったらコミットしておく**（後で戻せるから）
 
+### 本番デプロイ運用（重要）
+- 本番 Cloud Run は **origin/main の内容だけ**を正とする
+- feature ブランチや未コミット差分を本番に直接デプロイしない
+- 本番反映は原則 `git push origin main` → GitHub Actions 自動デプロイで行う
+- 手動 `./deploy-cloudrun.sh` は、クリーンな `main` かつ `HEAD == origin/main` のときだけ通る
+- 手動デプロイで先に出した変更は、必ず同じコミットを `main` に push する。push しないと次の main デプロイで機能が消える
+- 詳細は [docs/DEPLOY_CLOUDRUN.md](docs/DEPLOY_CLOUDRUN.md) を参照
+
 ## 実装の原則
 
 ### モバイルファースト

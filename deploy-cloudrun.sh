@@ -15,13 +15,60 @@ IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)}"
 IMAGE_URI="${IMAGE_NAME}:${IMAGE_TAG}"
 ENV_FILE=".env.local"
 
+require_clean_main() {
+  local current_branch
+  current_branch="$(git branch --show-current)"
+
+  if [[ "${ALLOW_NON_MAIN_DEPLOY:-}" != "1" && "${current_branch}" != "main" ]]; then
+    echo "❌ 本番デプロイは main ブランチからのみ実行できます。"
+    echo "現在のブランチ: ${current_branch:-detached HEAD}"
+    echo ""
+    echo "手順:"
+    echo "  1. 変更をコミット"
+    echo "  2. main に fast-forward/merge"
+    echo "  3. origin/main に push（GitHub Actions が自動デプロイ）"
+    echo ""
+    echo "緊急時だけ ALLOW_NON_MAIN_DEPLOY=1 ./deploy-cloudrun.sh で上書きできます。"
+    exit 1
+  fi
+
+  if [[ -n "$(git status --porcelain --untracked-files=all)" && "${ALLOW_DIRTY_DEPLOY:-}" != "1" ]]; then
+    echo "❌ 未コミットの変更があるため、本番デプロイを中止します。"
+    echo "先に commit するか、不要な変更を退避してください。"
+    echo ""
+    git status --short
+    echo ""
+    echo "緊急時だけ ALLOW_DIRTY_DEPLOY=1 ./deploy-cloudrun.sh で上書きできます。"
+    exit 1
+  fi
+
+  git fetch --quiet origin main
+  local head_sha origin_main_sha
+  head_sha="$(git rev-parse HEAD)"
+  origin_main_sha="$(git rev-parse origin/main)"
+
+  if [[ "${ALLOW_UNPUSHED_DEPLOY:-}" != "1" && "${head_sha}" != "${origin_main_sha}" ]]; then
+    echo "❌ ローカルHEADが origin/main と一致しないため、本番デプロイを中止します。"
+    echo "local HEAD : ${head_sha}"
+    echo "origin/main: ${origin_main_sha}"
+    echo ""
+    echo "先に git push origin main を実行し、GitHub Actions の自動デプロイを使ってください。"
+    echo "緊急時だけ ALLOW_UNPUSHED_DEPLOY=1 ./deploy-cloudrun.sh で上書きできます。"
+    exit 1
+  fi
+}
+
 echo "🚀 Cloud Run デプロイを開始します..."
 echo "プロジェクト: ${PROJECT_ID}"
 echo "サービス: ${SERVICE_NAME}"
 echo "リージョン: ${REGION}"
 echo "URL: ${PUBLIC_URL}"
 echo "イメージ: ${IMAGE_URI}"
+echo "コミット: $(git rev-parse HEAD)"
+echo "ブランチ: $(git branch --show-current || true)"
 echo ""
+
+require_clean_main
 
 # 1. プロジェクトIDを設定
 echo "📝 GCP プロジェクトを設定中..."

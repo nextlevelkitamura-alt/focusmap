@@ -33,43 +33,59 @@
 
 ---
 
+## 本番デプロイ運用ルール
+
+本番 Cloud Run は **origin/main の内容だけをデプロイする**。
+
+今回のように「別の場所で main からデプロイしたら機能が消える」事故は、ローカルの feature ブランチや未pushコミットを手動デプロイした後、古い `origin/main` の自動デプロイで上書きされることで起きる。
+
+### 原則
+- 機能が動いたら必ず commit する。
+- 本番に出す前に `main` へ fast-forward/merge する。
+- `git push origin main` を本番デプロイの起点にする。
+- Cloud Run に直接デプロイする場合も、クリーンな `main` かつ `HEAD == origin/main` の状態だけ許可する。
+- feature ブランチや未コミット差分を本番に直接出さない。
+
+### 推奨フロー
+```bash
+git status
+npm run build
+npm test -- <関連テスト>
+git checkout main
+git merge --ff-only <作業ブランチ>
+git push origin main
+```
+
+`origin/main` への push 後、GitHub Actions の `Deploy to Cloud Run` が自動で本番へ反映する。
+
+### 手動デプロイ
+通常は使わない。使う場合も以下の条件を `deploy-cloudrun.sh` が検査する。
+
+- 現在ブランチが `main`
+- 未コミット/未追跡の変更がない
+- ローカル `HEAD` が `origin/main` と一致している
+
+緊急時の上書き用に `ALLOW_NON_MAIN_DEPLOY=1` / `ALLOW_DIRTY_DEPLOY=1` / `ALLOW_UNPUSHED_DEPLOY=1` は残しているが、使った場合は直後に必ず `main` へ同じコミットを push する。
+
 ## デプロイ手順
 
 ### 前提条件
 - Google Cloud SDK (`gcloud`) インストール済み
 - Docker は不要 (Cloud Build がクラウド上でビルド)
 
-### ワンコマンドデプロイ
+### 通常デプロイ
 
 ```bash
-# 1. ビルド (Cloud Build)
-cd /path/to/shikumika-app
+git push origin main
+gh run watch --repo nextlevelkitamura-alt/focusmap "$(gh run list --repo nextlevelkitamura-alt/focusmap --branch main --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
+```
 
-SUPABASE_URL=$(grep 'NEXT_PUBLIC_SUPABASE_URL=' .env.local | cut -d'"' -f2)
-SUPABASE_KEY=$(grep 'NEXT_PUBLIC_SUPABASE_ANON_KEY=' .env.local | cut -d'"' -f2)
+### 例外的な手動デプロイ
 
-gcloud builds submit \
-  --config=cloudbuild.yaml \
-  --region=asia-northeast1 \
-  --project=shikumika-app \
-  --substitutions="_NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL,_NEXT_PUBLIC_SUPABASE_ANON_KEY=$SUPABASE_KEY"
-
-# 2. デプロイ (Cloud Run)
-SERVICE_URL="https://shikumika-app-364jgme3ja-an.a.run.app"
-ENV_VARS=$(grep -v '^#' .env.local | grep -v '^$' | grep '=' | \
-  sed "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=$SERVICE_URL/api/calendar/callback|" | \
-  sed "s|NEXTAUTH_URL=.*|NEXTAUTH_URL=$SERVICE_URL|" | \
-  while IFS='=' read -r key value; do echo -n "$key=$value,"; done | sed 's/,$//')
-
-gcloud run deploy shikumika-app \
-  --image asia-northeast1-docker.pkg.dev/shikumika-app/cloud-run-source-deploy/shikumika-app:latest \
-  --region asia-northeast1 \
-  --platform managed \
-  --allow-unauthenticated \
-  --memory 512Mi --cpu 1 \
-  --min-instances 0 --max-instances 10 \
-  --timeout 300s --port 3000 \
-  --set-env-vars "$ENV_VARS"
+```bash
+git checkout main
+git pull --ff-only origin main
+./deploy-cloudrun.sh
 ```
 
 ### 重要: NEXT_PUBLIC_* 変数について

@@ -13,6 +13,10 @@ env:
   PUBLIC_URL: https://focusmap-official.com
   IMAGE_NAME: asia-northeast1-docker.pkg.dev/shikumika-app/cloud-run-source-deploy/shikumika-app
 
+concurrency:
+  group: cloud-run-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,6 +26,13 @@ jobs:
       id-token: write
 
     steps:
+      - name: Validate production ref
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Production deploys must run from refs/heads/main. Current ref: ${GITHUB_REF}"
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
 
