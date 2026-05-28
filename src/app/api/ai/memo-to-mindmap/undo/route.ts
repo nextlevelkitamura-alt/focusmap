@@ -14,6 +14,18 @@ export async function POST(request: Request) {
       : []
     const projectId = typeof body?.projectId === 'string' ? body.projectId : null
     const deleteProjectIfEmpty = body?.deleteProjectIfEmpty === true
+    const restoreTaskTitles: Array<{ taskId: string; title: string }> = Array.isArray(body?.restoreTaskTitles)
+      ? body.restoreTaskTitles
+        .map((item: unknown) => {
+          if (!item || typeof item !== 'object') return null
+          const record = item as Record<string, unknown>
+          const taskId = typeof record.taskId === 'string' ? record.taskId : ''
+          const title = typeof record.title === 'string' ? record.title.trim() : ''
+          if (!taskId || !title) return null
+          return { taskId, title }
+        })
+        .filter((item: { taskId: string; title: string } | null): item is { taskId: string; title: string } => !!item)
+      : []
 
     if (taskIds.length === 0) {
       return NextResponse.json({ error: 'taskIds が必要です' }, { status: 400 })
@@ -48,7 +60,28 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, deletedTaskIds: taskIds })
+    if (restoreTaskTitles.length > 0) {
+      const restoreResults = await Promise.all(
+        restoreTaskTitles.map(item =>
+          supabase
+            .from('tasks')
+            .update({ title: item.title, updated_at: new Date().toISOString() })
+            .eq('id', item.taskId)
+            .eq('user_id', user.id),
+        ),
+      )
+      const restoreError = restoreResults.find(result => result.error)?.error
+      if (restoreError) {
+        console.error('[memo-to-mindmap/undo] 既存ノード名の復元失敗:', restoreError)
+        return NextResponse.json({ error: restoreError.message }, { status: 500 })
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      deletedTaskIds: taskIds,
+      restoredTaskIds: restoreTaskTitles.map(item => item.taskId),
+    })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[memo-to-mindmap/undo] error:', msg, error)

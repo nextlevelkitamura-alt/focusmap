@@ -67,9 +67,21 @@ export async function POST(request: Request) {
 
     // 既存マップへの追記時は、既存ツリーをコンテキストとして渡す
     let existingTree: string | undefined
+    let existingTasks: Array<{ id: string; title: string }> = []
     if (targetProjectId) {
       const { treeText, nodeCount } = await loadMindmapStructure(supabase, user.id, targetProjectId)
       if (nodeCount > 0) existingTree = treeText
+      const { data: tasks, error: tasksError } = await supabase
+        .from('tasks')
+        .select('id, title')
+        .eq('user_id', user.id)
+        .eq('project_id', targetProjectId)
+        .is('deleted_at', null)
+
+      if (tasksError) {
+        return NextResponse.json({ error: tasksError.message }, { status: 500 })
+      }
+      existingTasks = tasks || []
     }
 
     const { draft, modelName, inputTokens, outputTokens } = await generateMindmapDraft({
@@ -89,6 +101,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       draft,
+      existingTasks,
       usage: { model: modelName, inputTokens, outputTokens, costUsd },
     })
   } catch (error) {

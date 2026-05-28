@@ -9,6 +9,8 @@ import { z } from 'zod'
 import { generateObject } from 'ai'
 import { getModelForMemoMindmap, type MemoMindmapMode } from './providers'
 
+export const MAX_MINDMAP_DRAFT_DEPTH = 4
+
 export const MindmapDraftSchema = z.object({
   projectTitle: z.string().describe('マインドマップ全体のタイトル。簡潔に'),
   nodes: z
@@ -23,13 +25,30 @@ export const MindmapDraftSchema = z.object({
         sourceNoteIds: z
           .array(z.string())
           .describe('このノードが直接表す元メモID。分類・要約・橋渡し用の追加ノードは空配列'),
+        attachToExistingTaskId: z
+          .string()
+          .nullable()
+          .default(null)
+          .describe('既存マップの接続先task_id。parentTempIdがnullの追加ルートだけ指定可'),
       }),
     )
     .describe('ツリーを構成する全ノード。階層は parentTempId で表現'),
+  existingNodeRenameSuggestions: z
+    .array(
+      z.object({
+        taskId: z.string().describe('変更候補の既存ノードID'),
+        currentTitle: z.string().describe('現在の既存ノード名'),
+        suggestedTitle: z.string().describe('変更案。内容の見出しだけを書く'),
+        reason: z.string().describe('なぜ名前を広げる/変えるべきか'),
+      }),
+    )
+    .default([])
+    .describe('既存ノード名の変更案。自動適用禁止。必要な場合だけ出す'),
 })
 
 export type MindmapDraft = z.infer<typeof MindmapDraftSchema>
 export type MindmapDraftNode = MindmapDraft['nodes'][number]
+export type ExistingNodeRenameSuggestion = MindmapDraft['existingNodeRenameSuggestions'][number]
 
 export interface MemoInput {
   id: string
@@ -43,7 +62,7 @@ const SYSTEM_PROMPT = `あなたは、散らばったメモを整理して論理
 
 # 厳守するルール
 1. メモの原文を尊重し、書かれていない事実を勝手に足さない。
-2. 階層は3〜4段までに収める（深くしすぎない）。
+2. 追加するノード群は最大${MAX_MINDMAP_DRAFT_DEPTH}層まで。5層以上は禁止。原則は浅く、必要な場合だけ3〜4層にする。
 3. 主旨が近いメモは同じ枝にまとめる。
 4. 抽象 → 具体 の順で親子関係を作る（上位ほど大きな概念）。
 5. 与えられた全てのメモIDを、いずれかの「元メモそのものを直接表す具体ノード」の sourceNoteIds に必ず割り当てる。取りこぼし禁止。
@@ -51,7 +70,11 @@ const SYSTEM_PROMPT = `あなたは、散らばったメモを整理して論理
 7. ノードの title は簡潔に（長文にしない）。メモ本文そのままのコピーは避け、見出しとして要約する。
 8. 1つのメモが複数のノードに関係する場合は、最も主たる具体ノードの sourceNoteIds に入れる。
 9. 複数メモを束ねるために新しく作る分類・要約・橋渡し・論点整理ノードは sourceNoteIds を必ず [] にする。これはメモではなく、ただの構造ノード。
-10. title に「メモ」「ノード」「まとめ用ノード」など管理上の呼称を入れず、内容の見出しだけを書く。`
+10. title に「メモ」「ノード」「まとめ用ノード」など管理上の呼称を入れず、内容の見出しだけを書く。
+11. 既存マップが与えられた場合、意味が明確に近い既存ノードがあれば、追加ルートの attachToExistingTaskId に既存ノードIDを入れて接続する。
+12. attachToExistingTaskId を指定できるのは parentTempId が null の追加ルートだけ。子ノードごとに別々の既存ノードへ散らさない。
+13. 異なるトピックなら無理に既存ノードへ接続せず、attachToExistingTaskId は null にする。
+14. 既存ノードに接続したいが既存ノード名が狭すぎる/ズレている場合だけ existingNodeRenameSuggestions に変更案を出す。既存ノード名は絶対に勝手に変更しない。`
 
 interface BuildPromptArgs {
   notes: MemoInput[]
@@ -64,7 +87,7 @@ function buildUserPrompt({ notes, existingTree }: BuildPromptArgs): string {
     .join('\n\n')
 
   const existingSection = existingTree
-    ? `\n\n# 既存のマインドマップ構造\n以下は追記先の既存ツリーです。新しいノードは、適切なら既存の枝に接続し、合わなければ新規ルートを作ってください。\n${existingTree}`
+    ? `\n\n# 既存のマインドマップ構造\n以下は追記先の既存ツリーです。各行の [task:...] / [group:...] が既存ノードIDです。\n新しいノード群は、適切なら追加ルートの attachToExistingTaskId に既存ノードIDを入れて接続してください。合わなければ null のまま新規ルートにしてください。\n既存ノード名を広げた方がよい場合だけ existingNodeRenameSuggestions に変更案と理由を出してください。自動変更は禁止です。\n${existingTree}`
     : ''
 
   return `次のメモ群をロジックツリーに整理してください。
@@ -72,7 +95,7 @@ function buildUserPrompt({ notes, existingTree }: BuildPromptArgs): string {
 # メモ一覧（全${notes.length}件）
 ${noteList}${existingSection}
 
-全てのメモIDを具体ノードの sourceNoteIds に割り当て、分類・要約・橋渡し用の追加ノードは sourceNoteIds: [] にした、ツリー構造の JSON を出力してください。`
+全てのメモIDを具体ノードの sourceNoteIds に割り当て、分類・要約・橋渡し用の追加ノードは sourceNoteIds: [] にした、最大${MAX_MINDMAP_DRAFT_DEPTH}層までのツリー構造 JSON を出力してください。`
 }
 
 export function buildDraftChildMap(nodes: MindmapDraftNode[]): Map<string, string[]> {
@@ -95,6 +118,36 @@ export function isSourceBackedDraftNode(
 ): boolean {
   if (node.sourceNoteIds.length === 0) return false
   return (childMap.get(node.tempId)?.length ?? 0) === 0
+}
+
+export function getDraftNodeDepths(nodes: MindmapDraftNode[]): Map<string, number> {
+  const nodeByTempId = new Map(nodes.map(node => [node.tempId, node]))
+  const depthCache = new Map<string, number>()
+
+  const depthOf = (tempId: string, seen: Set<string> = new Set()): number => {
+    if (depthCache.has(tempId)) return depthCache.get(tempId)!
+    if (seen.has(tempId)) return 1
+    seen.add(tempId)
+    const node = nodeByTempId.get(tempId)
+    if (!node?.parentTempId || !nodeByTempId.has(node.parentTempId)) {
+      depthCache.set(tempId, 1)
+      return 1
+    }
+    const depth = depthOf(node.parentTempId, seen) + 1
+    depthCache.set(tempId, depth)
+    return depth
+  }
+
+  for (const node of nodes) depthOf(node.tempId)
+  return depthCache
+}
+
+export function getDraftDepthViolations(
+  nodes: MindmapDraftNode[],
+  maxDepth: number = MAX_MINDMAP_DRAFT_DEPTH,
+): MindmapDraftNode[] {
+  const depths = getDraftNodeDepths(nodes)
+  return nodes.filter(node => (depths.get(node.tempId) ?? 1) > maxDepth)
 }
 
 export interface GenerateDraftResult {

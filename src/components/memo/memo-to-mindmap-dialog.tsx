@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react"
-import { Loader2, Trash2, Sparkles, Network } from "lucide-react"
+import { AlertTriangle, Link2, Loader2, Trash2, Sparkles, Network } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,10 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
   buildDraftChildMap,
+  getDraftDepthViolations,
   isSourceBackedDraftNode,
+  MAX_MINDMAP_DRAFT_DEPTH,
+  type ExistingNodeRenameSuggestion,
   type MindmapDraft,
   type MindmapDraftNode,
 } from "@/lib/ai/memo-to-mindmap"
@@ -23,6 +26,11 @@ type Mode = "quick" | "deep"
 type Step = "config" | "generating" | "preview" | "committing"
 
 interface ProjectOption {
+  id: string
+  title: string
+}
+
+interface ExistingTaskOption {
   id: string
   title: string
 }
@@ -62,6 +70,9 @@ export function MemoToMindmapDialog({
   const [step, setStep] = useState<Step>("config")
   const [mode, setMode] = useState<Mode>("quick")
   const [nodes, setNodes] = useState<MindmapDraftNode[]>([])
+  const [existingTasks, setExistingTasks] = useState<ExistingTaskOption[]>([])
+  const [renameSuggestions, setRenameSuggestions] = useState<ExistingNodeRenameSuggestion[]>([])
+  const [selectedRenameTaskIds, setSelectedRenameTaskIds] = useState<Set<string>>(new Set())
   const [projectTitle, setProjectTitle] = useState("")
   const [error, setError] = useState<string | null>(null)
 
@@ -99,6 +110,9 @@ export function MemoToMindmapDialog({
     setStep("config")
     setMode("quick")
     setNodes([])
+    setExistingTasks([])
+    setRenameSuggestions([])
+    setSelectedRenameTaskIds(new Set())
     setProjectTitle("")
     setError(null)
     setTarget(defaultProjectId || mostFrequentProjectId || NEW_PROJECT)
@@ -134,7 +148,28 @@ export function MemoToMindmapDialog({
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || "生成に失敗しました")
       const draft = data.draft as MindmapDraft
-      setNodes(draft.nodes)
+      const nextExistingTasks: ExistingTaskOption[] = Array.isArray(data.existingTasks)
+        ? data.existingTasks.filter((task: unknown): task is ExistingTaskOption => {
+          if (!task || typeof task !== "object") return false
+          const record = task as Record<string, unknown>
+          return typeof record.id === "string" && typeof record.title === "string"
+        })
+        : []
+      const nextExistingTaskTitleById = new Map(nextExistingTasks.map(task => [task.id, task.title]))
+      setNodes(draft.nodes.map(node => ({
+        ...node,
+        attachToExistingTaskId: node.attachToExistingTaskId ?? null,
+      })))
+      setExistingTasks(nextExistingTasks)
+      setRenameSuggestions(Array.isArray(draft.existingNodeRenameSuggestions)
+        ? draft.existingNodeRenameSuggestions
+          .filter(suggestion => nextExistingTaskTitleById.has(suggestion.taskId))
+          .map(suggestion => ({
+            ...suggestion,
+            currentTitle: nextExistingTaskTitleById.get(suggestion.taskId) || suggestion.currentTitle,
+          }))
+        : [])
+      setSelectedRenameTaskIds(new Set())
       setProjectTitle(draft.projectTitle || "新しいマインドマップ")
       setStep("preview")
     } catch (err) {
@@ -142,6 +177,31 @@ export function MemoToMindmapDialog({
       setStep("config")
     }
   }, [noteIds, source, mode, target])
+
+  const existingTaskTitleById = useMemo(() => {
+    return new Map(existingTasks.map(task => [task.id, task.title]))
+  }, [existingTasks])
+
+  const selectedRenameSuggestions = useMemo(() => {
+    return renameSuggestions.filter(suggestion => selectedRenameTaskIds.has(suggestion.taskId))
+  }, [renameSuggestions, selectedRenameTaskIds])
+
+  const toggleRenameSuggestion = useCallback((taskId: string) => {
+    setSelectedRenameTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) next.delete(taskId)
+      else next.add(taskId)
+      return next
+    })
+  }, [])
+
+  const handlePreviewTargetChange = useCallback((nextTarget: string) => {
+    setTarget(nextTarget)
+    setNodes(prev => prev.map(node => ({ ...node, attachToExistingTaskId: null })))
+    setExistingTasks([])
+    setRenameSuggestions([])
+    setSelectedRenameTaskIds(new Set())
+  }, [])
 
   // --- ノード編集 ---
   const updateTitle = useCallback((tempId: string, title: string) => {
@@ -182,6 +242,9 @@ export function MemoToMindmapDialog({
   const renderNodeEditor = (node: MindmapDraftNode): ReactNode => {
     const children = childrenMap.get(node.tempId) || []
     const isSourceBacked = isSourceBackedDraftNode(node, childIdMap)
+    const attachedTitle = target !== NEW_PROJECT && node.parentTempId === null && node.attachToExistingTaskId
+      ? existingTaskTitleById.get(node.attachToExistingTaskId) ?? null
+      : null
     return (
       <div key={node.tempId} className="flex items-center gap-3">
         <div className="relative w-40 shrink-0 rounded-lg border bg-background p-1.5 shadow-sm sm:w-48">
@@ -202,6 +265,12 @@ export function MemoToMindmapDialog({
               メモ {node.sourceNoteIds.length}
             </div>
           )}
+          {attachedTitle && (
+            <div className="mt-1 flex min-w-0 items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-1 text-[10px] text-sky-700 dark:text-sky-300">
+              <Link2 className="h-3 w-3 shrink-0" />
+              <span className="truncate">{attachedTitle}</span>
+            </div>
+          )}
         </div>
         {children.length > 0 && (
           <div className="flex items-center gap-2">
@@ -216,11 +285,16 @@ export function MemoToMindmapDialog({
   }
 
   const rootNodes = childrenMap.get("__root__") || []
+  const depthViolations = useMemo(() => getDraftDepthViolations(nodes), [nodes])
 
   // --- 確定 ---
   const handleCommit = useCallback(async () => {
     if (nodes.length === 0) {
       setError("ノードがありません")
+      return
+    }
+    if (depthViolations.length > 0) {
+      setError(`追加ノードは最大${MAX_MINDMAP_DRAFT_DEPTH}層までです。深すぎるノードを削除するか再生成してください`)
       return
     }
     setStep("committing")
@@ -230,7 +304,11 @@ export function MemoToMindmapDialog({
         target === NEW_PROJECT
           ? { type: "new", projectTitle: projectTitle.trim(), spaceId }
           : { type: "existing", projectId: target }
-      const draftPayload = { projectTitle: projectTitle.trim() || "新しいマインドマップ", nodes }
+      const draftPayload = {
+        projectTitle: projectTitle.trim() || "新しいマインドマップ",
+        nodes,
+        existingNodeRenameSuggestions: renameSuggestions,
+      }
 
       const res = await fetch("/api/ai/memo-to-mindmap/commit", {
         method: "POST",
@@ -239,6 +317,7 @@ export function MemoToMindmapDialog({
           draft: draftPayload,
           target: targetPayload,
           source,
+          appliedRenameSuggestions: selectedRenameSuggestions,
         }),
       })
       const data = await res.json()
@@ -257,6 +336,10 @@ export function MemoToMindmapDialog({
               taskIds: currentTaskIds,
               projectId: currentProjectId,
               deleteProjectIfEmpty: currentCreatedProject,
+              restoreTaskTitles: selectedRenameSuggestions.map(suggestion => ({
+                taskId: suggestion.taskId,
+                title: suggestion.currentTitle,
+              })),
             }),
           })
           if (!undoRes.ok) {
@@ -269,7 +352,12 @@ export function MemoToMindmapDialog({
           const redoRes = await fetch("/api/ai/memo-to-mindmap/commit", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ draft: draftPayload, target: targetPayload, source }),
+            body: JSON.stringify({
+              draft: draftPayload,
+              target: targetPayload,
+              source,
+              appliedRenameSuggestions: selectedRenameSuggestions,
+            }),
           })
           const redoData = await redoRes.json()
           if (!redoRes.ok) throw new Error(redoData?.error || "やり直しに失敗しました")
@@ -285,7 +373,7 @@ export function MemoToMindmapDialog({
       setError(err instanceof Error ? err.message : "保存に失敗しました")
       setStep("preview")
     }
-  }, [nodes, source, target, projectTitle, spaceId, reset, onSuccess, pushAction])
+  }, [nodes, depthViolations.length, source, target, projectTitle, spaceId, renameSuggestions, selectedRenameSuggestions, reset, onSuccess, pushAction])
 
   const canCreateNew = spaces.length > 0
   const newProjectInvalid = target === NEW_PROJECT && (!canCreateNew || !spaceId || !projectTitle.trim())
@@ -394,6 +482,39 @@ export function MemoToMindmapDialog({
               placeholder="マインドマップのタイトル"
               className="h-9 px-2.5 rounded-md border border-input bg-background text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
             />
+            {renameSuggestions.length > 0 && (
+              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+                  <AlertTriangle className="h-4 w-4" />
+                  既存ノード名の変更案
+                </div>
+                <div className="mt-2 space-y-2">
+                  {renameSuggestions.map(suggestion => {
+                    const selected = selectedRenameTaskIds.has(suggestion.taskId)
+                    return (
+                      <div key={suggestion.taskId} className="rounded-md border border-amber-500/30 bg-background/70 p-2">
+                        <div className="space-y-1 text-xs">
+                          <div className="text-muted-foreground">現在: {suggestion.currentTitle}</div>
+                          <div className="font-medium">変更案: {suggestion.suggestedTitle}</div>
+                          <div className="leading-relaxed text-muted-foreground">{suggestion.reason}</div>
+                        </div>
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            type="button"
+                            variant={selected ? "default" : "outline"}
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => toggleRenameSuggestion(suggestion.taskId)}
+                          >
+                            {selected ? "この名前変更を適用する" : "適用しない"}
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             <div className="min-h-[280px] flex-1 overflow-auto rounded-lg border border-dashed bg-muted/30 p-3">
               {rootNodes.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
@@ -405,11 +526,16 @@ export function MemoToMindmapDialog({
                 </div>
               )}
             </div>
+            {depthViolations.length > 0 && (
+              <p className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+                追加ノードは最大{MAX_MINDMAP_DRAFT_DEPTH}層までです。深すぎるノードが{depthViolations.length}件あります。
+              </p>
+            )}
             <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">保存先プロジェクト</span>
               <select
                 value={target}
-                onChange={e => setTarget(e.target.value)}
+                onChange={e => handlePreviewTargetChange(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 <option value={NEW_PROJECT} disabled={!canCreateNew}>
@@ -462,7 +588,7 @@ export function MemoToMindmapDialog({
           {step === "preview" && (
             <>
               <Button variant="ghost" onClick={() => setStep("config")}>戻る</Button>
-              <Button onClick={handleCommit} disabled={newProjectInvalid || nodes.length === 0}>
+              <Button onClick={handleCommit} disabled={newProjectInvalid || nodes.length === 0 || depthViolations.length > 0}>
                 確定して反映
               </Button>
             </>

@@ -4,7 +4,10 @@ import { randomUUID } from 'crypto'
 import {
   MindmapDraftSchema,
   buildDraftChildMap,
+  getDraftDepthViolations,
   isSourceBackedDraftNode,
+  MAX_MINDMAP_DRAFT_DEPTH,
+  type ExistingNodeRenameSuggestion,
   type MindmapDraftNode,
 } from '@/lib/ai/memo-to-mindmap'
 
@@ -29,6 +32,16 @@ export async function POST(request: Request) {
     if (draft.nodes.length === 0) {
       return NextResponse.json({ error: 'ノードがありません' }, { status: 400 })
     }
+    const depthViolations = getDraftDepthViolations(draft.nodes)
+    if (depthViolations.length > 0) {
+      return NextResponse.json(
+        {
+          error: `追加ノードは最大${MAX_MINDMAP_DRAFT_DEPTH}層までです。プレビューで階層を浅くしてください`,
+          overDepthNodeIds: depthViolations.map(node => node.tempId),
+        },
+        { status: 400 },
+      )
+    }
 
     const target = body?.target
     if (!target || (target.type !== 'new' && target.type !== 'existing')) {
@@ -38,6 +51,7 @@ export async function POST(request: Request) {
     // --- 保存先プロジェクトを解決 ---
     let projectId: string
     let createdProject = false
+    let existingProjectTasks: Array<{ id: string; title: string; parent_task_id: string | null; order_index: number | null }> = []
 
     if (target.type === 'existing') {
       const { data: project } = await supabase
@@ -50,6 +64,17 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'プロジェクトが見つかりません' }, { status: 404 })
       }
       projectId = project.id
+      const { data: existingTasks, error: existingTasksError } = await supabase
+        .from('tasks')
+        .select('id, title, parent_task_id, order_index')
+        .eq('project_id', projectId)
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+
+      if (existingTasksError) {
+        return NextResponse.json({ error: existingTasksError.message }, { status: 500 })
+      }
+      existingProjectTasks = existingTasks || []
     } else {
       const spaceId: string | undefined = target.spaceId
       const projectTitle: string =
@@ -87,6 +112,51 @@ export async function POST(request: Request) {
 
     const realIdByTempId = new Map<string, string>()
     for (const node of draft.nodes) realIdByTempId.set(node.tempId, randomUUID())
+    const existingTaskById = new Map(existingProjectTasks.map(task => [task.id, task]))
+    const existingNextOrderByKey = new Map<string, number>()
+    for (const task of existingProjectTasks) {
+      const key = task.parent_task_id ? `existing:${task.parent_task_id}` : '__root__'
+      const nextOrder = (task.order_index ?? 0) + 1
+      existingNextOrderByKey.set(key, Math.max(existingNextOrderByKey.get(key) ?? 0, nextOrder))
+    }
+
+    const appliedRenameSuggestions: ExistingNodeRenameSuggestion[] = Array.isArray(body?.appliedRenameSuggestions)
+      ? body.appliedRenameSuggestions
+        .map((item: unknown) => {
+          if (!item || typeof item !== 'object') return null
+          const record = item as Record<string, unknown>
+          const taskId = typeof record.taskId === 'string' ? record.taskId : ''
+          const currentTitle = typeof record.currentTitle === 'string' ? record.currentTitle : ''
+          const suggestedTitle = typeof record.suggestedTitle === 'string' ? record.suggestedTitle.trim() : ''
+          const reason = typeof record.reason === 'string' ? record.reason : ''
+          if (!taskId || !suggestedTitle) return null
+          return { taskId, currentTitle, suggestedTitle, reason }
+        })
+        .filter((item: ExistingNodeRenameSuggestion | null): item is ExistingNodeRenameSuggestion => !!item)
+      : []
+
+    const validRenameSuggestions = appliedRenameSuggestions.filter(suggestion => {
+      const existingTask = existingTaskById.get(suggestion.taskId)
+      return !!existingTask &&
+        existingTask.title === suggestion.currentTitle &&
+        existingTask.title !== suggestion.suggestedTitle
+    })
+    if (validRenameSuggestions.length > 0) {
+      const renameResults = await Promise.all(
+        validRenameSuggestions.map(suggestion =>
+          supabase
+            .from('tasks')
+            .update({ title: suggestion.suggestedTitle, updated_at: new Date().toISOString() })
+            .eq('id', suggestion.taskId)
+            .eq('project_id', projectId)
+            .eq('user_id', user.id),
+        ),
+      )
+      const renameError = renameResults.find(result => result.error)?.error
+      if (renameError) {
+        return NextResponse.json({ error: renameError.message }, { status: 500 })
+      }
+    }
 
     const allDraftNoteIds = [...new Set(draft.nodes.flatMap(n => n.sourceNoteIds))]
     const sourceNoteContentById = new Map<string, { content: string; image_urls: string[] | null }>()
@@ -129,6 +199,13 @@ export async function POST(request: Request) {
     const effectiveParent = (node: MindmapDraftNode): string | null =>
       node.parentTempId && nodeByTempId.has(node.parentTempId) ? node.parentTempId : null
 
+    const attachedExistingParent = (node: MindmapDraftNode): string | null => {
+      if (target.type !== 'existing') return null
+      if (effectiveParent(node)) return null
+      const taskId = node.attachToExistingTaskId
+      return taskId && existingTaskById.has(taskId) ? taskId : null
+    }
+
     // 深さ計算（循環ガード付き）
     const depthCache = new Map<string, number>()
     const depthOf = (tempId: string, seen: Set<string> = new Set()): number => {
@@ -153,8 +230,9 @@ export async function POST(request: Request) {
     const orderCounter = new Map<string, number>()
     const rows = draft.nodes.map(node => {
       const parentTempId = effectiveParent(node)
-      const groupKey = parentTempId ?? '__root__'
-      const orderIndex = orderCounter.get(groupKey) ?? 0
+      const existingParentId = attachedExistingParent(node)
+      const groupKey = parentTempId ? `draft:${parentTempId}` : existingParentId ? `existing:${existingParentId}` : '__root__'
+      const orderIndex = orderCounter.get(groupKey) ?? existingNextOrderByKey.get(groupKey) ?? 0
       orderCounter.set(groupKey, orderIndex + 1)
       const isSourceBacked = isSourceBackedDraftNode(node, draftChildMap)
       const sourceNotes = isSourceBacked
@@ -175,7 +253,7 @@ export async function POST(request: Request) {
         id: realIdByTempId.get(node.tempId)!,
         user_id: user.id,
         project_id: projectId,
-        parent_task_id: parentTempId ? realIdByTempId.get(parentTempId)! : null,
+        parent_task_id: parentTempId ? realIdByTempId.get(parentTempId)! : existingParentId,
         title: node.title.trim() || '無題',
         status: sourceBackedDone ? 'done' : 'todo',
         stage: sourceBackedDone ? 'done' : 'plan',
@@ -283,7 +361,7 @@ export async function POST(request: Request) {
     }
 
     const rootTaskIds = draft.nodes
-      .filter(n => effectiveParent(n) === null)
+      .filter(n => effectiveParent(n) === null && !attachedExistingParent(n))
       .map(n => realIdByTempId.get(n.tempId)!)
 
     return NextResponse.json({
@@ -292,6 +370,7 @@ export async function POST(request: Request) {
       rootTaskIds,
       taskIds: insertRows.map(row => row.id),
       taskCount: insertRows.length,
+      renamedTaskIds: validRenameSuggestions.map(suggestion => suggestion.taskId),
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
