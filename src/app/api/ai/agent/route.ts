@@ -132,7 +132,10 @@ export async function POST(request: Request) {
     const usesVision = hasImagePart(modelInputMessages)
     const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
     const { tools, runner } = await buildAgentTools(user.id, spaceId ?? null)
-    const modelMessages = await convertToModelMessages(modelInputMessages)
+    const modelMessages = await convertToModelMessages(modelInputMessages, {
+      tools,
+      ignoreIncompleteToolCalls: true,
+    })
 
     const result = streamText({
       model,

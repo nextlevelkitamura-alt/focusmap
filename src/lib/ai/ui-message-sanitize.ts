@@ -9,6 +9,12 @@ const MAX_OBJECT_KEYS = 100
 export const MAX_CURRENT_IMAGE_DATA_URL_CHARS = 1_200_000
 
 type UIPart = UIMessage['parts'][number]
+type ToolLikeUIPart = UIPart & {
+  type: string
+  state?: string
+  toolCallId?: string
+  toolName?: string
+}
 
 function truncateString(value: string): string {
   if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
@@ -51,6 +57,24 @@ function isImageFilePart(part: UIPart): part is UIPart & {
     typeof part.url === 'string'
 }
 
+function isToolLikePart(part: UIPart): part is ToolLikeUIPart {
+  return part.type === 'dynamic-tool' || part.type.startsWith('tool-')
+}
+
+function toolPartName(part: ToolLikeUIPart): string {
+  if (part.type === 'dynamic-tool' && typeof part.toolName === 'string' && part.toolName.trim()) {
+    return part.toolName
+  }
+  if (part.type.startsWith('tool-')) return part.type.slice('tool-'.length)
+  return 'tool'
+}
+
+function isIncompleteToolPart(part: ToolLikeUIPart): boolean {
+  return part.state === 'input-streaming' ||
+    part.state === 'input-available' ||
+    part.state === 'approval-requested'
+}
+
 function filePlaceholder(part: Extract<UIPart, { type: 'file' }>): UIPart {
   const filename = part.filename ? ` ${part.filename}` : ''
   const mediaType = part.mediaType ? ` ${part.mediaType}` : ''
@@ -60,10 +84,23 @@ function filePlaceholder(part: Extract<UIPart, { type: 'file' }>): UIPart {
   }
 }
 
+function incompleteToolPlaceholder(part: ToolLikeUIPart): UIPart {
+  const name = toolPartName(part)
+  const state = part.state ? ` (${part.state})` : ''
+  return {
+    type: 'text',
+    text: `[前回の ${name} ツール呼び出し${state}は結果が未確定のため、モデル送信から除外しました]`,
+  }
+}
+
 function sanitizePart(part: UIPart, preserveCurrentImages: boolean): UIPart {
   if (part.type === 'file') {
     if (isImageFilePart(part) && preserveCurrentImages && part.url.length <= MAX_CURRENT_IMAGE_DATA_URL_CHARS) return part
     return filePlaceholder(part)
+  }
+
+  if (isToolLikePart(part) && isIncompleteToolPart(part)) {
+    return incompleteToolPlaceholder(part)
   }
 
   const record = { ...(part as Record<string, unknown>) }

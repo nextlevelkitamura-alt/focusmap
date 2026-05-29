@@ -28,7 +28,6 @@ import {
   Mic,
   PanelLeftClose,
   PanelLeftOpen,
-  Paperclip,
   Plus,
   Search,
   Send,
@@ -532,7 +531,11 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
               </div>
             )}
             <div className="flex items-end gap-2">
-              <AutomationPromptMenu onSelect={insertAutomationPrompt} />
+              <AutomationPromptMenu
+                onSelect={insertAutomationPrompt}
+                onAttachImage={() => fileInputRef.current?.click()}
+                attachDisabled={isBusy}
+              />
               <input
                 ref={fileInputRef}
                 type="file"
@@ -541,26 +544,6 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 className="hidden"
                 onChange={handleFileChange}
               />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-11 w-11 shrink-0"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isBusy}
-                title="画像を添付"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={isRecording ? "destructive" : "outline"}
-                size="icon"
-                className="h-11 w-11 shrink-0"
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={isTranscribing}
-                title={isRecording ? "録音停止" : "音声入力"}
-              >
-                {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
-              </Button>
               <textarea
                 ref={inputRef}
                 value={input}
@@ -569,14 +552,31 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 onPaste={handlePaste}
                 placeholder={activeTab === "automation" ? "例: 毎朝予定を確認して、調整案を出して" : "例: 今日やることを整理して"}
                 rows={1}
-                className="max-h-32 min-h-11 flex-1 resize-none rounded-lg border bg-background px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-primary"
+                className="max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-lg border bg-background px-3.5 py-3 text-sm outline-none focus:ring-1 focus:ring-primary"
               />
+              <Button
+                variant={isRecording ? "destructive" : "outline"}
+                size="icon"
+                className="h-12 w-11 shrink-0 rounded-lg"
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={isTranscribing}
+                title={isRecording ? "録音停止" : "音声入力"}
+              >
+                {isTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-4 w-4" />}
+              </Button>
               {isBusy ? (
-                <Button size="icon" variant="destructive" className="h-11 w-11 shrink-0" onClick={() => void stop()} title="停止">
+                <Button size="icon" variant="ghost" className="h-12 w-11 shrink-0 rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void stop()} title="停止">
                   <Square className="h-3.5 w-3.5" />
                 </Button>
               ) : (
-                <Button size="icon" className="h-11 w-11 shrink-0" disabled={!canSend} onClick={() => submit(input)} title={sendLabel}>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-12 w-11 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                  disabled={!canSend}
+                  onClick={() => submit(input)}
+                  title={sendLabel}
+                >
                   <Send className="h-4 w-4" />
                 </Button>
               )}
@@ -638,17 +638,34 @@ function ChatTabs({ value, onChange }: { value: ChatTab; onChange: (value: ChatT
   )
 }
 
-function AutomationPromptMenu({ onSelect }: { onSelect: (prompt: string) => void }) {
+function AutomationPromptMenu({
+  onSelect,
+  onAttachImage,
+  attachDisabled = false,
+}: {
+  onSelect: (prompt: string) => void
+  onAttachImage: () => void
+  attachDisabled?: boolean
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-lg" title="自動化メニュー">
+        <Button variant="outline" size="icon" className="h-12 w-11 shrink-0 rounded-lg" title="追加">
           <Plus className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-64">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">自動化を選ぶ</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-xs text-muted-foreground">追加</DropdownMenuLabel>
+        <DropdownMenuItem
+          className="cursor-pointer gap-2 py-2"
+          disabled={attachDisabled}
+          onSelect={onAttachImage}
+        >
+          <ImageIcon className="h-4 w-4" />
+          <span className="text-sm font-medium">写真を添付</span>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">自動化を選ぶ</DropdownMenuLabel>
         {AUTOMATION_SHORTCUTS.map(item => {
           const Icon = item.icon
           return (

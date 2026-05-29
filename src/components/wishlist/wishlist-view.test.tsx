@@ -173,6 +173,7 @@ async function renderVisibleWishlist(expectedText = 'Drop memo') {
 describe('WishlistView calendar D&D', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     invalidateWishlistItemsCache()
     window.__focusmapMemoDropHandler = undefined
     window.__focusmapMemoDrag = null
@@ -425,6 +426,53 @@ describe('WishlistView calendar D&D', () => {
 
     await waitFor(() => {
       expect(screen.getByTitle('完了にする')).toBeInTheDocument()
+    })
+  })
+
+  test('スマホ表示では選択中カラムに合わせて追加メモの保存先を変える', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist' && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}')
+        return jsonResponse({ item: createMemoItem({ id: 'created-memo', title: body.title, ...body }) }, { status: 201 })
+      }
+      if (url === '/api/wishlist') return jsonResponse({ items: [] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '今日する0' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '今日する0' }))
+    fireEvent.click(screen.getAllByRole('button', { name: '追加' })[0])
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([input, init]) =>
+        requestUrl(input) === '/api/wishlist' && init?.method === 'POST',
+      )
+      expect(createCall).toBeDefined()
+      expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
+        title: '新しいメモ',
+        memo_status: 'unsorted',
+        is_today: true,
+        is_completed: false,
+      })
     })
   })
 })

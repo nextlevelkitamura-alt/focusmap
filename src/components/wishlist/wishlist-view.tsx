@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
@@ -106,6 +106,16 @@ const STATUS_LABEL: Record<MemoStatus | "all", string> = {
   completed: "完了",
 }
 
+const COLUMN_LABEL: Record<ColumnKey, string> = {
+  unsorted: "未予定",
+  mapped: "マップ追加済み",
+  today: "今日する",
+  scheduled: "予定済み",
+  completed: "完了",
+}
+
+const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "scheduled", "mapped", "completed"]
+
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -168,6 +178,69 @@ function hasMindmapLinks(item: MemoItem | null | undefined): boolean {
   return (item?.mindmap_link_count ?? 0) > 0 || extractMindmapTaskIds(item).length > 0
 }
 
+function getManualColumn(item: MemoItem | null | undefined): ColumnKey | null {
+  const payload = readRecord(item?.ai_source_payload)
+  const column = payload.manual_column
+  return column === "mapped" || column === "today" || column === "scheduled" || column === "completed" || column === "unsorted"
+    ? column
+    : null
+}
+
+function withManualColumnPayload(payload: unknown, column: ColumnKey) {
+  return {
+    ...readRecord(payload),
+    manual_column: column,
+    manual_column_assigned_at: new Date().toISOString(),
+  }
+}
+
+function getMobileColumnCreateOverrides(column: ColumnKey, payload?: unknown): Record<string, unknown> {
+  if (column === "today") {
+    return {
+      memo_status: "unsorted",
+      is_today: true,
+      is_completed: false,
+      scheduled_at: null,
+      google_event_id: null,
+    }
+  }
+  if (column === "scheduled") {
+    return {
+      memo_status: "scheduled",
+      is_today: false,
+      is_completed: false,
+      google_event_id: null,
+      ai_source_payload: withManualColumnPayload(payload, column),
+    }
+  }
+  if (column === "mapped") {
+    return {
+      memo_status: "organized",
+      is_today: false,
+      is_completed: false,
+      scheduled_at: null,
+      google_event_id: null,
+      ai_source_payload: withManualColumnPayload(payload, column),
+    }
+  }
+  if (column === "completed") {
+    return {
+      memo_status: "completed",
+      is_today: false,
+      is_completed: true,
+      scheduled_at: null,
+      google_event_id: null,
+    }
+  }
+  return {
+    memo_status: "unsorted",
+    is_today: false,
+    is_completed: false,
+    scheduled_at: null,
+    google_event_id: null,
+  }
+}
+
 function getCompletionUpdate(updates: Record<string, unknown>): boolean | null {
   if (typeof updates.is_completed === "boolean") return updates.is_completed
   if (updates.memo_status === "completed") return true
@@ -202,7 +275,7 @@ function getColumn(item: MemoItem, todayStart: number, todayEnd: number): Column
   const isScheduledToday = sched != null && !Number.isNaN(sched) && sched >= todayStart && sched < todayEnd
   if (item.is_today || isScheduledToday) return "today"
   if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
-  if (hasMindmapLinks(item)) return "mapped"
+  if (hasMindmapLinks(item) || getManualColumn(item) === "mapped") return "mapped"
   return "unsorted"
 }
 
@@ -406,6 +479,8 @@ export function WishlistView({
   const [selectMode, setSelectMode] = useState(false)
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
   const [showMindmapDialog, setShowMindmapDialog] = useState(false)
+  const [activeMobileColumn, setActiveMobileColumn] = useState<ColumnKey>("unsorted")
+  const [isMobileMemoLayout, setIsMobileMemoLayout] = useState(false)
   const [linkedMemoFocus, setLinkedMemoFocus] = useState<{
     taskId: string
     taskTitle: string
@@ -414,6 +489,7 @@ export function WishlistView({
     isLoading: boolean
     error: string | null
   } | null>(null)
+  const mobileColumnsRef = useRef<HTMLDivElement>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
@@ -489,6 +565,39 @@ export function WishlistView({
     startRecording,
     stopRecording,
   } = useVoiceRecorder(handleTranscribed)
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return
+    const query = window.matchMedia("(max-width: 767px)")
+    const update = () => setIsMobileMemoLayout(query.matches)
+    update()
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
+
+  const handleMobileColumnsScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget
+    if (target.clientWidth <= 0) return
+    const index = Math.max(
+      0,
+      Math.min(MOBILE_COLUMN_ORDER.length - 1, Math.round(target.scrollLeft / target.clientWidth)),
+    )
+    const column = MOBILE_COLUMN_ORDER[index]
+    if (column) setActiveMobileColumn(column)
+  }, [])
+
+  const scrollToMobileColumn = useCallback((column: ColumnKey) => {
+    setActiveMobileColumn(column)
+    const index = MOBILE_COLUMN_ORDER.indexOf(column)
+    const target = mobileColumnsRef.current
+    if (!target || index < 0) return
+    const left = target.clientWidth * index
+    if (typeof target.scrollTo === "function") {
+      target.scrollTo({ left, behavior: "smooth" })
+    } else {
+      target.scrollLeft = left
+    }
+  }, [])
 
   useEffect(() => {
     if (!isAnalyzing || !analyzeStartedAt) {
@@ -677,6 +786,44 @@ export function WishlistView({
       "completed",
     )
   }, [filteredItems, todayRange])
+
+  const mobileSections = useMemo(() => ({
+    unsorted: {
+      columnKey: "unsorted" as const,
+      title: COLUMN_LABEL.unsorted,
+      count: unscheduledItems.length,
+      items: unscheduledItems,
+      emptyText: "未予定のメモはありません",
+    },
+    today: {
+      columnKey: "today" as const,
+      title: COLUMN_LABEL.today,
+      count: todayItems.length,
+      items: todayItems,
+      emptyText: "今日するメモはありません",
+    },
+    scheduled: {
+      columnKey: "scheduled" as const,
+      title: COLUMN_LABEL.scheduled,
+      count: scheduledItems.length,
+      items: scheduledItems,
+      emptyText: "予定済みのメモはありません",
+    },
+    mapped: {
+      columnKey: "mapped" as const,
+      title: COLUMN_LABEL.mapped,
+      count: mappedItems.length,
+      items: mappedItems,
+      emptyText: "マップ追加済みのメモはありません",
+    },
+    completed: {
+      columnKey: "completed" as const,
+      title: COLUMN_LABEL.completed,
+      count: completedItems.length,
+      items: completedItems,
+      emptyText: "完了したメモはありません",
+    },
+  }), [completedItems, mappedItems, scheduledItems, todayItems, unscheduledItems])
 
   const selectedMemosProjectId = useMemo(() => {
     const ids = new Set(
@@ -970,6 +1117,9 @@ export function WishlistView({
 
   const handleCreate = async () => {
     setIntakeError(null)
+    const mobileColumnOverrides = isMobileMemoLayout
+      ? getMobileColumnCreateOverrides(activeMobileColumn)
+      : {}
     try {
       const res = await fetch("/api/wishlist", {
         method: "POST",
@@ -981,6 +1131,7 @@ export function WishlistView({
           category: "アイデア",
           tags: ["アイデア"],
           memo_status: "unsorted",
+          ...mobileColumnOverrides,
         }),
       })
       const data = await res.json()
@@ -1026,6 +1177,9 @@ export function WishlistView({
     const [firstLine, ...rest] = text.split("\n")
     const title = firstLine.trim().slice(0, 80) || "新しいメモ"
     const description = rest.join("\n").trim() || (text.length > title.length ? text : "")
+    const mobileColumnOverrides = isMobileMemoLayout
+      ? getMobileColumnCreateOverrides(activeMobileColumn)
+      : {}
     setIntakeError(null)
     try {
       const res = await fetch("/api/wishlist", {
@@ -1038,6 +1192,7 @@ export function WishlistView({
           category: "アイデア",
           tags: ["アイデア"],
           memo_status: "unsorted",
+          ...mobileColumnOverrides,
         }),
       })
       const data = await res.json()
@@ -1124,6 +1279,13 @@ export function WishlistView({
     setIsSavingSuggestion(true)
     const scheduledAt = calendarCandidate?.scheduled_at ?? suggestion.scheduled_at
     const durationMinutes = calendarCandidate?.duration_minutes ?? suggestion.duration_minutes
+    const baseAiSourcePayload = { suggestion, intakeText }
+    const mobileTargetColumn = addToCalendar
+      ? "scheduled"
+      : activeMobileColumn
+    const mobileColumnOverrides = isMobileMemoLayout
+      ? getMobileColumnCreateOverrides(mobileTargetColumn, baseAiSourcePayload)
+      : {}
     try {
       const res = await fetch("/api/wishlist", {
         method: "POST",
@@ -1139,7 +1301,8 @@ export function WishlistView({
           scheduled_at: scheduledAt,
           duration_minutes: durationMinutes,
           memo_status: scheduledAt ? "time_candidates" : "unsorted",
-          ai_source_payload: { suggestion, intakeText },
+          ai_source_payload: baseAiSourcePayload,
+          ...mobileColumnOverrides,
         }),
       })
       const data = await res.json()
@@ -1807,6 +1970,36 @@ export function WishlistView({
           </div>
         </>
         )}
+        {isMobileMemoLayout && !linkedMemoFocus && (
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:hidden">
+            {MOBILE_COLUMN_ORDER.map(column => {
+              const section = mobileSections[column]
+              const active = activeMobileColumn === column
+              return (
+                <button
+                  key={column}
+                  type="button"
+                  onClick={() => scrollToMobileColumn(column)}
+                  className={cn(
+                    "min-h-8 shrink-0 rounded-full border px-3 text-xs transition-colors",
+                    active
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                  aria-pressed={active}
+                >
+                  {section.title}
+                  <span className={cn(
+                    "ml-1 rounded-full px-1.5 text-[10px]",
+                    active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground",
+                  )}>
+                    {section.count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
         {selectMode && (
           <MemoSelectionToolbar
             selectedCount={selectedMemoIds.size}
@@ -1850,7 +2043,7 @@ export function WishlistView({
               <Loader2 className="h-4 w-4 animate-spin" />
               関連メモを読み込み中...
             </div>
-          ) : filteredItems.length === 0 && (!linkedMemoFocus || linkedMemoFocus.structuredItems.length === 0) ? (
+          ) : filteredItems.length === 0 && (!linkedMemoFocus || linkedMemoFocus.structuredItems.length === 0) && !(isMobileMemoLayout && !linkedMemoFocus) ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <p>{linkedMemoFocus ? "このノードに紐付くメモはありません" : "メモはまだありません"}</p>
               {!linkedMemoFocus && (
@@ -1921,6 +2114,48 @@ export function WishlistView({
                 </DragDropContext>
               )}
             </div>
+          ) : isMobileMemoLayout ? (
+            <DragDropContext onDragEnd={handleDragEnd}>
+              <div
+                ref={mobileColumnsRef}
+                onScroll={handleMobileColumnsScroll}
+                className="-mx-4 overflow-x-auto scroll-smooth pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                style={{ scrollSnapType: "x mandatory" }}
+              >
+                <div className="flex min-w-full">
+                  {MOBILE_COLUMN_ORDER.map(column => {
+                    const section = mobileSections[column]
+                    return (
+                      <div
+                        key={column}
+                        className="w-full shrink-0 px-4"
+                        style={{ scrollSnapAlign: "start" }}
+                      >
+                        <MemoSection
+                          columnKey={section.columnKey}
+                          title={section.title}
+                          count={section.count}
+                          items={section.items}
+                          emptyText={section.emptyText}
+                          onUpdate={handleUpdate}
+                          onDelete={handleDelete}
+                          onOpen={openDetail}
+                          projectById={projectById}
+                          tagColors={tagColors}
+                          getAiTask={getMemoAiTask}
+                          onOpenCodex={openInCodexWebForMemo}
+                          onToggleToday={handleToggleTodayFromCard}
+                          nativeMemoDrag={(column === "unsorted" || column === "today") && isCalendarSplitVisible}
+                          selectMode={selectMode}
+                          selectedMemoIds={selectedMemoIds}
+                          onToggleSelect={toggleMemoSelection}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </DragDropContext>
           ) : (
             <DragDropContext onDragEnd={handleDragEnd}>
             <div className="mx-auto w-full overflow-x-auto pb-2">
