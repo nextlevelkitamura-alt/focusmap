@@ -164,9 +164,14 @@ export function AutomationSettings() {
         >
           <div className="flex flex-wrap gap-2">
             <Button asChild className="h-10 gap-1.5">
-              <Link href="/dashboard">
+              <Link
+                href="/dashboard"
+                onClick={() => {
+                  try { localStorage.setItem("focusmap:activeView", "ai") } catch {}
+                }}
+              >
                 <Play className="h-4 w-4" />
-                自動化タブを開く
+                チャットを開く
               </Link>
             </Button>
             <Button variant="outline" className="h-10 gap-1.5" onClick={() => window.location.reload()}>
