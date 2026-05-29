@@ -320,7 +320,7 @@ export function ChatWorkspace({ mode, spaceId = null, projectId = null, title }:
     submitText(input)
   }
 
-  const resolvedTitle = title ?? (mode === "automation" ? "自動化チャット" : "通常チャット")
+  const resolvedTitle = title ?? (mode === "automation" ? "自動化" : "チャット")
 
   return (
     <div className="flex h-full min-h-0 bg-background text-foreground">

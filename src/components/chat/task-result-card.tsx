@@ -27,7 +27,7 @@ const ONLINE_WINDOW_MS = 2 * 60 * 1000;
  * Focusmap Lite (Phase F) のオンラインランナーが居るかどうかを軽量にpoll する。
  *
  * pending 状態のタスクが進まない最大の理由は executor='playwright' を claim できる Mac側
- * Focusmap Lite agent が起動していないこと。 ここで明示警告を出して「自動化チャットがハングしてる」
+ * Focusmap Lite agent が起動していないこと。ここで明示警告を出して「自動化がハングしてる」
  * と誤解されるのを防ぐ。
  */
 function useFocusmapLiteOnline(): { hasOnline: boolean | null; lastSeenMinutesAgo: number | null } {

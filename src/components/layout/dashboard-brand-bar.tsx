@@ -36,10 +36,10 @@ export function DashboardBrandBar() {
                 <Link
                     href="/dashboard/chat"
                     className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background px-2.5 py-1 text-xs font-medium hover:bg-muted/60 transition-colors"
-                    aria-label="自動化チャット"
+                    aria-label="チャット"
                 >
                     <MessageSquare className="h-3 w-3" />
-                    <span className="hidden sm:inline">自動化チャット</span>
+                    <span className="hidden sm:inline">チャット</span>
                 </Link>
                 <Suspense fallback={null}>
                     <GlobalWorkspaceSwitcher />

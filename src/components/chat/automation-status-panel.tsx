@@ -56,6 +56,8 @@ interface PingResult {
 
 interface AutomationStatusPanelProps {
   spaceId: string | null
+  embedded?: boolean
+  className?: string
 }
 
 function isRecentHeartbeat(value: string | null | undefined) {
@@ -87,7 +89,7 @@ function statusClass(level: StatusLevel) {
   return "border-border bg-muted/40 text-muted-foreground"
 }
 
-export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
+export function AutomationStatusPanel({ spaceId, embedded = false, className }: AutomationStatusPanelProps) {
   const [runners, setRunners] = useState<Runner[]>([])
   const [calendar, setCalendar] = useState<CalendarStatus | null>(null)
   const [localStatus, setLocalStatus] = useState<LocalStatus | null>(null)
@@ -289,7 +291,13 @@ export function AutomationStatusPanel({ spaceId }: AutomationStatusPanelProps) {
   ]
 
   return (
-    <section className="shrink-0 overflow-hidden border-b border-border/40 bg-muted/10 px-3 py-3 md:px-4">
+    <section
+      className={cn(
+        "shrink-0 overflow-hidden bg-muted/10 px-3 py-3 md:px-4",
+        embedded ? "rounded-md border border-border/60" : "border-b border-border/40",
+        className,
+      )}
+    >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">

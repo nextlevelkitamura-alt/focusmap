@@ -13,7 +13,7 @@ export function AutoChatView({ spaceId, projectId = null }: AutoChatViewProps) {
       mode="automation"
       spaceId={spaceId}
       projectId={projectId}
-      title="自動化チャット"
+      title="自動化"
     />
   )
 }

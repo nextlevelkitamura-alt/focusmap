@@ -7,6 +7,7 @@
 import { tool } from 'ai'
 import { z } from 'zod/v3'
 import { createClient } from '@/utils/supabase/server'
+import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 
 // ━━━ タスク関連 ━━━
 
@@ -251,6 +252,96 @@ export const deleteMindmapNode = tool({
     return { success: true, title: targetNode.title, message: `「${targetNode.title}」を削除しました` }
   },
 })
+
+// ━━━ 予約実行（サーバー側 ai_tasks キュー） ━━━
+
+// cronのバリデーション（5フィールド形式）— /api/ai-tasks/schedule と同じ仕様
+function isValidCron(expr: string): boolean {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return false
+  const rangeCheck = (part: string, min: number, max: number) => {
+    if (part === '*') return true
+    const n = parseInt(part, 10)
+    return !isNaN(n) && n >= min && n <= max
+  }
+  return (
+    rangeCheck(parts[0], 0, 59) &&
+    rangeCheck(parts[1], 0, 23) &&
+    rangeCheck(parts[2], 1, 31) &&
+    rangeCheck(parts[3], 1, 12) &&
+    rangeCheck(parts[4], 0, 6)
+  )
+}
+
+/**
+ * 予約実行ツール。Mac がオフラインのときや「毎朝/明日やって」等の時間指定タスクを
+ * サーバー側 ai_tasks キューに積む。実体は /api/ai-tasks/schedule と同じロジック。
+ * spaceId をクロージャで束ねるためファクトリ形式。
+ */
+export function createScheduleTask(spaceId: string | null) {
+  return tool({
+    description:
+      '指定した日時または繰り返しスケジュールでAIタスクを予約実行する。「明日の朝やって」「毎週月曜に巡回して」などの時間指定や、Macがオフラインで後で実行したいときに使う。実行はサーバー側で行われる。',
+    inputSchema: z.object({
+      prompt: z.string().describe('予約実行するタスクの指示内容（実行時にこの内容でAIが動く）'),
+      scheduledAt: z
+        .string()
+        .describe('実行開始日時（ISO 8601形式、例: 2026-06-01T08:00:00+09:00）。繰り返しの場合は初回基準時刻。'),
+      recurrenceCron: z
+        .string()
+        .optional()
+        .describe('繰り返し実行する場合の5フィールドcron式（例: 毎朝8時なら "0 8 * * *"）。一度きりなら省略。'),
+    }),
+    execute: async ({ prompt, scheduledAt, recurrenceCron }) => {
+      const supabase = await createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return { success: false, error: '認証エラー' }
+
+      if (!prompt || prompt.trim().length === 0) {
+        return { success: false, error: 'prompt が空です' }
+      }
+      if (!scheduledAt || isNaN(Date.parse(scheduledAt))) {
+        return { success: false, error: 'scheduledAt は有効なISO8601日時である必要があります' }
+      }
+      if (!recurrenceCron && new Date(scheduledAt).getTime() < Date.now() - 5 * 60_000) {
+        return { success: false, error: 'scheduledAt は未来の日時にしてください' }
+      }
+      if (recurrenceCron && !isValidCron(recurrenceCron)) {
+        return { success: false, error: 'recurrenceCron は有効な5フィールドcron式である必要があります' }
+      }
+
+      const resolvedSpace = await resolveAiTaskSpaceId(supabase, user.id, { space_id: spaceId || null })
+      if (resolvedSpace.error) return { success: false, error: resolvedSpace.error }
+
+      const { data, error } = await supabase
+        .from('ai_tasks')
+        .insert({
+          user_id: user.id,
+          space_id: resolvedSpace.spaceId,
+          prompt: prompt.trim(),
+          approval_type: 'auto',
+          status: 'pending',
+          scheduled_at: scheduledAt,
+          recurrence_cron: recurrenceCron || null,
+          executor: 'claude',
+          run_visibility: normalizeVisibility(undefined, resolvedSpace.spaceId ? 'space' : 'private'),
+        })
+        .select('id')
+        .single()
+
+      if (error) return { success: false, error: error.message }
+      return {
+        success: true,
+        taskId: data.id,
+        scheduledAt,
+        recurrence: recurrenceCron || null,
+        message: recurrenceCron
+          ? `繰り返し予約（${recurrenceCron}）を登録しました`
+          : `${scheduledAt} に予約を登録しました`,
+      }
+    },
+  })
+}
 
 // ━━━ ツール自動実行の有効化判定 ━━━
 

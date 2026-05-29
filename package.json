@@ -19,6 +19,7 @@
   "dependencies": {
     "@ai-sdk/deepseek": "^2.0.35",
     "@ai-sdk/google": "^3.0.33",
+    "@ai-sdk/react": "^3.0.195",
     "@google/generative-ai": "^0.24.1",
     "@hello-pangea/dnd": "^18.0.1",
     "@radix-ui/react-alert-dialog": "^1.1.15",

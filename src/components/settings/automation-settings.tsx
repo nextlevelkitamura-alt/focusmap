@@ -85,7 +85,7 @@ function FocusmapLiteInstallPanel() {
         throw new Error(res.status === 401 ? "ログインセッションが切れています。再読み込みしてください。" : `サーバーエラー (${res.status})`)
       }
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "トークン発行に失敗しました")
-      setCommand(data.install_command)
+      setCommand(typeof data.install_command === "string" ? data.install_command : "")
       setMessage("このコマンドでMacを接続できます。実行後、数十秒で上の状態がオンラインになります。")
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "トークン発行に失敗しました")
@@ -163,7 +163,7 @@ export function AutomationSettings() {
       <div className="grid gap-4 lg:grid-cols-2">
         <SettingBlock
           icon={Workflow}
-          title="自動化チャット"
+          title="自動化"
           description="自動化の指示を判定し、ai_tasks に投入してMac側のランナーがバックグラウンド実行します。"
         >
           <div className="flex flex-wrap gap-2">
@@ -188,15 +188,15 @@ export function AutomationSettings() {
         <SettingBlock
           icon={Bot}
           title="モデル設定"
-          description="通常チャットと自動化チャットのAI実行設定を管理します。"
+          description="チャットと自動化のAI実行設定を管理します。"
         >
           <div className="grid gap-2 text-sm">
             <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
-              <div className="text-zinc-500">通常チャット</div>
+              <div className="text-zinc-500">チャット</div>
               <div className="font-mono text-zinc-100">gemini-3.1-flash-lite</div>
             </div>
             <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
-              <div className="text-zinc-500">自動化チャット</div>
+              <div className="text-zinc-500">自動化</div>
               <div className="font-mono text-zinc-100">deepseek-v4-pro</div>
             </div>
           </div>
@@ -243,7 +243,7 @@ export function AutomationSettings() {
               3. 実行確認
             </div>
             <p className="text-xs leading-5 text-zinc-500">
-              ランナーの heartbeat で GWS 認証状態を検出し、未設定なら自動化チャット起動時に案内します。
+              ランナーの heartbeat で GWS 認証状態を検出し、未設定なら自動化起動時に案内します。
             </p>
           </div>
         </div>
@@ -256,7 +256,7 @@ export function AutomationSettings() {
           description="ログインが必要なサイト巡回や入力自動化は、Mac側のPlaywright実行環境とブラウザ認証状態を使います。"
         >
           <p className="text-xs leading-5 text-zinc-500">
-            認証切れやブラウザ権限不足が検出された場合は、自動化チャット起動時に設定案内を出します。
+            認証切れやブラウザ権限不足が検出された場合は、自動化起動時に設定案内を出します。
           </p>
         </SettingBlock>
 

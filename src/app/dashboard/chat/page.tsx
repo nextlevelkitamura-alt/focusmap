@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
-import { AutoChatView } from '@/components/chat/auto-chat-view';
+import { UnifiedChat } from '@/components/chat/unified-chat';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,7 @@ export default async function ChatPage({ searchParams }: PageProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <AutoChatView spaceId={spaceId} />
+      <UnifiedChat spaceId={spaceId} />
     </div>
   );
 }

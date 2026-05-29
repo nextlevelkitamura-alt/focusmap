@@ -131,6 +131,27 @@ export function getConfigForAgent(agentId: AgentId): AgentModelConfig {
 }
 
 // ============================================================
+// 統合エージェント用プロバイダー (unified-agent-chat)
+// ============================================================
+
+/**
+ * 統合チャットのエージェントループ用モデルを返す。
+ * - DeepSeek V4 Pro を採用。マルチステップのツール推論には Thinking を ON にする
+ *   (intent判定は単発で OFF だったが、ステップを計画するエージェントには Thinking が効く)
+ * - DEEPSEEK_API_KEY 未設定なら Gemini Flash-Lite へフォールバック
+ *
+ * 戻り値の modelName は ai_usage ログと原価推定に使う。
+ */
+export function getAgentModel(): { model: ReturnType<typeof deepseek> | ReturnType<typeof google>; modelName: string } {
+  if (process.env.DEEPSEEK_API_KEY) {
+    const modelName = process.env.DEEPSEEK_AGENT_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_DEEPSEEK_MODEL
+    return { model: deepseek(modelName), modelName }
+  }
+  const modelName = resolveGeminiModel()
+  return { model: google(modelName), modelName }
+}
+
+// ============================================================
 // メモ→マインドマップ変換用プロバイダー（デュアル構成）
 // ============================================================
 
