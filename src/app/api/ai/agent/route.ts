@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server'
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
 import { getAgentModel, getAgentVisionModel } from '@/lib/ai/providers'
 import { buildAgentTools } from '@/lib/ai/agent-tools'
+import { sanitizeUIMessagesForModel } from '@/lib/ai/ui-message-sanitize'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
 
 // マルチステップのツール実行で時間がかかるため上限を引き上げる (Cloud Run の上限内)
@@ -101,6 +102,17 @@ function hasImagePart(messages: UIMessage[]): boolean {
   )
 }
 
+function friendlyAgentError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/maximum context length|reduce the length of the messages|context/i.test(message)) {
+    return '履歴内の画像・スクリーンショットが大きすぎたため応答を作れませんでした。履歴を軽量化して再送してください。'
+  }
+  if (/timeout|aborted|network/i.test(message)) {
+    return '応答がタイムアウトしました。入力欄は使えます。もう一度送るか、重い作業は予約実行にしてください。'
+  }
+  return message || 'AI応答の生成に失敗しました。'
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
@@ -116,10 +128,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'messages is required' }, { status: 400 })
     }
 
-    const usesVision = hasImagePart(messages)
+    const modelInputMessages = sanitizeUIMessagesForModel(messages)
+    const usesVision = hasImagePart(modelInputMessages)
     const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
     const { tools, runner } = await buildAgentTools(user.id, spaceId ?? null)
-    const modelMessages = await convertToModelMessages(messages)
+    const modelMessages = await convertToModelMessages(modelInputMessages)
 
     const result = streamText({
       model,
@@ -127,9 +140,15 @@ export async function POST(request: Request) {
       messages: modelMessages,
       tools,
       stopWhen: stepCountIs(12),
+      timeout: { totalMs: 300_000 },
+      onError: ({ error }) => {
+        console.error('[ai/agent] stream error:', error)
+      },
     })
 
-    return result.toUIMessageStreamResponse()
+    return result.toUIMessageStreamResponse({
+      onError: friendlyAgentError,
+    })
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'agent request failed' },

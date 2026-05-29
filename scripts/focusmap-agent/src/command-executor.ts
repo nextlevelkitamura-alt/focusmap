@@ -231,6 +231,7 @@ export async function executeCommand(command: AgentCommand, config: AgentConfig)
         selector?: string;
         full_page?: boolean;
         type?: 'png' | 'jpeg';
+        quality?: number;
       }>(command);
       return (await browserScreenshot(opts)) as unknown as Record<string, unknown>;
     }

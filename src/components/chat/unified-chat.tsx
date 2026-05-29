@@ -57,6 +57,7 @@ import { cn } from "@/lib/utils"
 import { AgentStatusChip, useAgentConnection } from "@/components/chat/agent-status-chip"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
+import { MAX_CURRENT_IMAGE_DATA_URL_CHARS, sanitizeUIMessagesForModel } from "@/lib/ai/ui-message-sanitize"
 
 interface UnifiedChatProps {
   spaceId?: string | null
@@ -119,8 +120,10 @@ const AUTOMATION_SHORTCUTS = [
 type ChatTab = "chat" | "automation"
 
 const MAX_CHAT_ATTACHMENTS = 4
-const MAX_IMAGE_SIDE = 2000
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_IMAGE_SIDE = 1600
+const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024
+const CHAT_SLOW_NOTICE_MS = 45_000
+const CHAT_WATCHDOG_MS = 180_000
 
 const TOOL_LABELS: Record<string, string> = {
   runTerminal: "ターミナル実行",
@@ -170,7 +173,7 @@ async function imageFileToPart(file: File): Promise<FileUIPart> {
   const rawDataUrl = await fileToDataUrl(file)
   const image = await loadImage(rawDataUrl)
   const maxSide = Math.max(image.naturalWidth, image.naturalHeight)
-  if (file.size <= MAX_IMAGE_BYTES && maxSide <= MAX_IMAGE_SIDE) {
+  if (file.size <= MAX_IMAGE_BYTES && maxSide <= MAX_IMAGE_SIDE && rawDataUrl.length <= MAX_CURRENT_IMAGE_DATA_URL_CHARS) {
     return { type: "file", mediaType: file.type || "image/png", filename: file.name, url: rawDataUrl }
   }
 
@@ -184,7 +187,7 @@ async function imageFileToPart(file: File): Promise<FileUIPart> {
   if (!ctx) return { type: "file", mediaType: file.type || "image/png", filename: file.name, url: rawDataUrl }
   ctx.drawImage(image, 0, 0, width, height)
   const mediaType = "image/jpeg"
-  return { type: "file", mediaType, filename: file.name, url: canvas.toDataURL(mediaType, 0.9) }
+  return { type: "file", mediaType, filename: file.name, url: canvasToLimitedDataUrl(canvas) }
 }
 
 function formatBytes(bytes: number | undefined) {
@@ -193,6 +196,31 @@ function formatBytes(bytes: number | undefined) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
+
+function canvasToLimitedDataUrl(canvas: HTMLCanvasElement): string {
+  const qualities = [0.86, 0.76, 0.66, 0.56, 0.46]
+  for (const quality of qualities) {
+    const dataUrl = canvas.toDataURL("image/jpeg", quality)
+    if (dataUrl.length <= MAX_CURRENT_IMAGE_DATA_URL_CHARS) return dataUrl
+  }
+  return canvas.toDataURL("image/jpeg", 0.38)
+}
+
+function friendlyChatError(error: Error): string {
+  const message = error.message || ""
+  if (/maximum context length|reduce the length of the messages|context/i.test(message)) {
+    return "履歴内の画像・スクリーンショットが大きすぎました。軽量化して再送します。もう一度送ってください。"
+  }
+  if (/timeout|aborted|network/i.test(message)) {
+    return "応答がタイムアウトしました。入力欄は使えます。もう一度送れます。"
+  }
+  return message || "送信に失敗しました。もう一度送れます。"
+}
+
+type RuntimeNotice = {
+  tone: "info" | "error"
+  message: string
+} | null
 
 export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: UnifiedChatProps) {
   void _projectId
@@ -203,18 +231,45 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<FileUIPart[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const transport = useMemo(
-    () => new DefaultChatTransport({ api: "/api/ai/agent", body: { spaceId } }),
+    () => new DefaultChatTransport({
+      api: "/api/ai/agent",
+      body: { spaceId },
+      prepareSendMessagesRequest: ({ messages, body, headers, credentials, api, messageId }) => ({
+        api,
+        headers,
+        credentials,
+        body: {
+          ...(body ?? {}),
+          messages: sanitizeUIMessagesForModel(messages, { currentUserMessageId: messageId }),
+        },
+      }),
+    }),
     [spaceId],
   )
 
-  const { messages, sendMessage, setMessages, status, stop, addToolApprovalResponse } = useChat({
+  const { messages, sendMessage, setMessages, status, stop, addToolApprovalResponse, error, clearError } = useChat({
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    onError: error => {
+      setRuntimeNotice({ tone: "error", message: friendlyChatError(error) })
+    },
+    onFinish: ({ isAbort, isDisconnect, isError }) => {
+      if (isAbort) {
+        setRuntimeNotice({ tone: "info", message: "応答を停止しました。入力欄は使えます。" })
+        return
+      }
+      if (isDisconnect || isError) {
+        setRuntimeNotice({ tone: "error", message: "応答が途中で止まりました。もう一度送れます。" })
+        return
+      }
+      setRuntimeNotice(null)
+    },
   })
 
   const sessions = useAgentChatSessions()
@@ -257,6 +312,26 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   }, [])
   const { isRecording, isTranscribing, analyserRef, startRecording, stopRecording } = useVoiceRecorder(handleTranscribed)
 
+  useEffect(() => {
+    if (status !== "error" || !error) return
+    setRuntimeNotice({ tone: "error", message: friendlyChatError(error) })
+  }, [status, error])
+
+  useEffect(() => {
+    if (!isBusy) return
+    const slowTimer = window.setTimeout(() => {
+      setRuntimeNotice({ tone: "info", message: "応答待ちが続いています。停止しても入力欄は戻ります。" })
+    }, CHAT_SLOW_NOTICE_MS)
+    const watchdogTimer = window.setTimeout(() => {
+      void stop()
+      setRuntimeNotice({ tone: "error", message: "応答が3分以上止まったため自動停止しました。もう一度送れます。" })
+    }, CHAT_WATCHDOG_MS)
+    return () => {
+      window.clearTimeout(slowTimer)
+      window.clearTimeout(watchdogTimer)
+    }
+  }, [isBusy, stop])
+
   const addAttachmentFiles = useCallback(async (files: File[]) => {
     const imageFiles = files.filter(file => file.type.startsWith("image/"))
     if (imageFiles.length === 0) {
@@ -295,7 +370,11 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     const trimmed = text.trim()
     if ((!trimmed && attachments.length === 0) || isBusy) return
     const files = attachments
-    void sendMessage(trimmed ? { text: trimmed, files } : { files })
+    if (status === "error") clearError()
+    setRuntimeNotice(null)
+    void sendMessage(trimmed ? { text: trimmed, files } : { files }).catch(error => {
+      setRuntimeNotice({ tone: "error", message: error instanceof Error ? friendlyChatError(error) : "送信に失敗しました。もう一度送れます。" })
+    })
     setInput("")
     setAttachments([])
     setAttachmentError(null)
@@ -314,6 +393,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     setInput("")
     setAttachments([])
     setAttachmentError(null)
+    setRuntimeNotice(null)
     setMobileHistoryOpen(false)
     setTimeout(() => inputRef.current?.focus(), 0)
   }
@@ -435,6 +515,21 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
               <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                 {attachmentError}
               </p>
+            )}
+            {runtimeNotice && (
+              <div
+                className={cn(
+                  "flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs",
+                  runtimeNotice.tone === "error"
+                    ? "border-destructive/30 bg-destructive/10 text-destructive"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                )}
+              >
+                <span>{runtimeNotice.message}</span>
+                <button type="button" className="shrink-0 rounded px-2 py-1 font-medium" onClick={() => setRuntimeNotice(null)}>
+                  閉じる
+                </button>
+              </div>
             )}
             <div className="flex items-end gap-2">
               <AutomationPromptMenu onSelect={insertAutomationPrompt} />

@@ -5,7 +5,7 @@
  * - browser_navigate: URL を開く / 待機
  * - browser_click: セレクタ指定でクリック
  * - browser_fill: フォーム入力
- * - browser_screenshot: ページ/要素のスクリーンショット (PNG base64)
+ * - browser_screenshot: ページ/要素のスクリーンショット (JPEG/PNG base64)
  * - browser_text: ページテキスト抽出
  * - browser_eval: JavaScript 評価 (安全モードのみ)
  *
@@ -126,6 +126,7 @@ export interface BrowserScreenshotOptions {
   selector?: string;
   full_page?: boolean;
   type?: 'png' | 'jpeg';
+  quality?: number;
 }
 
 export async function browserScreenshot(options: BrowserScreenshotOptions): Promise<{
@@ -140,13 +141,16 @@ export async function browserScreenshot(options: BrowserScreenshotOptions): Prom
   if (options.url) {
     await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   }
-  const format = options.type ?? 'png';
+  const format = options.type ?? 'jpeg';
+  const quality = format === 'jpeg'
+    ? Math.max(1, Math.min(100, Math.round(options.quality ?? 75)))
+    : undefined;
   let buffer: Buffer;
   if (options.selector) {
     const element = await page.waitForSelector(options.selector, { timeout: 10_000 });
-    buffer = await element.screenshot({ type: format });
+    buffer = await element.screenshot({ type: format, quality });
   } else {
-    buffer = await page.screenshot({ fullPage: options.full_page ?? true, type: format });
+    buffer = await page.screenshot({ fullPage: options.full_page ?? false, type: format, quality });
   }
   return {
     session_id: sessionId,

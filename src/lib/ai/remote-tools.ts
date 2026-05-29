@@ -313,7 +313,7 @@ export function createRemoteTools(ctx: RemoteToolContext): ToolSet {
         sessionId: z.string().optional().describe('ブラウザセッションID'),
       }),
       execute: async ({ url, selector, fullPage, sessionId }) =>
-        run('browser_screenshot', { url, selector, full_page: fullPage, session_id: sessionId }),
+        run('browser_screenshot', { url, selector, full_page: fullPage ?? false, session_id: sessionId, type: 'jpeg', quality: 75 }),
     }),
 
     readFile: tool({
