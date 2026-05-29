@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { getCalendarClient } from '@/lib/google-calendar'
 import type { calendar_v3 } from 'googleapis'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 function isMissingCalendarEventError(error: unknown) {
   if (!error || typeof error !== 'object') return false
@@ -25,6 +26,180 @@ function toRestorableGoogleEvent(event: calendar_v3.Schema$Event): calendar_v3.S
     visibility: event.visibility || undefined,
     extendedProperties: event.extendedProperties || undefined,
   }
+}
+
+function dateFromGoogleEventTime(value: calendar_v3.Schema$EventDateTime | undefined): Date | null {
+  const raw = value?.dateTime || value?.date
+  if (!raw) return null
+  const date = new Date(raw)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function isSameMinute(a: Date | null, b: Date | null, toleranceMinutes = 5) {
+  if (!a || !b) return false
+  return Math.abs(a.getTime() - b.getTime()) <= toleranceMinutes * 60 * 1000
+}
+
+function titleMatches(actual: string | null | undefined, expected: string | undefined) {
+  if (!expected) return true
+  const normalizedActual = (actual || '').trim().toLowerCase()
+  const normalizedExpected = expected.trim().toLowerCase()
+  if (!normalizedActual || !normalizedExpected) return false
+  return normalizedActual === normalizedExpected ||
+    normalizedActual.includes(normalizedExpected) ||
+    normalizedExpected.includes(normalizedActual)
+}
+
+function buildDeleteSearchWindow(startTime?: string, endTime?: string) {
+  const start = startTime ? new Date(startTime) : null
+  const end = endTime ? new Date(endTime) : null
+  if (start && !Number.isNaN(start.getTime())) {
+    const windowStart = new Date(start.getTime() - 30 * 60 * 1000)
+    const windowEnd = end && !Number.isNaN(end.getTime())
+      ? new Date(end.getTime() + 30 * 60 * 1000)
+      : new Date(start.getTime() + 2 * 60 * 60 * 1000)
+    return { windowStart, windowEnd, expectedStart: start, expectedEnd: end && !Number.isNaN(end.getTime()) ? end : null }
+  }
+
+  const now = new Date()
+  return {
+    windowStart: new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000),
+    windowEnd: new Date(now.getTime() + 45 * 24 * 60 * 60 * 1000),
+    expectedStart: null,
+    expectedEnd: null,
+  }
+}
+
+async function resolveCalendarEventForDeletion(params: {
+  supabase: SupabaseClient
+  calendar: calendar_v3.Calendar
+  userId: string
+  calendarId: string
+  providedEventId: string
+  title?: string
+  startTime?: string
+  endTime?: string
+  deleteScope: 'this' | 'series'
+  recurringEventId?: string
+}) {
+  const {
+    supabase,
+    calendar,
+    userId,
+    calendarId,
+    providedEventId,
+    title,
+    startTime,
+    endTime,
+    deleteScope,
+    recurringEventId,
+  } = params
+  const { windowStart, windowEnd, expectedStart, expectedEnd } = buildDeleteSearchWindow(startTime, endTime)
+
+  const tryGoogleGet = async (eventId: string) => {
+    try {
+      const eventRes = await calendar.events.get({ calendarId, eventId })
+      return eventRes.data
+    } catch (error) {
+      if (!isMissingCalendarEventError(error)) throw error
+      return null
+    }
+  }
+
+  const resolveFromGoogleEvent = (event: calendar_v3.Schema$Event, source: string) => {
+    const instanceEventId = event.id
+    if (!instanceEventId) return null
+    return {
+      eventId: deleteScope === 'series' ? (recurringEventId || event.recurringEventId || instanceEventId) : instanceEventId,
+      instanceEventId,
+      event,
+      source,
+    }
+  }
+
+  const directEvent = await tryGoogleGet(providedEventId)
+  if (directEvent) return resolveFromGoogleEvent(directEvent, 'provided_google_id')
+
+  if (recurringEventId && recurringEventId !== providedEventId) {
+    const recurringEvent = await tryGoogleGet(recurringEventId)
+    if (recurringEvent) return resolveFromGoogleEvent(recurringEvent, 'provided_recurring_id')
+  }
+
+  const cachedMatches = []
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (uuidPattern.test(providedEventId)) {
+    const { data } = await supabase
+      .from('calendar_events')
+      .select('id, google_event_id, recurring_event_id, title, start_time, end_time')
+      .eq('user_id', userId)
+      .eq('calendar_id', calendarId)
+      .eq('id', providedEventId)
+      .maybeSingle()
+    if (data) cachedMatches.push(data)
+  }
+
+  const { data: cachedByGoogleId } = await supabase
+    .from('calendar_events')
+    .select('id, google_event_id, recurring_event_id, title, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('calendar_id', calendarId)
+    .eq('google_event_id', providedEventId)
+    .maybeSingle()
+  if (cachedByGoogleId) cachedMatches.push(cachedByGoogleId)
+
+  let query = supabase
+    .from('calendar_events')
+    .select('id, google_event_id, recurring_event_id, title, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('calendar_id', calendarId)
+    .gte('start_time', windowStart.toISOString())
+    .lte('start_time', windowEnd.toISOString())
+    .limit(10)
+  if (title) query = query.ilike('title', `%${title}%`)
+  const { data: cachedByTime } = await query
+  if (cachedByTime) cachedMatches.push(...cachedByTime)
+
+  const bestCached = cachedMatches.find(event => {
+    const cachedStart = new Date(event.start_time)
+    const cachedEnd = new Date(event.end_time)
+    return titleMatches(event.title, title) &&
+      (!expectedStart || isSameMinute(cachedStart, expectedStart)) &&
+      (!expectedEnd || isSameMinute(cachedEnd, expectedEnd))
+  }) || cachedMatches.find(event => titleMatches(event.title, title))
+
+  if (bestCached?.google_event_id) {
+    const cachedTargetId = deleteScope === 'series'
+      ? (recurringEventId || bestCached.recurring_event_id || bestCached.google_event_id)
+      : bestCached.google_event_id
+    const cachedGoogleEvent = await tryGoogleGet(cachedTargetId)
+    return {
+      eventId: cachedTargetId,
+      instanceEventId: bestCached.google_event_id,
+      event: cachedGoogleEvent,
+      source: cachedGoogleEvent ? 'cached_event_google_id' : 'cached_event_only',
+    }
+  }
+
+  const listRes = await calendar.events.list({
+    calendarId,
+    timeMin: windowStart.toISOString(),
+    timeMax: windowEnd.toISOString(),
+    singleEvents: true,
+    orderBy: 'startTime',
+    q: title,
+    maxResults: 20,
+  })
+  const googleMatch = (listRes.data.items || []).find(event => {
+    const eventStart = dateFromGoogleEventTime(event.start)
+    const eventEnd = dateFromGoogleEventTime(event.end)
+    return titleMatches(event.summary, title) &&
+      (!expectedStart || isSameMinute(eventStart, expectedStart)) &&
+      (!expectedEnd || isSameMinute(eventEnd, expectedEnd))
+  }) || (listRes.data.items || []).find(event => titleMatches(event.summary, title))
+
+  if (googleMatch) return resolveFromGoogleEvent(googleMatch, 'google_search')
+
+  return null
 }
 
 // POST /api/ai/chat/execute - AIチャットのアクション実行
@@ -214,9 +389,10 @@ export async function POST(request: Request) {
 
         const { calendar } = await getCalendarClient(user.id)
         const requestedScope = delete_scope === 'series' ? 'series' : 'this'
-        const targetEventId = requestedScope === 'series'
+        let targetEventId = requestedScope === 'series'
           ? (recurring_event_id?.trim() || eventId)
           : eventId
+        let instanceEventId = eventId
         let eventSnapshot: calendar_v3.Schema$Event | null = null
         try {
           const eventRes = await calendar.events.get({
@@ -226,6 +402,42 @@ export async function POST(request: Request) {
           eventSnapshot = eventRes.data
         } catch (error) {
           if (!isMissingCalendarEventError(error)) throw error
+        }
+
+        let resolvedSource = 'provided'
+        if (!eventSnapshot) {
+          const resolved = await resolveCalendarEventForDeletion({
+            supabase,
+            calendar,
+            userId: user.id,
+            calendarId,
+            providedEventId: eventId,
+            title,
+            startTime: start_time,
+            endTime: end_time,
+            deleteScope: requestedScope,
+            recurringEventId: recurring_event_id,
+          })
+          if (resolved) {
+            console.warn('[execute/delete_calendar_event] Resolved stale event id:', {
+              providedEventId: eventId,
+              resolvedEventId: resolved.eventId,
+              instanceEventId: resolved.instanceEventId,
+              calendarId,
+              source: resolved.source,
+            })
+            targetEventId = resolved.eventId
+            instanceEventId = resolved.instanceEventId
+            eventSnapshot = resolved.event || null
+            resolvedSource = resolved.source
+          }
+        }
+
+        if (!eventSnapshot && resolvedSource === 'provided') {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 削除対象の予定IDを特定できませんでした。予定名・日時・カレンダー名を確認してください。',
+          }, { status: 404 })
         }
 
         const undoLog = eventSnapshot
@@ -241,6 +453,7 @@ export async function POST(request: Request) {
                   calendar_id: calendarId,
                   event_id: targetEventId,
                   original_event_id: eventId,
+                  resolved_from: resolvedSource,
                   delete_scope: requestedScope,
                   recurring_event_id: recurring_event_id || eventSnapshot.recurringEventId || null,
                   title: title || eventSnapshot.summary || null,
@@ -284,7 +497,7 @@ export async function POST(request: Request) {
 
         calendarEventDeleteQuery = requestedScope === 'series'
           ? calendarEventDeleteQuery.or(`google_event_id.eq.${targetEventId},recurring_event_id.eq.${targetEventId}`)
-          : calendarEventDeleteQuery.eq('google_event_id', targetEventId)
+          : calendarEventDeleteQuery.eq('google_event_id', instanceEventId)
 
         await calendarEventDeleteQuery
 
@@ -297,7 +510,7 @@ export async function POST(request: Request) {
           })
           .eq('user_id', user.id)
           .eq('calendar_id', calendarId)
-          .eq('google_event_id', targetEventId)
+          .eq('google_event_id', instanceEventId)
           .is('deleted_at', null)
 
         await supabase
@@ -310,7 +523,7 @@ export async function POST(request: Request) {
             updated_at: new Date().toISOString(),
           })
           .eq('user_id', user.id)
-          .eq('google_event_id', targetEventId)
+          .eq('google_event_id', instanceEventId)
 
         const dateLabel = start_time
           ? new Date(start_time).toLocaleString('ja-JP', {
@@ -330,6 +543,7 @@ export async function POST(request: Request) {
             : `✅ 予定「${displayTitle}」はGoogleカレンダー上に見つかりませんでした。Focusmap側の同期情報を整理しました`,
           eventData: {
             google_event_id: targetEventId,
+            original_google_event_id: instanceEventId,
             calendar_id: calendarId,
             title: displayTitle,
             start_time,
