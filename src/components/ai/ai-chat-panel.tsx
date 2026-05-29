@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useUndoRedo } from "@/hooks/useUndoRedo"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
+import { broadcastCalendarOptimisticEventRemoval } from "@/hooks/useCalendarEvents"
 
 interface ChatOption {
   label: string
@@ -86,6 +87,7 @@ interface CalendarEventData {
   estimated_time: number
   calendar_id?: string | null
   google_event_id?: string
+  original_google_event_id?: string
   start_time?: string
   end_time?: string
   deleted?: boolean
@@ -130,6 +132,21 @@ const SKILL_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>
 }
 
 const MAX_RALLIES = 15
+
+function removeDeletedCalendarEventOptimistically(eventData?: CalendarEventData) {
+  const calendarId = typeof eventData?.calendar_id === 'string' ? eventData.calendar_id : undefined
+  const googleEventId = typeof eventData?.google_event_id === 'string' ? eventData.google_event_id : undefined
+  const originalGoogleEventId = typeof eventData?.original_google_event_id === 'string'
+    ? eventData.original_google_event_id
+    : undefined
+
+  if (originalGoogleEventId) {
+    broadcastCalendarOptimisticEventRemoval(originalGoogleEventId, originalGoogleEventId, calendarId)
+  }
+  if (googleEventId && googleEventId !== originalGoogleEventId) {
+    broadcastCalendarOptimisticEventRemoval(googleEventId, googleEventId, calendarId)
+  }
+}
 
 function formatDateTimeRange(startAt: string, endAt: string): string {
   const start = new Date(startAt)
@@ -544,6 +561,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
       }
 
       if (success && msg.action?.type === 'delete_calendar_event') {
+        removeDeletedCalendarEventOptimistically(eventData)
         onCalendarEventCreated?.()
         const deletedEventId = typeof eventData?.google_event_id === 'string' ? eventData.google_event_id : undefined
         const calendarId = typeof eventData?.calendar_id === 'string' ? eventData.calendar_id : undefined
@@ -587,6 +605,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
               })
               const redoData = await redoRes.json()
               if (!redoRes.ok || !redoData.success) throw new Error(redoData.message || '予定の再削除に失敗しました')
+              removeDeletedCalendarEventOptimistically(redoData.eventData)
               onCalendarEventCreated?.()
             },
           })
@@ -666,6 +685,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
       }
 
       if (success && action.type === 'delete_calendar_event') {
+        removeDeletedCalendarEventOptimistically(eventData)
         onCalendarEventCreated?.()
         setExecutionNotice('予定を削除しました')
         setTimeout(() => setExecutionNotice(null), 4500)
