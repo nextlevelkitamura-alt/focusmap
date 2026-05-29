@@ -149,6 +149,21 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => expect(onAddRootNode).toHaveBeenCalled())
   })
 
+  test("keeps a newly created empty node blank while entering edit mode", async () => {
+    const blankRoot = makeTask({ id: "root-1", title: "" })
+
+    renderMap({
+      groups: [blankRoot],
+      tasks: [],
+      pendingEditNodeId: "root-1",
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+    })
+
+    const input = await screen.findByDisplayValue("")
+    expect(input).toHaveFocus()
+  })
+
   test("pans the stage with a two-finger wheel gesture", async () => {
     renderMap()
 

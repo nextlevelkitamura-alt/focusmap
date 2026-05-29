@@ -1723,7 +1723,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         // ルートタスクの場合 → 新しいルートタスクを作成
         const isRootTask = groups.some(g => g.id === taskId);
         if (isRootTask) {
-            await createRootTaskAndFocus("New Task");
+            await createRootTaskAndFocus("");
             return;
         }
 
@@ -2172,7 +2172,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     data: {
                         ...node.data,
                         label: project?.title ?? 'Project',
-                        onAddChild: () => cbs.createRootTaskAndFocus("New Task"),
+                        onAddChild: () => cbs.createRootTaskAndFocus(""),
                         isSelected: selectedNodeIds.has('project-root'),
                         isDropTarget: dropTarget?.nodeId === node.id,
                         dropPosition: dropTarget?.nodeId === node.id ? dropTarget.position : null,
@@ -2902,7 +2902,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onSelectNodes={handleCustomSelectNodes}
                 onToggleCollapse={toggleTaskCollapse}
                 pendingEditNodeId={pendingEditNodeId}
-                onAddRootNode={() => callbacks.createRootTaskAndFocus("New Task")}
+                onAddRootNode={() => callbacks.createRootTaskAndFocus("")}
                 onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
                 onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
                 onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}

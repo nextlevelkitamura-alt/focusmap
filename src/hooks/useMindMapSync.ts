@@ -235,7 +235,7 @@ export function useMindMapSync({
                         project_id: projectId,
                         parent_task_id: null,
                         is_group: true,
-                        title,
+                        title: title || 'New Task',
                         order_index: maxOrder,
                     }),
                 });
