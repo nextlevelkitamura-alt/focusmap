@@ -11,13 +11,25 @@ export type AgentConnectionState = "online" | "offline" | "absent" | "loading"
 
 interface RunnerRow {
   last_heartbeat_at: string | null
+  metadata?: unknown
+}
+
+/**
+ * agent_commands (ターミナル/ブラウザ/ファイル) を実行できる focusmap-agent か。
+ * ai_tasks 用 task-runner も ai_runners に heartbeat を出すが agent_commands は claim しないので除外する。
+ * (サーバー側 resolveOnlineRunner の判定と揃える)
+ */
+function canExecuteRemoteCommands(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object") return false
+  const meta = metadata as Record<string, unknown>
+  return meta.app === "focusmap-lite" || meta.agent === "focusmap-agent"
 }
 
 /**
  * Mac常駐エージェントの接続状態を5秒ごとにポーリングして返す。
- * - online : heartbeat 2分以内の runner が居る → 即実行できる
- * - offline: runner は登録済みだが heartbeat 切れ → 予約実行になる
- * - absent : runner 未登録 → セットアップが必要
+ * - online : agent_commands を実行できる focusmap-agent が heartbeat 2分以内 → 即実行できる
+ * - offline: focusmap-agent は登録済みだが heartbeat 切れ → 予約実行になる
+ * - absent : focusmap-agent 未登録 → セットアップが必要
  */
 export function useAgentConnection(): { state: AgentConnectionState } {
   const [state, setState] = useState<AgentConnectionState>("loading")
@@ -30,8 +42,10 @@ export function useAgentConnection(): { state: AgentConnectionState } {
         const res = await fetch("/api/ai-runners", { cache: "no-store" })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
-        const runners: RunnerRow[] = Array.isArray(data?.runners) ? data.runners : []
+        const allRunners: RunnerRow[] = Array.isArray(data?.runners) ? data.runners : []
         if (!mounted) return
+        // ターミナル等を実行できる focusmap-agent だけを対象にする
+        const runners = allRunners.filter(r => canExecuteRemoteCommands(r.metadata))
         if (runners.length === 0) {
           setState("absent")
           return

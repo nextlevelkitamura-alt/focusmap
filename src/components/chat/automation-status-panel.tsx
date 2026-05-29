@@ -75,6 +75,12 @@ function formatRelativeHeartbeat(value: string | null | undefined) {
   return `${hours}時間前`
 }
 
+function canExecuteRemoteCommands(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object") return false
+  const meta = metadata as Record<string, unknown>
+  return meta.app === "focusmap-lite" || meta.agent === "focusmap-agent"
+}
+
 function StatusIcon({ level }: { level: StatusLevel }) {
   if (level === "checking") return <Loader2 className="h-3.5 w-3.5 animate-spin" />
   if (level === "ok") return <CheckCircle2 className="h-3.5 w-3.5" />
@@ -134,16 +140,46 @@ export function AutomationStatusPanel({ spaceId, embedded = false, className }: 
     void refreshStatus()
   }, [refreshStatus])
 
-  const latestRunner = runners[0] ?? null
-  const onlineRunner = runners.find(runner => isRecentHeartbeat(runner.last_heartbeat_at)) ?? null
-  const runnerExecutors = useMemo(
-    () => new Set(runners.flatMap(runner => runner.executors ?? [])),
+  const commandRunners = useMemo(
+    () => runners.filter(runner => canExecuteRemoteCommands(runner.metadata)),
     [runners],
+  )
+  const latestRunner = commandRunners[0] ?? null
+  const onlineRunner = commandRunners.find(runner => isRecentHeartbeat(runner.last_heartbeat_at)) ?? null
+  const runnerExecutors = useMemo(
+    () => new Set(commandRunners.flatMap(runner => runner.executors ?? [])),
+    [commandRunners],
   )
   const runnerSecrets = useMemo(
-    () => new Set(runners.flatMap(runner => runner.available_secret_names ?? [])),
-    [runners],
+    () => new Set(commandRunners.flatMap(runner => runner.available_secret_names ?? [])),
+    [commandRunners],
   )
+  const codingHarnesses = useMemo(
+    () => {
+      const names = commandRunners.flatMap(runner => {
+        const value = runner.metadata?.coding_harnesses
+        return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : []
+      })
+      return [...new Set(names)]
+    },
+    [commandRunners],
+  )
+  const folderAccessSummary = useMemo(() => {
+    const access = onlineRunner?.metadata?.folder_access ?? latestRunner?.metadata?.folder_access
+    if (!access || typeof access !== "object" || Array.isArray(access)) {
+      return { detail: "PC連携後に確認", level: (onlineRunner ? "unknown" : "missing") as StatusLevel }
+    }
+    const entries = Object.entries(access as Record<string, unknown>)
+    const denied = entries.filter(([, value]) => value === "denied").map(([key]) => key)
+    const ok = entries.filter(([, value]) => value === "ok").length
+    if (denied.length > 0) {
+      return { detail: `拒否: ${denied.join(" / ")}`, level: "warn" as StatusLevel }
+    }
+    if (ok > 0) {
+      return { detail: `${ok}箇所アクセス可`, level: "ok" as StatusLevel }
+    }
+    return { detail: "未確認", level: "unknown" as StatusLevel }
+  }, [latestRunner?.metadata, onlineRunner])
   const hasGws = useMemo(
     () => runners.some(runner => {
       const metadata = runner.metadata ?? {}
@@ -248,6 +284,20 @@ export function AutomationStatusPanel({ spaceId, embedded = false, className }: 
           ? "claude"
           : "未確認",
       level: loading ? "checking" : runnerExecutors.size || localStatus?.claudeInstalled ? "ok" : "warn",
+    },
+    {
+      key: "harness",
+      icon: Bot,
+      label: "コードハーネス",
+      detail: codingHarnesses.length ? codingHarnesses.join(" / ") : "未検出",
+      level: loading ? "checking" : codingHarnesses.length ? "ok" : "unknown",
+    },
+    {
+      key: "folders",
+      icon: Terminal,
+      label: "フォルダ権限",
+      detail: folderAccessSummary.detail,
+      level: loading ? "checking" : folderAccessSummary.level,
     },
     {
       key: "ai",

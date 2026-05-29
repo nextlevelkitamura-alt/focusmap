@@ -15,11 +15,11 @@ import { homedir } from 'node:os';
 import { resolve, dirname, relative } from 'node:path';
 import { realpathSync, existsSync } from 'node:fs';
 
-const ALLOWED_ROOTS = [homedir(), '/tmp'];
+export const ALLOWED_ROOTS = [homedir(), '/tmp'];
 const MAX_READ_BYTES = 5 * 1024 * 1024; // 5MB
 const MAX_WRITE_BYTES = 5 * 1024 * 1024;
 
-function isPathSafe(targetPath: string): { ok: true; real: string } | { ok: false; reason: string } {
+export function resolveSafePath(targetPath: string): { ok: true; real: string } | { ok: false; reason: string } {
   let absolute: string;
   try {
     absolute = resolve(targetPath);
@@ -56,7 +56,7 @@ export interface FileReadResult {
 }
 
 export async function fileRead(rawPath: string): Promise<FileReadResult> {
-  const safety = isPathSafe(rawPath);
+  const safety = resolveSafePath(rawPath);
   if (!safety.ok) throw new Error(safety.reason);
   const buf = await readFile(safety.real);
   const truncated = buf.byteLength > MAX_READ_BYTES;
@@ -81,7 +81,7 @@ export async function fileWrite(
   content: string,
   options: { mode?: 'overwrite' | 'append'; mkdirs?: boolean } = {},
 ): Promise<FileWriteResult> {
-  const safety = isPathSafe(rawPath);
+  const safety = resolveSafePath(rawPath);
   if (!safety.ok) throw new Error(safety.reason);
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes > MAX_WRITE_BYTES) {
@@ -107,12 +107,20 @@ export interface FileListEntry {
   modified_at: string;
 }
 
-export async function fileList(rawPath: string): Promise<{ path: string; entries: FileListEntry[] }> {
-  const safety = isPathSafe(rawPath);
+export async function fileList(
+  rawPath: string,
+  options: { maxEntries?: number } = {},
+): Promise<{ path: string; entries: FileListEntry[]; truncated: boolean }> {
+  const safety = resolveSafePath(rawPath);
   if (!safety.ok) throw new Error(safety.reason);
   const items = await readdir(safety.real, { withFileTypes: true });
+  const maxEntries = Number.isFinite(options.maxEntries) ? Math.max(1, Math.min(options.maxEntries ?? 200, 1000)) : 200;
+  const sortedItems = [...items].sort((a, b) => {
+    const dirOrder = Number(b.isDirectory()) - Number(a.isDirectory());
+    return dirOrder || a.name.localeCompare(b.name);
+  });
   const entries: FileListEntry[] = [];
-  for (const item of items) {
+  for (const item of sortedItems.slice(0, maxEntries)) {
     const child = resolve(safety.real, item.name);
     try {
       const st = await stat(child);
@@ -126,11 +134,11 @@ export async function fileList(rawPath: string): Promise<{ path: string; entries
       // 取得失敗時はスキップ
     }
   }
-  return { path: safety.real, entries };
+  return { path: safety.real, entries, truncated: items.length > maxEntries };
 }
 
 export async function fileDelete(rawPath: string): Promise<{ path: string; deleted: boolean }> {
-  const safety = isPathSafe(rawPath);
+  const safety = resolveSafePath(rawPath);
   if (!safety.ok) throw new Error(safety.reason);
   if (!existsSync(safety.real)) {
     return { path: safety.real, deleted: false };

@@ -31,7 +31,6 @@ export async function POST(
 
     const updates: Record<string, unknown> = {
       status,
-      updated_at: new Date().toISOString(),
     }
     if (body.result && typeof body.result === 'object') updates.result = body.result
     if (typeof body.error === 'string') updates.error = body.error

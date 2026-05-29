@@ -26,9 +26,33 @@ function describeOs(os: string | null): string {
   return os
 }
 
+function formatRunnerHints(runner: OnlineRunner): string[] {
+  const lines: string[] = []
+  if (runner.googleDriveRoots.length > 0) {
+    lines.push(`- Google Drive候補: ${runner.googleDriveRoots.join(' / ')}`)
+  }
+  if (runner.inaccessibleGoogleDriveRoots.length > 0) {
+    lines.push(`- アクセス不可のGoogle Drive候補: ${runner.inaccessibleGoogleDriveRoots.join(' / ')}`)
+  }
+  if (runner.cloudStorageRoots.length > 0) {
+    lines.push(`- CloudStorage候補: ${runner.cloudStorageRoots.join(' / ')}`)
+  }
+  if (runner.codingHarnesses.length > 0) {
+    lines.push(`- 利用可能なコード実行ハーネス: ${runner.codingHarnesses.join(' / ')}`)
+  }
+  if (runner.folderAccess) {
+    const access = Object.entries(runner.folderAccess)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(', ')
+    if (access) lines.push(`- フォルダ権限: ${access}`)
+  }
+  return lines
+}
+
 function buildSystemPrompt(runner: OnlineRunner | null): string {
   const online = runner !== null
   const osLabel = online ? describeOs(runner.os) : null
+  const runnerHints = online ? formatRunnerHints(runner) : []
   return [
     'あなたは Focusmap の統合AIアシスタントです。日本語で応答します。',
     '',
@@ -41,10 +65,21 @@ function buildSystemPrompt(runner: OnlineRunner | null): string {
     '## ツールの種類',
     '- サーバー直実行 (常に使える): addTask / addCalendarEvent / addMindmapGroup / addMindmapTask / deleteMindmapNode',
     '- 予約実行 (常に使える): scheduleTask — 時間指定や繰り返し、またはMacがオフラインのときにサーバー側でタスクを予約実行する。',
-    '- Mac経由 (ターミナル/ブラウザ/ファイル): runTerminal / browserNavigate / browserClick / browserFill / browserScreenshot / readFile / writeFile / webResearch',
+    '- Mac経由 (ターミナル/ブラウザ/ファイル): runTerminal / listFiles / readFile / writeFile / runOpenCode / browserNavigate / browserClick / browserFill / browserScreenshot / webResearch',
+    '',
+    '## Mac実行ルール',
+    '- フォルダの中身確認は、まず listFiles を使う。シェルの ls/find は listFiles/readFile で足りない場合だけ使う。',
+    '- runTerminal は通常コマンドを自動実行する。削除・sudo・git push などの危険操作はMac側でブロックされる。',
+    '- cwd を指定できる作業では、対象リポジトリまたはフォルダの絶対パスを必ず cwd に入れる。',
+    '- OpenCodeが利用可能な場合、コードベース調査や実装案の下請けには runOpenCode を使える。失敗したら listFiles/readFile/runTerminal で自力継続する。',
+    '- 存在しない一般パスを前提にしない。Google Drive は runner が検出した候補パスを優先する。',
     '',
     online
-      ? `## 接続状態\n現在このユーザーの常駐エージェントは**オンライン**です (OS: ${osLabel})。Mac経由ツールは即時実行できます。\n- runTerminal でシェルコマンドを生成するときは、必ずこのOS (${osLabel}) に合った構文・コマンドを使ってください。例: Windows なら PowerShell/cmd、macOS・Linux なら sh/bash。パス区切りや改行コードもOSに合わせること。`
+      ? [
+        `## 接続状態\n現在このユーザーの常駐エージェントは**オンライン**です (OS: ${osLabel})。Mac経由ツールは即時実行できます。`,
+        `- runTerminal でシェルコマンドを生成するときは、必ずこのOS (${osLabel}) に合った構文・コマンドを使ってください。例: Windows なら PowerShell/cmd、macOS・Linux なら sh/bash。パス区切りや改行コードもOSに合わせること。`,
+        ...runnerHints,
+      ].join('\n')
       : '## 接続状態\n現在このユーザーの常駐エージェントは**オフライン（または未接続）**です。Mac経由ツール (ターミナル/ブラウザ/ファイル) は実行できません。これらが必要な作業を頼まれたら、エージェントを起動して接続するよう案内するか、scheduleTask で予約実行を提案してください。サーバー直実行ツールと scheduleTask は通常どおり使えます。',
   ].join('\n')
 }

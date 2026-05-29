@@ -11,7 +11,7 @@
  *  4. サーバーは agent_commands 行をポーリングして結果を待つ
  *     (agent_commands は supabase_realtime publication 未登録のため Realtime 不可 → ポーリング)
  *
- * Mac 側 (command-executor.ts) は v1 のまま無改修。既存の type/payload をそのまま使う。
+ * Mac 側 (command-executor.ts) は cwd・timeout・安全ブロック・ファイル一覧を処理する。
  */
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod/v3'
@@ -21,6 +21,9 @@ import { createClient } from '@/utils/supabase/server'
 const HEARTBEAT_ONLINE_WINDOW_MS = 2 * 60 * 1000 // 2分以内の heartbeat をオンラインとみなす
 const DEFAULT_TIMEOUT_MS = 120_000 // 1ツール最大2分
 const DEFAULT_POLL_MS = 1_500
+const DEFAULT_SHELL_TIMEOUT_MS = 180_000
+const DEFAULT_OPENCODE_TIMEOUT_MS = 300_000
+const MAX_SHELL_TIMEOUT_MS = 570_000
 
 export interface OnlineRunner {
   id: string
@@ -28,6 +31,11 @@ export interface OnlineRunner {
   displayName: string | null
   /** ランナーのOS (heartbeat metadata の os/platform から。例: 'darwin' | 'win32' | 'linux')。不明なら null。 */
   os: string | null
+  googleDriveRoots: string[]
+  inaccessibleGoogleDriveRoots: string[]
+  cloudStorageRoots: string[]
+  codingHarnesses: string[]
+  folderAccess: Record<string, unknown> | null
 }
 
 /** metadata から OS を取り出す。agent が os/platform を送っていれば使う。 */
@@ -39,9 +47,37 @@ function extractOs(metadata: unknown): string | null {
   return null
 }
 
+function extractStringArray(metadata: unknown, key: string): string[] {
+  if (!metadata || typeof metadata !== 'object') return []
+  const value = (metadata as Record<string, unknown>)[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+}
+
+function extractObject(metadata: unknown, key: string): Record<string, unknown> | null {
+  if (!metadata || typeof metadata !== 'object') return null
+  const value = (metadata as Record<string, unknown>)[key]
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
 /**
- * heartbeat が直近 2 分以内の runner を1台返す。無ければ null (= Macオフライン)。
- * 最新 heartbeat のものを優先する。
+ * その runner が agent_commands (ターミナル/ブラウザ/ファイル) を claim・実行できるか。
+ * focusmap-agent (focusmap-lite) だけが agent_commands を処理する。
+ * ai_tasks 実行用の task-runner も同じ ai_runners に heartbeat を出すが、
+ * agent_commands は一切 claim しないため、これを除外しないとコマンドが pending のまま放置される。
+ *
+ * 判別: focusmap-agent の heartbeat は metadata.app='focusmap-lite' (サーバー側付与) /
+ * metadata.agent='focusmap-agent' (エージェント側付与) を持つ。task-runner はどちらも持たない。
+ */
+function canExecuteRemoteCommands(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false
+  const meta = metadata as Record<string, unknown>
+  return meta.app === 'focusmap-lite' || meta.agent === 'focusmap-agent'
+}
+
+/**
+ * heartbeat が直近 2 分以内で、かつ agent_commands を実行できる focusmap-agent を1台返す。
+ * 無ければ null (= Macオフライン)。最新 heartbeat のものを優先する。
  */
 export async function resolveOnlineRunner(
   supabase: SupabaseClient,
@@ -54,14 +90,21 @@ export async function resolveOnlineRunner(
     .eq('user_id', userId)
     .gte('last_heartbeat_at', since)
     .order('last_heartbeat_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(10)
   if (error || !data) return null
+
+  const capable = data.find(row => canExecuteRemoteCommands(row.metadata))
+  if (!capable) return null
   return {
-    id: data.id,
-    hostname: data.hostname,
-    displayName: data.display_name ?? null,
-    os: extractOs(data.metadata),
+    id: capable.id,
+    hostname: capable.hostname,
+    displayName: capable.display_name ?? null,
+    os: extractOs(capable.metadata),
+    googleDriveRoots: extractStringArray(capable.metadata, 'google_drive_roots'),
+    inaccessibleGoogleDriveRoots: extractStringArray(capable.metadata, 'inaccessible_google_drive_roots'),
+    cloudStorageRoots: extractStringArray(capable.metadata, 'cloud_storage_roots'),
+    codingHarnesses: extractStringArray(capable.metadata, 'coding_harnesses'),
+    folderAccess: extractObject(capable.metadata, 'folder_access'),
   }
 }
 
@@ -176,16 +219,56 @@ export function createRemoteTools(ctx: RemoteToolContext): ToolSet {
     return { success: false, status: res.status, error: res.error }
   }
 
+  const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+  const normalizeShellTimeoutMs = (value: number | undefined, fallback: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+    return Math.max(1_000, Math.min(Math.round(value), MAX_SHELL_TIMEOUT_MS))
+  }
+  const waitForAgentTimeoutMs = (agentTimeoutMs: number) =>
+    Math.min(agentTimeoutMs + 30_000, 600_000)
+  const openCodeCommand = (input: {
+    prompt: string
+    cwd?: string
+    agent?: string
+    model?: string
+    title?: string
+  }) => {
+    const parts = ['opencode', 'run', '--format', 'json']
+    if (input.cwd) parts.push('--dir', shellQuote(input.cwd))
+    if (input.agent) parts.push('--agent', shellQuote(input.agent))
+    if (input.model) parts.push('--model', shellQuote(input.model))
+    if (input.title) parts.push('--title', shellQuote(input.title))
+    parts.push(shellQuote(input.prompt))
+    return parts.join(' ')
+  }
+
   return {
     runTerminal: tool({
       description:
-        'Macのターミナルでシェルコマンドを実行する。ファイル操作・git・npm・スクリプト実行など。破壊的コマンド(rm -rf等)はMac側でブロックされる。',
+        'Macのターミナルでシェルコマンドを自動実行する。フォルダ探索・git・npm・スクリプト実行など。破壊的コマンド(rm -rf, sudo, git push等)はMac側でブロックされる。',
       inputSchema: z.object({
         command: z.string().describe('実行するシェルコマンド'),
         cwd: z.string().optional().describe('作業ディレクトリ(省略時はホーム)'),
+        timeoutMs: z.number().optional().describe('タイムアウト(ms)。省略時180000、最大570000'),
       }),
-      needsApproval: true,
-      execute: async ({ command, cwd }) => run('run_shell', { command, cwd }),
+      execute: async ({ command, cwd, timeoutMs }) => {
+        const shellTimeoutMs = normalizeShellTimeoutMs(timeoutMs, DEFAULT_SHELL_TIMEOUT_MS)
+        return run(
+          'run_shell',
+          { command, cwd, timeout_ms: shellTimeoutMs },
+          waitForAgentTimeoutMs(shellTimeoutMs),
+        )
+      },
+    }),
+
+    listFiles: tool({
+      description:
+        'Mac上のフォルダ直下を一覧する。Google Drive、Documents、Downloads、リポジトリなどの探索では、まずこのツールを使う。',
+      inputSchema: z.object({
+        path: z.string().describe('一覧するフォルダの絶対パス'),
+        maxEntries: z.number().optional().describe('最大件数。省略時200、最大1000'),
+      }),
+      execute: async ({ path, maxEntries }) => run('file_list', { path, max_entries: maxEntries }),
     }),
 
     browserNavigate: tool({
@@ -251,6 +334,27 @@ export function createRemoteTools(ctx: RemoteToolContext): ToolSet {
       needsApproval: true,
       execute: async ({ path, content, mkdirs }) =>
         run('file_write', { path, content, mkdirs }),
+    }),
+
+    runOpenCode: tool({
+      description:
+        'OpenCode CLIを非対話モードで実行する。コード調査、実装案、リポジトリ内の読み取り中心作業に使う。OpenCodeがMacに未導入なら失敗するため、その場合はrunTerminal/listFiles/readFileで続行する。',
+      inputSchema: z.object({
+        prompt: z.string().describe('OpenCodeへ渡す依頼文'),
+        cwd: z.string().optional().describe('対象リポジトリ/フォルダの絶対パス'),
+        agent: z.string().optional().describe('OpenCode agent名。例: plan / build など。未指定可'),
+        model: z.string().optional().describe('provider/model形式のモデル指定。未指定可'),
+        title: z.string().optional().describe('OpenCodeセッション名。未指定可'),
+        timeoutMs: z.number().optional().describe('タイムアウト(ms)。省略時300000、最大570000'),
+      }),
+      execute: async (input) => {
+        const shellTimeoutMs = normalizeShellTimeoutMs(input.timeoutMs, DEFAULT_OPENCODE_TIMEOUT_MS)
+        return run(
+          'run_shell',
+          { command: openCodeCommand(input), cwd: input.cwd, timeout_ms: shellTimeoutMs },
+          waitForAgentTimeoutMs(shellTimeoutMs),
+        )
+      },
     }),
 
     webResearch: tool({

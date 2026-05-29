@@ -108,7 +108,7 @@ related: [focusmap-lite-mac-agent.md]
 - [ ] mode別state/localStorage を単一化
 
 ### Phase 4: ガードレール
-- [ ] 破壊的ツール(runTerminal/writeFile/file_delete)に v6 tool approval(`needsApproval`) → UI承認
+- [ ] `runTerminal` は通常コマンドを承認なしで実行し、削除・sudo・git push等はMac側でブロックする。`writeFile` / `file_delete` など破壊的I/Oは v6 tool approval(`needsApproval`) → UI承認
 - [ ] Cloud Run timeout 600s。`stepCountIs` + ツール個別timeoutで上限
 - [ ] コマンドポーリング間隔短縮 or Realtime push (Phase F bottleneck解消)
 - [ ] scheduleTask ツール(recurrence_cron/scheduled_at で ai_tasks 登録) — 「毎朝〜」系を吸収
@@ -151,4 +151,4 @@ related: [focusmap-lite-mac-agent.md]
 - **Thinking ON判断**: intent判定はThinking OFFだったが、マルチステップ計画にはThinking推奨。要チューニング。
 - **全メッセージV4 Pro**: 雑談もV4 Proのレイテンシ/コスト。ユーザー確定の代償。後でFlash-Lite受け→V4Pro昇格のhybridも検討余地(ただしrouting復活なので当面しない)。
 - **5sポーリング**: 1ツール=最大5s待ち。12ステップで累積1分の死に時間。Phase 4で必須改修。
-- **Mac側v1変更ゼロ**: command-executor.ts が既に24種対応。ポーリング短縮以外Mac変更不要なのが本設計の利点。
+- **Mac側変更あり**: `cwd` 反映、フォルダ権限/Google Drive検出、OpenCode等ハーネス検出のため `focusmap-agent` 側も更新する。既存 `agent_commands` 種別は増やさず、`run_shell` / `file_list` を拡張利用する。

@@ -8,6 +8,7 @@ import {
   fileWrite,
   fileList,
   fileDelete,
+  resolveSafePath,
 } from './executors/file-io.js';
 import {
   browserNavigate,
@@ -22,22 +23,43 @@ function payloadAs<T>(command: AgentCommand): T {
   return (command.payload ?? {}) as T;
 }
 
-const DANGEROUS_SHELL_PATTERN = /\b(rm\s+-rf|sudo\s+rm|mkfs|diskutil\s+erase|shutdown|reboot|:(){|dd\s+if=|chmod\s+-R\s+777)\b/i;
+const DEFAULT_SHELL_TIMEOUT_MS = 180_000;
+const MAX_SHELL_TIMEOUT_MS = 570_000;
+
+const DANGEROUS_SHELL_PATTERN =
+  /\b(rm|rmdir|unlink|sudo|su|mkfs|shutdown|reboot|halt|dd\s+if=|chmod\s+-R|chown\s+-R|diskutil\s+(erase|partition)|git\s+(push|reset\s+--hard|clean\s+-[dfx]|checkout\s+--)|npm\s+publish|pnpm\s+publish|yarn\s+publish)\b/i;
 
 function payloadString(command: AgentCommand, key: string): string | null {
   const value = command.payload?.[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function payloadNumber(command: AgentCommand, key: string): number | null {
+  const value = command.payload?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function isDangerousShellCommand(command: string): boolean {
+  return DANGEROUS_SHELL_PATTERN.test(command) || command.includes(':(){');
+}
+
+function resolveTimeoutMs(rawTimeoutMs?: number | null): number {
+  if (typeof rawTimeoutMs !== 'number' || !Number.isFinite(rawTimeoutMs)) {
+    return DEFAULT_SHELL_TIMEOUT_MS;
+  }
+  return Math.max(1_000, Math.min(Math.round(rawTimeoutMs), MAX_SHELL_TIMEOUT_MS));
+}
+
 function runProcess(
   executable: string,
   args: string[],
-  options: { shell?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+  options: { shell?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number; cwd?: string } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       shell: options.shell ?? false,
       env: options.env,
+      cwd: options.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -73,19 +95,29 @@ export async function openUrl(url: string) {
   return runProcess('/usr/bin/env', ['xdg-open', url], { timeoutMs: 10_000 });
 }
 
-async function runShell(command: string, config: AgentConfig) {
+function resolveCommandCwd(rawCwd?: string | null): string | undefined {
+  if (!rawCwd) return undefined;
+  const safety = resolveSafePath(rawCwd);
+  if (!safety.ok) throw new Error(`cwd is not allowed: ${safety.reason}`);
+  return safety.real;
+}
+
+async function runShell(command: string, config: AgentConfig, cwd?: string | null, timeoutMs?: number | null) {
   if (!config.shell_enabled) {
     throw new Error('shell execution is disabled. Set shell_enabled=true in ~/.focusmap/config.json to allow it.');
   }
-  if (DANGEROUS_SHELL_PATTERN.test(command)) {
+  if (isDangerousShellCommand(command)) {
     throw new Error('blocked dangerous shell command');
   }
+  const safeCwd = resolveCommandCwd(cwd);
+  const resolvedTimeoutMs = resolveTimeoutMs(timeoutMs);
   return runProcess('/bin/zsh', ['-lc', command], {
     env: {
       ...process.env,
       PATH: config.path || process.env.PATH,
     },
-    timeoutMs: 180_000,
+    cwd: safeCwd,
+    timeoutMs: resolvedTimeoutMs,
   });
 }
 
@@ -104,14 +136,19 @@ export async function executeCommand(command: AgentCommand, config: AgentConfig)
     }
     case 'open_gws_auth': {
       const shell = payloadString(command, 'command') || 'gws auth login';
-      const result = await runShell(shell, config);
+      const cwd = payloadString(command, 'cwd');
+      const timeoutMs = payloadNumber(command, 'timeout_ms');
+      const result = await runShell(shell, config, cwd, timeoutMs);
       return { command: shell, ...result };
     }
     case 'run_shell': {
       const shell = payloadString(command, 'command');
+      const cwd = payloadString(command, 'cwd');
+      const timeoutMs = payloadNumber(command, 'timeout_ms');
       if (!shell) throw new Error('payload.command is required');
-      const result = await runShell(shell, config);
-      return { command: shell, ...result };
+      const resolvedTimeoutMs = resolveTimeoutMs(timeoutMs);
+      const result = await runShell(shell, config, cwd, resolvedTimeoutMs);
+      return { command: shell, cwd: cwd ? resolveCommandCwd(cwd) : null, ...result };
     }
     case 'scan_capabilities':
       return await collectCapabilities(config);
@@ -142,9 +179,9 @@ export async function executeCommand(command: AgentCommand, config: AgentConfig)
       return (await fileWrite(path, content, { mode, mkdirs })) as unknown as Record<string, unknown>;
     }
     case 'file_list': {
-      const { path } = payloadAs<{ path: string }>(command);
+      const { path, max_entries } = payloadAs<{ path: string; max_entries?: number }>(command);
       if (!path) throw new Error('payload.path is required');
-      return (await fileList(path)) as unknown as Record<string, unknown>;
+      return (await fileList(path, { maxEntries: max_entries })) as unknown as Record<string, unknown>;
     }
     case 'file_delete': {
       const { path } = payloadAs<{ path: string }>(command);

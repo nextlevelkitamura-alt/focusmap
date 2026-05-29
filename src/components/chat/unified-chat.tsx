@@ -94,6 +94,8 @@ type ChatTab = "chat" | "automation"
 
 const TOOL_LABELS: Record<string, string> = {
   runTerminal: "ターミナル実行",
+  listFiles: "フォルダ一覧",
+  runOpenCode: "OpenCode実行",
   browserNavigate: "ブラウザで開く",
   browserClick: "クリック",
   browserFill: "入力",
@@ -609,6 +611,7 @@ function ToolPart({
       const obj = input as Record<string, unknown>
       if (typeof obj.command === "string") return obj.command
       if (typeof obj.path === "string") return obj.path
+      if (typeof obj.prompt === "string") return obj.prompt
     }
     return undefined
   })()

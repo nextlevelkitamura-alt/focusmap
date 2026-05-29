@@ -14,7 +14,24 @@ const VALID_TYPES = new Set([
   'resume_agent',
   'upload_logs',
   'scan_capabilities',
+  'file_read',
+  'file_write',
+  'file_list',
+  'file_delete',
+  'browser_navigate',
+  'browser_click',
+  'browser_fill',
+  'browser_screenshot',
+  'browser_text',
+  'browser_close_session',
+  'cancel_command',
 ])
+
+function canExecuteRemoteCommands(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false
+  const meta = metadata as Record<string, unknown>
+  return meta.app === 'focusmap-lite' || meta.agent === 'focusmap-agent'
+}
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
@@ -47,10 +64,13 @@ export async function POST(request: NextRequest) {
 
   const { data: runner } = await supabase
     .from('ai_runners')
-    .select('id, user_id')
+    .select('id, user_id, metadata')
     .eq('id', runnerId)
     .maybeSingle()
   if (!runner) return NextResponse.json({ error: 'Runner not found' }, { status: 404 })
+  if (!canExecuteRemoteCommands(runner.metadata)) {
+    return NextResponse.json({ error: 'Runner cannot execute agent commands' }, { status: 400 })
+  }
   if (runner.user_id !== user.id) {
     const { data: spaces } = await supabase
       .from('ai_runner_spaces')
