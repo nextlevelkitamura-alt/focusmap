@@ -8,7 +8,7 @@ import { Calendar3DayView } from "@/components/calendar/calendar-3day-view"
 import { CalendarMonthView } from "@/components/calendar/calendar-month-view"
 import { CalendarDayView } from "@/components/calendar/calendar-day-view"
 import { CalendarEventEditModal, EventUpdatePayload } from "@/components/calendar/calendar-event-edit-modal"
-import { useCalendarEvents, invalidateCalendarCache } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarOptimisticEventRemoval } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useCalendarToast } from "@/components/calendar/calendar-toast"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
@@ -334,7 +334,11 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
             if (!event) throw new Error('Event not found')
 
             // 楽観的削除: 即座にUIから削除
-            setEvents(prev => prev.filter(e => e.id !== eventId))
+            setEvents(prev => prev.filter(e =>
+                e.id !== eventId &&
+                !(e.google_event_id === event.google_event_id && e.calendar_id === event.calendar_id)
+            ))
+            broadcastCalendarOptimisticEventRemoval(event.id, event.google_event_id, event.calendar_id)
 
             try {
                 const response = await fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`, {

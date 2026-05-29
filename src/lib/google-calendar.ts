@@ -548,8 +548,22 @@ export async function fetchMultipleCalendarEvents(
     })
   );
 
-  const allEvents = await Promise.all(eventsPromises);
+  const settledEvents = await Promise.allSettled(eventsPromises);
+  const failedCalendars: string[] = [];
+  const allEvents = settledEvents.flatMap((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+    failedCalendars.push(calendarIds[index]);
+    console.warn('[fetchMultipleCalendarEvents] Failed to fetch one calendar:', {
+      calendarId: calendarIds[index],
+      error: result.reason,
+    });
+    return [];
+  });
+
+  if (allEvents.length === 0 && failedCalendars.length === calendarIds.length) {
+    throw new Error('Failed to fetch events from all calendars');
+  }
 
   // 全てのイベントをフラットに結合
-  return allEvents.flat();
+  return allEvents;
 }

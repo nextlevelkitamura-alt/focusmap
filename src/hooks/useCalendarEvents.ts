@@ -168,10 +168,10 @@ export function broadcastCalendarOptimisticEvent(event: CalendarEvent) {
 }
 
 /** 楽観追加したカレンダーイベントを全 useCalendarEvents インスタンスから削除する */
-export function broadcastCalendarOptimisticEventRemoval(eventId: string, googleEventId?: string) {
+export function broadcastCalendarOptimisticEventRemoval(eventId: string, googleEventId?: string, calendarId?: string) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(CALENDAR_OPTIMISTIC_EVENT_REMOVE, {
-      detail: { eventId, googleEventId },
+      detail: { eventId, googleEventId, calendarId },
     }));
   }
 }
@@ -225,14 +225,21 @@ function sortEventsByStartTime(events: CalendarEvent[]): CalendarEvent[] {
 function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): CalendarEvent[] {
   const next = events.filter(existing => {
     if (existing.id === event.id) return false;
-    if (event.google_event_id && existing.google_event_id === event.google_event_id) return false;
+    if (
+      event.google_event_id &&
+      existing.google_event_id === event.google_event_id &&
+      existing.calendar_id === event.calendar_id
+    ) return false;
     return true;
   });
   return sortEventsByStartTime([...next, event]);
 }
 
-function removeEvent(events: CalendarEvent[], eventId: string, googleEventId?: string): CalendarEvent[] {
+function removeEvent(events: CalendarEvent[], eventId: string, googleEventId?: string, calendarId?: string): CalendarEvent[] {
   return events.filter(event => {
+    if (googleEventId && calendarId) {
+      return !(event.google_event_id === googleEventId && event.calendar_id === calendarId);
+    }
     if (googleEventId) return event.google_event_id !== googleEventId;
     return event.id !== eventId;
   });
@@ -251,7 +258,13 @@ function mergeRecentOptimisticEvents(fetchedEvents: CalendarEvent[], previousEve
 
     const key = `${event.calendar_id}::${event.google_event_id || event.id}`;
     if (fetchedKeys.has(key)) return false;
-    if (event.google_event_id && fetchedEvents.some(fetched => fetched.google_event_id === event.google_event_id)) return false;
+    if (
+      event.google_event_id &&
+      fetchedEvents.some(fetched =>
+        fetched.google_event_id === event.google_event_id &&
+        fetched.calendar_id === event.calendar_id
+      )
+    ) return false;
     return true;
   });
 
@@ -604,9 +617,9 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     };
 
     const removeHandler = (event: Event) => {
-      const { eventId, googleEventId } = (event as CustomEvent<{ eventId: string; googleEventId?: string }>).detail ?? {};
+      const { eventId, googleEventId, calendarId } = (event as CustomEvent<{ eventId: string; googleEventId?: string; calendarId?: string }>).detail ?? {};
       if (!eventId) return;
-      commitEvents(prev => removeEvent(prev, eventId, googleEventId));
+      commitEvents(prev => removeEvent(prev, eventId, googleEventId, calendarId));
     };
 
     window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
@@ -630,8 +643,8 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
     commitEvents(prev => mergeOptimisticEvent(prev, event));
   }, [commitEvents]);
 
-  const removeOptimisticEvent = useCallback((eventId: string, googleEventId?: string) => {
-    commitEvents(prev => removeEvent(prev, eventId, googleEventId));
+  const removeOptimisticEvent = useCallback((eventId: string, googleEventId?: string, calendarId?: string) => {
+    commitEvents(prev => removeEvent(prev, eventId, googleEventId, calendarId));
   }, [commitEvents]);
 
   return {

@@ -23,8 +23,8 @@ interface MobileEventEditModalProps {
     onClose: () => void
     onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[] }) => Promise<void>
     onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]; description?: string }) => Promise<void>
-    onDeleteTask?: (taskId: string) => void
-    onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void
+    onDeleteTask?: (taskId: string) => void | Promise<void>
+    onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void | Promise<void>
     availableCalendars: { id: string; name: string; background_color?: string }[]
     onScheduleReminder?: (targetType: 'task' | 'event', targetId: string, scheduledAt: Date, title: string, advanceMinutes: number) => void
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
@@ -78,6 +78,7 @@ export function MobileEventEditModal({
     const [showCalendarPicker, setShowCalendarPicker] = useState(false)
     const [subtaskInput, setSubtaskInput] = useState('')
     const [isAddingSubTask, setIsAddingSubTask] = useState(false)
+    const [isDeleting, setIsDeleting] = useState(false)
     const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null)
     const [localChildTasks, setLocalChildTasks] = useState<Task[]>(childTasks)
 
@@ -262,14 +263,30 @@ export function MobileEventEditModal({
     }
 
     // Delete handler
-    const handleDelete = useCallback(() => {
+    const handleDelete = useCallback(async () => {
         if (!target) return
-        if (target.source === 'task') {
-            onDeleteTask?.(target.taskId!)
-        } else {
-            onDeleteEvent?.(target.id, target.googleEventId!, target.calendarId!)
+        const dateLabel = format(target.startTime, 'M/d(E) HH:mm', { locale: ja })
+        const ok = window.confirm(`「${target.title}」\n${dateLabel} の予定を削除します。よろしいですか？`)
+        if (!ok) return
+
+        setIsDeleting(true)
+        try {
+            if (target.source === 'task') {
+                await onDeleteTask?.(target.taskId!)
+            } else {
+                if (!target.googleEventId || !target.calendarId) {
+                    throw new Error('削除対象のカレンダー予定を特定できませんでした')
+                }
+                await onDeleteEvent?.(target.id, target.googleEventId, target.calendarId)
+            }
+            onClose()
+        } catch (err) {
+            console.error('[MobileEventEditModal] Delete error:', err)
+            const message = err instanceof Error ? err.message : '予定の削除に失敗しました'
+            window.alert(message)
+        } finally {
+            setIsDeleting(false)
         }
-        onClose()
     }, [target, onDeleteTask, onDeleteEvent, onClose])
 
     // 終了時刻の計算
@@ -627,10 +644,10 @@ export function MobileEventEditModal({
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleSave}
-                            disabled={!title.trim()}
+                            disabled={!title.trim() || isDeleting}
                             className={cn(
                                 "py-3 text-sm font-medium rounded-lg transition-colors",
-                                (onDeleteTask || onDeleteEvent) ? "basis-3/4" : "w-full",
+                                (onDeleteTask || onDeleteEvent) ? "basis-2/3" : "w-full",
                                 !title.trim()
                                     ? "bg-muted text-muted-foreground cursor-not-allowed"
                                     : "bg-primary text-primary-foreground active:bg-primary/90"
@@ -641,9 +658,12 @@ export function MobileEventEditModal({
                         {(onDeleteTask || onDeleteEvent) && (
                             <button
                                 onClick={handleDelete}
-                                className="basis-1/4 flex items-center justify-center gap-1 py-3 text-sm font-medium text-red-500 bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors"
+                                disabled={isDeleting}
+                                aria-label="削除"
+                                className="basis-1/3 flex items-center justify-center gap-1 py-3 text-sm font-medium text-red-500 bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors disabled:opacity-60"
                             >
-                                <Trash2 className="w-4 h-4" />
+                                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                <span>削除</span>
                             </button>
                         )}
                     </div>

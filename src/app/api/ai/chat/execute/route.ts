@@ -194,7 +194,7 @@ export async function POST(request: Request) {
 
         const { data: ownedCalendar, error: calendarLookupError } = await supabase
           .from('user_calendars')
-          .select('google_calendar_id')
+          .select('google_calendar_id, access_level')
           .eq('user_id', user.id)
           .eq('google_calendar_id', calendarId)
           .maybeSingle()
@@ -204,6 +204,12 @@ export async function POST(request: Request) {
             success: false,
             message: '❌ 選択したカレンダーは利用できません',
           }, { status: 400 })
+        }
+        if (ownedCalendar && !['owner', 'writer'].includes(ownedCalendar.access_level || '')) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ このカレンダーは閲覧専用のため削除できません',
+          }, { status: 403 })
         }
 
         const { calendar } = await getCalendarClient(user.id)
@@ -270,12 +276,17 @@ export async function POST(request: Request) {
             .eq('user_id', user.id)
         }
 
-        await supabase
+        let calendarEventDeleteQuery = supabase
           .from('calendar_events')
           .delete()
           .eq('user_id', user.id)
           .eq('calendar_id', calendarId)
-          .eq('google_event_id', targetEventId)
+
+        calendarEventDeleteQuery = requestedScope === 'series'
+          ? calendarEventDeleteQuery.or(`google_event_id.eq.${targetEventId},recurring_event_id.eq.${targetEventId}`)
+          : calendarEventDeleteQuery.eq('google_event_id', targetEventId)
+
+        await calendarEventDeleteQuery
 
         await supabase
           .from('tasks')
@@ -285,8 +296,21 @@ export async function POST(request: Request) {
             last_started_at: null,
           })
           .eq('user_id', user.id)
+          .eq('calendar_id', calendarId)
           .eq('google_event_id', targetEventId)
           .is('deleted_at', null)
+
+        await supabase
+          .from('ideal_goals')
+          .update({
+            scheduled_at: null,
+            google_event_id: null,
+            memo_status: 'unsorted',
+            is_today: false,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .eq('google_event_id', targetEventId)
 
         const dateLabel = start_time
           ? new Date(start_time).toLocaleString('ja-JP', {

@@ -229,7 +229,9 @@ export function CalendarEventCard({
         <div
           role="button"
           tabIndex={0}
-          className="absolute top-0 right-0 z-20 w-6 h-6 flex items-center justify-center rounded-bl-lg md:opacity-0 md:group-hover:opacity-100 transition-opacity cursor-pointer"
+          aria-label="予定を削除"
+          title="予定を削除"
+          className="absolute top-0 right-0 z-20 w-7 h-7 flex items-center justify-center rounded-bl-lg opacity-85 md:opacity-70 md:group-hover:opacity-100 transition-opacity cursor-pointer"
           style={{ backgroundColor: `${textColor}30`, color: textColor }}
           onClick={(e) => {
             e.stopPropagation();

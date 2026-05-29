@@ -3,6 +3,13 @@ import { createClient } from '@/utils/supabase/server';
 import { getCalendarClient } from '@/lib/google-calendar';
 import { classifyCalendarAuthError } from '@/lib/calendar-auth-errors';
 
+function isMissingCalendarEventError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const status = 'status' in error ? (error as { status?: unknown }).status : undefined;
+  const code = 'code' in error ? (error as { code?: unknown }).code : undefined;
+  return status === 404 || code === 404;
+}
+
 function popupReminderMinutes(
   reminders: Array<{ method?: string | null; minutes?: number | null }> | null | undefined
 ): number[] {
@@ -294,13 +301,17 @@ export async function DELETE(
   const searchParams = request.nextUrl.searchParams;
   let googleEventId = searchParams.get('googleEventId');
   let calendarId = searchParams.get('calendarId') || 'primary';
+  let deleteScope = searchParams.get('deleteScope') === 'series' ? 'series' : 'this';
+  let recurringEventId = searchParams.get('recurringEventId');
 
   // If not in query params, try request body
-  if (!googleEventId) {
+  if (!googleEventId || !searchParams.has('deleteScope') || !recurringEventId) {
     try {
       const body = await request.json();
-      googleEventId = body.googleEventId;
-      calendarId = body.calendarId || 'primary';
+      googleEventId = googleEventId || body.googleEventId;
+      calendarId = body.calendarId || calendarId || 'primary';
+      deleteScope = body.deleteScope === 'series' ? 'series' : deleteScope;
+      recurringEventId = recurringEventId || body.recurringEventId;
     } catch {
       // No body or parse error
     }
@@ -320,23 +331,60 @@ export async function DELETE(
   }
 
   try {
+    const targetGoogleEventId = deleteScope === 'series' && recurringEventId
+      ? recurringEventId
+      : googleEventId;
+
+    const { data: targetCalendar, error: calendarLookupError } = await supabase
+      .from('user_calendars')
+      .select('google_calendar_id, access_level')
+      .eq('user_id', user.id)
+      .eq('google_calendar_id', calendarId)
+      .maybeSingle();
+    if (calendarLookupError) throw calendarLookupError;
+
+    if (targetCalendar && !['owner', 'writer'].includes(targetCalendar.access_level || '')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'READ_ONLY_CALENDAR',
+            message: 'このカレンダーは閲覧専用のため削除できません'
+          }
+        },
+        { status: 403 }
+      );
+    }
+
     // Google Calendar からイベントを削除
-    console.log('[events/delete] Deleting from Google Calendar:', googleEventId, 'from calendar:', calendarId);
+    console.log('[events/delete] Deleting from Google Calendar:', targetGoogleEventId, 'from calendar:', calendarId);
     const { calendar } = await getCalendarClient(user.id);
 
-    await calendar.events.delete({
-      calendarId,
-      eventId: googleEventId,
-    });
-
-    console.log('[events/delete] Deleted from Google Calendar');
+    let deletedFromGoogle = false;
+    try {
+      await calendar.events.delete({
+        calendarId,
+        eventId: targetGoogleEventId,
+      });
+      deletedFromGoogle = true;
+      console.log('[events/delete] Deleted from Google Calendar');
+    } catch (error) {
+      if (!isMissingCalendarEventError(error)) throw error;
+      console.log('[events/delete] Event already missing on Google Calendar, cleaning local state');
+    }
 
     // DB からも削除
-    const { error: dbError } = await supabase
+    let dbDeleteQuery = supabase
       .from('calendar_events')
       .delete()
       .eq('user_id', user.id)
-      .eq('google_event_id', googleEventId);
+      .eq('calendar_id', calendarId);
+
+    dbDeleteQuery = deleteScope === 'series'
+      ? dbDeleteQuery.or(`google_event_id.eq.${targetGoogleEventId},recurring_event_id.eq.${targetGoogleEventId}`)
+      : dbDeleteQuery.eq('google_event_id', googleEventId);
+
+    const { error: dbError } = await dbDeleteQuery;
 
     if (dbError) {
       console.error('[events/delete] Failed to delete from database:', dbError);
@@ -349,6 +397,7 @@ export async function DELETE(
       .from('tasks')
       .select('id, source')
       .eq('user_id', user.id)
+      .eq('calendar_id', calendarId)
       .eq('google_event_id', googleEventId);
 
     if (relatedTasks && relatedTasks.length > 0) {
@@ -418,7 +467,10 @@ export async function DELETE(
 
     return NextResponse.json({
       success: true,
-      message: 'Event deleted successfully'
+      message: deletedFromGoogle
+        ? 'Event deleted successfully'
+        : 'Event was already missing on Google Calendar; local state cleaned',
+      notFoundOnGoogle: !deletedFromGoogle
     });
 
   } catch (error: unknown) {

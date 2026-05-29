@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
-import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, broadcastCalendarEventTimeUpdate, EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, broadcastCalendarEventTimeUpdate, broadcastCalendarOptimisticEventRemoval, EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails, formatDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
@@ -1249,19 +1249,26 @@ export function useTodayViewLogic({
     // ユーザー視点では「カレンダーの予定を消したらタスクも消える」のが自然。
     // クイック追加で作ったタスク（source='manual', google_event_id=同期後にセット）は
     // モーダルが「予定を編集」として開くケースがあり、これまでは event だけ消えてタスクが残る不具合があった。
-    const handleDeleteEvent = useCallback((eventId: string, googleEventId: string, calendarId: string) => {
+    const handleDeleteEvent = useCallback(async (eventId: string, googleEventId: string, calendarId: string) => {
         const previousEvents = localCalendarEvents
         const previousTasks = localTasks
-        const eventToDelete = localCalendarEvents.find(e => e.id === eventId || e.google_event_id === googleEventId)
+        const eventToDelete = localCalendarEvents.find(e =>
+            e.id === eventId ||
+            (e.google_event_id === googleEventId && e.calendar_id === calendarId)
+        )
 
         // 同じ google_event_id を持つタスク（source 不問）の id を全て収集
-        const linkedTasks = localTasks.filter(t => t.google_event_id === googleEventId)
+        const linkedTasks = localTasks.filter(t => t.google_event_id === googleEventId && (!t.calendar_id || t.calendar_id === calendarId))
         const linkedTaskIds = linkedTasks.map(t => t.id)
 
-        removeOptimisticEvent(eventId, googleEventId)
-        setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== googleEventId && e.id !== eventId))
+        removeOptimisticEvent(eventId, googleEventId, calendarId)
+        broadcastCalendarOptimisticEventRemoval(eventId, googleEventId, calendarId)
+        setLocalCalendarEvents(prev => prev.filter(e =>
+            e.id !== eventId &&
+            !(e.google_event_id === googleEventId && e.calendar_id === calendarId)
+        ))
         // 紐づく全タスクをローカルから除外
-        setLocalTasks(prev => prev.filter(t => t.google_event_id !== googleEventId))
+        setLocalTasks(prev => prev.filter(t => !(t.google_event_id === googleEventId && (!t.calendar_id || t.calendar_id === calendarId))))
         // pendingDeleteTaskIds にも積み、props 経由の再供給で復活しないようにする
         if (linkedTaskIds.length > 0) {
             setPendingDeleteTaskIds(prev => {
@@ -1271,33 +1278,33 @@ export function useTodayViewLogic({
             })
         }
 
-        fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
-            method: 'DELETE',
-        })
-            .then(async (res) => {
-                if (!res.ok) {
-                    const data = await res.json().catch(() => null)
-                    throw new Error(data?.error?.message || 'Failed to delete event')
+        try {
+            const res = await fetch(`/api/calendar/events/${eventId}?googleEventId=${encodeURIComponent(googleEventId)}&calendarId=${encodeURIComponent(calendarId)}`, {
+                method: 'DELETE',
+            })
+            if (!res.ok) {
+                const data = await res.json().catch(() => null)
+                throw new Error(data?.error?.message || 'Failed to delete event')
+            }
+            // 紐づくタスクもサーバー側から削除（DELETE は冪等な前提）
+            for (const taskId of linkedTaskIds) {
+                if (onDeleteTaskProp) {
+                    await onDeleteTaskProp(taskId).catch(err => {
+                        console.warn('[useTodayViewLogic] linked task delete failed:', taskId, err)
+                    })
+                } else {
+                    await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
+                        console.warn('[useTodayViewLogic] linked task delete failed:', taskId, err)
+                    })
                 }
-                // 紐づくタスクもサーバー側から削除（DELETE は冪等な前提）
-                for (const taskId of linkedTaskIds) {
-                    if (onDeleteTaskProp) {
-                        await onDeleteTaskProp(taskId).catch(err => {
-                            console.warn('[useTodayViewLogic] linked task delete failed:', taskId, err)
-                        })
-                    } else {
-                        await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(err => {
-                            console.warn('[useTodayViewLogic] linked task delete failed:', taskId, err)
-                        })
-                    }
-                }
-                // refetchは呼ばず、楽観的削除済みのため不要（再フェッチするとサーバーからイベントが復元されてしまう）
-                invalidateCalendarCache()
-                if (eventToDelete) {
-                    let currentEvent = eventToDelete
-                    pushAction({
-                        description: `「${eventToDelete.title}」を削除`,
-                        undo: async () => {
+            }
+            // refetchは呼ばず、楽観的削除済みのため不要（再フェッチするとサーバーからイベントが復元されてしまう）
+            invalidateCalendarCache()
+            if (eventToDelete) {
+                let currentEvent = eventToDelete
+                pushAction({
+                    description: `「${eventToDelete.title}」を削除`,
+                    undo: async () => {
                             const createRes = await fetch(`/api/calendar/events/${eventToDelete.id}`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -1315,10 +1322,13 @@ export function useTodayViewLogic({
                                 calendar_id: calendarId,
                             }
 
-                            setLocalCalendarEvents(prev => {
-                                const next = prev.filter(e => e.id !== currentEvent.id && e.google_event_id !== currentEvent.google_event_id)
-                                return [...next, currentEvent].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-                            })
+                        setLocalCalendarEvents(prev => {
+                            const next = prev.filter(e =>
+                                e.id !== currentEvent.id &&
+                                !(e.google_event_id === currentEvent.google_event_id && e.calendar_id === currentEvent.calendar_id)
+                            )
+                            return [...next, currentEvent].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+                        })
 
                             if (linkedTasks.length > 0) {
                                 setPendingDeleteTaskIds(prev => prev.filter(id => !linkedTaskIds.includes(id)))
@@ -1348,12 +1358,16 @@ export function useTodayViewLogic({
                                     })
                                 }
                             }
-                            invalidateCalendarCache()
-                            broadcastCalendarSync()
-                        },
-                        redo: async () => {
-                            removeOptimisticEvent(currentEvent.id, currentEvent.google_event_id)
-                            setLocalCalendarEvents(prev => prev.filter(e => e.google_event_id !== currentEvent.google_event_id && e.id !== currentEvent.id))
+                        invalidateCalendarCache()
+                        broadcastCalendarSync()
+                    },
+                    redo: async () => {
+                            removeOptimisticEvent(currentEvent.id, currentEvent.google_event_id, currentEvent.calendar_id)
+                            broadcastCalendarOptimisticEventRemoval(currentEvent.id, currentEvent.google_event_id, currentEvent.calendar_id)
+                            setLocalCalendarEvents(prev => prev.filter(e =>
+                                e.id !== currentEvent.id &&
+                                !(e.google_event_id === currentEvent.google_event_id && e.calendar_id === currentEvent.calendar_id)
+                            ))
                             setLocalTasks(prev => prev.filter(t => !linkedTaskIds.includes(t.id)))
                             if (linkedTaskIds.length > 0) {
                                 setPendingDeleteTaskIds(prev => {
@@ -1373,19 +1387,19 @@ export function useTodayViewLogic({
                                     await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
                                 }
                             }
-                            invalidateCalendarCache()
-                        },
-                    })
-                }
-            })
-            .catch(err => {
-                console.error('[useTodayViewLogic] Failed to delete event:', err)
-                setLocalCalendarEvents(previousEvents)
-                setLocalTasks(previousTasks)
-                setPendingDeleteTaskIds(prev => prev.filter(id => !linkedTaskIds.includes(id)))
-                invalidateCalendarCache()
-                broadcastCalendarSync()
-            })
+                        invalidateCalendarCache()
+                    },
+                })
+            }
+        } catch (err) {
+            console.error('[useTodayViewLogic] Failed to delete event:', err)
+            setLocalCalendarEvents(previousEvents)
+            setLocalTasks(previousTasks)
+            setPendingDeleteTaskIds(prev => prev.filter(id => !linkedTaskIds.includes(id)))
+            invalidateCalendarCache()
+            broadcastCalendarSync()
+            throw err
+        }
     }, [removeOptimisticEvent, localCalendarEvents, localTasks, onDeleteTaskProp, onUpdateTask, pushAction])
 
     // Writable calendars

@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { generateText, type ToolSet } from 'ai'
+import { generateText, stepCountIs, type ToolSet } from 'ai'
 import { getModelForSkill, getConfigForSkill, getModelForAgent, getConfigForAgent } from '@/lib/ai/providers'
 import { buildCoachSystemPrompt } from '@/lib/ai/agents/coach'
 import { buildProjectPMSystemPrompt } from '@/lib/ai/agents/project-pm'
@@ -66,7 +66,7 @@ const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 function isCalendarDeletionIntent(text: string): boolean {
   const hasDeleteWord = /(消して|消す|削除|キャンセル|取り消し|取消|なくして|外して)/.test(text)
-  const hasCalendarWord = /(予定|カレンダー|会議|ミーティング|打ち合わせ|MTG|mtg|先ほど|さっき)/i.test(text)
+  const hasCalendarWord = /(予定|カレンダー|会議|ミーティング|打ち合わせ|MTG|mtg|先ほど|さっき|下記)/i.test(text)
   return hasDeleteWord && hasCalendarWord
 }
 
@@ -79,6 +79,8 @@ function isCalendarRestoreIntent(text: string): boolean {
 function formatCalendarEventsForPrompt(events: Array<{
   google_event_id: string
   calendar_id: string
+  calendar_name?: string
+  calendar_access_level?: string | null
   title: string
   start_time: string
   end_time: string
@@ -108,7 +110,11 @@ function formatCalendarEventsForPrompt(events: Array<{
       const recurring = event.recurring_event_id
         ? ` / recurring_event_id=${event.recurring_event_id} / 繰り返し予定`
         : ''
-      return `${index + 1}. ${event.title} / ${start}〜${end} / calendar_id=${event.calendar_id} / event_id=${event.google_event_id}${recurring}`
+      const access = event.calendar_access_level
+        ? ` / 権限=${event.calendar_access_level}${['owner', 'writer'].includes(event.calendar_access_level) ? ' / 削除可' : ' / 閲覧のみ'}`
+        : ''
+      const calendarName = event.calendar_name ? ` / カレンダー=${event.calendar_name}` : ''
+      return `${index + 1}. ${event.title} / ${start}〜${end}${calendarName} / calendar_id=${event.calendar_id} / event_id=${event.google_event_id}${access}${recurring}`
     })
     .join('\n')
 }
@@ -626,11 +632,11 @@ export async function POST(request: Request) {
     let defaultCalendarId = 'primary'
     let defaultCalendarName = ''
     let calendarCount = 0
-    let userCalendarsForResolution: Array<{ id: string; name: string }> = []
+    let userCalendarsForResolution: Array<{ id: string; name: string; accessLevel?: string | null; selected?: boolean | null }> = []
     if (calendarSettings?.is_sync_enabled) {
       const { data: userCalendars } = await supabase
         .from('user_calendars')
-        .select('google_calendar_id, name, is_primary')
+        .select('google_calendar_id, name, is_primary, access_level, selected')
         .eq('user_id', user.id)
         .order('is_primary', { ascending: false })
 
@@ -638,9 +644,14 @@ export async function POST(request: Request) {
         calendarCount = userCalendars.length
         userCalendarsForResolution = userCalendars
           .filter(c => !!c.google_calendar_id)
-          .map(c => ({ id: c.google_calendar_id, name: c.name || '' }))
+          .map(c => ({
+            id: c.google_calendar_id,
+            name: c.name || '',
+            accessLevel: c.access_level,
+            selected: c.selected,
+          }))
         calendarsContext = userCalendars.map(c =>
-          `- ${c.name} (ID: ${c.google_calendar_id})${c.is_primary ? ' [デフォルト]' : ''}`
+          `- ${c.name} (ID: ${c.google_calendar_id})${c.is_primary ? ' [デフォルト]' : ''}${['owner', 'writer'].includes(c.access_level || '') ? '' : ' [閲覧のみ]'}`
         ).join('\n')
         defaultCalendarId = calendarSettings.default_calendar_id || userCalendars[0].google_calendar_id || 'primary'
         const defaultCal = userCalendars.find(c => c.google_calendar_id === defaultCalendarId)
@@ -651,8 +662,8 @@ export async function POST(request: Request) {
     // スケジューリング意図を検出
     const allMessages = [...history.map(m => m.content), message]
     const previousAssistantText = [...history].reverse().find(m => m.role === 'assistant')?.content || ''
-    const isDeletionFollowUp = /削除|消す|消して/.test(previousAssistantText)
-      && /(\d+\s*番|これ|それ|はい|お願い|削除|消して|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/.test(message)
+    const isDeletionFollowUp = /(削除|消す|消して|見当たりません|正しい予定名|カレンダー名|どれを削除)/.test(previousAssistantText)
+      && /(\d+\s*番|これ|それ|はい|お願い|削除|消して|ある|あります|カレンダー|予定|会議|タスク管理|仕事|個人|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/.test(message)
     const isDeletionIntent = isCalendarDeletionIntent(message) || isDeletionFollowUp
     const isRestoreIntent = isCalendarRestoreIntent(message)
     const isSchedulingIntent = !isDeletionIntent && SCHEDULING_KEYWORDS.some(kw =>
@@ -697,19 +708,27 @@ export async function POST(request: Request) {
           userCalendarsForResolution.map(c => c.id),
           { timeMin, timeMax },
         )
+        const calendarMetaById = new Map(
+          userCalendarsForResolution.map(calendar => [calendar.id, calendar])
+        )
         calendarEventsContext = formatCalendarEventsForPrompt(
           events
             .filter(event => !!event.google_event_id && !!event.calendar_id)
             .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-            .map(event => ({
-              google_event_id: event.google_event_id,
-              calendar_id: event.calendar_id,
-              title: event.title,
-              start_time: event.start_time,
-              end_time: event.end_time,
-              is_all_day: event.is_all_day,
-              recurring_event_id: event.recurring_event_id,
-            })),
+            .map(event => {
+              const calendarMeta = calendarMetaById.get(event.calendar_id)
+              return {
+                google_event_id: event.google_event_id,
+                calendar_id: event.calendar_id,
+                calendar_name: calendarMeta?.name,
+                calendar_access_level: calendarMeta?.accessLevel,
+                title: event.title,
+                start_time: event.start_time,
+                end_time: event.end_time,
+                is_all_day: event.is_all_day,
+                recurring_event_id: event.recurring_event_id,
+              }
+            }),
         )
       } catch (err) {
         console.error('[chat] Calendar event fetch for deletion failed:', err)
@@ -912,7 +931,7 @@ export async function POST(request: Request) {
       prompt,
       maxOutputTokens: skillConfig.maxTokens,
       temperature: skillConfig.temperature,
-      ...(tools && Object.keys(tools).length > 0 ? { tools, maxSteps: 5 } : {}),
+      ...(tools && Object.keys(tools).length > 0 ? { tools, stopWhen: stepCountIs(8) } : {}),
     })
 
     const responseText = aiResult.text
@@ -1261,6 +1280,17 @@ export async function POST(request: Request) {
     let pendingAction: ChatMessage['action'] | undefined
     let calendarChoices: Array<{ id: string; name: string; isDefault: boolean }> | undefined
     let missingFields: MissingField[] | undefined
+
+    if (isDeletionIntent && action?.type === 'add_calendar_event') {
+      action = undefined
+      bestProposal = undefined
+      plannerState = 'capture_intent'
+      if (!replyText || /登録|追加|予約/.test(replyText)) {
+        replyText = calendarEventsContext && !calendarEventsContext.includes('失敗')
+          ? '削除対象の予定を候補から選び直してください。予定名・時間・カレンダー名のどれかを指定してください。'
+          : '削除対象の予定を取得できませんでした。予定名・日時・カレンダー名をもう一度教えてください。'
+      }
+    }
 
     if (bestProposal) {
       const startDate = isValidDateString(bestProposal.startAt) ? new Date(bestProposal.startAt) : null

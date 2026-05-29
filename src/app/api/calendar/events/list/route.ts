@@ -142,23 +142,24 @@ export async function GET(request: NextRequest) {
     console.log('[events/list] Google Calendar API events:', googleEvents.length);
 
     // Google Calendar API のイベントに id を付与し、重複を排除
-    // 複数カレンダーから同じイベント（同じ google_event_id）が返される場合があるため
-    const seenGoogleEventIds = new Set<string>();
+    // event_id はカレンダー間で衝突しうるため、calendar_id と組み合わせて扱う。
+    const seenGoogleEventKeys = new Set<string>();
     const googleEventsWithId = googleEvents
       .map(event => ({
         ...event,
         id: event.google_event_id // google_event_id を id として使用
       }))
       .filter(event => {
-        if (seenGoogleEventIds.has(event.google_event_id)) {
+        const key = getCompletionKey(event.calendar_id, event.google_event_id);
+        if (seenGoogleEventKeys.has(key)) {
           return false; // 重複を排除
         }
-        seenGoogleEventIds.add(event.google_event_id);
+        seenGoogleEventKeys.add(key);
         return true;
       });
 
     // Google Calendar API のイベントを Set に格納（重複チェック用）
-    const googleEventIds = seenGoogleEventIds;
+    const googleEventKeys = seenGoogleEventKeys;
 
     // DB からすべてのイベントを取得（google_event_id の有無に関わらず）
     let allDbEventsQuery = supabase
@@ -188,19 +189,23 @@ export async function GET(request: NextRequest) {
     });
 
     // 孤児イベントを非同期でDBからクリーンアップ（Google Calendarに存在しないDB行）
-    const orphanGoogleEventIds = (allDbEvents || [])
-      .filter(e => e.google_event_id && !googleEventIds.has(e.google_event_id))
-      .map(e => e.google_event_id);
+    const orphanDbEvents = (allDbEvents || [])
+      .filter(e => e.google_event_id && !googleEventKeys.has(getCompletionKey(e.calendar_id, e.google_event_id)));
+    const orphanGoogleEventIds = orphanDbEvents.map(e => e.google_event_id);
     if (orphanGoogleEventIds.length > 0) {
       console.log('[events/list] Cleaning up orphan DB events:', orphanGoogleEventIds.length);
-      const { error: orphanDelErr } = await supabase
-        .from('calendar_events')
-        .delete()
-        .eq('user_id', user.id)
-        .in('google_event_id', orphanGoogleEventIds);
-      if (orphanDelErr) {
-        console.error('[events/list] Orphan cleanup failed:', orphanDelErr);
-      }
+      const orphanDeleteResults = await Promise.all(
+        orphanDbEvents.map(event =>
+          supabase
+            .from('calendar_events')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('calendar_id', event.calendar_id)
+            .eq('google_event_id', event.google_event_id)
+        )
+      );
+      const orphanDelErr = orphanDeleteResults.find(result => result.error)?.error;
+      if (orphanDelErr) console.error('[events/list] Orphan cleanup failed:', orphanDelErr);
 
       // Google Calendarに存在しないイベントに対応するタスクもsoft-delete + タイマーリセット
       const { error: taskOrphanErr } = await supabase
