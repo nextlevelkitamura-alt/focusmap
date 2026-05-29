@@ -79,8 +79,12 @@ function FocusmapLiteInstallPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ space_id: spaceId, name: "Focusmap Lite" }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "トークン発行に失敗しました")
+      const text = await res.text()
+      let data: Record<string, unknown> = {}
+      try { data = JSON.parse(text) } catch {
+        throw new Error(res.status === 401 ? "ログインセッションが切れています。再読み込みしてください。" : `サーバーエラー (${res.status})`)
+      }
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "トークン発行に失敗しました")
       setCommand(data.install_command)
       setMessage("このコマンドでMacを接続できます。実行後、数十秒で上の状態がオンラインになります。")
     } catch (error) {
