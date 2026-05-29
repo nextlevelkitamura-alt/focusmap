@@ -42,7 +42,8 @@ export function buildProjectConsultationPrompt(ctx: SkillContext): string {
 - グループ追加: add_mindmap_group（title, project_id を指定）
 - タスク追加: add_mindmap_task（title, parent_id, project_id を指定）
 - 予定追加: add_calendar_event（title, scheduled_at, estimated_time を指定）
-- 削除操作は実行不可。「削除はアプリから直接行ってください」と案内する
+- 予定削除: delete_calendar_event（calendar_id, event_id, title, start_time を指定）
+- マインドマップノード削除: delete_mindmap_node（node_id を指定）
 
 ## アクション指定方法
 \`\`\`action

@@ -20,6 +20,7 @@ import { loadAllProjectContexts, formatProjectContextsForPrompt } from '@/lib/ai
 import { loadContextFromDocuments } from '@/lib/ai/context/document-context'
 import { summarizeProjectTasks, summarizeAllProjects } from '@/lib/ai/context/task-summarizer'
 import { buildMindmapContextForPrompt } from '@/lib/ai/context/mindmap-context'
+import { fetchMultipleCalendarEvents } from '@/lib/google-calendar'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -62,6 +63,87 @@ type MissingField = 'duration' | 'calendar' | 'start_time'
 // スケジューリング意図を検出するキーワード
 const SCHEDULING_KEYWORDS = ['予定', 'カレンダー', '入れて', 'スケジュール', '会議', 'ミーティング', 'ランチ', '追加して', '登録', '予約']
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
+
+function isCalendarDeletionIntent(text: string): boolean {
+  const hasDeleteWord = /(消して|消す|削除|キャンセル|取り消し|取消|なくして|外して)/.test(text)
+  const hasCalendarWord = /(予定|カレンダー|会議|ミーティング|打ち合わせ|MTG|mtg|先ほど|さっき)/i.test(text)
+  return hasDeleteWord && hasCalendarWord
+}
+
+function isCalendarRestoreIntent(text: string): boolean {
+  const hasRestoreWord = /(戻して|元に戻して|復元|取り消し|取消|undo|アンドゥ)/i.test(text)
+  const hasCalendarWord = /(予定|カレンダー|会議|ミーティング|打ち合わせ|MTG|mtg|さっき|直前|消した|削除)/i.test(text)
+  return hasRestoreWord && hasCalendarWord
+}
+
+function formatCalendarEventsForPrompt(events: Array<{
+  google_event_id: string
+  calendar_id: string
+  title: string
+  start_time: string
+  end_time: string
+  is_all_day?: boolean
+  recurring_event_id?: string | null
+}>) {
+  if (events.length === 0) return '該当期間に予定はありません。'
+  return events
+    .slice(0, 80)
+    .map((event, index) => {
+      const start = new Date(event.start_time).toLocaleString('ja-JP', {
+        timeZone: 'Asia/Tokyo',
+        month: 'numeric',
+        day: 'numeric',
+        weekday: 'short',
+        hour: event.is_all_day ? undefined : '2-digit',
+        minute: event.is_all_day ? undefined : '2-digit',
+      })
+      const end = new Date(event.end_time).toLocaleString('ja-JP', {
+        timeZone: 'Asia/Tokyo',
+        month: 'numeric',
+        day: 'numeric',
+        weekday: 'short',
+        hour: event.is_all_day ? undefined : '2-digit',
+        minute: event.is_all_day ? undefined : '2-digit',
+      })
+      const recurring = event.recurring_event_id
+        ? ` / recurring_event_id=${event.recurring_event_id} / 繰り返し予定`
+        : ''
+      return `${index + 1}. ${event.title} / ${start}〜${end} / calendar_id=${event.calendar_id} / event_id=${event.google_event_id}${recurring}`
+    })
+    .join('\n')
+}
+
+function formatCalendarUndoHistoryForPrompt(rows: Array<{
+  id: string
+  google_event_id: string | null
+  created_at: string
+  sync_data: unknown
+}>) {
+  if (rows.length === 0) return '当日中に復元可能な削除履歴はありません。'
+  return rows.map((row, index) => {
+    const data = row.sync_data && typeof row.sync_data === 'object'
+      ? row.sync_data as {
+          title?: string | null
+          start_time?: string | null
+          end_time?: string | null
+          calendar_id?: string | null
+          delete_scope?: string | null
+        }
+      : {}
+    const start = data.start_time
+      ? new Date(data.start_time).toLocaleString('ja-JP', {
+          timeZone: 'Asia/Tokyo',
+          month: 'numeric',
+          day: 'numeric',
+          weekday: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '日時不明'
+    const scope = data.delete_scope === 'series' ? '繰り返し全体' : 'この1回'
+    return `${index + 1}. ${data.title || '予定'} / ${start} / ${scope} / calendar_id=${data.calendar_id || ''} / undo_id=${row.id}`
+  }).join('\n')
+}
 
 function clampDuration(minutes: number): number {
   if (!Number.isFinite(minutes)) return 60
@@ -568,11 +650,15 @@ export async function POST(request: Request) {
 
     // スケジューリング意図を検出
     const allMessages = [...history.map(m => m.content), message]
-    const isSchedulingIntent = SCHEDULING_KEYWORDS.some(kw =>
+    const previousAssistantText = [...history].reverse().find(m => m.role === 'assistant')?.content || ''
+    const isDeletionFollowUp = /削除|消す|消して/.test(previousAssistantText)
+      && /(\d+\s*番|これ|それ|はい|お願い|削除|消して|[0-2]?\d\s*時|[0-9]{1,2}\/[0-9]{1,2})/.test(message)
+    const isDeletionIntent = isCalendarDeletionIntent(message) || isDeletionFollowUp
+    const isRestoreIntent = isCalendarRestoreIntent(message)
+    const isSchedulingIntent = !isDeletionIntent && SCHEDULING_KEYWORDS.some(kw =>
       allMessages.some(text => text.includes(kw))
     )
     const allUserTexts = [...history.filter(h => h.role === 'user').map(h => h.content), message]
-    const explicitDuration = extractDurationHints(allUserTexts)
     // Duration prompt bypass を廃止: AIが対話ステップで所要時間を聞くようにする
 
     // スケジューリング意図があり、カレンダー連携済みの場合、空き時間を取得
@@ -593,6 +679,72 @@ export async function POST(request: Request) {
         } catch (err) {
           console.error('[chat] Free time fetch failed:', err)
         }
+      }
+    }
+
+    let calendarEventsContext = ''
+    if (isDeletionIntent && calendarSettings?.is_sync_enabled && userCalendarsForResolution.length > 0) {
+      try {
+        const now = new Date()
+        const timeMin = new Date(now)
+        timeMin.setDate(now.getDate() - 14)
+        timeMin.setHours(0, 0, 0, 0)
+        const timeMax = new Date(now)
+        timeMax.setDate(now.getDate() + 45)
+        timeMax.setHours(23, 59, 59, 999)
+        const events = await fetchMultipleCalendarEvents(
+          user.id,
+          userCalendarsForResolution.map(c => c.id),
+          { timeMin, timeMax },
+        )
+        calendarEventsContext = formatCalendarEventsForPrompt(
+          events
+            .filter(event => !!event.google_event_id && !!event.calendar_id)
+            .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+            .map(event => ({
+              google_event_id: event.google_event_id,
+              calendar_id: event.calendar_id,
+              title: event.title,
+              start_time: event.start_time,
+              end_time: event.end_time,
+              is_all_day: event.is_all_day,
+              recurring_event_id: event.recurring_event_id,
+            })),
+        )
+      } catch (err) {
+        console.error('[chat] Calendar event fetch for deletion failed:', err)
+        calendarEventsContext = '予定候補の取得に失敗しました。カレンダー連携を確認してください。'
+      }
+    }
+
+    let calendarUndoContext = ''
+    if (isRestoreIntent && calendarSettings?.is_sync_enabled) {
+      try {
+        const now = new Date()
+        const jst = new Date(now.getTime() + JST_OFFSET_MS)
+        const startOfJstDayUtc = new Date(Date.UTC(
+          jst.getUTCFullYear(),
+          jst.getUTCMonth(),
+          jst.getUTCDate(),
+          -9,
+          0,
+          0,
+          0,
+        ))
+        const { data: undoRows, error: undoError } = await supabase
+          .from('calendar_sync_log')
+          .select('id, google_event_id, created_at, sync_data')
+          .eq('user_id', user.id)
+          .eq('action', 'delete_with_undo')
+          .in('status', ['success', 'not_found'])
+          .gte('created_at', startOfJstDayUtc.toISOString())
+          .order('created_at', { ascending: false })
+          .limit(10)
+        if (undoError) throw undoError
+        calendarUndoContext = formatCalendarUndoHistoryForPrompt(undoRows || [])
+      } catch (err) {
+        console.error('[chat] Calendar undo history fetch failed:', err)
+        calendarUndoContext = '削除履歴の取得に失敗しました。'
       }
     }
 
@@ -665,6 +817,8 @@ export async function POST(request: Request) {
         defaultCalendarName: defaultCalendarName || 'デフォルトカレンダー',
         calendarsContext,
         calendarCount,
+        eventsContext: calendarEventsContext || undefined,
+        undoContext: calendarUndoContext || undefined,
       } : undefined,
       freeTimeContext: freeTimeContext || undefined,
       projectContextPrompt: projectContextPrompt || undefined,

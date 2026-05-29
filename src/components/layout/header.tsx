@@ -89,6 +89,17 @@ export function Header({
 
     const { activeView, setActiveView } = useView()
 
+    const handleLogoClick = () => {
+        if (onLogoClick) {
+            onLogoClick()
+            return
+        }
+        try {
+            window.localStorage.setItem("focusmap:today-sub-view", "memo")
+        } catch {}
+        setActiveView('today')
+    }
+
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Today', icon: <CalendarDays className="h-3.5 w-3.5" /> },
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
@@ -145,7 +156,7 @@ export function Header({
             <div className="flex min-w-0 max-w-[440px] items-center gap-3">
                 <button
                     type="button"
-                    onClick={onLogoClick ?? (() => setActiveView('today'))}
+                    onClick={handleLogoClick}
                     className="inline-flex min-h-11 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label="Todayボードへ移動"
                     title="Today"

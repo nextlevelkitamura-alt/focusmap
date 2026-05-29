@@ -732,8 +732,16 @@ export function CustomMindMapView({
     const viewportRafRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
     const panMovedRef = useRef(false);
+    const pendingResizeSavesRef = useRef(new Map<string, number>());
     const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
     const suppressPaneClickUntilRef = useRef(0);
+    const savedNodeWidthById = useMemo(() => {
+        const byId = new Map<string, number | null>();
+        for (const task of [...groups, ...tasks]) {
+            byId.set(task.id, task.node_width ?? null);
+        }
+        return byId;
+    }, [groups, tasks]);
     const groupsForModel = useMemo(
         () => groups.map(task => {
             const width = nodeWidthOverrides[task.id];
@@ -785,20 +793,36 @@ export function CustomMindMapView({
         panOffsetRef.current = panOffset;
     }, [panOffset]);
 
+    useEffect(() => {
+        setNodeWidthOverrides(prev => {
+            let changed = false;
+            const next = { ...prev };
+            for (const [taskId, width] of Object.entries(prev)) {
+                if (!savedNodeWidthById.has(taskId) || savedNodeWidthById.get(taskId) === width) {
+                    delete next[taskId];
+                    pendingResizeSavesRef.current.delete(taskId);
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
+        });
+    }, [savedNodeWidthById]);
+
     const handleResizeNode = useCallback((taskId: string, width: number, commit: boolean) => {
         setNodeWidthOverrides(prev => (prev[taskId] === width ? prev : { ...prev, [taskId]: width }));
         if (!commit) return;
+        pendingResizeSavesRef.current.set(taskId, width);
         void Promise.resolve(onResizeNode?.(taskId, width))
             .catch(error => {
-                console.error("[CustomMindMap] Failed to save node width:", error);
-            })
-            .finally(() => {
+                if (pendingResizeSavesRef.current.get(taskId) !== width) return;
+                pendingResizeSavesRef.current.delete(taskId);
                 setNodeWidthOverrides(prev => {
                     if (prev[taskId] !== width) return prev;
                     const next = { ...prev };
                     delete next[taskId];
                     return next;
                 });
+                console.error("[CustomMindMap] Failed to save node width:", error);
             });
     }, [onResizeNode]);
 

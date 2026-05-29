@@ -10,6 +10,7 @@ import { SKILLS } from "@/lib/ai/skills"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { useUndoRedo } from "@/hooks/useUndoRedo"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 
 interface ChatOption {
@@ -84,6 +85,13 @@ interface CalendarEventData {
   scheduled_at: string
   estimated_time: number
   calendar_id?: string | null
+  google_event_id?: string
+  start_time?: string
+  end_time?: string
+  deleted?: boolean
+  restored?: boolean
+  undo_id?: string | null
+  delete_scope?: string
 }
 
 interface TaskData {
@@ -158,6 +166,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
   const [currentSummaryText, setCurrentSummaryText] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const { pushAction, undo } = useUndoRedo()
 
   // 音声入力
   const handleTranscribed = useCallback((text: string) => {
@@ -236,6 +245,28 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
     }
 
     const updatedMessages = [...messages, userMessage]
+
+    if (/(元に戻して|戻して|取り消して|undo|アンドゥ)/i.test(trimmed)) {
+      setMessages(updatedMessages)
+      setInput("")
+      setIsLoading(true)
+      try {
+        const desc = await undo()
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: desc ? `元に戻しました: ${desc}` : '元に戻せる操作がありません。',
+        }])
+        if (desc) {
+          onCalendarEventCreated?.()
+          onMindmapUpdated?.()
+        }
+      } finally {
+        setIsLoading(false)
+      }
+      return
+    }
+
     setMessages(updatedMessages)
     setInput("")
     setIsLoading(true)
@@ -370,7 +401,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, messages, buildRequestContext, activeSkillId, summaryBoundaryIndex, currentSummaryText, handleToolResults])
+  }, [isLoading, messages, buildRequestContext, activeSkillId, summaryBoundaryIndex, currentSummaryText, handleToolResults, undo, onCalendarEventCreated, onMindmapUpdated])
 
   // サイレント送信（ユーザーバブルを表示せずにAPIに送信）
   const sendMessageSilent = useCallback(async (text: string) => {
@@ -512,6 +543,58 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
         setTimeout(() => setExecutionNotice(null), 4500)
       }
 
+      if (success && msg.action?.type === 'delete_calendar_event') {
+        onCalendarEventCreated?.()
+        const deletedEventId = typeof eventData?.google_event_id === 'string' ? eventData.google_event_id : undefined
+        const calendarId = typeof eventData?.calendar_id === 'string' ? eventData.calendar_id : undefined
+        const undoId = typeof eventData?.undo_id === 'string' ? eventData.undo_id : undefined
+        if (undoId && deletedEventId && calendarId) {
+          let currentEventId = deletedEventId
+          pushAction({
+            description: `予定「${eventData?.title || '予定'}」の削除`,
+            undo: async () => {
+              const undoRes = await fetch('/api/ai/chat/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: { type: 'restore_calendar_event', params: { undo_id: undoId } },
+                }),
+              })
+              const undoData = await undoRes.json()
+              if (!undoRes.ok || !undoData.success) throw new Error(undoData.message || '予定の復元に失敗しました')
+              if (typeof undoData.eventData?.google_event_id === 'string') {
+                currentEventId = undoData.eventData.google_event_id
+              }
+              onCalendarEventCreated?.()
+            },
+            redo: async () => {
+              const redoRes = await fetch('/api/ai/chat/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: {
+                    type: 'delete_calendar_event',
+                    params: {
+                      ...msg.action?.params,
+                      calendar_id: calendarId,
+                      event_id: currentEventId,
+                      recurring_event_id: msg.action?.params?.delete_scope === 'series'
+                        ? currentEventId
+                        : msg.action?.params?.recurring_event_id,
+                    },
+                  },
+                }),
+              })
+              const redoData = await redoRes.json()
+              if (!redoRes.ok || !redoData.success) throw new Error(redoData.message || '予定の再削除に失敗しました')
+              onCalendarEventCreated?.()
+            },
+          })
+        }
+        setExecutionNotice('予定を削除しました')
+        setTimeout(() => setExecutionNotice(null), 4500)
+      }
+
       // タスク作成成功時にマインドマップ更新
       if (success && msg.action?.type === 'add_task') {
         onTaskCreated?.(taskData)
@@ -524,7 +607,7 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
         m.id === messageId ? { ...m, actionStatus: 'error' as const } : m
       ))
     }
-  }, [messages, onCalendarEventCreated, onTaskCreated, onMindmapUpdated])
+  }, [messages, onCalendarEventCreated, onTaskCreated, onMindmapUpdated, pushAction])
 
   // アクションキャンセル
   const handleCancelAction = useCallback((messageId: string) => {
@@ -579,6 +662,12 @@ export function AiChatPanel({ mode = 'floating', activeNoteId, activeProjectId, 
           ? new Date(eventData.scheduled_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
           : null
         setExecutionNotice(registeredAt ? `予定を登録しました（${registeredAt}）` : '予定を登録しました')
+        setTimeout(() => setExecutionNotice(null), 4500)
+      }
+
+      if (success && action.type === 'delete_calendar_event') {
+        onCalendarEventCreated?.()
+        setExecutionNotice('予定を削除しました')
         setTimeout(() => setExecutionNotice(null), 4500)
       }
     } catch {

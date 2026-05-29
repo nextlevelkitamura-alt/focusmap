@@ -238,34 +238,6 @@ export function buildMindMapModel({
         addTask(group, projectNodeId, 0);
     }
 
-    const nodeById = new Map(nodes.map(node => [node.id, node]));
-    const parentToChildren = new Map<string, MindMapModelNode[]>();
-    for (const edge of edges) {
-        const child = nodeById.get(edge.target);
-        if (!child || child.kind !== 'task') continue;
-        const siblings = parentToChildren.get(edge.source) ?? [];
-        siblings.push(child);
-        parentToChildren.set(edge.source, siblings);
-    }
-    for (const [, siblings] of parentToChildren) {
-        if (siblings.length < 2) continue;
-        const maxWidth = Math.max(...siblings.map(node => node.width));
-        for (const node of siblings) {
-            const rawTask = rawTaskById.get(node.id);
-            if (!rawTask || rawTask.node_width != null || node.width === maxWidth) continue;
-            node.width = maxWidth;
-            const hasInfoRow =
-                node.estimatedDisplayMinutes > 0 ||
-                node.priority != null ||
-                !!node.scheduledAt ||
-                node.hasMemo ||
-                node.hasMemoImages ||
-                node.source === 'memo' ||
-                node.source === 'wishlist';
-            node.height = estimateTaskNodeHeight(node.title, hasInfoRow, maxWidth, isMobile);
-        }
-    }
-
     for (const node of nodes) {
         graph.setNode(node.id, {
             width: node.kind === 'project' ? PROJECT_NODE_WIDTH : node.width,

@@ -1949,7 +1949,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         node_width: number | null;
     };
 
-    const { structureNodes, edges, taskDataMap } = useMemo(() => {
+    const { structureNodes, taskDataMap } = useMemo(() => {
         const resultNodes: Node[] = [];
         const resultEdges: Edge[] = [];
         const dataMap = new Map<string, ParsedTask & { hasChildren: boolean; estimatedDisplayMinutes: number; estimatedAutoMinutes: number; estimatedIsOverride: boolean }>();
@@ -2094,43 +2094,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 globalYOffset = Math.max(globalYOffset + 80, yOffsetCursor.value + 30);
             }
 
-            // 同じ親を持つ兄弟ノードの幅を最大幅に統一する
-            const parentToChildIds = new Map<string, string[]>();
-            resultEdges.forEach(e => {
-                if (!parentToChildIds.has(e.source)) parentToChildIds.set(e.source, []);
-                parentToChildIds.get(e.source)!.push(e.target);
-            });
-
-            const nodeById = new Map<string, Node>();
-            resultNodes.forEach(n => nodeById.set(n.id, n));
-
-            parentToChildIds.forEach((childIds) => {
-                const taskChildren = childIds.filter(id => nodeById.get(id)?.type === 'taskNode');
-                if (taskChildren.length < 2) return;
-                // 手動リサイズ済みノードを除いた最大幅で揃える（オーバーライドは個別に確定済み）
-                const maxWidth = Math.max(...taskChildren.map(id => (nodeById.get(id)?.width as number) ?? 0));
-                taskChildren.forEach(id => {
-                    // 手動リサイズ済みノードは兄弟揃えをスキップ
-                    const t = dataMap.get(id);
-                    if (t?.node_width != null) return;
-                    const n = nodeById.get(id);
-                    if (!n || n.width === maxWidth) return;
-                    const task = dataMap.get(id);
-                    const hasInfo = task ? (
-                        (task.estimatedDisplayMinutes > 0) ||
-                        task.priority != null ||
-                        !!task.scheduled_at ||
-                        !!task.memo ||
-                        !!(task.memo_images && task.memo_images.length > 0) ||
-                        task.source === 'memo' ||
-                        task.source === 'wishlist'
-                    ) : false;
-                    const newHeight = estimateTaskNodeHeight(task?.title || String(n.data?.label ?? ''), hasInfo, maxWidth, isNarrow);
-                    n.width = maxWidth;
-                    n.height = newHeight;
-                    (n.data as Record<string, unknown>).nodeWidth = maxWidth;
-                });
-            });
         } catch (err) {
             console.error('[MindMap] Error:', err);
         }

@@ -1,5 +1,31 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
+import { getCalendarClient } from '@/lib/google-calendar'
+import type { calendar_v3 } from 'googleapis'
+
+function isMissingCalendarEventError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const status = 'status' in error ? (error as { status?: unknown }).status : undefined
+  const code = 'code' in error ? (error as { code?: unknown }).code : undefined
+  return status === 404 || code === 404
+}
+
+function toRestorableGoogleEvent(event: calendar_v3.Schema$Event): calendar_v3.Schema$Event {
+  return {
+    summary: event.summary || undefined,
+    description: event.description || undefined,
+    location: event.location || undefined,
+    start: event.start || undefined,
+    end: event.end || undefined,
+    recurrence: event.recurrence || undefined,
+    attendees: event.attendees || undefined,
+    reminders: event.reminders || undefined,
+    colorId: event.colorId || undefined,
+    transparency: event.transparency || undefined,
+    visibility: event.visibility || undefined,
+    extendedProperties: event.extendedProperties || undefined,
+  }
+}
 
 // POST /api/ai/chat/execute - AIチャットのアクション実行
 export async function POST(request: Request) {
@@ -132,6 +158,268 @@ export async function POST(request: Request) {
             scheduled_at,
             estimated_time: estMin,
             calendar_id: resolvedCalendarId,
+          },
+        })
+      }
+
+      case 'delete_calendar_event': {
+        const {
+          calendar_id,
+          event_id,
+          google_event_id,
+          title,
+          start_time,
+          end_time,
+          delete_scope,
+          recurring_event_id,
+        } = action.params as {
+          calendar_id?: string
+          event_id?: string
+          google_event_id?: string
+          title?: string
+          start_time?: string
+          end_time?: string
+          delete_scope?: 'this' | 'series'
+          recurring_event_id?: string
+        }
+        const calendarId = calendar_id?.trim()
+        const eventId = (event_id || google_event_id)?.trim()
+
+        if (!calendarId || !eventId) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 削除対象の予定を特定できませんでした',
+          }, { status: 400 })
+        }
+
+        const { data: ownedCalendar, error: calendarLookupError } = await supabase
+          .from('user_calendars')
+          .select('google_calendar_id')
+          .eq('user_id', user.id)
+          .eq('google_calendar_id', calendarId)
+          .maybeSingle()
+        if (calendarLookupError) throw calendarLookupError
+        if (!ownedCalendar && calendarId !== 'primary') {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 選択したカレンダーは利用できません',
+          }, { status: 400 })
+        }
+
+        const { calendar } = await getCalendarClient(user.id)
+        const requestedScope = delete_scope === 'series' ? 'series' : 'this'
+        const targetEventId = requestedScope === 'series'
+          ? (recurring_event_id?.trim() || eventId)
+          : eventId
+        let eventSnapshot: calendar_v3.Schema$Event | null = null
+        try {
+          const eventRes = await calendar.events.get({
+            calendarId,
+            eventId: targetEventId,
+          })
+          eventSnapshot = eventRes.data
+        } catch (error) {
+          if (!isMissingCalendarEventError(error)) throw error
+        }
+
+        const undoLog = eventSnapshot
+          ? await supabase
+              .from('calendar_sync_log')
+              .insert({
+                user_id: user.id,
+                google_event_id: targetEventId,
+                action: 'delete_with_undo',
+                direction: 'to_calendar',
+                status: 'pending',
+                sync_data: {
+                  calendar_id: calendarId,
+                  event_id: targetEventId,
+                  original_event_id: eventId,
+                  delete_scope: requestedScope,
+                  recurring_event_id: recurring_event_id || eventSnapshot.recurringEventId || null,
+                  title: title || eventSnapshot.summary || null,
+                  start_time: start_time || eventSnapshot.start?.dateTime || eventSnapshot.start?.date || null,
+                  end_time: end_time || eventSnapshot.end?.dateTime || eventSnapshot.end?.date || null,
+                  restore_event: toRestorableGoogleEvent(eventSnapshot),
+                  restore_mode: requestedScope === 'this' && (recurring_event_id || eventSnapshot.recurringEventId)
+                    ? 'standalone_equivalent'
+                    : 'event_insert',
+                },
+              })
+              .select('id')
+              .single()
+          : null
+        if (undoLog?.error) throw undoLog.error
+
+        let deletedFromGoogle = false
+        try {
+          await calendar.events.delete({
+            calendarId,
+            eventId: targetEventId,
+          })
+          deletedFromGoogle = true
+        } catch (error) {
+          if (!isMissingCalendarEventError(error)) throw error
+        }
+
+        if (undoLog?.data?.id) {
+          await supabase
+            .from('calendar_sync_log')
+            .update({ status: deletedFromGoogle ? 'success' : 'not_found' })
+            .eq('id', undoLog.data.id)
+            .eq('user_id', user.id)
+        }
+
+        await supabase
+          .from('calendar_events')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('calendar_id', calendarId)
+          .eq('google_event_id', targetEventId)
+
+        await supabase
+          .from('tasks')
+          .update({
+            deleted_at: new Date().toISOString(),
+            is_timer_running: false,
+            last_started_at: null,
+          })
+          .eq('user_id', user.id)
+          .eq('google_event_id', targetEventId)
+          .is('deleted_at', null)
+
+        const dateLabel = start_time
+          ? new Date(start_time).toLocaleString('ja-JP', {
+              timeZone: 'Asia/Tokyo',
+              month: 'numeric',
+              day: 'numeric',
+              weekday: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : ''
+        const displayTitle = title || '予定'
+        return NextResponse.json({
+          success: true,
+          message: deletedFromGoogle
+            ? `✅ ${dateLabel ? `${dateLabel}の` : ''}予定「${displayTitle}」をカレンダーから削除しました`
+            : `✅ 予定「${displayTitle}」はGoogleカレンダー上に見つかりませんでした。Focusmap側の同期情報を整理しました`,
+          eventData: {
+            google_event_id: targetEventId,
+            calendar_id: calendarId,
+            title: displayTitle,
+            start_time,
+            end_time,
+            deleted: true,
+            delete_scope: requestedScope,
+            undo_id: undoLog?.data?.id || null,
+          },
+        })
+      }
+
+      case 'restore_calendar_event': {
+        const { undo_id } = action.params as { undo_id?: string }
+        if (!undo_id) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 復元対象が見つかりません',
+          }, { status: 400 })
+        }
+
+        const { data: undoLog, error: undoLookupError } = await supabase
+          .from('calendar_sync_log')
+          .select('id, google_event_id, sync_data, created_at')
+          .eq('id', undo_id)
+          .eq('user_id', user.id)
+          .maybeSingle()
+        if (undoLookupError) throw undoLookupError
+        if (!undoLog?.sync_data || typeof undoLog.sync_data !== 'object') {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 復元データが見つかりません',
+          }, { status: 404 })
+        }
+        const createdAt = new Date(undoLog.created_at).getTime()
+        const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000)
+        const startOfJstDayUtc = Date.UTC(
+          jstNow.getUTCFullYear(),
+          jstNow.getUTCMonth(),
+          jstNow.getUTCDate(),
+          -9,
+          0,
+          0,
+          0,
+        )
+        if (!Number.isFinite(createdAt) || createdAt < startOfJstDayUtc) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 復元できるのは当日中に削除した予定のみです',
+          }, { status: 400 })
+        }
+
+        const syncData = undoLog.sync_data as {
+          calendar_id?: string
+          restore_event?: calendar_v3.Schema$Event
+          title?: string | null
+          start_time?: string | null
+          end_time?: string | null
+        }
+        const calendarId = syncData.calendar_id
+        const restoreEvent = syncData.restore_event
+        if (!calendarId || !restoreEvent) {
+          return NextResponse.json({
+            success: false,
+            message: '❌ 復元データが不完全です',
+          }, { status: 400 })
+        }
+
+        const { calendar } = await getCalendarClient(user.id)
+        const restored = await calendar.events.insert({
+          calendarId,
+          requestBody: restoreEvent,
+        })
+        const restoredEventId = restored.data.id
+        if (!restoredEventId) {
+          throw new Error('Google Calendar did not return a restored event id')
+        }
+
+        await supabase
+          .from('calendar_sync_log')
+          .insert({
+            user_id: user.id,
+            google_event_id: restoredEventId,
+            action: 'restore_delete',
+            direction: 'to_calendar',
+            status: 'success',
+            sync_data: {
+              undo_id,
+              calendar_id: calendarId,
+              restored_google_event_id: restoredEventId,
+              original_google_event_id: undoLog.google_event_id,
+            },
+          })
+
+        const displayTitle = syncData.title || restoreEvent.summary || '予定'
+        const dateLabel = syncData.start_time
+          ? new Date(syncData.start_time).toLocaleString('ja-JP', {
+              timeZone: 'Asia/Tokyo',
+              month: 'numeric',
+              day: 'numeric',
+              weekday: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : ''
+        return NextResponse.json({
+          success: true,
+          message: `✅ ${dateLabel ? `${dateLabel}の` : ''}予定「${displayTitle}」を復元しました`,
+          eventData: {
+            google_event_id: restoredEventId,
+            calendar_id: calendarId,
+            title: displayTitle,
+            start_time: syncData.start_time,
+            end_time: syncData.end_time,
+            restored: true,
           },
         })
       }
