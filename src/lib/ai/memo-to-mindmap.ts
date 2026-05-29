@@ -10,6 +10,18 @@ import { generateObject } from 'ai'
 import { getModelForMemoMindmap, type MemoMindmapMode } from './providers'
 
 export const MAX_MINDMAP_DRAFT_DEPTH = 4
+export const MAX_CONVERSATION_LOG_CHARS = 5000
+export const MAX_HELD_CONVERSATION_ITEMS = 3
+
+export const MindmapDraftItemKindSchema = z.enum(['policy', 'decision', 'question', 'task'])
+
+export const MindmapDraftTriageItemSchema = z.object({
+  clientId: z.string().describe('一時ID。"h1","x1"... の形式'),
+  title: z.string().describe('候補の見出し。接頭辞なしの内容見出し'),
+  kind: MindmapDraftItemKindSchema.default('task').describe('候補の種類'),
+  reason: z.string().describe('採用/保留/除外の理由。短く'),
+  sourceNoteIds: z.array(z.string()).default([]).describe('根拠となる元メモID'),
+})
 
 export const MindmapDraftSchema = z.object({
   projectTitle: z.string().describe('マインドマップ全体のタイトル。簡潔に'),
@@ -44,11 +56,23 @@ export const MindmapDraftSchema = z.object({
     )
     .default([])
     .describe('既存ノード名の変更案。自動適用禁止。必要な場合だけ出す'),
+  holdItems: z
+    .array(MindmapDraftTriageItemSchema)
+    .max(MAX_HELD_CONVERSATION_ITEMS)
+    .default([])
+    .describe('会話ログ整理時だけ使う保留候補。採用/除外をユーザーがすぐ選べるように最大3件'),
+  excludedItems: z
+    .array(MindmapDraftTriageItemSchema)
+    .max(20)
+    .default([])
+    .describe('会話ログ整理時だけ使う除外候補。マップには入れないが確認・復活できるようにする'),
 })
 
 export type MindmapDraft = z.infer<typeof MindmapDraftSchema>
 export type MindmapDraftNode = MindmapDraft['nodes'][number]
 export type ExistingNodeRenameSuggestion = MindmapDraft['existingNodeRenameSuggestions'][number]
+export type MindmapDraftTriageItem = z.infer<typeof MindmapDraftTriageItemSchema>
+export type MindmapDraftInputKind = 'memo' | 'conversation_log'
 
 export interface MemoInput {
   id: string
@@ -76,12 +100,42 @@ const SYSTEM_PROMPT = `あなたは、散らばったメモを整理して論理
 13. 異なるトピックなら無理に既存ノードへ接続せず、attachToExistingTaskId は null にする。
 14. 既存ノードに接続したいが既存ノード名が狭すぎる/ズレている場合だけ existingNodeRenameSuggestions に変更案を出す。既存ノード名は絶対に勝手に変更しない。`
 
+const CONVERSATION_LOG_PROMPT = `
+# 会話ログを整理する場合の追加ルール
+入力がGPT等との会話ログの場合、「全文をマップ化」ではなく、残すべき判断・作業・論点だけを取捨選択して構造化する。
+
+## 採用する情報
+- 目的、方針、決定事項、未決の論点、実行タスク、制約、リスク、優先順位
+- 後から見返した時に、次の判断や実行に使える内容
+
+## 原則除外する情報
+- 相槌、挨拶、前置き、AIのテンプレ説明、一般論、重複、言い直し
+- ユーザーが却下した案、根拠のないAIの推測、プロジェクトに関係ない脱線
+- APIキー、パスワード、認証情報、不要な個人情報
+
+## 出力分類
+- nodes: マップへ入れる採用候補だけを入れる。
+- holdItems: 本当に判断不能なものだけ。最大${MAX_HELD_CONVERSATION_ITEMS}件まで。迷ったら保留ではなく採用か除外に寄せる。
+- excludedItems: マップには入れないが、ユーザーが確認・復活できるよう短く列挙する。
+- 会話ログ1件から複数の具体ノードを作る場合、同じ sourceNoteIds を複数ノードに入れてよい。
+
+## ノードタイトル接頭辞
+nodes の title は必ず次のいずれかの接頭辞で始める。
+- 方針: 進め方・設計思想・ルール
+- 決定: もう決めたこと
+- 論点: まだ考えるべき問い・未決事項
+- タスク: 実行する作業
+
+holdItems / excludedItems の title には接頭辞を付けず、kind に policy / decision / question / task を入れる。
+`
+
 interface BuildPromptArgs {
   notes: MemoInput[]
   existingTree?: string
+  inputKind: MindmapDraftInputKind
 }
 
-function buildUserPrompt({ notes, existingTree }: BuildPromptArgs): string {
+function buildUserPrompt({ notes, existingTree, inputKind }: BuildPromptArgs): string {
   const noteList = notes
     .map((n, i) => `${i + 1}. [id: ${n.id}]\n${n.content.trim()}`)
     .join('\n\n')
@@ -90,12 +144,16 @@ function buildUserPrompt({ notes, existingTree }: BuildPromptArgs): string {
     ? `\n\n# 既存のマインドマップ構造\n以下は追記先の既存ツリーです。各行の [task:...] / [group:...] が既存ノードIDです。\n新しいノード群は、適切なら追加ルートの attachToExistingTaskId に既存ノードIDを入れて接続してください。合わなければ null のまま新規ルートにしてください。\n既存ノード名を広げた方がよい場合だけ existingNodeRenameSuggestions に変更案と理由を出してください。自動変更は禁止です。\n${existingTree}`
     : ''
 
-  return `次のメモ群をロジックツリーに整理してください。
+  const conversationSection = inputKind === 'conversation_log' ? `\n\n${CONVERSATION_LOG_PROMPT}` : ''
+
+  return `次の${inputKind === 'conversation_log' ? '会話ログ' : 'メモ群'}をロジックツリーに整理してください。
 
 # メモ一覧（全${notes.length}件）
-${noteList}${existingSection}
+${noteList}${existingSection}${conversationSection}
 
-全てのメモIDを具体ノードの sourceNoteIds に割り当て、分類・要約・橋渡し用の追加ノードは sourceNoteIds: [] にした、最大${MAX_MINDMAP_DRAFT_DEPTH}層までのツリー構造 JSON を出力してください。`
+${inputKind === 'conversation_log'
+    ? `採用候補だけを nodes に入れ、判断不能なものは最大${MAX_HELD_CONVERSATION_ITEMS}件まで holdItems、マップ不要なものは excludedItems に分けてください。nodes の title は必ず「方針:」「決定:」「論点:」「タスク:」のいずれかで始めてください。`
+    : `全てのメモIDを具体ノードの sourceNoteIds に割り当て、分類・要約・橋渡し用の追加ノードは sourceNoteIds: [] にした、最大${MAX_MINDMAP_DRAFT_DEPTH}層までのツリー構造 JSON を出力してください。`}`
 }
 
 export function buildDraftChildMap(nodes: MindmapDraftNode[]): Map<string, string[]> {
@@ -164,14 +222,31 @@ export async function generateMindmapDraft(args: {
   notes: MemoInput[]
   mode: MemoMindmapMode
   existingTree?: string
+  inputKind?: MindmapDraftInputKind
 }): Promise<GenerateDraftResult> {
   const { model, modelName } = getModelForMemoMindmap(args.mode)
+  const usingDeepseek = modelName.toLowerCase().includes('deepseek')
 
   const result = await generateObject({
     model,
     schema: MindmapDraftSchema,
     system: SYSTEM_PROMPT,
-    prompt: buildUserPrompt({ notes: args.notes, existingTree: args.existingTree }),
+    prompt: buildUserPrompt({
+      notes: args.notes,
+      existingTree: args.existingTree,
+      inputKind: args.inputKind ?? 'memo',
+    }),
+    temperature: args.inputKind === 'conversation_log' ? 0.2 : 0.3,
+    ...(usingDeepseek
+      ? {
+        providerOptions: {
+          deepseek: {
+            thinking: { type: 'disabled' },
+            reasoningEffort: 'medium',
+          },
+        },
+      }
+      : {}),
   })
 
   const inputTokens = result.usage.inputTokens ?? 0

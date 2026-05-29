@@ -5,6 +5,8 @@ import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, StickyNote } 
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
+import { KeyboardAccessoryBar } from "@/components/mobile/keyboard-accessory-bar";
 import {
     NODE_MIN_WIDTH,
     NODE_MIN_WIDTH_MOBILE,
@@ -118,6 +120,10 @@ type PendingLongPressDragState = {
     startClientY: number;
 };
 
+type CustomTaskEditController = {
+    finishEditing: () => Promise<void>;
+};
+
 type WebKitGestureEvent = Event & {
     scale: number;
     clientX?: number;
@@ -192,6 +198,8 @@ function CustomTaskNode({
     resizeScale,
     isMobile,
     onOpenLinkedMemos,
+    onEditingChange,
+    onRegisterEditController,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -216,6 +224,8 @@ function CustomTaskNode({
     resizeScale: number;
     isMobile: boolean;
     onOpenLinkedMemos?: (taskId: string) => void;
+    onEditingChange?: (taskId: string, isEditing: boolean) => void;
+    onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -300,6 +310,23 @@ function CustomTaskNode({
         setEditValue(value ?? (initialEditValue ?? node.title));
         setIsEditing(true);
     }, [initialEditValue, node.title]);
+
+    useEffect(() => {
+        onEditingChange?.(node.id, isEditing);
+        return () => {
+            if (isEditing) onEditingChange?.(node.id, false);
+        };
+    }, [isEditing, node.id, onEditingChange]);
+
+    useEffect(() => {
+        if (!isEditing) {
+            onRegisterEditController?.(node.id, null);
+            return;
+        }
+
+        onRegisterEditController?.(node.id, { finishEditing });
+        return () => onRegisterEditController?.(node.id, null);
+    }, [finishEditing, isEditing, node.id, onRegisterEditController]);
 
     const handleNodeKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLDivElement>) => {
         if (isEditing) return;
@@ -694,10 +721,13 @@ export function CustomMindMapView({
     const [panState, setPanState] = useState<PanState | null>(null);
     const [spacePressed, setSpacePressed] = useState(false);
     const [nodeWidthOverrides, setNodeWidthOverrides] = useState<Record<string, number>>({});
+    const [activeEditingTaskId, setActiveEditingTaskId] = useState<string | null>(null);
+    const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight();
     const viewportRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const zoomRef = useRef(zoom);
     const panOffsetRef = useRef(panOffset);
+    const editControllersRef = useRef(new Map<string, CustomTaskEditController>());
     const pendingViewportTransformRef = useRef<{ zoom: number; pan: Point } | null>(null);
     const viewportRafRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
@@ -741,6 +771,11 @@ export function CustomMindMapView({
             .map(node => node.id),
         [positionedNodes, selectedNodeIds]
     );
+    const activeAccessoryNode = useMemo(() => {
+        if (!activeEditingTaskId) return null;
+        const node = nodeById.get(activeEditingTaskId);
+        return node?.kind === "task" ? node : null;
+    }, [activeEditingTaskId, nodeById]);
 
     useEffect(() => {
         zoomRef.current = zoom;
@@ -1403,6 +1438,53 @@ export function CustomMindMapView({
         };
     }, [applyViewportTransform, clearPendingLongPressDrag, commitViewportTransform, panState]);
 
+    const handleEditingChange = useCallback((taskId: string, editing: boolean) => {
+        setActiveEditingTaskId(prev => {
+            if (editing) return taskId;
+            return prev === taskId ? null : prev;
+        });
+    }, []);
+
+    const handleRegisterEditController = useCallback((taskId: string, controller: CustomTaskEditController | null) => {
+        if (controller) {
+            editControllersRef.current.set(taskId, controller);
+            return;
+        }
+        editControllersRef.current.delete(taskId);
+    }, []);
+
+    const finishActiveEdit = useCallback(async (taskId: string) => {
+        await editControllersRef.current.get(taskId)?.finishEditing();
+    }, []);
+
+    const handleAccessoryAddChild = useCallback(async () => {
+        const taskId = activeEditingTaskId;
+        if (!taskId) return;
+        await finishActiveEdit(taskId);
+        await onAddChildNode?.(taskId);
+    }, [activeEditingTaskId, finishActiveEdit, onAddChildNode]);
+
+    const handleAccessoryAddSibling = useCallback(async () => {
+        const taskId = activeEditingTaskId;
+        if (!taskId) return;
+        await finishActiveEdit(taskId);
+        await onAddSiblingNode?.(taskId);
+    }, [activeEditingTaskId, finishActiveEdit, onAddSiblingNode]);
+
+    const handleAccessoryDelete = useCallback(async () => {
+        const taskId = activeEditingTaskId;
+        if (!taskId) return;
+        setActiveEditingTaskId(null);
+        await onDeleteNode?.(taskId);
+    }, [activeEditingTaskId, onDeleteNode]);
+
+    const handleAccessoryDismiss = useCallback(() => {
+        if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+        }
+        setActiveEditingTaskId(null);
+    }, []);
+
     const selectionRect = selectionBox
         ? {
             left: Math.min(selectionBox.startX, selectionBox.currentX),
@@ -1559,6 +1641,8 @@ export function CustomMindMapView({
                                 resizeScale={zoom}
                                 isMobile={isMobile}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
+                                onEditingChange={handleEditingChange}
+                                onRegisterEditController={handleRegisterEditController}
                             />
                         );
                     })}
@@ -1570,6 +1654,16 @@ export function CustomMindMapView({
                     )}
                 </div>
             </div>
+            {isMobile && isKeyboardOpen && activeAccessoryNode && (
+                <KeyboardAccessoryBar
+                    keyboardHeight={keyboardHeight}
+                    showIndentControls={false}
+                    onAddChild={onAddChildNode ? handleAccessoryAddChild : undefined}
+                    onAddSibling={onAddSiblingNode ? handleAccessoryAddSibling : undefined}
+                    onDelete={onDeleteNode ? handleAccessoryDelete : undefined}
+                    onDismiss={handleAccessoryDismiss}
+                />
+            )}
         </div>
     );
 }

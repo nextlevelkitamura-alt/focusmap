@@ -14,7 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Bot, LogOut, Settings, User as UserIcon, Network, CalendarDays, Sparkles, StickyNote, Workflow } from "lucide-react"
+import { LogOut, MessageCircle, Settings, User as UserIcon, Network, CalendarDays, Sparkles, StickyNote } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -92,8 +92,7 @@ export function Header({
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Today', icon: <CalendarDays className="h-3.5 w-3.5" /> },
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
-        { id: 'ai',        label: 'AI',    icon: <Bot className="h-3.5 w-3.5" /> },
-        { id: 'automation', label: '自動化', icon: <Workflow className="h-3.5 w-3.5" /> },
+        { id: 'ai',        label: 'チャット', icon: <MessageCircle className="h-3.5 w-3.5" /> },
         { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
     ]
 
@@ -127,10 +126,6 @@ export function Header({
                 projectMap[item.id] = item.project_id ?? null
             }
 
-            if (ids.length === 0) {
-                setOrganizeError("このプロジェクトに未整理メモがありません")
-                return
-            }
             const slicedIds = ids.slice(0, 50)
             setOrganizeMemoIds(slicedIds)
             setOrganizeMemoProjects(
@@ -326,6 +321,7 @@ export function Header({
                     setOrganizeMemoIds([])
                     onMindmapUpdated?.()
                 }}
+                allowTextImport
             />
         </header>
     )

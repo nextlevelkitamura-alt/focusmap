@@ -31,7 +31,12 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
         queueMicrotask(() => {
             const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
             if (saved && VALID_VIEWS.includes(saved)) {
-                setActiveViewState(saved)
+                if (saved === 'automation') {
+                    try { localStorage.setItem(STORAGE_KEY, 'ai') } catch {}
+                    setActiveViewState('ai')
+                } else {
+                    setActiveViewState(saved)
+                }
             }
             setIsViewReady(true)
         })
