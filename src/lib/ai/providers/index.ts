@@ -151,6 +151,16 @@ export function getAgentModel(): { model: ReturnType<typeof deepseek> | ReturnTy
   return { model: google(modelName), modelName }
 }
 
+/**
+ * 画像付きの統合チャット用モデル。
+ * DeepSeek API の Chat Completion は現行仕様で user content が text string のため、
+ * UIMessage の file/image パートが来たターンだけ Gemini へ切り替える。
+ */
+export function getAgentVisionModel(): { model: ReturnType<typeof google>; modelName: string } {
+  const modelName = resolveGeminiModel(process.env.GEMINI_VISION_MODEL ?? process.env.GEMINI_MODEL)
+  return { model: google(modelName), modelName }
+}
+
 // ============================================================
 // メモ→マインドマップ変換用プロバイダー（デュアル構成）
 // ============================================================

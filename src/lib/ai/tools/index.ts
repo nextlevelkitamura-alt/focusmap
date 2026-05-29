@@ -291,8 +291,20 @@ export function createScheduleTask(spaceId: string | null) {
         .string()
         .optional()
         .describe('繰り返し実行する場合の5フィールドcron式（例: 毎朝8時なら "0 8 * * *"）。一度きりなら省略。'),
+      cwd: z
+        .string()
+        .optional()
+        .describe('実行時の作業ディレクトリ。仕事リポ/求人更新なら /Users/kitamuranaohiro/Private/仕事 などの絶対パスを指定する。'),
+      skillId: z
+        .string()
+        .optional()
+        .describe('予約タスクのスキルID。求人更新なら job-update、仕事リポ定期実行なら staff-status-schedule など。'),
+      executor: z
+        .enum(['claude', 'codex', 'codex_app'])
+        .optional()
+        .describe('実行器。未指定なら claude。Codexで実行したい場合だけ codex/codex_app を指定する。'),
     }),
-    execute: async ({ prompt, scheduledAt, recurrenceCron }) => {
+    execute: async ({ prompt, scheduledAt, recurrenceCron, cwd, skillId, executor }) => {
       const supabase = await createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return { success: false, error: '認証エラー' }
@@ -323,7 +335,9 @@ export function createScheduleTask(spaceId: string | null) {
           status: 'pending',
           scheduled_at: scheduledAt,
           recurrence_cron: recurrenceCron || null,
-          executor: 'claude',
+          cwd: cwd || null,
+          skill_id: skillId || null,
+          executor: executor || 'claude',
           run_visibility: normalizeVisibility(undefined, resolvedSpace.spaceId ? 'space' : 'private'),
         })
         .select('id')

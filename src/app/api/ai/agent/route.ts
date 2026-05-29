@@ -9,7 +9,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
-import { getAgentModel } from '@/lib/ai/providers'
+import { getAgentModel, getAgentVisionModel } from '@/lib/ai/providers'
 import { buildAgentTools } from '@/lib/ai/agent-tools'
 import type { OnlineRunner } from '@/lib/ai/remote-tools'
 
@@ -61,11 +61,18 @@ function buildSystemPrompt(runner: OnlineRunner | null): string {
     '- ユーザーが「実行」「やって」「巡回して」「記録して」など作業を求めたら、適切なツールを使って実際に実行する。',
     '- マルチステップの作業は、1ステップずつツールを呼びながら進める。各ステップの結果を見て次を判断する。',
     '- ツールが失敗した場合は、理由をユーザーに分かりやすく伝え、代替案を提案する。',
+    '- 画像が添付されている場合は、画像の内容を実際に確認してから答える。',
     '',
     '## ツールの種類',
     '- サーバー直実行 (常に使える): addTask / addCalendarEvent / addMindmapGroup / addMindmapTask / deleteMindmapNode',
     '- 予約実行 (常に使える): scheduleTask — 時間指定や繰り返し、またはMacがオフラインのときにサーバー側でタスクを予約実行する。',
     '- Mac経由 (ターミナル/ブラウザ/ファイル): runTerminal / listFiles / readFile / writeFile / runOpenCode / browserNavigate / browserClick / browserFill / browserScreenshot / webResearch',
+    '',
+    '## 仕事リポ・求人運用',
+    '- ユーザーが「仕事リポ」「求人更新」「求人立案」「求人採用」「求人を作って/直して/巡回して」と依頼したら、対象指定がない限り `/Users/kitamuranaohiro/Private/仕事` を仕事リポ候補として扱う。',
+    '- まず listFiles で `/Users/kitamuranaohiro/Private/仕事`、必要に応じて `/Users/kitamuranaohiro/Private/仕事/scripts/job-update` と `/Users/kitamuranaohiro/Private/仕事/scripts/job-create` を確認する。',
+    '- すぐ実行する依頼なら runTerminal または runOpenCode を cwd `/Users/kitamuranaohiro/Private/仕事` で使う。定期実行の依頼なら scheduleTask に cwd と skillId を渡して予約する。',
+    '- 求人更新は skillId `job-update` を優先する。求人立案は cwd `/Users/kitamuranaohiro/Private/仕事` と、リポ内の job-create/job-update 関連資料を確認したうえで進める。',
     '',
     '## Mac実行ルール',
     '- フォルダの中身確認は、まず listFiles を使う。シェルの ls/find は listFiles/readFile で足りない場合だけ使う。',
@@ -84,6 +91,16 @@ function buildSystemPrompt(runner: OnlineRunner | null): string {
   ].join('\n')
 }
 
+function hasImagePart(messages: UIMessage[]): boolean {
+  return messages.some(message =>
+    message.parts.some(part =>
+      part.type === 'file' &&
+      typeof part.mediaType === 'string' &&
+      part.mediaType.toLowerCase().startsWith('image/'),
+    ),
+  )
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
@@ -99,7 +116,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'messages is required' }, { status: 400 })
     }
 
-    const { model } = getAgentModel()
+    const usesVision = hasImagePart(messages)
+    const { model } = usesVision ? getAgentVisionModel() : getAgentModel()
     const { tools, runner } = await buildAgentTools(user.id, spaceId ?? null)
     const modelMessages = await convertToModelMessages(messages)
 

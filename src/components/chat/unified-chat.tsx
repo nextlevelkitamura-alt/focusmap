@@ -4,18 +4,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useChat } from "@ai-sdk/react"
 import {
   DefaultChatTransport,
+  isFileUIPart,
   isToolUIPart,
   getToolName,
   lastAssistantMessageIsCompleteWithApprovalResponses,
+  type FileUIPart,
   type UIMessage,
   type ToolUIPart,
   type DynamicToolUIPart,
 } from "ai"
 import {
+  BriefcaseBusiness,
   CalendarDays,
   CheckCircle2,
   FileText,
   History,
+  Image as ImageIcon,
   ListTodo,
   Loader2,
   Menu,
@@ -24,6 +28,7 @@ import {
   Mic,
   PanelLeftClose,
   PanelLeftOpen,
+  Paperclip,
   Plus,
   Search,
   Send,
@@ -32,6 +37,7 @@ import {
   Trash2,
   Workflow,
   Wrench,
+  X,
   XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -60,6 +66,8 @@ interface UnifiedChatProps {
 const PROMPTS = [
   "今日やることを整理して",
   "このプロジェクトの次の一手を考えて",
+  "求人更新して",
+  "この内容で求人立案して",
   "求人サイトを巡回して結果を記録して",
 ]
 
@@ -88,9 +96,31 @@ const AUTOMATION_SHORTCUTS = [
     prompt: "この内容をメモとして整理して、重要な判断と未決事項を分けて",
     icon: FileText,
   },
+  {
+    label: "求人更新",
+    description: "仕事リポを見て求人を最新化",
+    prompt: "仕事リポを確認して、求人更新に必要な差分を洗い出し、更新できるところまで実行して",
+    icon: BriefcaseBusiness,
+  },
+  {
+    label: "求人立案",
+    description: "条件から求人案を作成",
+    prompt: "この内容で求人立案して。仕事リポの求人作成ルールと既存求人を確認して、掲載できる案に整えて",
+    icon: FileText,
+  },
+  {
+    label: "仕事リポ巡回",
+    description: "定期実行の予約",
+    prompt: "仕事リポを毎朝9時に巡回して、求人更新・求人立案・採用対応が必要なものを報告する定期実行を設定して",
+    icon: Workflow,
+  },
 ]
 
 type ChatTab = "chat" | "automation"
+
+const MAX_CHAT_ATTACHMENTS = 4
+const MAX_IMAGE_SIDE = 2000
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 const TOOL_LABELS: Record<string, string> = {
   runTerminal: "ターミナル実行",
@@ -118,6 +148,52 @@ function formatDate(value: number) {
   return new Date(value).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ""))
+    reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error("画像の解析に失敗しました"))
+    image.src = src
+  })
+}
+
+async function imageFileToPart(file: File): Promise<FileUIPart> {
+  const rawDataUrl = await fileToDataUrl(file)
+  const image = await loadImage(rawDataUrl)
+  const maxSide = Math.max(image.naturalWidth, image.naturalHeight)
+  if (file.size <= MAX_IMAGE_BYTES && maxSide <= MAX_IMAGE_SIDE) {
+    return { type: "file", mediaType: file.type || "image/png", filename: file.name, url: rawDataUrl }
+  }
+
+  const scale = Math.min(1, MAX_IMAGE_SIDE / maxSide)
+  const width = Math.max(1, Math.round(image.naturalWidth * scale))
+  const height = Math.max(1, Math.round(image.naturalHeight * scale))
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return { type: "file", mediaType: file.type || "image/png", filename: file.name, url: rawDataUrl }
+  ctx.drawImage(image, 0, 0, width, height)
+  const mediaType = "image/jpeg"
+  return { type: "file", mediaType, filename: file.name, url: canvas.toDataURL(mediaType, 0.9) }
+}
+
+function formatBytes(bytes: number | undefined) {
+  if (!bytes || !Number.isFinite(bytes)) return ""
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
 export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: UnifiedChatProps) {
   void _projectId
   const { state: connectionState } = useAgentConnection()
@@ -125,7 +201,10 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   const [activeTab, setActiveTab] = useState<ChatTab>("chat")
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
+  const [attachments, setAttachments] = useState<FileUIPart[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const transport = useMemo(
@@ -178,11 +257,48 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
   }, [])
   const { isRecording, isTranscribing, analyserRef, startRecording, stopRecording } = useVoiceRecorder(handleTranscribed)
 
+  const addAttachmentFiles = useCallback(async (files: File[]) => {
+    const imageFiles = files.filter(file => file.type.startsWith("image/"))
+    if (imageFiles.length === 0) {
+      setAttachmentError("画像ファイルを選択してください")
+      return
+    }
+    const room = MAX_CHAT_ATTACHMENTS - attachments.length
+    if (room <= 0) {
+      setAttachmentError(`画像は${MAX_CHAT_ATTACHMENTS}枚まで添付できます`)
+      return
+    }
+    setAttachmentError(null)
+    try {
+      const parts = await Promise.all(imageFiles.slice(0, room).map(imageFileToPart))
+      setAttachments(prev => [...prev, ...parts].slice(0, MAX_CHAT_ATTACHMENTS))
+      if (imageFiles.length > room) {
+        setAttachmentError(`画像は${MAX_CHAT_ATTACHMENTS}枚まで添付できます`)
+      }
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : "画像の追加に失敗しました")
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }, [attachments.length])
+
+  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    void addAttachmentFiles(Array.from(event.target.files ?? []))
+  }, [addAttachmentFiles])
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index))
+    setAttachmentError(null)
+  }, [])
+
   const submit = (text: string) => {
     const trimmed = text.trim()
-    if (!trimmed || isBusy) return
-    void sendMessage({ text: trimmed })
+    if ((!trimmed && attachments.length === 0) || isBusy) return
+    const files = attachments
+    void sendMessage(trimmed ? { text: trimmed, files } : { files })
     setInput("")
+    setAttachments([])
+    setAttachmentError(null)
     setActiveTab("chat")
   }
 
@@ -196,6 +312,8 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     sessions.createSession()
     setMessages([])
     setInput("")
+    setAttachments([])
+    setAttachmentError(null)
     setMobileHistoryOpen(false)
     setTimeout(() => inputRef.current?.focus(), 0)
   }
@@ -220,7 +338,15 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
     submit(input)
   }
 
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageFiles = Array.from(event.clipboardData.files ?? []).filter(file => file.type.startsWith("image/"))
+    if (imageFiles.length === 0) return
+    event.preventDefault()
+    void addAttachmentFiles(imageFiles)
+  }
+
   const sendLabel = connectionState === "offline" ? "予約して送信" : "送信"
+  const canSend = input.trim().length > 0 || attachments.length > 0
 
   return (
     <div className="flex h-full min-h-0 bg-background text-foreground">
@@ -288,8 +414,48 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 </button>
               </div>
             )}
+            {attachments.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto rounded-md border bg-muted/20 p-2">
+                {attachments.map((attachment, index) => (
+                  <div key={`${attachment.filename ?? "image"}-${index}`} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md border bg-background">
+                    <img src={attachment.url} alt={attachment.filename ?? "添付画像"} className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm"
+                      onClick={() => removeAttachment(index)}
+                      aria-label="添付画像を削除"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachmentError && (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {attachmentError}
+              </p>
+            )}
             <div className="flex items-end gap-2">
               <AutomationPromptMenu onSelect={insertAutomationPrompt} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-11 w-11 shrink-0"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isBusy}
+                title="画像を添付"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
               <Button
                 variant={isRecording ? "destructive" : "outline"}
                 size="icon"
@@ -305,6 +471,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                 value={input}
                 onChange={event => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={activeTab === "automation" ? "例: 毎朝予定を確認して、調整案を出して" : "例: 今日やることを整理して"}
                 rows={1}
                 className="max-h-32 min-h-11 flex-1 resize-none rounded-lg border bg-background px-3 py-3 text-sm outline-none focus:ring-1 focus:ring-primary"
@@ -314,7 +481,7 @@ export function UnifiedChat({ spaceId = null, projectId: _projectId = null }: Un
                   <Square className="h-3.5 w-3.5" />
                 </Button>
               ) : (
-                <Button size="icon" className="h-11 w-11 shrink-0" disabled={!input.trim()} onClick={() => submit(input)} title={sendLabel}>
+                <Button size="icon" className="h-11 w-11 shrink-0" disabled={!canSend} onClick={() => submit(input)} title={sendLabel}>
                   <Send className="h-4 w-4" />
                 </Button>
               )}
@@ -575,11 +742,85 @@ function MessageBubble({ message, isActive = false, onApproval }: { message: UIM
           if (isToolUIPart(part)) {
             return <ToolPart key={index} part={part} name={getToolName(part)} onApproval={onApproval} />
           }
+          if (isFileUIPart(part)) {
+            return <FilePart key={index} part={part} isUser={isUser} />
+          }
           return null
         })}
       </div>
     </div>
   )
+}
+
+function FilePart({ part, isUser }: { part: FileUIPart; isUser: boolean }) {
+  const isImage = part.mediaType.toLowerCase().startsWith("image/")
+  if (isImage) {
+    return (
+      <a
+        href={part.url}
+        target="_blank"
+        rel="noreferrer"
+        className={cn(
+          "block overflow-hidden rounded-lg border bg-background",
+          isUser ? "max-w-[240px]" : "max-w-[360px]",
+        )}
+      >
+        <img src={part.url} alt={part.filename ?? "添付画像"} className="max-h-[360px] w-full object-contain" />
+        {part.filename && (
+          <span className="block truncate border-t px-2 py-1 text-[11px] text-muted-foreground">{part.filename}</span>
+        )}
+      </a>
+    )
+  }
+  return (
+    <div className={cn("inline-flex max-w-full items-center gap-2 rounded-md border px-3 py-2 text-xs", isUser ? "bg-primary text-primary-foreground" : "bg-muted/70")}>
+      <FileText className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{part.filename ?? part.mediaType}</span>
+    </div>
+  )
+}
+
+type ToolOutput = {
+  success?: boolean
+  message?: string
+  error?: string
+  result?: unknown
+  offline?: boolean
+}
+
+type ToolImagePreview = {
+  url: string
+  label: string
+  bytes?: number
+}
+
+function collectToolImages(value: unknown, label = "画像", seen = new Set<string>(), depth = 0): ToolImagePreview[] {
+  if (!value || depth > 5) return []
+  if (typeof value === "string") {
+    if (value.startsWith("data:image/") && !seen.has(value)) {
+      seen.add(value)
+      return [{ url: value, label }]
+    }
+    return []
+  }
+  if (typeof value !== "object") return []
+  const obj = value as Record<string, unknown>
+  const images: ToolImagePreview[] = []
+  const dataUrl = obj.data_url
+  if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/") && !seen.has(dataUrl)) {
+    seen.add(dataUrl)
+    images.push({
+      url: dataUrl,
+      label,
+      bytes: typeof obj.bytes === "number" ? obj.bytes : undefined,
+    })
+  }
+  for (const [key, child] of Object.entries(obj)) {
+    if (images.length >= 6) break
+    if (key === "data_url") continue
+    images.push(...collectToolImages(child, key === "result" ? label : key, seen, depth + 1))
+  }
+  return images
 }
 
 function ToolPart({
@@ -598,9 +839,10 @@ function ToolPart({
   const awaitingApproval = state === "approval-requested"
   const denied = state === "output-denied"
 
-  const output = done ? (part as { output?: unknown }).output as { success?: boolean; message?: string; error?: string } | undefined : undefined
-  const offline = output?.success === false && (output as { offline?: boolean })?.offline === true
+  const output = done ? (part as { output?: unknown }).output as ToolOutput | undefined : undefined
+  const offline = output?.success === false && output.offline === true
   const ok = done && output?.success !== false && !offline
+  const toolImages = done ? collectToolImages(output?.result ?? output, toolLabel(name)) : []
 
   const approvalId = (awaitingApproval || state === "approval-responded")
     ? (part as { approval?: { id: string } }).approval?.id
@@ -654,37 +896,55 @@ function ToolPart({
   }
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
-        running && "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400",
-        failed && "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
-        denied && "border-border bg-muted/40 text-muted-foreground",
-        offline && "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-        ok && "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-        !running && !failed && !done && !denied && "border-border bg-muted/40 text-muted-foreground",
-      )}
-    >
-      {running ? (
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-      ) : failed ? (
-        <XCircle className="h-3.5 w-3.5 shrink-0" />
-      ) : denied ? (
-        <XCircle className="h-3.5 w-3.5 shrink-0" />
-      ) : offline ? (
-        <Terminal className="h-3.5 w-3.5 shrink-0" />
-      ) : ok ? (
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-      ) : (
-        <Wrench className="h-3.5 w-3.5 shrink-0" />
-      )}
-      <span className="min-w-0 truncate">
-        {toolLabel(name)}
-        {running && "…"}
-        {denied && " — キャンセルしました"}
-        {done && output?.message ? ` — ${output.message}` : ""}
-        {failed && (part as { errorText?: string }).errorText ? ` — ${(part as { errorText?: string }).errorText}` : ""}
-      </span>
+    <div className="space-y-2">
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
+          running && "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400",
+          failed && "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+          denied && "border-border bg-muted/40 text-muted-foreground",
+          offline && "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+          ok && "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+          !running && !failed && !done && !denied && "border-border bg-muted/40 text-muted-foreground",
+        )}
+      >
+        {running ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+        ) : failed ? (
+          <XCircle className="h-3.5 w-3.5 shrink-0" />
+        ) : denied ? (
+          <XCircle className="h-3.5 w-3.5 shrink-0" />
+        ) : offline ? (
+          <Terminal className="h-3.5 w-3.5 shrink-0" />
+        ) : ok ? (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <Wrench className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <span className="min-w-0 truncate">
+          {toolLabel(name)}
+          {running && "…"}
+          {denied && " — キャンセルしました"}
+          {done && output?.message ? ` — ${output.message}` : ""}
+          {failed && (part as { errorText?: string }).errorText ? ` — ${(part as { errorText?: string }).errorText}` : ""}
+        </span>
+      </div>
+      {toolImages.map((image, index) => (
+        <a
+          key={`${image.url.slice(0, 48)}-${index}`}
+          href={image.url}
+          target="_blank"
+          rel="noreferrer"
+          className="block overflow-hidden rounded-md border bg-background"
+        >
+          <div className="flex items-center gap-1.5 border-b px-2 py-1.5 text-[11px] text-muted-foreground">
+            <ImageIcon className="h-3.5 w-3.5" />
+            <span className="truncate">{image.label}</span>
+            {image.bytes ? <span className="ml-auto shrink-0">{formatBytes(image.bytes)}</span> : null}
+          </div>
+          <img src={image.url} alt={image.label} className="max-h-[420px] w-full object-contain" />
+        </a>
+      ))}
     </div>
   )
 }
