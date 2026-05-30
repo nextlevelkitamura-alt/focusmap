@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { type ReactNode, useEffect, useMemo, useState } from "react"
 import { Bot, ExternalLink, Loader2, RefreshCw, Send } from "lucide-react"
 import {
   Dialog,
@@ -14,7 +14,7 @@ import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import type { Project, Task } from "@/types/database"
 
-const CODEX_DISPLAY_LOG_CHARS = 20_000
+const CODEX_DISPLAY_LOG_CHARS = 80_000
 
 type LinkedMemoDialogTarget = {
   taskId: string
@@ -98,11 +98,240 @@ function getCodexCompletionNotice(value: string): string {
 
 function buildCodexDisplayLog(liveLog: string, message: string, preview: string): string {
   const completionNotice = getCodexCompletionNotice(message)
-  const base = liveLog || message || preview
+  const base = [liveLog, message, preview].filter(Boolean).join("\n\n")
   return sanitizeCodexDisplayLog([
     base,
     completionNotice && !base.includes(completionNotice) ? `[Codex] ${completionNotice}` : null,
   ].filter(Boolean).join("\n\n")).slice(-CODEX_DISPLAY_LOG_CHARS)
+}
+
+function isSafeMediaSrc(src: string) {
+  return /^(https?:\/\/|\/|data:image\/)/i.test(src)
+}
+
+function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const pattern = /(!?\[[^\]]*]\([^)]+\)|`[^`]+`|\*\*[^*]+?\*\*)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index))
+    }
+
+    const token = match[0]
+    const key = `${keyPrefix}-${match.index}`
+    const markdownLink = token.match(/^(!?)\[([^\]]*)]\(([^)]+)\)$/)
+    if (markdownLink) {
+      const isImage = markdownLink[1] === "!"
+      const label = markdownLink[2]
+      const href = markdownLink[3].trim()
+      if (isImage) {
+        nodes.push(isSafeMediaSrc(href) ? (
+          // eslint-disable-next-line @next/next/no-img-element -- Codex output can reference arbitrary runtime image URLs.
+          <img
+            key={key}
+            src={href}
+            alt={label}
+            className="my-3 max-h-96 max-w-full rounded-md border object-contain"
+            loading="lazy"
+          />
+        ) : label)
+      } else {
+        nodes.push(
+          <a
+            key={key}
+            href={href}
+            className="text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
+            rel="noreferrer"
+            target={href.startsWith("#") ? undefined : "_blank"}
+          >
+            {label || href}
+          </a>,
+        )
+      }
+    } else if (token.startsWith("`")) {
+      nodes.push(
+        <code key={key} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.92em]">
+          {token.slice(1, -1)}
+        </code>,
+      )
+    } else if (token.startsWith("**")) {
+      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>)
+    } else {
+      nodes.push(token)
+    }
+
+    lastIndex = match.index + token.length
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex))
+  }
+  return nodes
+}
+
+function renderInlineLines(lines: string[], keyPrefix: string) {
+  return lines.flatMap((line, index) => [
+    ...renderInlineMarkdown(line, `${keyPrefix}-${index}`),
+    index < lines.length - 1 ? <br key={`${keyPrefix}-br-${index}`} /> : null,
+  ])
+}
+
+function isTableSeparator(line: string) {
+  const trimmed = line.trim()
+  if (!trimmed.includes("|")) return false
+  return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed)
+}
+
+function isTableRow(line: string) {
+  return line.trim().includes("|") && !/^```/.test(line.trim())
+}
+
+function splitTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map(cell => cell.trim())
+}
+
+function MarkdownContent({ text }: { text: string }) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n")
+  const blocks: ReactNode[] = []
+  let index = 0
+
+  const pushParagraph = (paragraphLines: string[], key: string) => {
+    blocks.push(
+      <p key={key} className="my-3 whitespace-normal">
+        {renderInlineLines(paragraphLines, key)}
+      </p>,
+    )
+  }
+
+  while (index < lines.length) {
+    const line = lines[index]
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      index += 1
+      continue
+    }
+
+    const fence = trimmed.match(/^```(\w+)?/)
+    if (fence) {
+      const start = index
+      const codeLines: string[] = []
+      index += 1
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+      if (index < lines.length) index += 1
+      blocks.push(
+        <pre key={`code-${start}`} className="my-3 overflow-x-auto rounded-md border bg-muted/30 px-3 py-2 text-xs leading-5">
+          <code>{codeLines.join("\n")}</code>
+        </pre>,
+      )
+      continue
+    }
+
+    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/)
+    if (heading) {
+      const level = heading[1].length
+      const className = level <= 2
+        ? "my-3 text-base font-semibold"
+        : "my-2 text-sm font-semibold"
+      blocks.push(
+        <div key={`heading-${index}`} className={className}>
+          {renderInlineMarkdown(heading[2], `heading-${index}`)}
+        </div>,
+      )
+      index += 1
+      continue
+    }
+
+    if (isTableRow(line) && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
+      const start = index
+      const headers = splitTableRow(line)
+      index += 2
+      const rows: string[][] = []
+      while (index < lines.length && lines[index].trim() && isTableRow(lines[index])) {
+        rows.push(splitTableRow(lines[index]))
+        index += 1
+      }
+      blocks.push(
+        <div key={`table-${start}`} className="my-4 overflow-x-auto rounded-md border">
+          <table className="w-full min-w-max border-collapse text-left text-sm">
+            <thead className="bg-muted/40">
+              <tr>
+                {headers.map((header, cellIndex) => (
+                  <th key={`${start}-h-${cellIndex}`} className="border-b px-3 py-2 font-semibold">
+                    {renderInlineMarkdown(header, `table-${start}-h-${cellIndex}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`${start}-r-${rowIndex}`} className="border-b last:border-b-0">
+                  {headers.map((_, cellIndex) => (
+                    <td key={`${start}-r-${rowIndex}-${cellIndex}`} className="align-top px-3 py-2">
+                      {renderInlineMarkdown(row[cellIndex] ?? "", `table-${start}-r-${rowIndex}-${cellIndex}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      )
+      continue
+    }
+
+    const listMatch = trimmed.match(/^(([-*])|(\d+[.)]))\s+(.+)$/)
+    if (listMatch) {
+      const start = index
+      const ordered = !!listMatch[3]
+      const items: string[] = []
+      while (index < lines.length) {
+        const item = lines[index].trim().match(/^(([-*])|(\d+[.)]))\s+(.+)$/)
+        if (!item || (!!item[3]) !== ordered) break
+        items.push(item[4])
+        index += 1
+      }
+      const ListTag = ordered ? "ol" : "ul"
+      blocks.push(
+        <ListTag key={`list-${start}`} className={ordered ? "my-3 list-decimal space-y-1 pl-5" : "my-3 list-disc space-y-1 pl-5"}>
+          {items.map((item, itemIndex) => (
+            <li key={`${start}-li-${itemIndex}`}>
+              {renderInlineMarkdown(item, `list-${start}-${itemIndex}`)}
+            </li>
+          ))}
+        </ListTag>,
+      )
+      continue
+    }
+
+    const paragraphStart = index
+    const paragraphLines: string[] = []
+    while (index < lines.length) {
+      const current = lines[index]
+      const currentTrimmed = current.trim()
+      if (!currentTrimmed) break
+      if (currentTrimmed.startsWith("```")) break
+      if (/^(#{1,4})\s+/.test(currentTrimmed)) break
+      if (isTableRow(current) && index + 1 < lines.length && isTableSeparator(lines[index + 1])) break
+      if (/^(([-*])|(\d+[.)]))\s+/.test(currentTrimmed) && paragraphLines.length > 0) break
+      paragraphLines.push(current)
+      index += 1
+    }
+    pushParagraph(paragraphLines, `paragraph-${paragraphStart}`)
+  }
+
+  return <div className="space-y-2">{blocks}</div>
 }
 
 function getCodexConversation(value: string, prompt: string): CodexConversation {
@@ -127,20 +356,9 @@ function getCodexConversation(value: string, prompt: string): CodexConversation 
   }
 
   const flushAssistant = () => {
-    const requestStart = assistantBlocks.findIndex(block =>
-      /ください|教えて|選んで|回答して|入力して|\?|？/.test(block) ||
-      /^\s*\d+[.．]/.test(block)
-    )
-    const logBlocks = requestStart >= 0 ? assistantBlocks.slice(0, requestStart) : []
-    const requestBlocks = requestStart >= 0 ? assistantBlocks.slice(requestStart) : assistantBlocks
-
-    for (const block of logBlocks) {
-      pushProcessLog(block)
-    }
-
-    const requestText = requestBlocks.join("\n\n").trim()
+    const text = assistantBlocks.join("\n\n").trim()
     assistantBlocks.length = 0
-    if (requestText) pushUnique({ kind: "request", text: requestText })
+    if (text) pushUnique({ kind: "request", text })
   }
 
   for (const rawBlock of value.split(/\n{2,}/)) {
@@ -163,6 +381,7 @@ function getCodexConversation(value: string, prompt: string): CodexConversation 
 
     const process = block.match(/^\[(command:[^\]]+|approval-requested|approval-resolved)\]\s*([\s\S]+)/i)
     if (process?.[1]) {
+      flushAssistant()
       const tag = process[1].toLowerCase()
       const body = process[2]?.trim() ?? ""
       if (tag === "approval-requested") {
@@ -472,7 +691,9 @@ export function MindmapLinkedMemosDialog({
                   <div className="flex justify-end">
                     <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
                       <div className="mb-1 text-xs font-medium text-muted-foreground">送信済み</div>
-                      <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words">{sentPrompt}</div>
+                      <div className="max-h-56 overflow-auto break-words">
+                        <MarkdownContent text={sentPrompt} />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -508,14 +729,18 @@ export function MindmapLinkedMemosDialog({
                       <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-end">
                         <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
                           <div className="mb-1 text-xs font-medium text-muted-foreground">Codex側で送信</div>
-                          <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words">{entry.text}</div>
+                          <div className="max-h-56 overflow-auto break-words">
+                            <MarkdownContent text={entry.text} />
+                          </div>
                         </div>
                       </div>
                     ) : (
                       <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-start">
-                        <div className="max-w-[78%] rounded-2xl border border-amber-500/25 bg-background px-4 py-3 text-sm leading-7 shadow-sm">
+                        <div className="max-w-[92%] rounded-2xl border border-amber-500/25 bg-background px-4 py-3 text-sm leading-7 shadow-sm">
                           <div className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">Codex出力（同期）</div>
-                          <div className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words">{entry.text}</div>
+                          <div className="break-words">
+                            <MarkdownContent text={entry.text} />
+                          </div>
                         </div>
                       </div>
                     )

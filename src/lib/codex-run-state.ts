@@ -42,7 +42,7 @@ export type CodexTaskUiState = {
   label: string
 }
 
-const MAX_LIVE_LOG_CHARS = 20_000
+const MAX_LIVE_LOG_CHARS = 80_000
 
 export function shouldCompleteSourceTaskForCodexReview(
   reason: CodexReviewReason,
