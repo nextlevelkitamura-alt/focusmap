@@ -151,8 +151,33 @@ related: [focusmap-lite-mac-agent.md, unified-agent-chat.md]
 - 全文ミラー（thread/turns/list）はアプリと二重管理になる。整合性（アプリ側で操作されたら？）の同期方針は別途。
 - per-thread sandbox が gws/Playwright（ネット/プロセス）を阻害しないか要検証（Phase 0）。
 
+## ディープリサーチ統合（2026-05-30）
+
+OpenAI公式doc・GitHub issue・コミュニティを横断調査し、敵対的検証（25主張中14採用/11却下）した結果。
+
+**(1) 我々の方針と一致する点（採用）:**
+- スレッド一覧の正本は `state_5.sqlite`（threadsテーブル）。`session_index.jsonl` は0.13xでは陳腐化＝索引いじりは当てにならない。我々の実機所見と一致。
+  出典: [#24730](https://github.com/openai/codex/issues/24730), [#19517](https://github.com/openai/codex/issues/19517), [#21196](https://github.com/openai/codex/issues/21196), [app-server doc](https://developers.openai.com/codex/app-server)
+- `codex exec`（source=Exec）はアプリ一覧から **by design で除外**（OpenAI collaborator明言, [#14544](https://github.com/openai/codex/issues/14544)）。
+  → **execを使わず app-server 経由にする**のが公式にも推奨される唯一筋。リサーチの推奨[A]＝我々が実証した方式と同一。
+- 「app-serverのthreads/listはexecをsourceKindsで出せる」仮説は**反証（0-3）**。execを出す公式手段は無い。我々がexecを捨てた判断は正しい。
+
+**(2) 新たに判明した重大な但し書き（モバイル）:**
+- **モバイルのリモート会話一覧は `state_5.sqlite` に在るだけでは出ない。** バックエンド(WHAM)経由で、現状 **Desktopアプリが作ったスレッドしか確実に出ない**。
+  CLI起動/モバイル起動/SSHリモート由来は**モバイルに出ず再開できない**（OPEN bug）。
+  出典: [#23351](https://github.com/openai/codex/issues/23351)(2026-05-18 OPEN), [#24730](https://github.com/openai/codex/issues/24730)
+- 含意: **app-server経由で注入した我々のthreadも、純正Codexアプリの「スマホ」には出ない可能性が高い**（PCデスクトップアプリには出る＝実証済み）。
+
+**(3) この設計への影響＝小さい（重要）:**
+- 本設計は **「FocusMap全ミラー＋往復UI自前」** を採用済み。**スマホ操作はFocusMapモバイルWebで行う**ため、純正アプリのモバイル可視性に依存しない。
+- → リサーチの否定的所見（純正スマホに出ない）は **ユーザーのゴールをブロックしない**。純正アプリ/スマホ表示は「出れば嬉しいボーナス」に格下げ。
+- ⚠️ ただし「FocusMapからではなく純正Codexアプリのスマホで直接操作したい」場合は **現状不可**（公式の未解決バグ）。ここは曖昧にしない。
+
+**(4) バージョン安定性リスク:**
+- app-server / remote-control / TUI移行は **experimental・流動的**。collaboratorは「TUIをapp-server上へ移行中」「execをthreads/listに出すかは未解決の論点」と発言＝将来仕様変更あり。バージョン固定＋回帰テスト必須。
+- `state_5.sqlite` の手動編集（sourceを偽装等）は **DB破損・ホストoffline化の実例あり＝禁止**（[#24730](https://github.com/openai/codex/issues/24730), 推定confidence medium）。
+
 ## メモ
 
-- 並行で `/deep-research`（execセッションをアプリに出す方法）実行中。完了したらバージョン安定性・公式見解の
-  注意点を本書「リスク」へ追記する。ただし本方式（app-server経由）は実機で実証済みのため設計の前提は確定。
-- スパイク資産: `/tmp/codex-relay-test/`（inject.mjs / proto/ TS型 / 各turn.jsonl）。本実装時に `scripts/` へ移植。
+- スパイク資産: `/tmp/codex-relay-test/`（inject.mjs / spike.mjs / netcheck.mjs / archive.mjs / proto/ TS型）。本実装時に `scripts/` へ移植。
+- 全文リサーチ出力: セッションの workflow task `wp4hnpq0p` 結果（22ソース/102主張）。
