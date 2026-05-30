@@ -1000,12 +1000,13 @@ export function WishlistCardDetail({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1120px,calc(100vw-32px))] sm:px-6">
+      <SheetContent side="right" className="w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1280px,calc(100vw-32px))] sm:px-6">
         <SheetHeader className="px-0 pb-2 pt-4">
           <SheetTitle className="text-left">メモを編集</SheetTitle>
         </SheetHeader>
 
-        <div className="space-y-4 pb-6">
+        <div className="grid gap-4 pb-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)] xl:items-start">
+          <div className="min-w-0 space-y-4">
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2">
             <label className="min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
@@ -1204,7 +1205,9 @@ export function WishlistCardDetail({
 
           {/* 過去の対話履歴（このメモの分） */}
           <MemoChatHistory memoId={item.id} />
+          </div>
 
+          <div className="min-w-0 space-y-4 xl:sticky xl:top-0">
           <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
               <Label className="flex items-center gap-1.5">
@@ -1603,6 +1606,7 @@ export function WishlistCardDetail({
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
+          </div>
           </div>
         </div>
       </SheetContent>

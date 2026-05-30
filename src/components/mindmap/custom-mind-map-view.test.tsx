@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { CustomMindMapView } from "./custom-mind-map-view"
 import type { Project, Task } from "@/types/database"
@@ -87,6 +87,7 @@ const installOpenKeyboardViewport = () => {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight })
   Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined })
 })
@@ -203,6 +204,80 @@ describe("CustomMindMapView keyboard operations", () => {
     })
     const committedWidth = onResizeNode.mock.calls.at(-1)?.[1] as number
     expect(committedWidth).toBeGreaterThan(initialWidth)
+  })
+
+  test("checks a task immediately and hides it from the map after 300ms", async () => {
+    vi.useFakeTimers()
+    const onUpdateStatus = vi.fn(() => Promise.resolve())
+
+    renderMap({ onUpdateStatus })
+
+    const node = getNode("Root task", "root-1")
+    const checkbox = within(node).getByRole("checkbox", { name: "完了にする" })
+
+    await act(async () => {
+      fireEvent.click(checkbox)
+    })
+
+    expect(onUpdateStatus).toHaveBeenCalledWith("root-1", "done")
+    expect(within(node).getByRole("checkbox")).toHaveAttribute("aria-checked", "true")
+
+    await act(async () => {
+      vi.advanceTimersByTime(299)
+    })
+    expect(screen.getByText("Root task")).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(document.querySelector('[data-id="root-1"]')).not.toBeInTheDocument()
+    expect(screen.getByRole("dialog", { name: "完了の取り消し" })).toBeInTheDocument()
+  })
+
+  test("can restore a hidden completed task from the undo dialog", async () => {
+    vi.useFakeTimers()
+    const onUpdateStatus = vi.fn(() => Promise.resolve())
+
+    renderMap({ onUpdateStatus })
+
+    const node = getNode("Root task", "root-1")
+    await act(async () => {
+      fireEvent.click(within(node).getByRole("checkbox", { name: "完了にする" }))
+      vi.advanceTimersByTime(300)
+    })
+
+    expect(document.querySelector('[data-id="root-1"]')).not.toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "戻す" }))
+      await Promise.resolve()
+    })
+
+    expect(onUpdateStatus).toHaveBeenNthCalledWith(1, "root-1", "done")
+    expect(onUpdateStatus).toHaveBeenNthCalledWith(2, "root-1", "todo")
+    expect(document.querySelector('[data-id="root-1"]')).toBeInTheDocument()
+    expect(screen.queryByRole("dialog", { name: "完了の取り消し" })).not.toBeInTheDocument()
+  })
+
+  test("removes the undo dialog after five seconds", async () => {
+    vi.useFakeTimers()
+    const onUpdateStatus = vi.fn(() => Promise.resolve())
+
+    renderMap({ onUpdateStatus })
+
+    const node = getNode("Root task", "root-1")
+    await act(async () => {
+      fireEvent.click(within(node).getByRole("checkbox", { name: "完了にする" }))
+      vi.advanceTimersByTime(300)
+    })
+
+    expect(screen.getByRole("dialog", { name: "完了の取り消し" })).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000)
+    })
+
+    expect(screen.queryByRole("dialog", { name: "完了の取り消し" })).not.toBeInTheDocument()
   })
 
   test("shows the mobile keyboard accessory while editing and saves before adding a child", async () => {

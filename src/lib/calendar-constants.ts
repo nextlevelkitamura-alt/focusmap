@@ -38,6 +38,12 @@ export const TODAY_DURATION_DEFAULT = 30 as const
 /** Custom DataTransfer MIME type for memo → calendar D&D */
 export const MEMO_DRAG_MIME = "application/x-focusmap-memo" as const
 
+/** Custom DataTransfer MIME type for scheduled memo → memo board D&D */
+export const SCHEDULED_MEMO_DRAG_MIME = "application/x-focusmap-scheduled-memo" as const
+
+/** Custom event name for sharing scheduled memo ids with calendar panes */
+export const SCHEDULED_MEMO_INDEX_EVENT = "focusmap:scheduled-memo-index" as const
+
 /** Custom event name for refetching wishlist items across views */
 export const WISHLIST_REFRESH_EVENT = "wishlist:refresh" as const
 

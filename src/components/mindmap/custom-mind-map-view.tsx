@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, StickyNote } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -63,6 +63,8 @@ const WHEEL_PAN_SENSITIVITY = 1;
 const WHEEL_ZOOM_SENSITIVITY = 0.0035;
 const TOUCH_PINCH_SENSITIVITY = 1;
 const DESKTOP_GESTURE_SENSITIVITY = 1.35;
+const DONE_NODE_HIDE_DELAY_MS = 300;
+const DONE_UNDO_WINDOW_MS = 5000;
 
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
@@ -118,6 +120,16 @@ type PendingLongPressDragState = {
     node: MindMapModelNode;
     startClientX: number;
     startClientY: number;
+};
+
+type DoneHideTimerState = {
+    timerId: number;
+    showUndo: boolean;
+};
+
+type UndoableDoneNode = {
+    taskId: string;
+    title: string;
 };
 
 type CustomTaskEditController = {
@@ -721,6 +733,9 @@ export function CustomMindMapView({
     const [panState, setPanState] = useState<PanState | null>(null);
     const [spacePressed, setSpacePressed] = useState(false);
     const [nodeWidthOverrides, setNodeWidthOverrides] = useState<Record<string, number>>({});
+    const [optimisticStatusByTaskId, setOptimisticStatusByTaskId] = useState<Record<string, string>>({});
+    const [hiddenDoneTaskIds, setHiddenDoneTaskIds] = useState<Set<string>>(new Set());
+    const [undoableDoneNodes, setUndoableDoneNodes] = useState<UndoableDoneNode[]>([]);
     const [activeEditingTaskId, setActiveEditingTaskId] = useState<string | null>(null);
     const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight();
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -734,6 +749,8 @@ export function CustomMindMapView({
     const panMovedRef = useRef(false);
     const pendingResizeSavesRef = useRef(new Map<string, number>());
     const pendingLongPressDragRef = useRef<PendingLongPressDragState | null>(null);
+    const doneHideTimersRef = useRef(new Map<string, DoneHideTimerState>());
+    const undoToastTimersRef = useRef(new Map<string, number>());
     const suppressPaneClickUntilRef = useRef(0);
     const savedNodeWidthById = useMemo(() => {
         const byId = new Map<string, number | null>();
@@ -742,19 +759,45 @@ export function CustomMindMapView({
         }
         return byId;
     }, [groups, tasks]);
+    const allTaskStatusById = useMemo(() => {
+        const byId = new Map<string, string>();
+        for (const task of [...groups, ...tasks]) {
+            byId.set(task.id, task.status ?? "todo");
+        }
+        return byId;
+    }, [groups, tasks]);
+    const allTaskTitleById = useMemo(() => {
+        const byId = new Map<string, string>();
+        for (const task of [...groups, ...tasks]) {
+            byId.set(task.id, task.title ?? "Task");
+        }
+        return byId;
+    }, [groups, tasks]);
+    const activeHiddenDoneTaskIds = useMemo(() => {
+        const next = new Set<string>();
+        for (const taskId of hiddenDoneTaskIds) {
+            const effectiveStatus = optimisticStatusByTaskId[taskId] ?? allTaskStatusById.get(taskId);
+            if (effectiveStatus === "done") next.add(taskId);
+        }
+        return next;
+    }, [allTaskStatusById, hiddenDoneTaskIds, optimisticStatusByTaskId]);
     const groupsForModel = useMemo(
         () => groups.map(task => {
             const width = nodeWidthOverrides[task.id];
-            return width == null ? task : { ...task, node_width: width };
-        }),
-        [groups, nodeWidthOverrides]
+            const status = optimisticStatusByTaskId[task.id];
+            if (width == null && status == null) return task;
+            return { ...task, node_width: width ?? task.node_width, status: status ?? task.status };
+        }).filter(task => !activeHiddenDoneTaskIds.has(task.id)),
+        [activeHiddenDoneTaskIds, groups, nodeWidthOverrides, optimisticStatusByTaskId]
     );
     const tasksForModel = useMemo(
         () => tasks.map(task => {
             const width = nodeWidthOverrides[task.id];
-            return width == null ? task : { ...task, node_width: width };
-        }),
-        [tasks, nodeWidthOverrides]
+            const status = optimisticStatusByTaskId[task.id];
+            if (width == null && status == null) return task;
+            return { ...task, node_width: width ?? task.node_width, status: status ?? task.status };
+        }).filter(task => !activeHiddenDoneTaskIds.has(task.id)),
+        [activeHiddenDoneTaskIds, nodeWidthOverrides, optimisticStatusByTaskId, tasks]
     );
     const model = useMemo(
         () => buildMindMapModel({ project, groups: groupsForModel, tasks: tasksForModel, collapsedTaskIds, isMobile }),
@@ -1308,12 +1351,147 @@ export function CustomMindMapView({
     }, [clearPendingLongPressDrag]);
 
     useEffect(() => {
+        const doneHideTimers = doneHideTimersRef.current;
+        const undoToastTimers = undoToastTimersRef.current;
         return () => {
             if (viewportRafRef.current !== null) {
                 window.cancelAnimationFrame(viewportRafRef.current);
             }
+            for (const { timerId } of doneHideTimers.values()) {
+                window.clearTimeout(timerId);
+            }
+            doneHideTimers.clear();
+            for (const timerId of undoToastTimers.values()) {
+                window.clearTimeout(timerId);
+            }
+            undoToastTimers.clear();
         };
     }, []);
+
+    const clearDoneHideTimer = useCallback((taskId: string) => {
+        const timer = doneHideTimersRef.current.get(taskId);
+        if (!timer) return;
+        window.clearTimeout(timer.timerId);
+        doneHideTimersRef.current.delete(taskId);
+    }, []);
+
+    const clearUndoToastTimer = useCallback((taskId: string) => {
+        const timerId = undoToastTimersRef.current.get(taskId);
+        if (timerId == null) return;
+        window.clearTimeout(timerId);
+        undoToastTimersRef.current.delete(taskId);
+    }, []);
+
+    const dismissDoneUndo = useCallback((taskId: string) => {
+        clearUndoToastTimer(taskId);
+        setUndoableDoneNodes(prev => prev.filter(item => item.taskId !== taskId));
+    }, [clearUndoToastTimer]);
+
+    const showDoneUndo = useCallback((taskId: string) => {
+        clearUndoToastTimer(taskId);
+        const title = allTaskTitleById.get(taskId) ?? "Task";
+        setUndoableDoneNodes(prev => [
+            ...prev.filter(item => item.taskId !== taskId),
+            { taskId, title },
+        ]);
+        const timerId = window.setTimeout(() => {
+            undoToastTimersRef.current.delete(taskId);
+            setUndoableDoneNodes(prev => prev.filter(item => item.taskId !== taskId));
+        }, DONE_UNDO_WINDOW_MS);
+        undoToastTimersRef.current.set(taskId, timerId);
+    }, [allTaskTitleById, clearUndoToastTimer]);
+
+    const scheduleDoneNodeHide = useCallback((taskId: string, options: { showUndo?: boolean } = {}) => {
+        clearDoneHideTimer(taskId);
+        const timerId = window.setTimeout(() => {
+            doneHideTimersRef.current.delete(taskId);
+            setHiddenDoneTaskIds(prev => {
+                if (prev.has(taskId)) return prev;
+                const next = new Set(prev);
+                next.add(taskId);
+                return next;
+            });
+            if (options.showUndo) {
+                showDoneUndo(taskId);
+            }
+        }, DONE_NODE_HIDE_DELAY_MS);
+        doneHideTimersRef.current.set(taskId, { timerId, showUndo: !!options.showUndo });
+    }, [clearDoneHideTimer, showDoneUndo]);
+
+    useEffect(() => {
+        for (const [taskId, status] of allTaskStatusById) {
+            if (status === "done" && !activeHiddenDoneTaskIds.has(taskId) && !doneHideTimersRef.current.has(taskId)) {
+                scheduleDoneNodeHide(taskId);
+            }
+        }
+    }, [activeHiddenDoneTaskIds, allTaskStatusById, scheduleDoneNodeHide]);
+
+    useEffect(() => {
+        if (activeHiddenDoneTaskIds.size === 0 || selectedNodeIds.size === 0) return;
+        const visibleNodeIds = new Set(positionedNodes.map(node => node.id));
+        const nextSelectedIds = Array.from(selectedNodeIds).filter(nodeId => visibleNodeIds.has(nodeId));
+        if (nextSelectedIds.length === selectedNodeIds.size) return;
+        const nextPrimaryId = selectedNodeId && nextSelectedIds.includes(selectedNodeId)
+            ? selectedNodeId
+            : nextSelectedIds[0] ?? null;
+        onSelectNodes(nextSelectedIds, nextPrimaryId);
+    }, [activeHiddenDoneTaskIds, onSelectNodes, positionedNodes, selectedNodeId, selectedNodeIds]);
+
+    const handleUpdateNodeStatus = useCallback(async (taskId: string, status: string) => {
+        clearDoneHideTimer(taskId);
+        setOptimisticStatusByTaskId(prev => ({ ...prev, [taskId]: status }));
+
+        if (status === "done") {
+            dismissDoneUndo(taskId);
+            scheduleDoneNodeHide(taskId, { showUndo: true });
+        } else {
+            dismissDoneUndo(taskId);
+            setHiddenDoneTaskIds(prev => {
+                if (!prev.has(taskId)) return prev;
+                const next = new Set(prev);
+                next.delete(taskId);
+                return next;
+            });
+        }
+
+        try {
+            await onUpdateStatus?.(taskId, status);
+        } catch (error) {
+            clearDoneHideTimer(taskId);
+            setOptimisticStatusByTaskId(prev => {
+                const next = { ...prev };
+                delete next[taskId];
+                return next;
+            });
+            setHiddenDoneTaskIds(prev => {
+                if (!prev.has(taskId)) return prev;
+                const next = new Set(prev);
+                next.delete(taskId);
+                return next;
+            });
+            console.error("[CustomMindMap] Failed to update node status:", error);
+        }
+    }, [clearDoneHideTimer, dismissDoneUndo, onUpdateStatus, scheduleDoneNodeHide]);
+
+    const handleUndoDone = useCallback(async (taskId: string) => {
+        clearDoneHideTimer(taskId);
+        dismissDoneUndo(taskId);
+        setHiddenDoneTaskIds(prev => {
+            if (!prev.has(taskId)) return prev;
+            const next = new Set(prev);
+            next.delete(taskId);
+            return next;
+        });
+        setOptimisticStatusByTaskId(prev => ({ ...prev, [taskId]: "todo" }));
+
+        try {
+            await onUpdateStatus?.(taskId, "todo");
+        } catch (error) {
+            setOptimisticStatusByTaskId(prev => ({ ...prev, [taskId]: "done" }));
+            scheduleDoneNodeHide(taskId);
+            console.error("[CustomMindMap] Failed to undo node completion:", error);
+        }
+    }, [clearDoneHideTimer, dismissDoneUndo, onUpdateStatus, scheduleDoneNodeHide]);
 
     useEffect(() => {
         if (!dragState) return;
@@ -1660,7 +1838,7 @@ export function CustomMindMapView({
                                 onDelete={onDeleteNode}
                                 onNavigate={onNavigateNode}
                                 onSaveTitle={onSaveTitle}
-                                onUpdateStatus={onUpdateStatus}
+                                onUpdateStatus={handleUpdateNodeStatus}
                                 onResize={onResizeNode ? handleResizeNode : undefined}
                                 resizeScale={zoom}
                                 isMobile={isMobile}
@@ -1687,6 +1865,31 @@ export function CustomMindMapView({
                     onDelete={onDeleteNode ? handleAccessoryDelete : undefined}
                     onDismiss={handleAccessoryDismiss}
                 />
+            )}
+            {undoableDoneNodes.length > 0 && (
+                <div className="absolute bottom-4 left-4 z-50 flex max-w-[min(360px,calc(100%-2rem))] flex-col gap-2">
+                    {undoableDoneNodes.map(item => (
+                        <div
+                            key={item.taskId}
+                            role="dialog"
+                            aria-label="完了の取り消し"
+                            className="flex items-center gap-3 rounded-lg border bg-card/95 px-3 py-2 text-sm shadow-lg backdrop-blur"
+                        >
+                            <div className="min-w-0 flex-1">
+                                <div className="truncate font-medium">{item.title}</div>
+                                <div className="text-xs text-muted-foreground">完了にしました</div>
+                            </div>
+                            <button
+                                type="button"
+                                className="flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors hover:bg-muted"
+                                onClick={() => void handleUndoDone(item.taskId)}
+                            >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                戻す
+                            </button>
+                        </div>
+                    ))}
+                </div>
             )}
         </div>
     );

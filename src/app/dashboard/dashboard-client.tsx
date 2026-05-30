@@ -26,6 +26,7 @@ import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
 import { preloadDashboardPanels, preloadDashboardView } from "@/lib/dashboard-preload"
 import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport"
+import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-memos-dialog"
 
 function DashboardPaneFallback() {
     return (
@@ -250,7 +251,7 @@ export function DashboardClient({
     }, [setActiveView, updateTodaySubView])
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
-    const [mindmapMemoFocus, setMindmapMemoFocus] = useState<{ taskId: string; requestKey: number } | null>(null)
+    const [mindmapLinkedMemoTarget, setMindmapLinkedMemoTarget] = useState<{ taskId: string; requestKey: number } | null>(null)
     const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
     const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
     const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
@@ -270,16 +271,9 @@ export function DashboardClient({
         })
     }, [])
     const openMindmapLinkedMemos = useCallback((taskId: string) => {
-        const isMobileViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
         setIsCalendarSplitOpen(false)
-        if (isMobileViewport) {
-            setIsMemoSplitOpen(false)
-            setActiveView('long-term')
-        } else {
-            setIsMemoSplitOpen(true)
-        }
-        setMindmapMemoFocus({ taskId, requestKey: Date.now() })
-    }, [setActiveView])
+        setMindmapLinkedMemoTarget({ taskId, requestKey: Date.now() })
+    }, [])
     // --- Sync Error Toast ---
     const [syncErrorToast, setSyncErrorToast] = useState<{ type: 'error'; message: string } | null>(null)
 
@@ -1258,8 +1252,6 @@ export function DashboardClient({
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={false}
                             onToggleCalendarSplit={toggleCalendarSplit}
-                            mindmapMemoFocus={mindmapMemoFocus}
-                            onLinkedTaskStatusChange={(taskId, status) => handleUpdateTaskWithQuickSync(taskId, { status })}
                             onMindmapUpdated={refreshFromServer}
                         />
                     </div>
@@ -1426,7 +1418,6 @@ export function DashboardClient({
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={isCalendarPanelVisible}
                             onToggleCalendarSplit={toggleCalendarSplit}
-                            mindmapMemoFocus={mindmapMemoFocus}
                             onMindmapUpdated={refreshFromServer}
                         />
                     ) : activeView === 'map' && isMemoSplitVisible ? (
@@ -1440,8 +1431,6 @@ export function DashboardClient({
                                     onOpenTodayMemoSchedule={openTodayMemoSchedule}
                                     isCalendarSplitVisible={false}
                                     compactComposer
-                                    mindmapMemoFocus={mindmapMemoFocus}
-                                    onLinkedTaskStatusChange={(taskId, status) => handleUpdateTaskWithQuickSync(taskId, { status })}
                                     onMindmapUpdated={refreshFromServer}
                                 />
                             </div>
@@ -1532,6 +1521,17 @@ export function DashboardClient({
             {isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
                 <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
+            <MindmapLinkedMemosDialog
+                target={mindmapLinkedMemoTarget}
+                onOpenChange={(open) => {
+                    if (!open) setMindmapLinkedMemoTarget(null)
+                }}
+                onOpenMemoHome={() => {
+                    setMindmapLinkedMemoTarget(null)
+                    setIsMemoSplitOpen(false)
+                    setActiveView('long-term')
+                }}
+            />
             </TimerProvider>
         </DragProvider>
     )

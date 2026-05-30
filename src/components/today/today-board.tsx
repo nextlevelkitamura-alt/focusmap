@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import {
   Square, CheckSquare, ChevronLeft, ChevronRight, Plus,
-  ChevronDown, ChevronUp, Clock, Calendar as CalendarIcon,
+  ChevronDown, ChevronUp, Clock,
   MessageCircle, Send, Loader2, Bot, CheckCircle2, AlertCircle,
 } from 'lucide-react'
 import { format } from 'date-fns'
@@ -13,7 +13,7 @@ import { Task, Project } from '@/types/database'
 import type { CalendarEvent } from '@/types/calendar'
 import { useTodayViewLogic } from '@/hooks/useTodayViewLogic'
 import { useAiTasks } from '@/hooks/useAiTasks'
-import type { AiTask, AiTaskStatus } from '@/types/ai-task'
+import type { AiTaskStatus } from '@/types/ai-task'
 import { AiTaskApprovalCard } from './ai-task-approval-card'
 import { AuthStatusBar } from './auth-status-bar'
 import { YarukotoTaskRow } from './yarukoto-task-row'
@@ -143,14 +143,26 @@ export function TodayBoard({
     const rootTodo = todo.filter(t => !t.parent_task_id || !todoIds.has(t.parent_task_id))
 
     // カレンダーイベント（タスクと紐づいていないもの）
+    const uniqueIds = new Set(unique.map(t => t.id))
     const taskGoogleEventIds = new Set(
       allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
     )
+    const eventLikeTaskKeys = new Set(
+      unique
+        .filter(t => !!t.scheduled_at)
+        .map(t => {
+          const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
+          return `${t.calendar_id || ''}|${t.title.trim().toLowerCase()}|${minute}`
+        })
+    )
     const events = logic.calendarEvents
       .filter(e => {
+        if (e.task_id && uniqueIds.has(e.task_id)) return false
         if (taskGoogleEventIds.has(e.google_event_id)) return false
         if (e.is_all_day) return false
         const start = new Date(e.start_time)
+        const eventKey = `${e.calendar_id || ''}|${e.title.trim().toLowerCase()}|${Math.floor(start.getTime() / 60000)}`
+        if (eventLikeTaskKeys.has(eventKey)) return false
         return start >= logic.today && start < logic.tomorrow
       })
 

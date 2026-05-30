@@ -155,13 +155,25 @@ export function TodayTaskBoard({
     const rootTasks = unique.filter(t => !t.parent_task_id || !uniqueIds.has(t.parent_task_id))
     const doneCount = unique.filter(t => t.status === 'done').length
 
+    const boardTaskIds = new Set(unique.map(t => t.id))
     const taskGoogleEventIds = new Set(
       allTasks.filter(t => t.google_event_id).map(t => t.google_event_id)
     )
+    const eventLikeTaskKeys = new Set(
+      unique
+        .filter(t => !!t.scheduled_at)
+        .map(t => {
+          const minute = Math.floor(new Date(t.scheduled_at!).getTime() / 60000)
+          return `${t.calendar_id || ''}|${t.title.trim().toLowerCase()}|${minute}`
+        })
+    )
     const events = logic.calendarEvents.filter(e => {
+      if (e.task_id && boardTaskIds.has(e.task_id)) return false
       if (taskGoogleEventIds.has(e.google_event_id)) return false
       if (e.is_all_day) return false
       const start = new Date(e.start_time)
+      const eventKey = `${e.calendar_id || ''}|${e.title.trim().toLowerCase()}|${Math.floor(start.getTime() / 60000)}`
+      if (eventLikeTaskKeys.has(eventKey)) return false
       return start >= logic.today && start < logic.tomorrow
     })
 

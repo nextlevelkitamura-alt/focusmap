@@ -29,7 +29,9 @@ const DEFAULT_SYNC_INTERVAL_MS = 120 * 1000;
 const SYNC_INTERVAL_JITTER_RATIO = 0.25;
 const SESSION_CACHE_PREFIX = 'focusmap:calendar-events:';
 const OPTIMISTIC_EVENT_KEEP_MS = 60 * 1000;
+const OPTIMISTIC_REMOVAL_KEEP_MS = 20 * 1000;
 const inflightRequests = new Map<string, Promise<CacheEntry>>();
+const recentlyRemovedEvents = new Map<string, number>();
 
 // Backoff state for quota errors
 let quotaErrorCount = 0;
@@ -117,7 +119,7 @@ function shouldRevalidate(entry: CacheEntry | null): boolean {
 function createCacheEntry(events: CalendarEvent[], syncedAt = new Date()): CacheEntry {
   const now = Date.now();
   return {
-    events,
+    events: filterRecentlyRemovedEvents(events),
     syncedAt,
     staleAt: now + CACHE_REVALIDATE_AFTER_MS,
     expiresAt: now + CACHE_DISPLAY_TTL_MS,
@@ -245,6 +247,7 @@ function sortEventsByStartTime(events: CalendarEvent[]): CalendarEvent[] {
 }
 
 function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): CalendarEvent[] {
+  forgetRemovedEvent(event);
   const next = events.filter(existing => {
     if (existing.id === event.id) return false;
     if (
@@ -257,8 +260,49 @@ function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): Ca
   return sortEventsByStartTime([...next, event]);
 }
 
+function cleanupRemovedEvents() {
+  const now = Date.now();
+  for (const [key, expiresAt] of recentlyRemovedEvents) {
+    if (expiresAt <= now) recentlyRemovedEvents.delete(key);
+  }
+}
+
+function removalKeys(eventId: string, googleEventId?: string, calendarId?: string): string[] {
+  const keys = [`id:${eventId}`];
+  if (googleEventId) keys.push(`google:${googleEventId}`);
+  if (googleEventId && calendarId) keys.push(`google-calendar:${calendarId}::${googleEventId}`);
+  return keys;
+}
+
+function rememberRemovedEvent(eventId: string, googleEventId?: string, calendarId?: string) {
+  cleanupRemovedEvents();
+  const expiresAt = Date.now() + OPTIMISTIC_REMOVAL_KEEP_MS;
+  for (const key of removalKeys(eventId, googleEventId, calendarId)) {
+    recentlyRemovedEvents.set(key, expiresAt);
+  }
+}
+
+function forgetRemovedEvent(event: CalendarEvent) {
+  cleanupRemovedEvents();
+  for (const key of removalKeys(event.id, event.google_event_id, event.calendar_id)) {
+    recentlyRemovedEvents.delete(key);
+  }
+}
+
+function isRecentlyRemovedEvent(event: CalendarEvent): boolean {
+  cleanupRemovedEvents();
+  return removalKeys(event.id, event.google_event_id, event.calendar_id).some(key => recentlyRemovedEvents.has(key));
+}
+
+function filterRecentlyRemovedEvents(events: CalendarEvent[]): CalendarEvent[] {
+  if (recentlyRemovedEvents.size === 0) return events;
+  return events.filter(event => !isRecentlyRemovedEvent(event));
+}
+
 function removeEvent(events: CalendarEvent[], eventId: string, googleEventId?: string, calendarId?: string): CalendarEvent[] {
+  rememberRemovedEvent(eventId, googleEventId, calendarId);
   return events.filter(event => {
+    if (isRecentlyRemovedEvent(event)) return false;
     if (googleEventId && calendarId) {
       return !(event.google_event_id === googleEventId && event.calendar_id === calendarId);
     }
@@ -290,7 +334,7 @@ function mergeRecentOptimisticEvents(fetchedEvents: CalendarEvent[], previousEve
     return true;
   });
 
-  return sortEventsByStartTime([...fetchedEvents, ...survivors]);
+  return sortEventsByStartTime(filterRecentlyRemovedEvents([...fetchedEvents, ...survivors]));
 }
 
 async function fetchEventsShared(
