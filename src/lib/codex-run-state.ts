@@ -2,6 +2,7 @@ export type CodexRunState = "running" | "awaiting_approval"
 
 export type CodexReviewReason =
   | "started"
+  | "manual_handoff"
   | "completed"
   | "aborted"
   | "archived"

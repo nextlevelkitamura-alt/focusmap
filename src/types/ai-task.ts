@@ -97,7 +97,7 @@ export interface AiTask {
    * 実行 AI エージェント
    * - 'claude': Claude Code Remote Control (tmux内、スマホアプリ接続)
    * - 'codex': Codex CLI headless (codex exec、ライブログ捕捉)
-   * - 'codex_app': Codex app-server 経由で Codex.app に見える thread を作成し初回turnだけ実行
+   * - 'codex_app': Codex.app 連携（手動ハンドオフ、または app-server 経由の初回turn実行）
    */
   executor: 'claude' | 'codex' | 'codex_app'
   /** Codex.app の thread ID (~/.codex/state_5.sqlite) */

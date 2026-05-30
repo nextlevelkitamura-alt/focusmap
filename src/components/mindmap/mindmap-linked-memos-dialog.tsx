@@ -461,6 +461,8 @@ export function MindmapLinkedMemosDialog({
   const codexMessage = stringValue(codexResult.message)
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
+  const codexManualHandoff = codexResult.codex_manual_handoff === true
+  const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const sentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexConversation = getCodexConversation(codexDisplayLog, sentPrompt)
@@ -472,6 +474,8 @@ export function MindmapLinkedMemosDialog({
   const codexCompleted = isCodexTask && codexTask?.status === "completed"
   const codexStatusLabel = codexCompleted
     ? "Codex完了"
+    : codexWaitingForAppSend
+      ? "Codex.app待ち"
     : codexTask?.status === "failed"
       ? "失敗"
       : codexUiState?.state === "running"
@@ -566,7 +570,63 @@ export function MindmapLinkedMemosDialog({
     setTask(prev => prev ? { ...prev, ...updates } : prev)
   }
 
-  async function handleSendCodex() {
+  async function createCodexTask(dispatchMode: "manual" | "auto", prompt: string) {
+    const res = await fetch("/api/ai-tasks/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        cwd: selectedRepoPath,
+        approval_type: "auto",
+        source_task_id: task?.id,
+        scheduled_at: new Date().toISOString(),
+        executor: "codex_app",
+        space_id: taskProject?.space_id ?? null,
+        dispatch_mode: dispatchMode,
+      }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      throw new Error(data.error || `Codex送信に失敗しました (${res.status})`)
+    }
+  }
+
+  async function handleStartInCodexApp() {
+    if (!task || hasCodexRun) return
+    const prompt = buildCodexPrompt(draftTitle, draftMemo)
+    if (!prompt) {
+      setError("メモ見出しかメモ詳細を入力してください")
+      return
+    }
+    if (!selectedRepoPath) {
+      setError("送信先リポジトリを設定してください")
+      return
+    }
+
+    setIsSending(true)
+    setIsSaving(true)
+    setError(null)
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("ブラウザがクリップボードコピーに対応していません。手動コピーが必要です")
+      }
+      await navigator.clipboard.writeText(prompt)
+      await saveDraft()
+      await createCodexTask("manual", prompt)
+      setJustSentPrompt(prompt)
+      await refreshAiTasks()
+      window.location.href = "codex://"
+      window.setTimeout(() => void refreshAiTasks(), 1200)
+      window.setTimeout(() => void refreshAiTasks(), 3500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Codex送信に失敗しました")
+    } finally {
+      setIsSaving(false)
+      setIsSending(false)
+    }
+  }
+
+  async function handleSendCodexInBackground() {
     if (!task || hasCodexRun) return
     const prompt = buildCodexPrompt(draftTitle, draftMemo)
     if (!prompt) {
@@ -583,23 +643,7 @@ export function MindmapLinkedMemosDialog({
     setError(null)
     try {
       await saveDraft()
-      const res = await fetch("/api/ai-tasks/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          cwd: selectedRepoPath,
-          approval_type: "auto",
-          source_task_id: task.id,
-          scheduled_at: new Date().toISOString(),
-          executor: "codex_app",
-          space_id: taskProject?.space_id ?? null,
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({})) as { error?: string }
-        throw new Error(data.error || `Codex送信に失敗しました (${res.status})`)
-      }
+      await createCodexTask("auto", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
       onOpenChange(false)
@@ -614,8 +658,7 @@ export function MindmapLinkedMemosDialog({
   }
 
   function handleOpenCodexThread() {
-    if (!codexThreadUrl) return
-    window.location.href = codexThreadUrl
+    window.location.href = codexThreadUrl || "codex://"
   }
 
   const title = task?.title || draftTitle || "ノード詳細"
@@ -655,6 +698,10 @@ export function MindmapLinkedMemosDialog({
                     <span className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={codexThreadId}>
                       {codexThreadId}
                     </span>
+                  ) : codexWaitingForAppSend ? (
+                    <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                      Codex.app送信待ち
+                    </span>
                   ) : (
                     <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                       thread作成中
@@ -681,11 +728,11 @@ export function MindmapLinkedMemosDialog({
                     type="button"
                     size="sm"
                     onClick={handleOpenCodexThread}
-                    disabled={!codexThreadUrl}
+                    disabled={!codexThreadUrl && !codexManualHandoff}
                     className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Codexで開く
+                    {codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
                   </Button>
                 </div>
               </div>
@@ -702,7 +749,9 @@ export function MindmapLinkedMemosDialog({
                     <div className="max-w-[78%] rounded-2xl border bg-background px-4 py-3 text-sm leading-7 shadow-sm">
                       <div className="mb-1 text-xs font-medium text-muted-foreground">Codexで返信・確認</div>
                       <div className="text-muted-foreground">
-                        このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。
+                        {codexWaitingForAppSend
+                          ? "プロンプトはコピー済みです。Codex.appで貼り付けて送信してください。Focusmap側はあとからthread状態だけ同期します。"
+                          : "このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。"}
                       </div>
                     </div>
                   </div>
@@ -710,7 +759,9 @@ export function MindmapLinkedMemosDialog({
                   {sentPrompt && (
                     <div className="flex justify-end">
                       <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
-                        <div className="mb-1 text-xs font-medium text-muted-foreground">送信済み</div>
+                        <div className="mb-1 text-xs font-medium text-muted-foreground">
+                          {codexWaitingForAppSend ? "コピー済み" : "送信済み"}
+                        </div>
                         <div className="max-h-56 overflow-auto break-words">
                           <MarkdownContent text={sentPrompt} />
                         </div>
@@ -748,7 +799,9 @@ export function MindmapLinkedMemosDialog({
                     ))
                   ) : (
                     <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
-                      Codex.app側の出力は未同期です
+                      {codexWaitingForAppSend
+                        ? "Codex.appで送信されると、この欄に状態と出力が同期されます"
+                        : "Codex.app側の出力は未同期です"}
                     </div>
                   )}
                 </div>
@@ -817,12 +870,23 @@ export function MindmapLinkedMemosDialog({
                   <Button
                     type="button"
                     size="sm"
-                    onClick={handleSendCodex}
+                    onClick={handleStartInCodexApp}
                     disabled={!canSend}
                     className="w-full gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
                   >
+                    {isSending || isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                    Codex.appで開始
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSendCodexInBackground}
+                    disabled={!canSend}
+                    className="w-full gap-1.5"
+                  >
                     {isSending || isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                    Codexに送信
+                    裏で送信
                   </Button>
                 </div>
               </div>

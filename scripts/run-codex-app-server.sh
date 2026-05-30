@@ -6,12 +6,19 @@
 
 export PATH="$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CODEX_BIN="${FOCUSMAP_CODEX_BIN:-}"
+if [ -z "$CODEX_BIN" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex" ]; then
+  CODEX_BIN="/Applications/Codex.app/Contents/Resources/codex"
+fi
+if [ -z "$CODEX_BIN" ]; then
+  CODEX_BIN="codex"
+fi
 
 # ANTHROPIC 系の env が混ざらないように
 unset ANTHROPIC_API_KEY
 unset CLAUDECODE
 
 # remote_control 機能を有効化（既に config.toml にあるが冗長で）
-exec codex app-server \
+exec "$CODEX_BIN" app-server \
   --listen "ws://127.0.0.1:7878" \
   --enable remote_control

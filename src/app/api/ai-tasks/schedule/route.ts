@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, source_task_id, executor, space_id, run_visibility } = body as {
+  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, source_task_id, executor, space_id, run_visibility, dispatch_mode } = body as {
     prompt?: string
     skill_id?: string
     scheduled_at?: string
@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
     executor?: 'claude' | 'codex' | 'codex_app'
     space_id?: string
     run_visibility?: string
+    dispatch_mode?: 'auto' | 'manual'
   }
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -138,6 +139,8 @@ export async function POST(req: NextRequest) {
     executor === 'codex_app' ? 'codex_app' :
     executor === 'codex' ? 'codex' :
     'claude'
+  const manualCodexHandoff = resolvedExecutor === 'codex_app' && dispatch_mode === 'manual'
+  const nowIso = new Date().toISOString()
 
   const resolvedSpace = await resolveAiTaskSpaceId(supabase, user.id, {
     space_id: space_id || null,
@@ -157,7 +160,7 @@ export async function POST(req: NextRequest) {
       prompt: prompt.trim(),
       skill_id: skill_id || null,
       approval_type: resolvedApprovalType,
-      status: 'pending',
+      status: manualCodexHandoff ? 'needs_input' : 'pending',
       scheduled_at,
       recurrence_cron: recurrence_cron || null,
       cwd: cwd || null,
@@ -166,6 +169,25 @@ export async function POST(req: NextRequest) {
       source_task_id: source_task_id || null,
       executor: resolvedExecutor,
       run_visibility: normalizeVisibility(run_visibility, resolvedSpace.spaceId ? 'space' : 'private'),
+      result: manualCodexHandoff
+        ? {
+            executor: 'codex_app',
+            codex_manual_handoff: true,
+            codex_run_state: 'awaiting_approval',
+            codex_review_reason: 'manual_handoff',
+            live_log: 'Codex.appでプロンプトを送信すると、Focusmapはthread状態とログだけ同期します。',
+            message: 'Codex.appでプロンプトを送信してください。Focusmap側は状態確認用の待機レコードです。',
+            last_activity_at: nowIso,
+            steps: [
+              {
+                key: 'handoff_ready',
+                label: 'Codex.app 手動開始待ち',
+                status: 'active',
+                at: nowIso,
+              },
+            ],
+          }
+        : null,
     })
     .select()
     .single()
@@ -177,6 +199,7 @@ export async function POST(req: NextRequest) {
 
   if (
     resolvedExecutor === 'codex_app' &&
+    !manualCodexHandoff &&
     canUseLocalDispatch(req) &&
     new Date(scheduled_at).getTime() <= Date.now() + 5_000
   ) {
