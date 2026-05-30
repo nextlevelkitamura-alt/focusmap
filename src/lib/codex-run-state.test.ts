@@ -10,6 +10,7 @@ describe("parseCodexRollout", () => {
       row({ type: "task_started" }),
       row({ type: "message", role: "developer", content: "internal instructions" }, "2026-05-30T08:00:01.000Z"),
       row({ type: "user_message", content: "# AGENTS.md instructions" }, "2026-05-30T08:00:01.500Z"),
+      row({ type: "function_call", name: "exec_command" }, "2026-05-30T08:00:01.700Z"),
       row({ type: "agent_message", message: "作業を始めます" }, "2026-05-30T08:00:02.000Z"),
     ].join("\n"))
 
@@ -18,6 +19,7 @@ describe("parseCodexRollout", () => {
     expect(parsed.liveLog).toContain("作業を始めます")
     expect(parsed.liveLog).not.toContain("internal instructions")
     expect(parsed.liveLog).not.toContain("AGENTS.md")
+    expect(parsed.liveLog).not.toContain("exec_command")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:02.000Z")
   })
 

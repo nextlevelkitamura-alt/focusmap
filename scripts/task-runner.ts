@@ -1121,7 +1121,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
   // Codex.app 側で追加turnが始まると awaiting_approval → running に戻すため、確認待ちも対象に含める。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, executor, result, status')
+    .select('id, prompt, codex_thread_id, started_at, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
@@ -1136,6 +1136,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
     executor: string | null
     result: Record<string, unknown> | null
     status: string
+    source_task_id: string | null
   }>) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
@@ -1191,6 +1192,31 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
       ).trim()
       if (!stateOut) {
         const current = (task.result ?? {}) as Record<string, unknown>
+        const now = new Date().toISOString()
+        if (task.source_task_id) {
+          await supabase
+            .from('tasks')
+            .update({ status: 'done', stage: 'done' })
+            .eq('id', task.source_task_id)
+          await supabase
+            .from('ai_tasks')
+            .update({
+              status: 'completed',
+              completed_at: now,
+              result: {
+                ...current,
+                executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
+                codex_thread_id: threadId,
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'thread_deleted',
+                live_log: 'Codex thread が削除されたため、マップノードを完了にしました。',
+                last_activity_at: now,
+              },
+            })
+            .eq('id', task.id)
+          console.log(`[codex-app] thread deleted, source task completed: ${task.id} -> ${task.source_task_id}`)
+          continue
+        }
         await supabase
           .from('ai_tasks')
           .update({

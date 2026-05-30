@@ -38,6 +38,16 @@ type LinkedMemoResponse = {
   error?: string
 }
 
+type CodexChatEntry = {
+  kind: "request" | "event"
+  text: string
+}
+
+type CodexConversation = {
+  entries: CodexChatEntry[]
+  processLogs: string[]
+}
+
 interface MindmapLinkedMemosDialogProps {
   target: LinkedMemoDialogTarget | null
   onOpenChange: (open: boolean) => void
@@ -82,6 +92,7 @@ function reviewReasonLabel(value: string | null) {
   if (value === "completed") return "実行完了"
   if (value === "aborted") return "停止"
   if (value === "archived") return "アーカイブ"
+  if (value === "thread_deleted") return "スレッド削除"
   if (value === "monitoring_lost") return "監視確認"
   if (value === "started") return "実行開始"
   return value || null
@@ -92,7 +103,8 @@ function sanitizeCodexDisplayLog(value: string): string {
   return value
     .split(/\n{2,}/)
     .map(block => block.trim())
-    .filter(block => block && !/^\[(developer|system|user)\]/i.test(block))
+    .filter(block => block && !/^\[(developer|system|user|tool:)\]/i.test(block))
+    .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
     .filter(block => {
       const key = block.replace(/\s+/g, " ")
       if (seen.has(key)) return false
@@ -101,6 +113,63 @@ function sanitizeCodexDisplayLog(value: string): string {
     })
     .join("\n\n")
     .trim()
+}
+
+function getCodexConversation(value: string, prompt: string): CodexConversation {
+  const entries: CodexChatEntry[] = []
+  const assistantBlocks: string[] = []
+  const processLogs: string[] = []
+  const seen = new Set<string>()
+  const promptKey = prompt.replace(/\s+/g, " ").trim()
+
+  const pushUnique = (entry: CodexChatEntry) => {
+    const key = `${entry.kind}:${entry.text.replace(/\s+/g, " ").trim()}`
+    if (seen.has(key)) return
+    seen.add(key)
+    entries.push(entry)
+  }
+
+  const flushAssistant = () => {
+    const requestStart = assistantBlocks.findIndex(block =>
+      /ください|教えて|選んで|回答して|入力して|\?|？/.test(block) ||
+      /^\s*\d+[.．]/.test(block)
+    )
+    const logBlocks = requestStart >= 0 ? assistantBlocks.slice(0, requestStart) : []
+    const requestBlocks = requestStart >= 0 ? assistantBlocks.slice(requestStart) : assistantBlocks
+
+    for (const block of logBlocks) {
+      const key = block.replace(/\s+/g, " ").trim()
+      if (key && !processLogs.some(log => log.replace(/\s+/g, " ").trim() === key)) {
+        processLogs.push(block)
+      }
+    }
+
+    const requestText = requestBlocks.join("\n\n").trim()
+    assistantBlocks.length = 0
+    if (requestText) pushUnique({ kind: "request", text: requestText })
+  }
+
+  for (const rawBlock of value.split(/\n{2,}/)) {
+    const block = rawBlock.trim()
+    if (!block) continue
+    if (block.replace(/\s+/g, " ").trim() === promptKey) continue
+    if (/^\[(developer|system|user|tool:)\]/i.test(block)) continue
+    if (/^Codex セッションは確認待ちです。/i.test(block)) continue
+
+    const event = block.match(/^\[Codex\]\s*([\s\S]+)/i)
+    if (event?.[1]?.trim()) {
+      flushAssistant()
+      pushUnique({ kind: "event", text: event[1].trim() })
+      continue
+    }
+
+    const assistant = block.match(/^\[assistant\]\s*([\s\S]+)/i)
+    const text = (assistant?.[1] ?? block).trim()
+    if (text) assistantBlocks.push(text)
+  }
+
+  flushAssistant()
+  return { entries, processLogs }
 }
 
 export function MindmapLinkedMemosDialog({
@@ -131,6 +200,10 @@ export function MindmapLinkedMemosDialog({
   const codexLogBlocks = codexLogCandidates
     .filter((value, index, arr) => arr.findIndex(other => other.includes(value)) === index)
   const codexDisplayLog = codexLogBlocks.join("\n\n").slice(-6000)
+  const codexPrompt = codexTask?.prompt?.trim() || ""
+  const codexConversation = getCodexConversation(codexDisplayLog, codexPrompt)
+  const codexChatEntries = codexConversation.entries
+  const codexProcessLogs = codexConversation.processLogs
   const hasCodexRun = !!codexTask && isCodexTask
 
   useEffect(() => {
@@ -182,7 +255,7 @@ export function MindmapLinkedMemosDialog({
 
   return (
     <Dialog open={!!target} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] w-[calc(100vw-1rem)] max-w-7xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex h-[min(88dvh,860px)] w-[min(88vw,1120px)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
         <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -224,14 +297,14 @@ export function MindmapLinkedMemosDialog({
               )}
             </div>
           ) : (
-            <section className="mx-auto w-full max-w-6xl space-y-4">
+            <section className="mx-auto w-full space-y-4">
               {hasCodexRun && (
-                <section className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-4">
-                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                <section className="overflow-hidden rounded-lg border bg-card">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Bot className="h-4 w-4 text-emerald-500" />
-                        <h3 className="text-sm font-semibold">Codex状況</h3>
+                        <h3 className="text-sm font-semibold">Codex</h3>
                         {codexUiState && (
                           <span className={codexUiState.state === "running"
                             ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
@@ -240,36 +313,76 @@ export function MindmapLinkedMemosDialog({
                             {codexUiState.label}
                           </span>
                         )}
+                        {codexReviewReason && (
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            {codexReviewReason}
+                          </span>
+                        )}
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        15秒ごとにCodexログを同期しています
-                        {codexReviewReason ? ` / ${codexReviewReason}` : ""}
+                      <p className="text-xs text-muted-foreground">
+                        15秒ごとに同期
                         {codexLastActivity ? ` / 最終活動 ${codexLastActivity}` : ""}
                       </p>
                     </div>
                     {codexThreadId && (
-                      <span className="rounded bg-background px-2 py-1 font-mono text-xs text-muted-foreground">
+                      <span className="rounded-md border bg-background px-2 py-1 font-mono text-xs text-muted-foreground">
                         thread {codexThreadId.slice(0, 8)}
                       </span>
                     )}
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
-                    <div className="min-w-0 space-y-2">
-                      <div className="text-xs font-medium text-muted-foreground">送信プロンプト</div>
-                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-background/80 p-3 text-xs leading-5">
-                        {codexTask?.prompt?.trim() || "プロンプトは記録されていません"}
-                      </pre>
+                  <div className="flex min-h-[480px] min-w-0 flex-col bg-background">
+                    <div className="shrink-0 border-b px-5 py-3">
+                      <div className="text-xs font-medium text-muted-foreground">会話</div>
                     </div>
-                    <div className="min-w-0 space-y-2">
-                      <div className="text-xs font-medium text-muted-foreground">Codexログ / 回答</div>
-                      {codexDisplayLog ? (
-                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border bg-background/80 p-3 font-mono text-xs leading-5">
-                          {codexDisplayLog}
-                        </pre>
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+                      {codexPrompt && (
+                        <div className="flex justify-end">
+                          <div className="max-w-[74%] rounded-2xl bg-muted px-4 py-2.5 text-sm leading-7 text-foreground">
+                            {codexPrompt}
+                          </div>
+                        </div>
+                      )}
+
+                      {(codexProcessLogs.length > 0 || codexDisplayLog) && (
+                        <details className="mx-auto w-full max-w-[82%] rounded-lg border bg-muted/10 text-xs">
+                          <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
+                            ログ
+                          </summary>
+                          <div className="space-y-2 border-t px-3 py-3">
+                            {codexProcessLogs.length > 0 ? (
+                              codexProcessLogs.map((log, index) => (
+                                <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
+                                  {log}
+                                </div>
+                              ))
+                            ) : (
+                              <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-mono leading-5 text-muted-foreground">{codexDisplayLog}</pre>
+                            )}
+                          </div>
+                        </details>
+                      )}
+
+                      {codexChatEntries.length > 0 ? (
+                        codexChatEntries.map((entry, index) => (
+                          entry.kind === "event" ? (
+                            <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-center">
+                              <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+                                {entry.text}
+                              </span>
+                            </div>
+                          ) : (
+                            <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-start">
+                              <div className="max-w-[78%] rounded-2xl border border-amber-500/25 bg-card px-4 py-3 text-sm leading-7 shadow-sm">
+                                <div className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">回答待ち</div>
+                                <div className="whitespace-pre-wrap break-words">{entry.text}</div>
+                              </div>
+                            </div>
+                          )
+                        ))
                       ) : (
-                        <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-background/50 px-3 py-8 text-sm text-muted-foreground">
-                          まだログはありません
+                        <div className="flex min-h-60 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
+                          まだ回答ログはありません
                         </div>
                       )}
                     </div>

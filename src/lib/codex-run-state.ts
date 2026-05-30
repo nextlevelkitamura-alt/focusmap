@@ -5,6 +5,7 @@ export type CodexReviewReason =
   | "completed"
   | "aborted"
   | "archived"
+  | "thread_deleted"
   | "monitoring_lost"
   | "unknown"
 
@@ -88,15 +89,6 @@ function appendLog(logs: string[], line: string) {
   }
 }
 
-function extractCommand(payload: Record<string, unknown>) {
-  const command = safeText(payload.command)
-  if (command) return command
-  const name = safeText(payload.name)
-  const input = isRecord(payload.input) ? payload.input : null
-  const inputCommand = input ? safeText(input.command) : ""
-  return [name, inputCommand].filter(Boolean).join(": ")
-}
-
 export function parseCodexRollout(
   rawJsonl: string,
   options: { archived?: boolean; snapshot?: CodexThreadSnapshot } = {},
@@ -175,8 +167,6 @@ export function parseCodexRollout(
       payloadType === "web_search_call" ||
       payloadType === "tool_search_call"
     ) {
-      const command = extractCommand(payload)
-      appendLog(logs, `[tool:start] ${command || payloadType}`)
       continue
     }
 
@@ -186,8 +176,7 @@ export function parseCodexRollout(
       payloadType === "web_search_end" ||
       payloadType === "tool_search_output"
     ) {
-      const text = safeText(payload)
-      appendLog(logs, text ? `[tool:output] ${text}` : `[tool:done] ${payloadType}`)
+      continue
     }
   }
 
