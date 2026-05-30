@@ -76,6 +76,8 @@ const CODEX_APP_WS_URL = 'ws://127.0.0.1:7878'
 const CODEX_APP_RPC_TIMEOUT_MS = 5_000
 const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
 const CODEX_LIVE_LOG_MAX_CHARS = 20_000
+const CODEX_ACTIVE_SYNC_INTERVAL_MS = 5_000
+const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 2
 
 type StaffStatusDueTask = {
   id: string
@@ -106,6 +108,7 @@ type MonitoredCodexTask = {
   prompt: string
   codex_thread_id: string | null
   started_at: string | null
+  cwd: string | null
   executor: string | null
   result: Record<string, unknown> | null
   status: string
@@ -1178,6 +1181,55 @@ function sqlText(value: string): string {
   return value.replace(/'/g, "''")
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function codexHandoffTokenForTask(task: MonitoredCodexTask): string | null {
+  const resultToken = asResultRecord(task.result).codex_handoff_token
+  if (typeof resultToken === 'string' && resultToken.trim()) return resultToken.trim()
+
+  const match = task.prompt.match(/Focusmap同期ID:\s*(FM-[A-Za-z0-9._:-]+)/)
+  return match?.[1]?.trim() || null
+}
+
+function codexThreadCwdCondition(cwd: string | null | undefined): string {
+  const value = cwd?.trim()
+  return value ? ` AND cwd = '${sqlText(value)}'` : ''
+}
+
+function findCodexThreadBySql(dbPath: string, where: string): string | null {
+  const out = execSync(
+    `sqlite3 ${JSON.stringify(dbPath)} "SELECT id FROM threads WHERE ${where} ORDER BY created_at_ms DESC LIMIT 1"`,
+    { encoding: 'utf-8', timeout: 5000 },
+  ).trim()
+  return out || null
+}
+
+function findMatchingCodexThread(dbPath: string, task: MonitoredCodexTask): string | null {
+  const sinceMs = task.started_at ? new Date(task.started_at).getTime() - 60_000 : Date.now() - 15 * 60_000
+  const token = codexHandoffTokenForTask(task)
+  const cwdCondition = codexThreadCwdCondition(task.cwd)
+
+  const candidates: string[] = []
+  if (token) {
+    const tokenCondition = `first_user_message LIKE '%Focusmap同期ID: ${sqlText(token)}%' AND updated_at_ms >= ${sinceMs}`
+    if (cwdCondition) candidates.push(`${tokenCondition}${cwdCondition}`)
+    candidates.push(tokenCondition)
+  }
+
+  const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
+  const prefixCondition = `first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs}`
+  if (cwdCondition) candidates.push(`${prefixCondition}${cwdCondition}`)
+  candidates.push(prefixCondition)
+
+  for (const where of candidates) {
+    const threadId = findCodexThreadBySql(dbPath, where)
+    if (threadId) return threadId
+  }
+  return null
+}
+
 function readCodexBridgeObservation(taskId: string): CodexBridgeObservation {
   const observation: CodexBridgeObservation = {
     awaitingApproval: false,
@@ -1392,7 +1444,7 @@ async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient
 
   const { data: aiTasks, error } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, executor, result, status, source_task_id')
+    .select('id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .not('source_task_id', 'is', null)
     .not('codex_thread_id', 'is', null)
@@ -1466,36 +1518,40 @@ async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function syncCodexAppThreads(supabase: any): Promise<void> {
+type CodexSyncStats = {
+  monitored: number
+  fastFollow: boolean
+}
+
+async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncStats> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
-  if (!fs.existsSync(dbPath)) return
+  if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
 
   // codex_app / codex 両 executor の実行中・確認待ちタスクを監視する。
   // Codex.app 側で追加turnが始まると awaiting_approval → running に戻すため、確認待ちも対象に含める。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, executor, result, status, source_task_id')
+    .select('id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
 
-  if (!tasks || tasks.length === 0) return
+  if (!tasks || tasks.length === 0) return { monitored: 0, fastFollow: false }
 
-  for (const task of tasks as MonitoredCodexTask[]) {
+  const monitoredTasks = tasks as MonitoredCodexTask[]
+  const stats: CodexSyncStats = {
+    monitored: monitoredTasks.length,
+    fastFollow: monitoredTasks.some(task => task.status === 'running' || task.status === 'needs_input'),
+  }
+
+  for (const task of monitoredTasks) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
     if (!threadId) {
-      // プロンプト先頭40文字（# タイトル...）でマッチ
-      const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
-      const sinceMs = task.started_at ? new Date(task.started_at).getTime() - 60_000 : 0
       try {
-        const out = execSync(
-          `sqlite3 ${JSON.stringify(dbPath)} "SELECT id FROM threads WHERE first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs} ORDER BY created_at_ms DESC LIMIT 1"`,
-          { encoding: 'utf-8', timeout: 5000 },
-        ).trim()
-        if (out) {
-          threadId = out
+        const matchedThreadId = findMatchingCodexThread(dbPath, task)
+        if (matchedThreadId) {
+          threadId = matchedThreadId
           await supabase
             .from('ai_tasks')
             .update({ codex_thread_id: threadId })
@@ -1668,6 +1724,21 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
     } catch (e) {
       console.error(`[codex-app] state read failed for ${task.id}:`, e instanceof Error ? e.message : e)
     }
+  }
+
+  return stats
+}
+
+async function syncActiveCodexFollowUps(
+  supabase: SupabaseClient,
+  initialStats: CodexSyncStats,
+): Promise<void> {
+  let stats = initialStats
+  for (let i = 0; i < CODEX_ACTIVE_SYNC_EXTRA_PASSES && stats.fastFollow; i += 1) {
+    await sleep(CODEX_ACTIVE_SYNC_INTERVAL_MS)
+    await syncCodexLiveLogs(supabase)
+    stats = await syncCodexAppThreads(supabase)
+    await syncCompletedFocusmapNodesToCodexArchive(supabase)
   }
 }
 
@@ -2683,8 +2754,9 @@ async function main() {
     await syncCodexLiveLogs(supabase)
 
     // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
-    await syncCodexAppThreads(supabase)
+    const codexSyncStats = await syncCodexAppThreads(supabase)
     await syncCompletedFocusmapNodesToCodexArchive(supabase)
+    await syncActiveCodexFollowUps(supabase, codexSyncStats)
 
     // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
     await recoverStaleStaffStatusTasks(supabase)

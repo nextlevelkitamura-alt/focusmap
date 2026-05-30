@@ -5,7 +5,20 @@ import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const REFRESH_INTERVAL_MS = 15_000
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
+const IDLE_REFRESH_INTERVAL_MS = 15_000
+
+function hasActiveCodexTask(tasks: Map<string, AiTask>) {
+  for (const task of tasks.values()) {
+    if (
+      (task.executor === 'codex' || task.executor === 'codex_app') &&
+      ACTIVE_STATUSES.includes(task.status)
+    ) {
+      return true
+    }
+  }
+  return false
+}
 
 /**
  * メモ（notes / ideal_goals）またはマインドマップタスクから起動された ai_tasks を取得する。
@@ -45,9 +58,16 @@ export function useMemoAiTasks() {
 
   useEffect(() => {
     fetchInitial()
-    const intervalId = window.setInterval(fetchInitial, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(intervalId)
   }, [fetchInitial])
+
+  const refreshIntervalMs = hasActiveCodexTask(bySourceId)
+    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+    : IDLE_REFRESH_INTERVAL_MS
+
+  useEffect(() => {
+    const intervalId = window.setInterval(fetchInitial, refreshIntervalMs)
+    return () => window.clearInterval(intervalId)
+  }, [fetchInitial, refreshIntervalMs])
 
   useEffect(() => {
     const supabase = createClient()

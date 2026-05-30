@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, source_task_id, executor, space_id, run_visibility, dispatch_mode } = body as {
+  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, source_task_id, executor, space_id, run_visibility, dispatch_mode, codex_handoff_token } = body as {
     prompt?: string
     skill_id?: string
     scheduled_at?: string
@@ -92,6 +92,7 @@ export async function POST(req: NextRequest) {
     space_id?: string
     run_visibility?: string
     dispatch_mode?: 'auto' | 'manual'
+    codex_handoff_token?: string
   }
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -140,6 +141,9 @@ export async function POST(req: NextRequest) {
     executor === 'codex' ? 'codex' :
     'claude'
   const manualCodexHandoff = resolvedExecutor === 'codex_app' && dispatch_mode === 'manual'
+  const handoffToken = typeof codex_handoff_token === 'string' && /^FM-[A-Za-z0-9._:-]{8,120}$/.test(codex_handoff_token.trim())
+    ? codex_handoff_token.trim()
+    : null
   const nowIso = new Date().toISOString()
 
   const resolvedSpace = await resolveAiTaskSpaceId(supabase, user.id, {
@@ -161,6 +165,7 @@ export async function POST(req: NextRequest) {
       skill_id: skill_id || null,
       approval_type: resolvedApprovalType,
       status: manualCodexHandoff ? 'needs_input' : 'pending',
+      started_at: manualCodexHandoff ? nowIso : null,
       scheduled_at,
       recurrence_cron: recurrence_cron || null,
       cwd: cwd || null,
@@ -173,6 +178,7 @@ export async function POST(req: NextRequest) {
         ? {
             executor: 'codex_app',
             codex_manual_handoff: true,
+            codex_handoff_token: handoffToken,
             codex_run_state: 'awaiting_approval',
             codex_review_reason: 'manual_handoff',
             live_log: 'Codex.appでプロンプトを送信すると、Focusmapはthread状態とログだけ同期します。',

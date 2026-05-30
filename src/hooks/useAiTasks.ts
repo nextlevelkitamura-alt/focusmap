@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
 
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
+const IDLE_REFRESH_INTERVAL_MS = 30_000
+
 interface UseAiTasksOptions {
   /** 最大取得件数（デフォルト: 20） */
   limit?: number
@@ -15,6 +18,13 @@ function matchesSpaceFilter(task: AiTask, spaceId: string | null | undefined) {
   if (!spaceId) return true
   if (spaceId === '__unassigned__') return !task.space_id
   return task.space_id === spaceId
+}
+
+function hasActiveCodexTask(tasks: AiTask[]) {
+  return tasks.some(task =>
+    (task.executor === 'codex' || task.executor === 'codex_app') &&
+    ['pending', 'running', 'awaiting_approval', 'needs_input'].includes(task.status)
+  )
 }
 
 export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {}) {
@@ -42,6 +52,15 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
   useEffect(() => {
     fetchTasks()
   }, [fetchTasks])
+
+  const refreshIntervalMs = hasActiveCodexTask(tasks)
+    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+    : IDLE_REFRESH_INTERVAL_MS
+
+  useEffect(() => {
+    const intervalId = window.setInterval(fetchTasks, refreshIntervalMs)
+    return () => window.clearInterval(intervalId)
+  }, [fetchTasks, refreshIntervalMs])
 
   // Realtime subscription
   useEffect(() => {

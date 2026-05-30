@@ -60,9 +60,15 @@ function buildCodexPrompt(title: string, memo: string) {
   const normalizedTitle = normalizeText(title)
   const normalizedMemo = normalizeText(memo)
   return [
-    normalizedTitle ? `メモ見出し: ${normalizedTitle}` : null,
-    normalizedMemo ? `メモ詳細:\n${normalizedMemo}` : null,
+    normalizedTitle || null,
+    normalizedMemo || null,
   ].filter(Boolean).join("\n\n")
+}
+
+function stripFocusmapSyncId(prompt: string) {
+  return prompt
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, "")
+    .trim()
 }
 
 function taskErrorMessage(data: TaskResponse, fallback: string) {
@@ -89,6 +95,7 @@ function sanitizeCodexDisplayLog(value: string): string {
     .split(/\n{2,}/)
     .map(block => block.trim())
     .filter(block => block && !/^\[(developer|system)\]/i.test(block))
+    .filter(block => !/^Focusmap同期ID:/i.test(block))
     .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
     .filter(block => !/^Codex\.appでプロンプトを送信すると、Focusmapはthread状態とログだけ同期します。/i.test(block))
     .filter(block => {
@@ -124,14 +131,15 @@ function normalizedKey(value: string) {
 
 function promptEchoKeys(prompt: string) {
   const keys = new Set<string>()
-  const normalizedPrompt = normalizedKey(prompt)
+  const rawPrompt = normalizedKey(prompt)
+  if (rawPrompt) keys.add(rawPrompt)
+  const visiblePrompt = stripFocusmapSyncId(prompt)
+  const normalizedPrompt = normalizedKey(visiblePrompt)
   if (normalizedPrompt) keys.add(normalizedPrompt)
 
-  const titleMatch = prompt.match(/^メモ見出し:\s*(.+)$/m)
-  const title = titleMatch?.[1]?.trim()
-  if (title) {
-    keys.add(normalizedKey(title))
-    keys.add(normalizedKey(`メモ見出し: ${title}`))
+  const firstLine = visiblePrompt.split("\n").map(line => line.trim()).find(Boolean)
+  if (firstLine) {
+    keys.add(normalizedKey(firstLine))
   }
 
   return keys
@@ -479,8 +487,9 @@ export function MindmapLinkedMemosDialog({
   const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
   const codexSendConfirmed = !codexWaitingForAppSend && (!!codexThreadId || !codexManualHandoff)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
-  const sentPrompt = codexTask?.prompt?.trim() || justSentPrompt
-  const codexConversation = getCodexConversation(codexDisplayLog, sentPrompt)
+  const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
+  const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
+  const codexConversation = getCodexConversation(codexDisplayLog, rawSentPrompt)
   const codexChatEntries = codexConversation.entries
   const codexAssistantEntries = codexChatEntries.filter(entry => entry.kind === "request")
   const codexUserEntries = codexChatEntries.filter(entry => entry.kind === "user")
@@ -587,7 +596,7 @@ export function MindmapLinkedMemosDialog({
     setTask(prev => prev ? { ...prev, ...updates } : prev)
   }
 
-  async function createCodexTask(dispatchMode: "manual" | "auto", prompt: string) {
+  async function createCodexTask(dispatchMode: "manual" | "auto", prompt: string, handoffToken?: string) {
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -600,6 +609,7 @@ export function MindmapLinkedMemosDialog({
         executor: "codex_app",
         space_id: taskProject?.space_id ?? null,
         dispatch_mode: dispatchMode,
+        codex_handoff_token: handoffToken,
       }),
     })
     if (!res.ok) {
@@ -612,7 +622,7 @@ export function MindmapLinkedMemosDialog({
     if (!task || hasCodexRun) return
     const prompt = buildCodexPrompt(draftTitle, draftMemo)
     if (!prompt) {
-      setError("メモ見出しかメモ詳細を入力してください")
+      setError("Codexに渡す内容を入力してください")
       return
     }
     if (!selectedRepoPath) {
@@ -629,16 +639,22 @@ export function MindmapLinkedMemosDialog({
       }
       await saveDraft()
       await navigator.clipboard.writeText(prompt)
-      await openCodexAppForRepo(selectedRepoPath)
       await createCodexTask("manual", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
+      try {
+        await openCodexAppForRepo(selectedRepoPath)
+      } catch (openErr) {
+        setError(openErr instanceof Error
+          ? `プロンプトはコピー済みです。Codex.app を手動で開いて貼り付けてください。${openErr.message}`
+          : "プロンプトはコピー済みです。Codex.app を手動で開いて貼り付けてください。")
+      }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
       setError(err instanceof Error
-        ? `Codex.appで開始できませんでした。プロンプトがコピー済みの場合は、送信済みにはしていません。${err.message}`
-        : "Codex.appで開始できませんでした。送信済みにはしていません")
+        ? `Codex.appで開始できませんでした。${err.message}`
+        : "Codex.appで開始できませんでした")
     } finally {
       setIsSaving(false)
       setIsSending(false)
@@ -649,7 +665,7 @@ export function MindmapLinkedMemosDialog({
     if (!task || hasCodexRun) return
     const prompt = buildCodexPrompt(draftTitle, draftMemo)
     if (!prompt) {
-      setError("メモ見出しかメモ詳細を入力してください")
+      setError("Codexに渡す内容を入力してください")
       return
     }
     if (!selectedRepoPath) {
