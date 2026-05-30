@@ -49,7 +49,20 @@ const OVERALL_TIMEOUT_MS = 15 * 60 * 1000 // 15分
 const CONNECT_TIMEOUT_MS = 10_000
 const POST_COMPLETION_GRACE_MS = 5_000
 const LIVE_LOG_MAX_CHARS = 80_000
-const OPEN_CODEX_THREAD = process.env.FOCUSMAP_CODEX_OPEN_THREAD !== '0'
+type CodexThreadOpenMode = 'manual' | 'completed' | 'created'
+
+function resolveCodexThreadOpenMode(value: string | undefined): CodexThreadOpenMode {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized || ['0', 'false', 'off', 'manual'].includes(normalized)) return 'manual'
+  if (['created', 'immediate', 'start'].includes(normalized)) return 'created'
+  if (['1', 'true', 'on', 'completed', 'complete', 'after-completion'].includes(normalized)) return 'completed'
+  return 'manual'
+}
+
+const CODEX_THREAD_OPEN_MODE = resolveCodexThreadOpenMode(
+  process.env.FOCUSMAP_CODEX_OPEN_THREAD_MODE ?? process.env.FOCUSMAP_CODEX_OPEN_THREAD,
+)
+const OPEN_CODEX_THREAD = CODEX_THREAD_OPEN_MODE !== 'manual'
 const LOG_FILE_TEMPLATE = (taskId: string) => `/tmp/codex-bridge-${taskId}.log`
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -223,6 +236,7 @@ async function pushStep(
 
 function openCodexThreadInApp(threadId: string, reason: 'created' | 'completed'): void {
   if (!OPEN_CODEX_THREAD || process.platform !== 'darwin') return
+  if (CODEX_THREAD_OPEN_MODE === 'completed' && reason !== 'completed') return
   const url = `codex://threads/${threadId}`
   try {
     const child = spawn('/usr/bin/open', ['-g', url], {
@@ -443,13 +457,14 @@ async function main() {
       openCodexThreadInApp(threadId, 'created')
 
       await pushStep(supabase, taskId, makeStep('thread_visible',
-        `Thread 作成 (Codex.app に表示, id ${threadId.slice(0, 8)})`),
+        `Thread 作成 (id ${threadId.slice(0, 8)})`),
         {
           threadId,
           metadata: {
             codex_thread_url: `codex://threads/${threadId}`,
             codex_thread_source: 'user',
             codex_open_thread_enabled: OPEN_CODEX_THREAD,
+            codex_open_thread_mode: CODEX_THREAD_OPEN_MODE,
           },
         })
       await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
