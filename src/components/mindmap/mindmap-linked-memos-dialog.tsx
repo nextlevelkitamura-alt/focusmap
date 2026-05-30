@@ -476,6 +476,7 @@ export function MindmapLinkedMemosDialog({
   const codexPreview = stringValue(codexSnapshot.preview)
   const codexManualHandoff = codexResult.codex_manual_handoff === true
   const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
+  const codexSendConfirmed = !codexWaitingForAppSend && (!!codexThreadId || !codexManualHandoff)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const sentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexConversation = getCodexConversation(codexDisplayLog, sentPrompt)
@@ -488,11 +489,13 @@ export function MindmapLinkedMemosDialog({
   const codexStatusLabel = codexCompleted
     ? "Codex完了"
     : codexWaitingForAppSend
-      ? "Codex.app待ち"
+      ? "貼り付け待ち"
     : codexTask?.status === "failed"
       ? "失敗"
       : codexUiState?.state === "running"
         ? "Codex実行中"
+        : codexManualHandoff && codexThreadId
+          ? "送信確認済み"
         : "Codexで確認"
   const codexStatusClass = codexCompleted
     ? "rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
@@ -623,23 +626,18 @@ export function MindmapLinkedMemosDialog({
       if (!navigator.clipboard?.writeText) {
         throw new Error("ブラウザがクリップボードコピーに対応していません。手動コピーが必要です")
       }
-      await navigator.clipboard.writeText(prompt)
       await saveDraft()
+      await navigator.clipboard.writeText(prompt)
+      await openCodexAppForRepo(selectedRepoPath)
       await createCodexTask("manual", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
-      try {
-        await openCodexAppForRepo(selectedRepoPath)
-      } catch (openErr) {
-        window.location.href = "codex://"
-        setError(openErr instanceof Error
-          ? `プロンプトはコピー済みです。Codex.appは通常起動しましたが、リポジトリ指定で開けませんでした: ${openErr.message}`
-          : "プロンプトはコピー済みです。Codex.appは通常起動しましたが、リポジトリ指定で開けませんでした")
-      }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Codex送信に失敗しました")
+      setError(err instanceof Error
+        ? `Codex.appで開始できませんでした。プロンプトがコピー済みの場合は、送信済みにはしていません。${err.message}`
+        : "Codex.appで開始できませんでした。送信済みにはしていません")
     } finally {
       setIsSaving(false)
       setIsSending(false)
@@ -695,7 +693,7 @@ export function MindmapLinkedMemosDialog({
 
   const title = task?.title || draftTitle || "ノード詳細"
   const description = hasCodexRun
-    ? (codexCompleted ? "Codex完了" : "Codexで続行中")
+    ? (codexWaitingForAppSend ? "Codex.appで送信待ち" : codexCompleted ? "Codex完了" : "Codexで続行中")
     : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
 
@@ -725,7 +723,14 @@ export function MindmapLinkedMemosDialog({
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Bot className="h-4 w-4 text-emerald-500" />
                   <span className={codexStatusClass}>{codexStatusLabel}</span>
-                  <span className="text-xs text-muted-foreground">送信済み</span>
+                  <span className="text-xs text-muted-foreground">
+                    {codexWaitingForAppSend ? "コピー済み・未送信" : codexSendConfirmed ? "送信確認済み" : "送信待ち"}
+                  </span>
+                  {codexRepoPath && (
+                    <span className="max-w-[18rem] truncate rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground" title={codexRepoPath}>
+                      repo {codexRepoPath.split("/").filter(Boolean).at(-1) ?? codexRepoPath}
+                    </span>
+                  )}
                   {codexThreadId ? (
                     <span className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={codexThreadId}>
                       {codexThreadId}
@@ -782,7 +787,7 @@ export function MindmapLinkedMemosDialog({
                       <div className="mb-1 text-xs font-medium text-muted-foreground">Codexで返信・確認</div>
                       <div className="text-muted-foreground">
                         {codexWaitingForAppSend
-                          ? "プロンプトはコピー済みです。選択リポジトリをCodex.appで開いています。貼り付けて送信してください。Focusmap側はあとからthread状態だけ同期します。"
+                          ? "プロンプトはコピー済みです。選択リポジトリをCodex.appで開いています。Codex.app側で貼り付けて送信してください。Focusmapがthreadを確認した時点で送信済みに切り替えます。"
                           : "このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。"}
                       </div>
                     </div>
@@ -792,7 +797,7 @@ export function MindmapLinkedMemosDialog({
                     <div className="flex justify-end">
                       <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
                         <div className="mb-1 text-xs font-medium text-muted-foreground">
-                          {codexWaitingForAppSend ? "コピー済み" : "送信済み"}
+                          {codexWaitingForAppSend ? "コピー済み・未送信" : codexManualHandoff ? "送信確認済み" : "送信済み"}
                         </div>
                         <div className="max-h-56 overflow-auto break-words">
                           <MarkdownContent text={sentPrompt} />

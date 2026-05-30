@@ -1,11 +1,14 @@
-import { spawn } from "child_process"
+import { execFile } from "child_process"
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { promisify } from "util"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 
 export const runtime = "nodejs"
+
+const execFileAsync = promisify(execFile)
 
 function canOpenLocalApp(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_APP_OPEN === "true") return true
@@ -16,14 +19,6 @@ function expandHome(input: string): string {
   if (input === "~") return os.homedir()
   if (input.startsWith("~/")) return path.join(os.homedir(), input.slice(2))
   return input
-}
-
-function codexAppCommand(repoPath: string): { command: string; args: string[] } {
-  const bundledCodex = "/Applications/Codex.app/Contents/Resources/codex"
-  if (fs.existsSync(bundledCodex)) {
-    return { command: bundledCodex, args: ["app", repoPath] }
-  }
-  return { command: "/usr/bin/open", args: ["-a", "Codex", repoPath] }
 }
 
 async function isRegisteredRepo(
@@ -66,6 +61,13 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+  if (process.platform !== "darwin") {
+    return NextResponse.json(
+      { error: "Codex.app のリポジトリ起動は macOS でのみ利用できます" },
+      { status: 400 },
+    )
+  }
+
   const body = await req.json().catch(() => ({})) as { repo_path?: unknown }
   if (typeof body.repo_path !== "string" || body.repo_path.trim().length === 0) {
     return NextResponse.json({ error: "repo_path is required" }, { status: 400 })
@@ -102,13 +104,11 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { command, args } = codexAppCommand(resolvedRepoPath)
   try {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: "ignore",
+    await execFileAsync("/usr/bin/open", ["-a", "Codex", resolvedRepoPath], {
+      timeout: 10_000,
+      windowsHide: true,
     })
-    child.unref()
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Codex.app の起動に失敗しました" },
