@@ -216,6 +216,8 @@ export interface Database {
                     memo_images: string[] | null
                     // Mindmap layout
                     node_width: number | null
+                    // Codex relay（任意: 既存の楽観更新リテラルを壊さないため optional）
+                    codex_work_dir?: string | null
                 }
                 Insert: {
                     id?: string
@@ -255,6 +257,7 @@ export interface Database {
                     memo_images?: string[] | null
                     // Mindmap layout
                     node_width?: number | null
+                    codex_work_dir?: string | null
                 }
                 Update: {
                     id?: string
@@ -294,6 +297,7 @@ export interface Database {
                     memo_images?: string[] | null
                     // Mindmap layout
                     node_width?: number | null
+                    codex_work_dir?: string | null
                 }
             }
             habit_completions: {

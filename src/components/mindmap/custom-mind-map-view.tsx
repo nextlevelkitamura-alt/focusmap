@@ -41,6 +41,7 @@ type CustomMindMapViewProps = {
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
+    onRunCodex?: (taskId: string) => void | Promise<void>;
     onMoveTask?: (params: {
         taskId: string;
         targetId: string;
@@ -210,6 +211,7 @@ function CustomTaskNode({
     resizeScale,
     isMobile,
     onOpenLinkedMemos,
+    onRunCodex,
     onEditingChange,
     onRegisterEditController,
 }: {
@@ -236,6 +238,7 @@ function CustomTaskNode({
     resizeScale: number;
     isMobile: boolean;
     onOpenLinkedMemos?: (taskId: string) => void;
+    onRunCodex?: (taskId: string) => void | Promise<void>;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
 }) {
@@ -574,6 +577,28 @@ function CustomTaskNode({
                     </button>
                 )}
 
+                {isMemoNode && onRunCodex && (
+                    <button
+                        type="button"
+                        className={cn(
+                            "shrink-0 rounded-[4px] px-1.5 text-[9px] font-medium leading-5 transition-colors",
+                            "active:scale-95 active:bg-indigo-300 dark:active:bg-indigo-500/40",
+                            node.isDone
+                                ? "bg-muted text-muted-foreground"
+                                : "bg-indigo-200 text-indigo-900 dark:bg-indigo-500/25 dark:text-indigo-200"
+                        )}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onRunCodex?.(node.id);
+                        }}
+                        title="Codexで実行（作業ディレクトリ必須・アプリ/スマホにスレッド表示）"
+                        aria-label="Codexで実行"
+                    >
+                        Codex
+                    </button>
+                )}
+
                 <div className="flex shrink-0 flex-col items-center leading-none">
                     {node.hasChildren && (
                         <button
@@ -723,6 +748,7 @@ export function CustomMindMapView({
     onUpdateStatus,
     onResizeNode,
     onOpenLinkedMemos,
+    onRunCodex,
     onMoveTask,
     onMoveTasks,
 }: CustomMindMapViewProps) {
@@ -1843,6 +1869,7 @@ export function CustomMindMapView({
                                 resizeScale={zoom}
                                 isMobile={isMobile}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
+                                onRunCodex={onRunCodex}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
                             />

@@ -1239,6 +1239,55 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }, 1400);
     }, []);
 
+    // マインドマップのノード(task)から Codex を起動する。
+    //   - cwd は per-node 必須（未設定なら入力を促し、tasks.codex_work_dir に保存）
+    //   - executor='codex_app' で /api/ai-tasks/schedule に投入 → task-runner → codex-rpc-bridge
+    //     → app-server(ws://127.0.0.1:7878) に thread 作成（Codexアプリ/ペアリング済みスマホに表示）
+    //   - プロンプトはノードの「タイトル + メモ詳細」
+    const handleRunCodex = useCallback(async (taskId: string) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        let cwd = (task.codex_work_dir ?? '').trim();
+        if (!cwd) {
+            const input = typeof window !== 'undefined'
+                ? window.prompt('Codex 作業ディレクトリ（このMac上の絶対パス）を入力してください。\n例: /Users/you/project', '')
+                : null;
+            if (!input || !input.trim()) {
+                flashClipboardFeedback('作業ディレクトリが必要です（Codex実行を中止）');
+                return;
+            }
+            cwd = input.trim();
+            try {
+                await onUpdateTask?.(taskId, { codex_work_dir: cwd });
+            } catch {
+                // 永続化に失敗しても今回の実行は続行する
+            }
+        }
+        const memo = (task.memo ?? '').trim();
+        const prompt = memo ? `${task.title}\n\n${memo}` : task.title;
+        try {
+            const res = await fetch('/api/ai-tasks/schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt,
+                    cwd,
+                    approval_type: 'auto',
+                    scheduled_at: new Date().toISOString(),
+                    executor: 'codex_app',
+                }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                flashClipboardFeedback(`Codex起動失敗: ${err?.error ?? res.status}`);
+                return;
+            }
+            flashClipboardFeedback('Codexに送信しました（アプリ/スマホにスレッドが出ます）');
+        } catch (e) {
+            flashClipboardFeedback(`Codex起動失敗: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }, [tasks, onUpdateTask, flashClipboardFeedback]);
+
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null, source: 'user' | 'system') => {
         if (source === 'user') {
             markUserAction();
@@ -2875,6 +2924,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                 onOpenLinkedMemos={onOpenLinkedMemos}
+                onRunCodex={handleRunCodex}
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
             />
