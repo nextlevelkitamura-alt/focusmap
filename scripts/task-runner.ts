@@ -20,6 +20,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { spawn, spawnSync } from 'child_process'
 import { execSync } from 'child_process'
+import WebSocket from 'ws'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -71,6 +72,8 @@ const STAFF_STATUS_RETRY_MAX_MS = 30 * 60 * 1000
 const STAFF_STATUS_STALE_RUNNING_MS = 45 * 60 * 1000
 const STAFF_STATUS_INTERACTIVE_LATE_LIMIT_MS = 15 * 60 * 1000
 const LOCAL_USER_ID_FILE = path.join(os.homedir(), '.config', 'life-manager', 'focusmap-user-id')
+const CODEX_APP_WS_URL = 'ws://127.0.0.1:7878'
+const CODEX_APP_RPC_TIMEOUT_MS = 5_000
 const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
 const CODEX_LIVE_LOG_MAX_CHARS = 20_000
 
@@ -107,6 +110,15 @@ type MonitoredCodexTask = {
   result: Record<string, unknown> | null
   status: string
   source_task_id: string | null
+}
+
+type CodexRpcEnvelope = {
+  jsonrpc?: string
+  id?: number
+  method?: string
+  params?: unknown
+  result?: unknown
+  error?: { code?: number; message?: string }
 }
 
 type AiRunner = {
@@ -1162,6 +1174,10 @@ function mergeCodexLiveLogs(blocks: string[], maxChars = CODEX_LIVE_LOG_MAX_CHAR
   return merged.join('\n\n').slice(-maxChars)
 }
 
+function sqlText(value: string): string {
+  return value.replace(/'/g, "''")
+}
+
 function readCodexBridgeObservation(taskId: string): CodexBridgeObservation {
   const observation: CodexBridgeObservation = {
     awaitingApproval: false,
@@ -1241,12 +1257,15 @@ async function completeCodexTaskClosedFromApp(
   const now = new Date().toISOString()
   const current = (task.result ?? {}) as Record<string, unknown>
   const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
-  const fallbackLog = opts.reason === 'archived'
+  const completionNotice = opts.reason === 'archived'
     ? 'Codex thread がCodex.app側でアーカイブされたため、マップノードを完了にしました。'
     : 'Codex thread が削除されたため、マップノードを完了にしました。'
-  const liveLog = opts.liveLog
+  const baseLiveLog = opts.liveLog
     || (typeof current.live_log === 'string' ? current.live_log : '')
-    || fallbackLog
+  const liveLog = mergeCodexLiveLogs([
+    baseLiveLog,
+    `[Codex] ${completionNotice}`,
+  ])
 
   if (task.source_task_id) {
     const { error } = await supabase
@@ -1274,11 +1293,177 @@ async function completeCodexTaskClosedFromApp(
         codex_source_task_completed: Boolean(task.source_task_id),
         codex_source_task_completed_at: task.source_task_id ? now : null,
         live_log: liveLog,
-        message: `${fallbackLog}\n\n${liveLog}`.trim(),
+        message: liveLog,
         last_activity_at: now,
       },
     })
     .eq('id', task.id)
+}
+
+async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set<string>> {
+  const uniqueThreadIds = [...new Set(threadIds.filter(Boolean))]
+  const archived = new Set<string>()
+  if (uniqueThreadIds.length === 0) return archived
+
+  return new Promise(resolve => {
+    const ws = new WebSocket(CODEX_APP_WS_URL)
+    let nextId = 0
+    const pending = new Map<number, (msg: CodexRpcEnvelope) => void>()
+    let settled = false
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      try { ws.close() } catch { /* ignore */ }
+      resolve(archived)
+    }
+
+    const timer = setTimeout(() => {
+      console.warn('[codex-app] archive RPC timed out; will retry on next runner cycle')
+      finish()
+    }, CODEX_APP_RPC_TIMEOUT_MS * Math.max(2, uniqueThreadIds.length + 1))
+
+    const call = (method: string, params?: unknown) => {
+      const id = ++nextId
+      const payload = { jsonrpc: '2.0', id, method, params }
+      return new Promise<CodexRpcEnvelope>((resolveCall, rejectCall) => {
+        const callTimer = setTimeout(() => {
+          pending.delete(id)
+          rejectCall(new Error(`RPC timeout: ${method}`))
+        }, CODEX_APP_RPC_TIMEOUT_MS)
+        pending.set(id, msg => {
+          clearTimeout(callTimer)
+          resolveCall(msg)
+        })
+        ws.send(JSON.stringify(payload))
+      })
+    }
+
+    ws.on('message', data => {
+      let msg: CodexRpcEnvelope
+      try {
+        msg = JSON.parse(data.toString()) as CodexRpcEnvelope
+      } catch {
+        return
+      }
+      if (typeof msg.id === 'number' && pending.has(msg.id)) {
+        const resolveCall = pending.get(msg.id)!
+        pending.delete(msg.id)
+        resolveCall(msg)
+      }
+    })
+
+    ws.on('error', err => {
+      console.warn('[codex-app] archive RPC connection failed:', err.message)
+      clearTimeout(timer)
+      finish()
+    })
+
+    ws.on('open', async () => {
+      try {
+        const init = await call('initialize', {
+          clientInfo: { name: 'focusmap', version: '0.1.0' },
+        })
+        if (init.error) throw new Error(init.error.message ?? 'initialize failed')
+
+        for (const threadId of uniqueThreadIds) {
+          const resp = await call('thread/archive', { threadId }).catch(error => ({
+            error: { message: error instanceof Error ? error.message : String(error) },
+          }) as CodexRpcEnvelope)
+          if (resp.error) {
+            console.warn(`[codex-app] thread/archive failed for ${threadId}:`, resp.error.message)
+          } else {
+            archived.add(threadId)
+          }
+        }
+      } catch (error) {
+        console.warn('[codex-app] archive RPC failed:', error instanceof Error ? error.message : error)
+      } finally {
+        clearTimeout(timer)
+        finish()
+      }
+    })
+  })
+}
+
+async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient): Promise<void> {
+  const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
+  if (!fs.existsSync(dbPath)) return
+
+  const { data: aiTasks, error } = await supabase
+    .from('ai_tasks')
+    .select('id, prompt, codex_thread_id, started_at, executor, result, status, source_task_id')
+    .in('executor', ['codex_app', 'codex'])
+    .not('source_task_id', 'is', null)
+    .not('codex_thread_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (error) {
+    console.error('[codex-app] completed source task scan failed:', error.message)
+    return
+  }
+  const monitored = (aiTasks ?? []) as MonitoredCodexTask[]
+  const sourceTaskIds = [...new Set(monitored.map(task => task.source_task_id).filter((id): id is string => !!id))]
+  if (sourceTaskIds.length === 0) return
+
+  const { data: sourceTasks, error: sourceError } = await supabase
+    .from('tasks')
+    .select('id, status, stage')
+    .in('id', sourceTaskIds)
+
+  if (sourceError) {
+    console.error('[codex-app] source task status scan failed:', sourceError.message)
+    return
+  }
+
+  const doneSourceIds = new Set(
+    ((sourceTasks ?? []) as Array<{ id: string; status: string | null; stage: string | null }>)
+      .filter(task => task.status === 'done' || task.stage === 'done')
+      .map(task => task.id),
+  )
+  if (doneSourceIds.size === 0) return
+
+  const archiveCandidates: MonitoredCodexTask[] = []
+  for (const task of monitored) {
+    if (!task.source_task_id || !task.codex_thread_id || !doneSourceIds.has(task.source_task_id)) continue
+
+    const result = (task.result ?? {}) as Record<string, unknown>
+    const reason = typeof result.codex_review_reason === 'string' ? result.codex_review_reason : ''
+    if (task.status === 'completed' && (reason === 'archived' || reason === 'thread_deleted')) continue
+
+    try {
+      const stateOut = execSync(
+        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT archived FROM threads WHERE id = '${sqlText(task.codex_thread_id)}' LIMIT 1"`,
+        { encoding: 'utf-8', timeout: 5000 },
+      ).trim()
+      const row = stateOut ? (JSON.parse(stateOut) as Array<{ archived?: number | boolean }>)[0] : null
+      if (row && (row.archived === 1 || row.archived === true)) {
+        await completeCodexTaskClosedFromApp(supabase, task, {
+          threadId: task.codex_thread_id,
+          reason: 'archived',
+        })
+      } else if (row) {
+        archiveCandidates.push(task)
+      }
+    } catch (scanError) {
+      console.error('[codex-app] failed to inspect thread archive state:', scanError instanceof Error ? scanError.message : scanError)
+    }
+  }
+
+  if (archiveCandidates.length === 0) return
+
+  const archivedThreadIds = await archiveCodexThreadsViaAppServer(
+    archiveCandidates.map(task => task.codex_thread_id).filter((id): id is string => !!id),
+  )
+  for (const task of archiveCandidates) {
+    if (!task.codex_thread_id || !archivedThreadIds.has(task.codex_thread_id)) continue
+    await completeCodexTaskClosedFromApp(supabase, task, {
+      threadId: task.codex_thread_id,
+      reason: 'archived',
+    })
+    console.log(`[codex-app] source task done, thread archived: ${task.id} -> ${task.source_task_id}`)
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1335,7 +1520,9 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
               executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
               codex_run_state: 'awaiting_approval',
               codex_review_reason: 'monitoring_lost',
-              live_log: typeof current.live_log === 'string' ? current.live_log : 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
+              live_log: typeof current.live_log === 'string'
+                ? current.live_log
+                : 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
               last_activity_at: new Date().toISOString(),
             },
           })
@@ -2497,6 +2684,7 @@ async function main() {
 
     // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
     await syncCodexAppThreads(supabase)
+    await syncCompletedFocusmapNodesToCodexArchive(supabase)
 
     // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
     await recoverStaleStaffStatusTasks(supabase)

@@ -88,6 +88,23 @@ function sanitizeCodexDisplayLog(value: string): string {
     .trim()
 }
 
+function getCodexCompletionNotice(value: string): string {
+  for (const rawBlock of value.split(/\n{2,}/)) {
+    const block = rawBlock.trim()
+    if (/^Codex thread .*マップノードを完了にしました。?$/.test(block)) return block
+  }
+  return ""
+}
+
+function buildCodexDisplayLog(liveLog: string, message: string, preview: string): string {
+  const completionNotice = getCodexCompletionNotice(message)
+  const base = liveLog || message || preview
+  return sanitizeCodexDisplayLog([
+    base,
+    completionNotice && !base.includes(completionNotice) ? `[Codex] ${completionNotice}` : null,
+  ].filter(Boolean).join("\n\n")).slice(-CODEX_DISPLAY_LOG_CHARS)
+}
+
 function getCodexConversation(value: string, prompt: string): CodexConversation {
   const entries: CodexChatEntry[] = []
   const assistantBlocks: string[] = []
@@ -192,18 +209,19 @@ export function MindmapLinkedMemosDialog({
   const codexMessage = stringValue(codexResult.message)
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
-  const codexPrimaryLogs = [codexMessage, codexLiveLog].filter(Boolean)
-  const codexLogCandidates = (codexPrimaryLogs.length > 0 ? codexPrimaryLogs : [codexPreview])
-    .map(sanitizeCodexDisplayLog)
-    .filter(Boolean)
-  const codexLogBlocks = codexLogCandidates
-    .filter((value, index, arr) => arr.findIndex(other => other.includes(value)) === index)
-  const codexDisplayLog = codexLogBlocks.join("\n\n").slice(-CODEX_DISPLAY_LOG_CHARS)
+  const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const sentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexConversation = getCodexConversation(codexDisplayLog, sentPrompt)
   const codexChatEntries = codexConversation.entries
   const codexProcessLogs = codexConversation.processLogs
   const hasCodexRun = (!!codexTask && isCodexTask) || !!justSentPrompt
+  const codexCompleted = isCodexTask && codexTask?.status === "completed"
+  const codexStatusLabel = codexCompleted ? "完了" : (codexUiState?.label ?? "実行中")
+  const codexStatusClass = codexCompleted
+    ? "rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+    : codexUiState?.state === "running"
+      ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+      : "rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
 
   const repoOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -334,7 +352,7 @@ export function MindmapLinkedMemosDialog({
 
   const title = task?.title || draftTitle || "ノード詳細"
   const description = hasCodexRun
-    ? "Codexと同期中"
+    ? (codexCompleted ? "Codex完了" : "Codexと同期中")
     : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
 
@@ -363,11 +381,8 @@ export function MindmapLinkedMemosDialog({
               <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
                 <div className="flex items-center gap-2">
                   <Bot className="h-4 w-4 text-emerald-500" />
-                  <span className={codexUiState?.state === "running"
-                    ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
-                    : "rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"}
-                  >
-                    {codexUiState?.label ?? "実行中"}
+                  <span className={codexStatusClass}>
+                    {codexStatusLabel}
                   </span>
                   <span className="text-xs text-muted-foreground">送信済み</span>
                 </div>

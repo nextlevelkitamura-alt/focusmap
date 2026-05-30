@@ -382,8 +382,23 @@ async function main() {
       await pushStep(supabase, taskId, makeStep('connected', 'app-server に接続 (initialize OK)'))
 
       // ─── thread/start で新規 thread 作成 ───
+      // approvalPolicy を省略すると app-server 既定が "untrusted" になり、
+      // date などの小さな読み取りコマンドでも承認待ちで止まる。
+      // Focusmap からの初回投入は Codex.app 側でログを追う用途なので、承認待ちを作らない。
       // response: { result: { thread: { id, ... }, model, ... } }
-      const threadResp = await callOk(rpc, 'thread/start', { cwd })
+      const THREAD_START_SHAPES: Array<{ name: string; payload: Record<string, unknown> }> = [
+        { name: 'approval-never', payload: { cwd, approvalPolicy: 'never' } },
+        { name: 'minimal', payload: { cwd } },
+      ]
+      let threadResp: RpcEnvelope | null = null
+      for (const s of THREAD_START_SHAPES) {
+        threadResp = await callOk(rpc, 'thread/start', s.payload)
+        if (threadResp) {
+          const result = threadResp.result as { approvalPolicy?: string } | undefined
+          console.error(`[bridge] thread/start OK shape=${s.name} approvalPolicy=${result?.approvalPolicy ?? 'unknown'}`)
+          break
+        }
+      }
       if (!threadResp) throw new Error('thread/start 失敗')
       const threadResult = threadResp.result as { thread?: { id?: string }; threadId?: string }
       const threadId = threadResult.thread?.id ?? threadResult.threadId
@@ -548,13 +563,12 @@ async function main() {
       })
 
       // ─── turn/start ───
-      // Phase A で確定: input-no-policy が正解
-      //   { threadId, input: [{ type: 'text', text }] }
-      //   sandboxPolicy/approvalPolicy は thread/start の defaults を継承（"never" 文字列は型エラー）
-      // 念のためフォールバック shape も残す（codex バージョン違い対策）
+      // Phase A で確定: input 配列が正解。
+      // thread 側の approvalPolicy=never を継承させつつ、turn 側でも指定できる版を最初に試す。
+      // 念のためフォールバック shape も残す（codex バージョン違い対策）。
       const TURN_SHAPES: Array<{ name: string; payload: Record<string, unknown> }> = [
+        { name: 'input-approval-never', payload: { threadId, input: [{ type: 'text', text: prompt }], approvalPolicy: 'never' } },
         { name: 'input-no-policy', payload: { threadId, input: [{ type: 'text', text: prompt }] } },
-        { name: 'input-approval-only', payload: { threadId, input: [{ type: 'text', text: prompt }], approvalPolicy: 'never' } },
         { name: 'items-array', payload: { threadId, items: [{ type: 'text', text: prompt }] } },
         { name: 'text-flat', payload: { threadId, text: prompt } },
       ]
