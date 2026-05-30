@@ -28,7 +28,7 @@ type TaskResponse = {
 }
 
 type CodexChatEntry = {
-  kind: "request" | "event"
+  kind: "request" | "event" | "user"
   text: string
 }
 
@@ -76,7 +76,7 @@ function sanitizeCodexDisplayLog(value: string): string {
   return value
     .split(/\n{2,}/)
     .map(block => block.trim())
-    .filter(block => block && !/^\[(developer|system|user|tool:)\]/i.test(block))
+    .filter(block => block && !/^\[(developer|system)\]/i.test(block))
     .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
     .filter(block => {
       const key = block.replace(/\s+/g, " ")
@@ -147,8 +147,19 @@ function getCodexConversation(value: string, prompt: string): CodexConversation 
     const block = rawBlock.trim()
     if (!block) continue
     if (block.replace(/\s+/g, " ").trim() === promptKey) continue
-    if (/^\[(developer|system|user|tool:)\]/i.test(block)) continue
+    if (/^\[(developer|system)\]/i.test(block)) continue
     if (/^Codex セッションは確認待ちです。/i.test(block)) continue
+    if (/^\[user\]\s*プロンプト送信済み\s*\(/i.test(block)) continue
+
+    const user = block.match(/^\[user\]\s*([\s\S]+)/i)
+    if (user?.[1]?.trim()) {
+      flushAssistant()
+      const userText = user[1].trim()
+      if (userText.replace(/\s+/g, " ").trim() !== promptKey) {
+        pushUnique({ kind: "user", text: userText })
+      }
+      continue
+    }
 
     const process = block.match(/^\[(command:[^\]]+|approval-requested|approval-resolved)\]\s*([\s\S]+)/i)
     if (process?.[1]) {
@@ -424,6 +435,13 @@ export function MindmapLinkedMemosDialog({
                         <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
                           {entry.text}
                         </span>
+                      </div>
+                    ) : entry.kind === "user" ? (
+                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-end">
+                        <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
+                          <div className="mb-1 text-xs font-medium text-muted-foreground">Codex側で送信</div>
+                          <div className="whitespace-pre-wrap break-words">{entry.text}</div>
+                        </div>
                       </div>
                     ) : (
                       <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-start">

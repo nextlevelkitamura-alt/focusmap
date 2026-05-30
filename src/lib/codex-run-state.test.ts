@@ -19,10 +19,28 @@ describe("parseCodexRollout", () => {
     expect(parsed.reviewReason).toBe("started")
     expect(parsed.liveLog).toContain("作業を始めます")
     expect(parsed.liveLog.match(/作業を始めます/g)?.length).toBe(1)
+    expect(parsed.liveLog).toContain("[command:started] exec_command")
     expect(parsed.liveLog).not.toContain("internal instructions")
     expect(parsed.liveLog).not.toContain("AGENTS.md")
-    expect(parsed.liveLog).not.toContain("exec_command")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:02.000Z")
+  })
+
+  test("mirrors user follow-ups and tool starts from the Codex app thread", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }),
+      row({ type: "user_message", message: "この方針で続けて" }, "2026-05-30T08:00:01.000Z"),
+      row({
+        type: "function_call",
+        name: "exec_command",
+        arguments: JSON.stringify({ cmd: "npm test -- --run src/lib/codex-run-state.test.ts" }),
+      }, "2026-05-30T08:00:02.000Z"),
+      row({ type: "agent_message", message: "続きの結果です" }, "2026-05-30T08:00:03.000Z"),
+    ].join("\n"))
+
+    expect(parsed.liveLog).toContain("[user] この方針で続けて")
+    expect(parsed.liveLog).toContain("[command:started] npm test -- --run src/lib/codex-run-state.test.ts")
+    expect(parsed.liveLog).toContain("[assistant] 続きの結果です")
+    expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:03.000Z")
   })
 
   test("moves to review when Codex completes", () => {
