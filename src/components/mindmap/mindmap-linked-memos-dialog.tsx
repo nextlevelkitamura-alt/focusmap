@@ -499,7 +499,7 @@ export function MindmapLinkedMemosDialog({
   const codexStatusLabel = codexCompleted
     ? "Codex完了"
     : codexWaitingForAppSend
-      ? "貼り付け待ち"
+      ? "実行待ち"
     : codexTask?.status === "failed"
       ? "失敗"
       : codexUiState?.state === "running"
@@ -511,9 +511,16 @@ export function MindmapLinkedMemosDialog({
     ? "rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
     : codexTask?.status === "failed"
       ? "rounded-md bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
+      : codexWaitingForAppSend
+        ? "rounded-md bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-300"
       : codexUiState?.state === "running"
         ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
         : "rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+  const codexIconClass = codexWaitingForAppSend
+    ? "text-sky-500"
+    : codexUiState?.state === "running"
+      ? "text-emerald-500"
+      : "text-amber-500"
 
   const repoOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -738,7 +745,7 @@ export function MindmapLinkedMemosDialog({
             <section className="flex min-h-[520px] flex-col overflow-hidden rounded-lg border bg-card">
               <div className="sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Bot className="h-4 w-4 text-emerald-500" />
+                  <Bot className={`h-4 w-4 ${codexIconClass}`} />
                   <span className={codexStatusClass}>{codexStatusLabel}</span>
                   <span className="text-xs text-muted-foreground">
                     {codexWaitingForAppSend ? "コピー済み・未送信" : codexSendConfirmed ? "送信確認済み" : "送信待ち"}

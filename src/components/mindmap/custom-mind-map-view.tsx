@@ -270,6 +270,7 @@ function CustomTaskNode({
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const [menuOpen, setMenuOpen] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
+    const isCodexWaitingForExecution = codexState?.state === "awaiting_approval" && codexState.label === "実行待ち";
     const scheduledLabel = formatDateShort(node.scheduledAt);
     const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode;
 
@@ -538,6 +539,7 @@ function CustomTaskNode({
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
                 node.isDone && "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale",
+                codexState?.state === "running" && "border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
                 selected && node.isDone && "ring-muted-foreground/40",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
@@ -571,19 +573,22 @@ function CustomTaskNode({
             )}
             {codexState?.state === "running" && (
                 <div
-                    className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/70 bg-background shadow-[0_0_12px_rgba(16,185,129,0.45)]"
+                    className="codex-node-running-orbit"
                     title="Codex 実行中"
                     aria-label="Codex 実行中"
-                >
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-                </div>
+                />
             )}
             {codexState?.state === "awaiting_approval" && (
                 <div
-                    className="absolute -right-2 -top-2 rounded-full border border-amber-400/70 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-amber-900 shadow-sm dark:bg-amber-500/20 dark:text-amber-200"
-                    title="Codex 確認待ち"
+                    className={cn(
+                        "absolute -right-2 -top-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm",
+                        isCodexWaitingForExecution
+                            ? "border-sky-400/80 bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-200"
+                            : "border-amber-400/70 bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
+                    )}
+                    title={`Codex ${codexState.label}`}
                 >
-                    確認待ち
+                    {codexState.label}
                 </div>
             )}
             <div className="flex items-center gap-1">
@@ -798,10 +803,10 @@ function CustomTaskNode({
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
                                 event.stopPropagation();
-                                onRunCodex?.(node.id);
+                                onOpenLinkedMemos?.(node.id);
                             }}
-                            title="ノードメニュー（詳細・メモ・Codex）"
-                            aria-label="ノードメニューを開く"
+                            title="関連メモ"
+                            aria-label="関連メモを開く"
                         >
                             <svg className="h-3 w-3" viewBox="0 0 12 12" fill="currentColor">
                                 <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
@@ -1012,12 +1017,16 @@ export function CustomMindMapView({
         return node?.kind === "task" ? node : null;
     }, [activeEditingTaskId, nodeById]);
     const codexSummary = useMemo(() => {
-        const states = Object.values(codexRunByNodeId);
+        const states = positionedNodes
+            .filter(node => node.kind === "task")
+            .map(node => codexRunByNodeId[node.id])
+            .filter((state): state is CodexNodeState => Boolean(state));
         return {
             running: states.filter(state => state.state === "running").length,
-            awaitingApproval: states.filter(state => state.state === "awaiting_approval").length,
+            waitingForExecution: states.filter(state => state.state === "awaiting_approval" && state.label === "実行待ち").length,
+            awaitingApproval: states.filter(state => state.state === "awaiting_approval" && state.label !== "実行待ち").length,
         };
-    }, [codexRunByNodeId]);
+    }, [codexRunByNodeId, positionedNodes]);
 
     useEffect(() => {
         zoomRef.current = zoom;
@@ -1889,12 +1898,17 @@ export function CustomMindMapView({
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
-            {(codexSummary.running > 0 || codexSummary.awaitingApproval > 0) && (
+            {(codexSummary.running > 0 || codexSummary.waitingForExecution > 0 || codexSummary.awaitingApproval > 0) && (
                 <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
                     {codexSummary.running > 0 && (
                         <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
                             <Loader2 className="h-3 w-3 animate-spin" />
                             実行中{codexSummary.running}
+                        </span>
+                    )}
+                    {codexSummary.waitingForExecution > 0 && (
+                        <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
+                            実行待ち{codexSummary.waitingForExecution}
                         </span>
                     )}
                     {codexSummary.awaitingApproval > 0 && (

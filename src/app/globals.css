@@ -284,3 +284,89 @@
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
+
+/* Custom Mind Map: Codex running state */
+.codex-node-running-orbit {
+  position: absolute;
+  inset: -5px;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  filter: drop-shadow(0 0 7px rgba(16, 185, 129, 0.55));
+}
+
+.codex-node-running-orbit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background:
+    conic-gradient(
+      from 0deg,
+      rgba(16, 185, 129, 0) 0deg,
+      rgba(16, 185, 129, 0) 205deg,
+      rgba(16, 185, 129, 0.22) 248deg,
+      rgba(52, 211, 153, 0.95) 292deg,
+      rgba(167, 243, 208, 1) 318deg,
+      rgba(16, 185, 129, 0) 360deg
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: codexNodeOrbit 1.8s infinite;
+}
+
+.codex-node-running-orbit::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  box-shadow:
+    0 0 12px rgba(16, 185, 129, 0.25),
+    inset 0 0 12px rgba(16, 185, 129, 0.08);
+  animation: codexNodeOrbitGlow 1.8s infinite;
+}
+
+@keyframes codexNodeOrbit {
+  0% {
+    transform: rotate(0deg);
+    opacity: 0.72;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  28% {
+    transform: rotate(168deg);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.36, 0, 0.66, -0.56);
+  }
+
+  52% {
+    transform: rotate(238deg);
+    opacity: 0.9;
+    animation-timing-function: cubic-bezier(0.22, 0.62, 0.34, 1);
+  }
+
+  100% {
+    transform: rotate(360deg);
+    opacity: 0.72;
+  }
+}
+
+@keyframes codexNodeOrbitGlow {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+
+  30% {
+    opacity: 0.86;
+  }
+
+  58% {
+    opacity: 0.52;
+  }
+}

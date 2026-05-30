@@ -105,7 +105,48 @@ describe("CustomMindMapView keyboard operations", () => {
     })
 
     expect(screen.getByText("実行中1")).toBeInTheDocument()
-    expect(screen.getByLabelText("Codex 実行中")).toBeInTheDocument()
+    expect(screen.getByLabelText("Codex 実行中")).toHaveClass("codex-node-running-orbit")
+  })
+
+  test("counts only visible map nodes in the Codex summary", () => {
+    renderMap({
+      codexRunByNodeId: {
+        "root-1": {
+          state: "awaiting_approval",
+          taskId: "ai-task-1",
+          label: "確認待ち",
+        },
+        "not-visible": {
+          state: "awaiting_approval",
+          taskId: "ai-task-2",
+          label: "確認待ち",
+        },
+      },
+    })
+
+    expect(screen.getByText("確認待ち1")).toBeInTheDocument()
+    expect(screen.queryByText("確認待ち2")).not.toBeInTheDocument()
+  })
+
+  test("shows execution waiting state separately from review waiting", () => {
+    renderMap({
+      codexRunByNodeId: {
+        "root-1": {
+          state: "awaiting_approval",
+          taskId: "ai-task-1",
+          label: "実行待ち",
+        },
+        "child-1": {
+          state: "awaiting_approval",
+          taskId: "ai-task-2",
+          label: "確認待ち",
+        },
+      },
+    })
+
+    expect(screen.getByText("実行待ち1")).toBeInTheDocument()
+    expect(screen.getAllByText("実行待ち")).toHaveLength(1)
+    expect(screen.getByText("確認待ち1")).toBeInTheDocument()
   })
 
   test("adds a child with Tab and a sibling with Enter", async () => {
@@ -125,6 +166,17 @@ describe("CustomMindMapView keyboard operations", () => {
 
     fireEvent.keyDown(node, { key: "Enter" })
     await waitFor(() => expect(onAddSiblingNode).toHaveBeenCalledWith("root-1"))
+  })
+
+  test("opens the linked memo dialog from the desktop node menu button", async () => {
+    const onOpenLinkedMemos = vi.fn()
+
+    renderMap({ onOpenLinkedMemos })
+
+    const node = getNode("Root task", "root-1")
+    fireEvent.click(within(node).getByRole("button", { name: "関連メモを開く" }))
+
+    expect(onOpenLinkedMemos).toHaveBeenCalledWith("root-1")
   })
 
   test("promotes with Shift+Tab and saves inline edits", async () => {

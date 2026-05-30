@@ -253,6 +253,12 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
 
   const result = isRecord(task.result) ? task.result : {}
   const rawState = result.codex_run_state
+  const isManualHandoff = result.codex_manual_handoff === true
+  const hasThreadId = typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0
+
+  if (isManualHandoff && !hasThreadId) {
+    return { state: "awaiting_approval", label: "実行待ち" }
+  }
 
   if (rawState === "awaiting_approval") {
     return { state: "awaiting_approval", label: "確認待ち" }

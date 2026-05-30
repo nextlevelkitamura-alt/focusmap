@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon, X, GripVertical, StickyNote, ImagePlus, Check, ChevronDown, ChevronRight } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
-import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings, DEFAULT_SETTINGS } from "@/components/dashboard/mindmap-display-settings";
+import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { useDrag } from "@/contexts/DragContext";
 import { DateTimePicker } from "@/lib/dynamic-imports";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
@@ -1121,9 +1121,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const isNarrow = useIsNarrowViewport();
     const zoomBounds = useMemo(() => getMindMapViewportBounds(), []);
 
-    // MindMap Display Settings (consistent default for SSR, restore from localStorage after mount)
-    const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(DEFAULT_SETTINGS);
-    useEffect(() => { setDisplaySettings(loadSettings()) }, []);
+    // MindMap Display Settings
+    const [displaySettings, setDisplaySettings] = useState<MindMapDisplaySettings>(() => loadSettings());
 
     // カレンダー同期（マインドマップのタスク全体）+ 楽観的UI更新
     useMultiTaskCalendarSync({
