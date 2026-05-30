@@ -40,22 +40,13 @@ function expandHome(input: string): string {
   return input
 }
 
-async function isRegisteredRepo(
+async function isScannedRepo(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   candidates: string[],
 ): Promise<boolean> {
   const uniqueCandidates = Array.from(new Set(candidates.filter(Boolean)))
   if (uniqueCandidates.length === 0) return false
-
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("user_id", userId)
-    .in("repo_path", uniqueCandidates)
-    .limit(1)
-    .maybeSingle()
-  if (project) return true
 
   const { data: availableRepo } = await supabase
     .from("available_repos")
@@ -66,6 +57,18 @@ async function isRegisteredRepo(
     .maybeSingle()
 
   return !!availableRepo
+}
+
+async function resolveGitRoot(repoPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/git", ["-C", repoPath, "rev-parse", "--show-toplevel"], {
+      timeout: 5_000,
+      windowsHide: true,
+    })
+    return fs.realpathSync(stdout.trim())
+  } catch {
+    return null
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -110,7 +113,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "repo_path must be a directory" }, { status: 400 })
   }
 
-  const registered = await isRegisteredRepo(supabase, user.id, [
+  const gitRoot = await resolveGitRoot(resolvedRepoPath)
+  if (!gitRoot) {
+    return NextResponse.json({ error: "repo_path must be a git repository" }, { status: 400 })
+  }
+  if (gitRoot !== resolvedRepoPath) {
+    return NextResponse.json(
+      { error: "repo_path must point to the git repository root", git_root: gitRoot },
+      { status: 400 },
+    )
+  }
+
+  const registered = await isScannedRepo(supabase, user.id, [
     rawRepoPath,
     expandedRepoPath,
     path.resolve(expandedRepoPath),
@@ -147,6 +161,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     repo_path: resolvedRepoPath,
+    git_root: gitRoot,
     activated,
     command: "codex app",
   })

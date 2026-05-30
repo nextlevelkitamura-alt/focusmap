@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server"
+import { resolveProjectRepoPath } from "@/lib/project-repo-path"
 import { NextResponse } from "next/server"
 
 export async function POST(request: Request) {
@@ -17,6 +18,11 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "space_id and title are required" }, { status: 400 })
         }
 
+        const resolvedRepo = await resolveProjectRepoPath(supabase, user.id, repo_path)
+        if (resolvedRepo.error) {
+            return NextResponse.json({ error: resolvedRepo.error }, { status: 400 })
+        }
+
         const { data, error } = await supabase
             .from("projects")
             .insert({
@@ -26,7 +32,7 @@ export async function POST(request: Request) {
                 status,
                 priority,
                 ...(color_theme ? { color_theme } : {}),
-                ...(repo_path !== undefined ? { repo_path: repo_path || null } : {}),
+                ...(repo_path !== undefined ? { repo_path: resolvedRepo.repoPath } : {}),
             })
             .select()
             .single()
