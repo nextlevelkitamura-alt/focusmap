@@ -148,8 +148,21 @@ export function invalidateCalendarCache() {
 const CALENDAR_SYNC_EVENT = 'focusmap:calendar-sync-request';
 const EVENT_COMPLETION_EVENT = 'focusmap:event-completion-changed';
 const CALENDAR_EVENT_TIME_UPDATE_EVENT = 'focusmap:calendar-event-time-update';
+const CALENDAR_EVENT_DETAIL_UPDATE_EVENT = 'focusmap:calendar-event-detail-update';
 const CALENDAR_OPTIMISTIC_EVENT_ADD = 'focusmap:calendar-optimistic-event-add';
 const CALENDAR_OPTIMISTIC_EVENT_REMOVE = 'focusmap:calendar-optimistic-event-remove';
+
+export type CalendarEventDetailUpdate = {
+  eventId: string;
+  googleEventId?: string;
+  calendarId?: string;
+  taskId?: string | null;
+  title?: string;
+  startTime?: string;
+  endTime?: string;
+  reminders?: number[];
+  description?: string;
+};
 
 /** 全 useCalendarEvents インスタンスにキャッシュ再取得を通知 */
 export function broadcastCalendarSync() {
@@ -198,7 +211,16 @@ export function broadcastCalendarEventTimeUpdate(
   }
 }
 
-export { EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT };
+/** イベントのタイトルなどの詳細変更を全インスタンスに即時ブロードキャスト */
+export function broadcastCalendarEventDetailUpdate(update: CalendarEventDetailUpdate) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, {
+      detail: update,
+    }));
+  }
+}
+
+export { EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT, CALENDAR_EVENT_DETAIL_UPDATE_EVENT };
 
 function isQuotaError(error: unknown): boolean {
   const message = error instanceof Error
@@ -622,11 +644,32 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       commitEvents(prev => removeEvent(prev, eventId, googleEventId, calendarId));
     };
 
+    const updateHandler = (event: Event) => {
+      const detail = (event as CustomEvent<CalendarEventDetailUpdate>).detail;
+      if (!detail?.eventId) return;
+      commitEvents(prev => prev.map(calendarEvent => {
+        const matches =
+          calendarEvent.id === detail.eventId ||
+          (!!detail.googleEventId && calendarEvent.google_event_id === detail.googleEventId && (!detail.calendarId || calendarEvent.calendar_id === detail.calendarId));
+        if (!matches) return calendarEvent;
+        return {
+          ...calendarEvent,
+          ...(detail.title !== undefined ? { title: detail.title } : {}),
+          ...(detail.startTime !== undefined ? { start_time: detail.startTime } : {}),
+          ...(detail.endTime !== undefined ? { end_time: detail.endTime } : {}),
+          ...(detail.reminders !== undefined ? { reminders: detail.reminders } : {}),
+          ...(detail.description !== undefined ? { description: detail.description } : {}),
+        };
+      }));
+    };
+
     window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
     window.addEventListener(CALENDAR_OPTIMISTIC_EVENT_REMOVE, removeHandler);
+    window.addEventListener(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, updateHandler);
     return () => {
       window.removeEventListener(CALENDAR_OPTIMISTIC_EVENT_ADD, addHandler);
       window.removeEventListener(CALENDAR_OPTIMISTIC_EVENT_REMOVE, removeHandler);
+      window.removeEventListener(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, updateHandler);
     };
   // See fetchEvents deps above: the stable keys intentionally stand in for the
   // Date objects and calendarIds array.

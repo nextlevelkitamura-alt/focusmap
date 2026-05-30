@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Task, HabitCompletion, Project } from "@/types/database"
 import { CalendarEvent } from "@/types/calendar"
-import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, broadcastCalendarEventTimeUpdate, broadcastCalendarOptimisticEventRemoval, EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT } from "@/hooks/useCalendarEvents"
+import { useCalendarEvents, invalidateCalendarCache, broadcastCalendarSync, broadcastEventCompletion, broadcastCalendarEventTimeUpdate, broadcastCalendarEventDetailUpdate, broadcastCalendarOptimisticEventRemoval, EVENT_COMPLETION_EVENT, CALENDAR_EVENT_TIME_UPDATE_EVENT, CALENDAR_EVENT_DETAIL_UPDATE_EVENT, type CalendarEventDetailUpdate } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { useHabits, HabitWithDetails, formatDateString } from "@/hooks/useHabits"
 import { useEventImport } from "@/hooks/useEventImport"
@@ -244,6 +244,47 @@ export function useTodayViewLogic({
         return () => window.removeEventListener(CALENDAR_EVENT_TIME_UPDATE_EVENT, handler)
     }, [])
 
+    // 他パネルからのイベント詳細変更の即時反映（タイトル編集などの楽観UI）
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<CalendarEventDetailUpdate>).detail
+            if (!detail?.eventId) return
+            const durationMinutes = detail.startTime && detail.endTime
+                ? Math.max(1, Math.round((new Date(detail.endTime).getTime() - new Date(detail.startTime).getTime()) / 60000))
+                : null
+            setLocalCalendarEvents(prev => prev.map(event => {
+                const matches =
+                    event.id === detail.eventId ||
+                    (!!detail.googleEventId && event.google_event_id === detail.googleEventId && (!detail.calendarId || event.calendar_id === detail.calendarId))
+                if (!matches) return event
+                return {
+                    ...event,
+                    ...(detail.title !== undefined ? { title: detail.title } : {}),
+                    ...(detail.startTime !== undefined ? { start_time: detail.startTime } : {}),
+                    ...(detail.endTime !== undefined ? { end_time: detail.endTime } : {}),
+                    ...(detail.reminders !== undefined ? { reminders: detail.reminders } : {}),
+                    ...(detail.description !== undefined ? { description: detail.description } : {}),
+                }
+            }))
+            setLocalTasks(prev => prev.map(task => {
+                const matches =
+                    (!!detail.taskId && task.id === detail.taskId) ||
+                    (!!detail.googleEventId && task.google_event_id === detail.googleEventId)
+                if (!matches) return task
+                return {
+                    ...task,
+                    ...(detail.title !== undefined ? { title: detail.title } : {}),
+                    ...(detail.startTime !== undefined ? { scheduled_at: detail.startTime } : {}),
+                    ...(durationMinutes !== null ? { estimated_time: durationMinutes } : {}),
+                    ...(detail.calendarId ? { calendar_id: detail.calendarId } : {}),
+                }
+            }))
+        }
+        window.addEventListener(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, handler)
+        return () => window.removeEventListener(CALENDAR_EVENT_DETAIL_UPDATE_EVENT, handler)
+    }, [])
+
     const eventByGoogleKey = useMemo(() => {
         const map = new Map<string, CalendarEvent>()
         for (const event of allFetchedEvents) {
@@ -315,6 +356,17 @@ export function useTodayViewLogic({
                 }
                 : task
         ))
+        broadcastCalendarEventDetailUpdate({
+            eventId: event.id,
+            googleEventId: updates.googleEventId,
+            calendarId: updates.calendarId,
+            taskId: event.task_id,
+            title: updates.title,
+            startTime: updates.start_time,
+            endTime: updates.end_time,
+            reminders: updates.reminders,
+            ...(updates.description !== undefined ? { description: updates.description } : {}),
+        })
 
         const res = await fetch(`/api/calendar/events/${event.id}`, {
             method: 'PATCH',
@@ -995,6 +1047,17 @@ export function useTodayViewLogic({
                 }
                 : task
         ))
+        broadcastCalendarEventDetailUpdate({
+            eventId,
+            googleEventId: updates.googleEventId,
+            calendarId: updates.calendarId,
+            taskId: previousEvent?.task_id,
+            title: updates.title,
+            startTime: updates.start_time,
+            endTime: updates.end_time,
+            reminders: updates.reminders,
+            ...(updates.description !== undefined ? { description: updates.description } : {}),
+        })
 
         if (!updates.googleEventId) {
             return
