@@ -90,6 +90,7 @@ function sanitizeCodexDisplayLog(value: string): string {
     .map(block => block.trim())
     .filter(block => block && !/^\[(developer|system)\]/i.test(block))
     .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
+    .filter(block => !/^Codex\.appでプロンプトを送信すると、Focusmapはthread状態とログだけ同期します。/i.test(block))
     .filter(block => {
       const key = block.replace(/\s+/g, " ")
       if (seen.has(key)) return false

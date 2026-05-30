@@ -10,6 +10,24 @@ export const runtime = "nodejs"
 
 const execFileAsync = promisify(execFile)
 
+async function activateCodexApp(): Promise<boolean> {
+  try {
+    await execFileAsync("/usr/bin/osascript", [
+      "-e",
+      "tell application id \"com.openai.codex\" to reopen",
+      "-e",
+      "tell application id \"com.openai.codex\" to activate",
+    ], {
+      timeout: 5_000,
+      windowsHide: true,
+    })
+    return true
+  } catch (err) {
+    console.warn("[codex/open-repo] Codex.app activation failed:", err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
 function canOpenLocalApp(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_APP_OPEN === "true") return true
   return ["localhost", "127.0.0.1", "::1"].includes(req.nextUrl.hostname)
@@ -116,5 +134,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  return NextResponse.json({ ok: true, repo_path: resolvedRepoPath })
+  const activated = await activateCodexApp()
+
+  return NextResponse.json({ ok: true, repo_path: resolvedRepoPath, activated })
 }
