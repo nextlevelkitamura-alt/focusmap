@@ -21,6 +21,7 @@ import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
+import { spawn } from 'child_process'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -48,6 +49,7 @@ const OVERALL_TIMEOUT_MS = 15 * 60 * 1000 // 15分
 const CONNECT_TIMEOUT_MS = 10_000
 const POST_COMPLETION_GRACE_MS = 5_000
 const LIVE_LOG_MAX_CHARS = 20_000
+const OPEN_CODEX_THREAD = process.env.FOCUSMAP_CODEX_OPEN_THREAD !== '0'
 const LOG_FILE_TEMPLATE = (taskId: string) => `/tmp/codex-bridge-${taskId}.log`
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -219,6 +221,21 @@ async function pushStep(
   await supabase.from('ai_tasks').update({ result: merged }).eq('id', taskId)
 }
 
+function openCodexThreadInApp(threadId: string, reason: 'created' | 'completed'): void {
+  if (!OPEN_CODEX_THREAD || process.platform !== 'darwin') return
+  const url = `codex://threads/${threadId}`
+  try {
+    const child = spawn('/usr/bin/open', ['-g', url], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+    console.error(`[bridge] opened Codex deeplink reason=${reason} url=${url}`)
+  } catch (err) {
+    console.error(`[bridge] Codex deeplink open failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // JSON-RPC ヘルパー
 // ─────────────────────────────────────────────────────────────────────────
@@ -279,6 +296,14 @@ class RpcClient {
       })
       this.ws.send(JSON.stringify(payload))
     })
+  }
+
+  notify(method: string, params?: unknown): void {
+    const payload = params === undefined
+      ? { jsonrpc: '2.0', method }
+      : { jsonrpc: '2.0', method, params }
+    this.appendLog(`→ ${JSON.stringify(payload)}\n`)
+    this.ws.send(JSON.stringify(payload))
   }
 
   onNotification(handler: (msg: RpcEnvelope) => void): () => void {
@@ -377,8 +402,10 @@ async function main() {
       // method 一覧は /tmp/codex-bridge-28cd0e3e-*.log の error response で確証済
       const initResp = await callOk(rpc, 'initialize', {
         clientInfo: { name: 'focusmap', version: '0.1.0' },
+        capabilities: { experimentalApi: true },
       })
       if (!initResp) throw new Error('initialize 失敗')
+      rpc.notify('initialized')
       await pushStep(supabase, taskId, makeStep('connected', 'app-server に接続 (initialize OK)'))
 
       // ─── thread/start で新規 thread 作成 ───
@@ -387,7 +414,17 @@ async function main() {
       // Focusmap からの初回投入は Codex.app 側でログを追う用途なので、承認待ちを作らない。
       // response: { result: { thread: { id, ... }, model, ... } }
       const THREAD_START_SHAPES: Array<{ name: string; payload: Record<string, unknown> }> = [
-        { name: 'approval-never', payload: { cwd, approvalPolicy: 'never' } },
+        {
+          name: 'focusmap-user-thread',
+          payload: {
+            cwd,
+            approvalPolicy: 'never',
+            experimentalRawEvents: true,
+            persistExtendedHistory: true,
+            threadSource: 'user',
+          },
+        },
+        { name: 'approval-never', payload: { cwd, approvalPolicy: 'never', threadSource: 'user' } },
         { name: 'minimal', payload: { cwd } },
       ]
       let threadResp: RpcEnvelope | null = null
@@ -403,10 +440,18 @@ async function main() {
       const threadResult = threadResp.result as { thread?: { id?: string }; threadId?: string }
       const threadId = threadResult.thread?.id ?? threadResult.threadId
       if (!threadId) throw new Error('thread/start レスポンスから id を取得できない')
+      openCodexThreadInApp(threadId, 'created')
 
       await pushStep(supabase, taskId, makeStep('thread_visible',
-        `Thread 作成 (mobile/Codex.app に表示, id ${threadId.slice(0, 8)})`),
-        { threadId })
+        `Thread 作成 (Codex.app に表示, id ${threadId.slice(0, 8)})`),
+        {
+          threadId,
+          metadata: {
+            codex_thread_url: `codex://threads/${threadId}`,
+            codex_thread_source: 'user',
+            codex_open_thread_enabled: OPEN_CODEX_THREAD,
+          },
+        })
       await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
 
       await pushStep(supabase, taskId, makeStep('prompt_ready', `プロンプト準備完了 (${prompt.length}文字)`), {
@@ -650,6 +695,7 @@ async function main() {
         }).eq('id', taskId)
       }
 
+      openCodexThreadInApp(threadId, 'completed')
       console.error(`[bridge] keeping websocket open ${POST_COMPLETION_GRACE_MS}ms after completion`)
       await sleep(POST_COMPLETION_GRACE_MS)
       ws.close()
