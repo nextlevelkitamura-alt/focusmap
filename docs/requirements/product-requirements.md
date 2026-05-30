@@ -16,6 +16,32 @@ Primary references:
 
 ## Current Managed Scope
 
+### CALENDAR-EVENT-TO-MEMO
+
+Convert a Google Calendar event on the right-side timeline into an unscheduled Focusmap memo by dragging it to the left memo board or using the memo action.
+
+Current status: `deployed_needs_recurring_verification`.
+
+Key implementation evidence:
+
+- `supabase/migrations/20260530143000_calendar_event_memo_conversions.sql`
+- `src/app/api/calendar/events/[eventId]/memo/route.ts`
+- `src/lib/calendar-event-to-memo.ts`
+- `src/components/today/today-timeline-calendar.tsx`
+- `src/components/dashboard/today-memo-board.tsx`
+- `src/hooks/useTodayViewLogic.ts`
+
+Acceptance criteria before this feature is `done`:
+
+1. A Google Calendar event without an existing memo can become a new memo.
+2. The new memo title is the event title.
+3. The new memo is unscheduled: `scheduled_at = null`, `google_event_id = null`, `memo_status = unsorted`, `is_today = false`.
+4. The source Google Calendar event is deleted after memo creation.
+5. Recurring events warn the user and support either this occurrence or the whole series.
+6. The conversion stores original event metadata and delete scope for traceability.
+7. Read-only calendars are rejected before memo conversion.
+8. Failure before Google deletion does not leave a duplicate memo.
+
 ### MEMO-STRUCTURE
 
 Turn raw user memos from wishlist items or notes into structured, reviewable memo items, then let selected items be linked into the mind map as task nodes or supporting context.

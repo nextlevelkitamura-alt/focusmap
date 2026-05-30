@@ -14,8 +14,7 @@ Last updated: 2026-05-30
 ## Done
 
 - REQ-013: Canonical development-management docs are now present in the main Focusmap repo.
-
-No product requirement is marked `done` yet.
+- REQ-014: Google Calendar events can be converted into new unscheduled memos and the feature is deployed.
 
 ## In Progress
 
@@ -23,6 +22,9 @@ No product requirement is marked `done` yet.
 
 ## Needs Verification
 
+- CALENDAR-EVENT-TO-MEMO recurring-event and RLS behavior still needs verification.
+- REQ-015: Recurring event warning and this-occurrence vs whole-series deletion.
+- REQ-016: Conversion audit table and RLS behavior.
 - MEMO-STRUCTURE end-to-end behavior exists in code but needs verification.
 - REQ-001: Raw memo separation.
 - REQ-002: Wishlist/note source support.
@@ -37,12 +39,19 @@ No product requirement is marked `done` yet.
 ## Verification Run
 
 - 2026-05-30: `npm test -- --run src/lib/ai/memo-to-mindmap.test.ts src/lib/mindmap-model.test.ts` passed: 2 files, 6 tests. This verifies adjacent mind map logic only; it does not close MEMO-STRUCTURE route/RLS requirements.
+- 2026-05-30: `npx tsc --noEmit` passed after CALENDAR-EVENT-TO-MEMO changes.
+- 2026-05-30: Targeted eslint on CALENDAR-EVENT-TO-MEMO touched files passed with 0 errors; existing warnings remain in `src/hooks/useTodayViewLogic.ts`.
+- 2026-05-30: `npm test -- --run src/components/dashboard/today-memo-board.test.tsx` passed: 1 file, 1 test.
+- 2026-05-30: Full `npm run lint -- --max-warnings=0` failed on pre-existing repo-wide lint errors outside this feature area.
+- 2026-05-30: Supabase migration `20260530143000` was applied and repaired as applied in remote migration history; `calendar_event_memo_conversions` table check passed.
+- 2026-05-30: Cloud Run revision `shikumika-app-00478-cjj` deployed `c538292` and served 100% traffic.
 
 ## Blocked
 
 - REQ-010: Intended memo item depth limit is not clearly enforced.
 - REQ-011: Supabase migration deployment/verification is not recorded.
 - REQ-012: Current branch contains unrelated uncommitted changes, so PR/deploy scope is unclear.
+- REQ-016: Conversion audit RLS behavior is not verified yet.
 
 ## Deferred
 
