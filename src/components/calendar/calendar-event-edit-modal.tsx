@@ -186,6 +186,12 @@ export function CalendarEventEditModal({
               id="title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => {
+                const nativeEvent = e.nativeEvent;
+                if (e.key !== 'Enter' || nativeEvent.isComposing || nativeEvent.keyCode === 229) return;
+                e.preventDefault();
+                if (title.trim()) handleSave();
+              }}
               placeholder="予定のタイトル"
               disabled={false}
               className="h-8 text-sm"

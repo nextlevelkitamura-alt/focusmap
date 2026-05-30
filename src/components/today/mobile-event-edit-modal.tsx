@@ -345,6 +345,12 @@ export function MobileEventEditModal({
                             type="text"
                             value={title}
                             onChange={(e) => setTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                                const nativeEvent = e.nativeEvent
+                                if (e.key !== 'Enter' || nativeEvent.isComposing || nativeEvent.keyCode === 229) return
+                                e.preventDefault()
+                                if (title.trim() && !isDeleting) handleSave()
+                            }}
                             className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                             placeholder="タイトルを入力"
                         />
