@@ -29,7 +29,7 @@ import {
     NODE_MIN_WIDTH, NODE_RESIZE_MAX_WIDTH,
 } from "@/lib/mindmap-layout";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
-import { CodexDirPicker } from "@/components/codex/codex-dir-picker";
+import { CodexNodePanel } from "@/components/codex/codex-node-panel";
 import { getMindMapViewportBounds, getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 
@@ -1240,59 +1240,18 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }, 1400);
     }, []);
 
-    // Codex 作業ディレクトリ選択ダイアログの状態（未設定ノード用）
-    const [codexPicker, setCodexPicker] = useState<{ taskId: string; nodeTitle: string } | null>(null);
+    // Codex ノードパネル（実行/往復/作業場所/プロンプト編集を一元化）の対象ノード
+    const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null);
 
-    // 実際に Codex を起動する（dir 確定後）。
-    //   - executor='codex' で /api/ai-tasks/schedule に投入 → task-runner → codex-rpc-bridge
-    //     → app-server(ws://127.0.0.1:7878) に thread 作成（Codexアプリ/ペアリング済みスマホに表示）
-    //     bridge が返信を ai_tasks.result(live_log) に回収するので FocusMap で往復できる
-    //   - プロンプトはノードの「タイトル + メモ詳細」。dir は per-node に保存し次回から即実行
-    const runCodexWithDir = useCallback(async (taskId: string, dir: string) => {
-        const task = tasks.find(t => t.id === taskId);
-        if (!task) return;
-        const cwd = dir.trim();
-        if (!cwd) { flashClipboardFeedback('作業ディレクトリが必要です'); return; }
-        if (cwd !== (task.codex_work_dir ?? '').trim()) {
-            try { await onUpdateTask?.(taskId, { codex_work_dir: cwd }); } catch { /* 永続化失敗でも続行 */ }
-        }
-        const memo = (task.memo ?? '').trim();
-        const prompt = memo ? `${task.title}\n\n${memo}` : task.title;
-        try {
-            const res = await fetch('/api/ai-tasks/schedule', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    cwd,
-                    approval_type: 'auto',
-                    scheduled_at: new Date().toISOString(),
-                    executor: 'codex',
-                    source_task_id: taskId,
-                }),
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                flashClipboardFeedback(`Codex起動失敗: ${err?.error ?? res.status}`);
-                return;
-            }
-            flashClipboardFeedback('Codexに送信しました（アプリ/スマホにスレッドが出ます）');
-        } catch (e) {
-            flashClipboardFeedback(`Codex起動失敗: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    }, [tasks, onUpdateTask, flashClipboardFeedback]);
-
-    // ノードの「Codex」ボタン: dir 設定済みなら即実行、未設定なら選択ダイアログを開く。
+    // ノードの「Codex」ボタン / 状態アイコン → Codex ノードパネルを開く（実行はパネルから）
     const handleRunCodex = useCallback((taskId: string) => {
-        const task = tasks.find(t => t.id === taskId);
-        if (!task) return;
-        const existing = (task.codex_work_dir ?? '').trim();
-        if (existing) {
-            void runCodexWithDir(taskId, existing);
-        } else {
-            setCodexPicker({ taskId, nodeTitle: task.title });
-        }
-    }, [tasks, runCodexWithDir]);
+        setCodexPanelTaskId(taskId);
+    }, []);
+
+    // codex_work_dir を per-node に保存
+    const persistCodexDir = useCallback(async (taskId: string, dir: string) => {
+        try { await onUpdateTask?.(taskId, { codex_work_dir: dir }); } catch { /* 永続化失敗でも続行 */ }
+    }, [onUpdateTask]);
 
     // よく使う候補（履歴の codex_work_dir + プロジェクトの repo_path）
     const codexDirCandidates = useMemo(() => {
@@ -1305,6 +1264,20 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         if (repo) set.add(repo);
         return Array.from(set);
     }, [tasks, project?.repo_path]);
+
+    // パネルに渡すノード情報
+    const codexPanelNode = useMemo(() => {
+        if (!codexPanelTaskId) return null;
+        const task = tasks.find(t => t.id === codexPanelTaskId);
+        if (!task) return null;
+        return {
+            taskId: task.id,
+            title: task.title,
+            memo: (task.memo ?? '').trim(),
+            cwd: task.codex_work_dir ?? null,
+            status: task.codex_status ?? null,
+        };
+    }, [codexPanelTaskId, tasks]);
 
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null, source: 'user' | 'system') => {
         if (source === 'user') {
@@ -2946,17 +2919,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
             />
-            {codexPicker && (
-                <CodexDirPicker
+            {codexPanelNode && (
+                <CodexNodePanel
                     open
-                    nodeTitle={codexPicker.nodeTitle}
+                    node={codexPanelNode}
                     candidates={codexDirCandidates}
-                    onCancel={() => setCodexPicker(null)}
-                    onConfirm={(dir) => {
-                        const target = codexPicker;
-                        setCodexPicker(null);
-                        if (target) void runCodexWithDir(target.taskId, dir);
-                    }}
+                    onClose={() => setCodexPanelTaskId(null)}
+                    onPersistDir={persistCodexDir}
                 />
             )}
 
