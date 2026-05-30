@@ -263,6 +263,78 @@ function packageTitle(task: AiTask) {
   return null
 }
 
+// Codex スレッドに「続けて送る」往復フォーム。
+//   既存ターンの codex_thread_id を codex_resume_thread_id として渡し、
+//   executor='codex' の新規 ai_task を作る → task-runner → bridge が thread/resume で会話継続。
+function CodexFollowUpForm({ task }: { task: AiTask }) {
+  const [text, setText] = useState("")
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const send = useCallback(async () => {
+    const prompt = text.trim()
+    if (!prompt || sending || !task.codex_thread_id) return
+    setSending(true)
+    setErr(null)
+    try {
+      const res = await fetch("/api/ai-tasks/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          cwd: task.cwd ?? undefined,
+          executor: "codex",
+          codex_resume_thread_id: task.codex_thread_id,
+          approval_type: "auto",
+          scheduled_at: new Date().toISOString(),
+        }),
+      })
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}))
+        setErr(e?.error ?? `送信失敗 (${res.status})`)
+        return
+      }
+      setText("")
+      setSent(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }, [text, sending, task.cwd, task.codex_thread_id])
+
+  return (
+    <div className="space-y-1 pt-1">
+      <div className="flex gap-1.5">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
+              void send()
+            }
+          }}
+          placeholder="このCodexスレッドに続けて送る…"
+          className="flex-1 rounded-md border border-border/60 bg-background px-2 py-1 text-[11px]"
+          disabled={sending}
+        />
+        <button
+          type="button"
+          onClick={() => void send()}
+          disabled={sending || !text.trim()}
+          className="shrink-0 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {sending ? "送信中…" : "送信"}
+        </button>
+      </div>
+      {sent && <p className="text-[10px] text-emerald-500">送信しました（次の更新でターンが追加されます）</p>}
+      {err && <p className="text-[10px] text-rose-500">{err}</p>}
+    </div>
+  )
+}
+
 function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string | null }) {
   const [expanded, setExpanded] = useState(false)
   const style = STATUS_STYLES[task.status]
@@ -398,6 +470,9 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
                 )}
                 {task.codex_thread_id && <p className="truncate">thread: {task.codex_thread_id}</p>}
               </div>
+            )}
+            {task.executor === "codex" && task.codex_thread_id && task.status !== "running" && task.status !== "pending" && (
+              <CodexFollowUpForm task={task} />
             )}
           </div>
         )}

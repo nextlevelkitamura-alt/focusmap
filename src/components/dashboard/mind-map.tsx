@@ -1241,8 +1241,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // マインドマップのノード(task)から Codex を起動する。
     //   - cwd は per-node 必須（未設定なら入力を促し、tasks.codex_work_dir に保存）
-    //   - executor='codex_app' で /api/ai-tasks/schedule に投入 → task-runner → codex-rpc-bridge
+    //   - executor='codex' で /api/ai-tasks/schedule に投入 → task-runner → codex-rpc-bridge
     //     → app-server(ws://127.0.0.1:7878) に thread 作成（Codexアプリ/ペアリング済みスマホに表示）
+    //     bridge が返信を ai_tasks.result(live_log) に回収するので FocusMap で往復できる
     //   - プロンプトはノードの「タイトル + メモ詳細」
     const handleRunCodex = useCallback(async (taskId: string) => {
         const task = tasks.find(t => t.id === taskId);
@@ -1274,7 +1275,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     cwd,
                     approval_type: 'auto',
                     scheduled_at: new Date().toISOString(),
-                    executor: 'codex_app',
+                    executor: 'codex',
                 }),
             });
             if (!res.ok) {

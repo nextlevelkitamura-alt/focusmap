@@ -78,6 +78,8 @@ type StaffStatusDueTask = {
   source_note_id: string | null
   source_ideal_goal_id: string | null
   executor: 'claude' | 'codex' | 'codex_app' | null
+  codex_thread_id?: string | null
+  codex_resume_thread_id?: string | null
   space_id?: string | null
   package_id?: string | null
   package_version_id?: string | null
@@ -1037,6 +1039,7 @@ async function launchCodexRemote(opts: {
   displayTitle?: string  // 「メモ見出し · 詳細」形式
   memoTitle?: string  // チャット名生成用のタイトルだけ
   memoDescription?: string  // 同じく詳細だけ
+  resumeThreadId?: string | null  // 指定時は thread/resume で会話継続（往復）
 }): Promise<{ success: true; sessionName: string } | { success: false; error: string }> {
   const sessionName = `codex-${opts.taskId.slice(0, 8)}`
   const logPath = `/tmp/codex-exec-${opts.taskId}.log`
@@ -1084,7 +1087,7 @@ async function launchCodexRemote(opts: {
     const outFd = fs.openSync(bridgeLog, 'a')
     const child = spawn(
       '/usr/local/bin/npx',
-      ['ts-node', '--esm', bridgePath, opts.taskId, opts.cwd, promptFile],
+      ['ts-node', '--esm', bridgePath, opts.taskId, opts.cwd, promptFile, opts.resumeThreadId ?? ''],
       {
         detached: true,
         stdio: ['ignore', outFd, outFd],
@@ -2843,6 +2846,7 @@ async function main() {
           displayTitle,
           memoTitle,
           memoDescription,
+          resumeThreadId: task.codex_resume_thread_id ?? null,
         })
 
         if (!result.success) {

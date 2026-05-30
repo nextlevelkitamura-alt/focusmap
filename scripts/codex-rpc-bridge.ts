@@ -286,7 +286,8 @@ class RpcClient {
 // メイン: 引数から taskId / cwd / promptFile を受け取り 1 タスク実行
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
-  const [, , taskId, cwd, promptFile] = process.argv
+  const [, , taskId, cwd, promptFile, resumeThreadIdArg] = process.argv
+  const resumeThreadId = (resumeThreadIdArg ?? '').trim() || null
   if (!taskId || !cwd || !promptFile) {
     console.error('Usage: codex-rpc-bridge.ts <taskId> <cwd> <promptFile>')
     process.exit(2)
@@ -366,16 +367,29 @@ async function main() {
       if (!initResp) throw new Error('initialize 失敗')
       await pushStep(supabase, taskId, makeStep('connected', 'app-server に接続 (initialize OK)'))
 
-      // ─── thread/start で新規 thread 作成 ───
+      // ─── thread/start（新規）or thread/resume（往復継続）───
       // response: { result: { thread: { id, ... }, model, ... } }
-      const threadResp = await callOk(rpc, 'thread/start', { cwd })
-      if (!threadResp) throw new Error('thread/start 失敗')
-      const threadResult = threadResp.result as { thread?: { id?: string }; threadId?: string }
-      const threadId = threadResult.thread?.id ?? threadResult.threadId
-      if (!threadId) throw new Error('thread/start レスポンスから id を取得できない')
+      let threadId: string | undefined
+      if (resumeThreadId) {
+        const resumeResp = await callOk(rpc, 'thread/resume', {
+          threadId: resumeThreadId,
+          persistExtendedHistory: false,
+          excludeTurns: true,
+        })
+        if (!resumeResp) throw new Error('thread/resume 失敗')
+        threadId = resumeThreadId
+      } else {
+        const threadResp = await callOk(rpc, 'thread/start', { cwd })
+        if (!threadResp) throw new Error('thread/start 失敗')
+        const threadResult = threadResp.result as { thread?: { id?: string }; threadId?: string }
+        threadId = threadResult.thread?.id ?? threadResult.threadId
+      }
+      if (!threadId) throw new Error('thread id を取得できない')
 
       await pushStep(supabase, taskId, makeStep('thread_visible',
-        `Thread 作成 (mobile/Codex.app に表示, id ${threadId.slice(0, 8)})`),
+        resumeThreadId
+          ? `Thread 継続 (resume, id ${threadId.slice(0, 8)})`
+          : `Thread 作成 (mobile/Codex.app に表示, id ${threadId.slice(0, 8)})`),
         { threadId })
       await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
 
