@@ -46,6 +46,7 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const WS_URL = 'ws://127.0.0.1:7878'
 const OVERALL_TIMEOUT_MS = 15 * 60 * 1000 // 15分
 const CONNECT_TIMEOUT_MS = 10_000
+const POST_COMPLETION_GRACE_MS = 5_000
 const LIVE_LOG_MAX_CHARS = 20_000
 const LOG_FILE_TEMPLATE = (taskId: string) => `/tmp/codex-bridge-${taskId}.log`
 
@@ -61,6 +62,8 @@ interface CodexStep {
 }
 type AiTaskTerminalStatus = 'awaiting_approval' | 'failed'
 let ACTIVE_EXECUTOR: 'codex' | 'codex_app' = 'codex'
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 function makeStep(key: string, label: string, status: CodexStepStatus = 'done'): CodexStep {
   return { key, label, status, at: new Date().toISOString() }
@@ -633,6 +636,8 @@ async function main() {
         }).eq('id', taskId)
       }
 
+      console.error(`[bridge] keeping websocket open ${POST_COMPLETION_GRACE_MS}ms after completion`)
+      await sleep(POST_COMPLETION_GRACE_MS)
       ws.close()
       clearTimeout(overallTimer)
       process.exit(0)
