@@ -529,10 +529,9 @@ export function WishlistView({
     }
   }, [projects])
 
-  // 既存呼び出し向けエイリアス（後方互換 / 詳細画面で使用）
-  const launchClaudeForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'claude'), [launchAiForMemo])
+  // codex に一本化。claude(当環境でENOEXEC) / codex_app(GUI重複) は UI から撤去。
+  // 復活時は launchAiForMemo(item, 'claude'|'codex_app') の alias を足して prop を渡す。
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
-  const launchCodexAppForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
 
   // 一覧カードの Codex ボタン: Codex Web を新規タブで開く + タイトル/本文をクリップボードへ
   const openInCodexWebForMemo = useCallback(async (item: MemoItem) => {
@@ -2289,9 +2288,7 @@ export function WishlistView({
         tagOptions={allTags}
         projects={projects}
         tagColors={tagColors}
-        onLaunchClaude={launchClaudeForMemo}
         onLaunchCodex={launchCodexForMemo}
-        onLaunchCodexApp={launchCodexAppForMemo}
         onMemoChanged={fetchItems}
       />
 

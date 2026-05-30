@@ -1309,8 +1309,8 @@ export function WishlistCardDetail({
                   </Link>
                 )}
 
-                {/* 2ボタン並列: Claude (橙) / Codex (緑) */}
-                <div className="grid grid-cols-2 gap-2">
+                {/* Codex 起動（codex に一本化。claude/codex_app は親から prop 未提供で非表示） */}
+                <div className="grid grid-cols-1 gap-2">
                   {onLaunchClaude && (
                     <Button
                       type="button"
