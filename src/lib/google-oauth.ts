@@ -22,7 +22,31 @@ function getForwardedOrigin(headers: Headers): string | null {
   return `${forwardedProto}://${forwardedHost}`;
 }
 
+function isPhonePreviewOrigin(origin: string | null): origin is string {
+  if (!origin) return false;
+  try {
+    const host = new URL(origin).hostname;
+    return (
+      host.endsWith('.trycloudflare.com') ||
+      host.endsWith('.ngrok-free.app') ||
+      host.endsWith('.ngrok.app')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function resolveGoogleRedirectUriFromRequest(request: Request): string {
+  const forwardedOrigin = getForwardedOrigin(request.headers);
+
+  // Phone preview tunnels need their public origin for OAuth callbacks.
+  // GOOGLE_REDIRECT_URI is usually localhost in local dev and is not reachable from a phone.
+  if (isPhonePreviewOrigin(forwardedOrigin)) {
+    const uri = `${trimTrailingSlash(forwardedOrigin)}${GOOGLE_CALLBACK_PATH}`;
+    console.log('[resolveGoogleRedirectUri] Using phone preview forwarded host:', uri);
+    return uri;
+  }
+
   // Priority 1: 明示的な環境変数（最優先）
   if (isValidAbsoluteUrl(process.env.GOOGLE_REDIRECT_URI)) {
     console.log('[resolveGoogleRedirectUri] Using GOOGLE_REDIRECT_URI env:', process.env.GOOGLE_REDIRECT_URI);
@@ -30,7 +54,6 @@ export function resolveGoogleRedirectUriFromRequest(request: Request): string {
   }
 
   // Priority 2: x-forwarded-host（Cloud Run が付与する実際のサービスURL）
-  const forwardedOrigin = getForwardedOrigin(request.headers);
   if (isValidAbsoluteUrl(forwardedOrigin)) {
     const uri = `${trimTrailingSlash(forwardedOrigin)}${GOOGLE_CALLBACK_PATH}`;
     console.log('[resolveGoogleRedirectUri] Using x-forwarded-host:', uri);
