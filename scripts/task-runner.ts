@@ -1085,9 +1085,13 @@ async function launchCodexRemote(opts: {
     // stdout/stderr はファイルにリダイレクト
     const bridgeLog = `/tmp/codex-bridge-stdout-${opts.taskId}.log`
     const outFd = fs.openSync(bridgeLog, 'a')
+    // bridge は tsx で起動する（このプロジェクトは ts-node 未導入。run-task-runner.sh と同じ tsx を使う）
+    const bridgeArgs = [opts.taskId, opts.cwd, promptFile, opts.resumeThreadId ?? '']
+    const tsxBin = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx')
+    const useLocalTsx = fs.existsSync(tsxBin)
     const child = spawn(
-      '/usr/local/bin/npx',
-      ['ts-node', '--esm', bridgePath, opts.taskId, opts.cwd, promptFile, opts.resumeThreadId ?? ''],
+      useLocalTsx ? tsxBin : '/usr/local/bin/npx',
+      useLocalTsx ? [bridgePath, ...bridgeArgs] : ['--yes', 'tsx', bridgePath, ...bridgeArgs],
       {
         detached: true,
         stdio: ['ignore', outFd, outFd],
