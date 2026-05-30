@@ -41,14 +41,32 @@
 
 ### 原則
 - 機能が動いたら必ず commit する。
-- 本番に出す前に `main` へ fast-forward/merge する。
+- 小さな修正は `main` に直接コミットしてよい。毎回ブランチを切らない。
+- 大きな機能、破壊的変更、本番に出すタイミングを分けたい変更だけブランチを使う。
+- ブランチで作業した場合は、本番に出す前に `main` へ fast-forward/merge する。
 - `git push origin main` を本番デプロイの起点にする。
 - Cloud Run に直接デプロイする場合も、クリーンな `main` かつ `HEAD == origin/main` の状態だけ許可する。
 - feature ブランチや未コミット差分を本番に直接出さない。
+- `main` が `origin/main` より ahead の状態では、ローカルで見えている変更はまだ本番デプロイ対象ではない。
 
 ### 推奨フロー
+
+小さな修正:
+
 ```bash
-git status
+git fetch --prune origin
+git status --short --branch
+npm run build
+git add <自分が触ったファイル>
+git commit -m "<変更内容>"
+git push origin main
+```
+
+ブランチを使った変更:
+
+```bash
+git fetch --prune origin
+git status --short --branch
 npm run build
 npm test -- <関連テスト>
 git checkout main
