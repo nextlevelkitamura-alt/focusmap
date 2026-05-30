@@ -157,6 +157,7 @@ const CALENDAR_OPTIMISTIC_EVENT_REMOVE = 'focusmap:calendar-optimistic-event-rem
 export type CalendarEventDetailUpdate = {
   eventId: string;
   googleEventId?: string;
+  /** New/current calendar id after an edit. Also scopes matching when unchanged. */
   calendarId?: string;
   taskId?: string | null;
   title?: string;
@@ -701,6 +702,7 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
           ...(detail.title !== undefined ? { title: detail.title } : {}),
           ...(detail.startTime !== undefined ? { start_time: detail.startTime } : {}),
           ...(detail.endTime !== undefined ? { end_time: detail.endTime } : {}),
+          ...(detail.calendarId !== undefined ? { calendar_id: detail.calendarId } : {}),
           ...(detail.reminders !== undefined ? { reminders: detail.reminders } : {}),
           ...(detail.description !== undefined ? { description: detail.description } : {}),
         };

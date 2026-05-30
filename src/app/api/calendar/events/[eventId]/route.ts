@@ -19,6 +19,10 @@ function popupReminderMinutes(
     .filter((minutes): minutes is number => typeof minutes === 'number');
 }
 
+function isWritableCalendar(accessLevel: string | null | undefined) {
+  return accessLevel === 'owner' || accessLevel === 'writer';
+}
+
 /**
  * カレンダーイベントの詳細取得（通知設定確認用）
  * GET /api/calendar/events/[eventId]?googleEventId=xxx&calendarId=yyy
@@ -558,6 +562,51 @@ export async function PATCH(
       );
     }
 
+    const { data: existingEventById, error: existingEventByIdError } = await supabase
+      .from('calendar_events')
+      .select('id, calendar_id, google_event_id')
+      .eq('user_id', user.id)
+      .eq('id', eventId)
+      .maybeSingle();
+    if (existingEventByIdError) throw existingEventByIdError;
+
+    let existingEvent = existingEventById;
+    if (!existingEvent) {
+      const { data: existingEventByGoogleId, error: existingEventByGoogleIdError } = await supabase
+        .from('calendar_events')
+        .select('id, calendar_id, google_event_id')
+        .eq('user_id', user.id)
+        .eq('google_event_id', googleEventId)
+        .maybeSingle();
+      if (existingEventByGoogleIdError) throw existingEventByGoogleIdError;
+      existingEvent = existingEventByGoogleId;
+    }
+
+    const sourceCalendarId = existingEvent?.calendar_id || body.originalCalendarId || calendarId || 'primary';
+    const destinationCalendarId = calendarId || sourceCalendarId || 'primary';
+
+    const calendarIdsToCheck = Array.from(new Set([sourceCalendarId, destinationCalendarId].filter(Boolean)));
+    const { data: calendarAccessRows, error: calendarAccessError } = await supabase
+      .from('user_calendars')
+      .select('google_calendar_id, access_level')
+      .eq('user_id', user.id)
+      .in('google_calendar_id', calendarIdsToCheck);
+    if (calendarAccessError) throw calendarAccessError;
+
+    const readOnlyCalendar = calendarAccessRows?.find(row => !isWritableCalendar(row.access_level));
+    if (readOnlyCalendar) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'READ_ONLY_CALENDAR',
+            message: 'このカレンダーは閲覧専用のため編集できません'
+          }
+        },
+        { status: 403 }
+      );
+    }
+
     // Google Calendar イベントを更新
     console.log('[events/update] Updating Google Calendar event:', googleEventId);
     const { calendar } = await getCalendarClient(user.id);
@@ -588,16 +637,32 @@ export async function PATCH(
       }
     }
 
+    let effectiveGoogleEventId = googleEventId;
+    if (sourceCalendarId !== destinationCalendarId) {
+      console.log('[events/update] Moving Google Calendar event:', {
+        eventId: googleEventId,
+        sourceCalendarId,
+        destinationCalendarId,
+      });
+      const moveResponse = await calendar.events.move({
+        calendarId: sourceCalendarId,
+        eventId: googleEventId,
+        destination: destinationCalendarId,
+      });
+      effectiveGoogleEventId = moveResponse.data.id || googleEventId;
+      console.log('[events/update] Moved Google Calendar event:', effectiveGoogleEventId);
+    }
+
     await calendar.events.update({
-      calendarId,
-      eventId: googleEventId,
+      calendarId: destinationCalendarId,
+      eventId: effectiveGoogleEventId,
       requestBody: googleEvent,
     });
 
     console.log('[events/update] Updated Google Calendar event');
 
     // DB も更新
-    const { error: dbError } = await supabase
+    let dbUpdateQuery = supabase
       .from('calendar_events')
       .update({
         title,
@@ -605,11 +670,18 @@ export async function PATCH(
         end_time,
         description,
         location,
+        calendar_id: destinationCalendarId,
+        google_event_id: effectiveGoogleEventId,
         updated_at: new Date().toISOString(),
         synced_at: new Date().toISOString(),
       })
-      .eq('user_id', user.id)
-      .eq('google_event_id', googleEventId);
+      .eq('user_id', user.id);
+
+    dbUpdateQuery = existingEvent?.id
+      ? dbUpdateQuery.eq('id', existingEvent.id)
+      : dbUpdateQuery.eq('google_event_id', googleEventId);
+
+    const { error: dbError } = await dbUpdateQuery;
 
     if (dbError) {
       console.error('[events/update] Failed to update database:', dbError);
@@ -637,7 +709,8 @@ export async function PATCH(
       const taskUpdates: Record<string, unknown> = {
         title,
         scheduled_at: start_time,
-        calendar_id: calendarId,
+        calendar_id: destinationCalendarId,
+        google_event_id: effectiveGoogleEventId,
         updated_at: new Date().toISOString()
       };
       if (estimated_time !== undefined && estimated_time !== null) {
@@ -669,6 +742,7 @@ export async function PATCH(
       title,
       scheduled_at: start_time,
       duration_minutes: estimated_time ?? computedDurationMinutes,
+      google_event_id: effectiveGoogleEventId,
       memo_status: 'scheduled',
       updated_at: new Date().toISOString(),
     };
@@ -694,6 +768,8 @@ export async function PATCH(
       success: true,
       message: 'Event updated successfully',
       task_id: linkedTaskId,
+      google_event_id: effectiveGoogleEventId,
+      calendar_id: destinationCalendarId,
     });
 
   } catch (error: unknown) {

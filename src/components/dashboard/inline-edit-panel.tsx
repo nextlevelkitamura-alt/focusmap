@@ -78,6 +78,7 @@ export function InlineEditPanel({
         return [...BASE_REMINDER_OPTIONS, { label: `${reminder}分前`, value: reminder }]
     }, [reminder])
 
+    /* eslint-disable react-hooks/set-state-in-effect */
     // Reset confirm state on open
     useEffect(() => {
         if (isOpen) setShowDeleteConfirm(false)
@@ -90,6 +91,7 @@ export function InlineEditPanel({
         setScheduledDate(new Date(target.startTime))
         setCalendarId(target.calendarId || '')
         setMemo(target.originalTask?.memo || '')
+        setShowCalendarPicker(false)
         if (target.source === 'task') {
             setDuration(target.estimatedTime || 60)
         } else {
@@ -107,6 +109,7 @@ export function InlineEditPanel({
             setReminder(15)
         }
     }, [target])
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     // Save
     const handleSave = useCallback(() => {
@@ -131,7 +134,7 @@ export function InlineEditPanel({
                 start_time: scheduledDate.toISOString(),
                 end_time: newEnd.toISOString(),
                 googleEventId: target.googleEventId || '',
-                calendarId: target.calendarId || '',
+                calendarId: calendarId || target.calendarId || '',
                 reminders: reminder >= 0 ? [reminder] : [],
             }).catch(err => {
                 console.error('[InlineEditPanel] Save event error:', err)
@@ -244,8 +247,8 @@ export function InlineEditPanel({
                     <p className="text-[9px] text-muted-foreground">終了: {endTimeStr}</p>
                 </div>
 
-                {/* Calendar Selection (Task only) */}
-                {isTask && availableCalendars.length > 0 && (
+                {/* Calendar Selection */}
+                {availableCalendars.length > 0 && (
                     <div className="space-y-1">
                         <label className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
                             <CalendarIcon className="w-3 h-3" />
@@ -289,23 +292,6 @@ export function InlineEditPanel({
                                 ))}
                             </div>
                         )}
-                    </div>
-                )}
-
-                {/* Event calendar (read-only) */}
-                {!isTask && selectedCalendar && (
-                    <div className="space-y-1">
-                        <label className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
-                            <CalendarIcon className="w-3 h-3" />
-                            カレンダー
-                        </label>
-                        <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs border rounded-md bg-muted/30">
-                            <div
-                                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                style={{ backgroundColor: selectedCalendar.background_color || '#4285F4' }}
-                            />
-                            <span className="text-muted-foreground">{selectedCalendar.name}</span>
-                        </div>
                     </div>
                 )}
 

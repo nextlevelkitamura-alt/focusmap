@@ -111,7 +111,6 @@ export function MobileEventEditModal({
     }, [onClose])
 
     // Initialize form when target changes
-    /* eslint-disable react-hooks/set-state-in-effect */
     useEffect(() => {
         if (!target) return
 
@@ -123,6 +122,7 @@ export function MobileEventEditModal({
         setSubtaskInput('')
         setLinkedTaskId(target.taskId || null)
         setLocalChildTasks(childTasks)
+        setShowCalendarPicker(false)
         if (target.source === 'task') {
             setDuration(target.estimatedTime || 60)
         } else {
@@ -142,7 +142,6 @@ export function MobileEventEditModal({
             setReminder(15)
         }
     }, [target])
-    /* eslint-enable react-hooks/set-state-in-effect */
 
     // childTasks prop が更新されたときにローカル状態を同期
     // 親が `?? []` で毎レンダー新配列を渡すため、内容が同じなら setState を skip して
@@ -245,7 +244,7 @@ export function MobileEventEditModal({
                 start_time: scheduledDate.toISOString(),
                 end_time: newEnd.toISOString(),
                 googleEventId: target.googleEventId || '',
-                calendarId: target.calendarId || '',
+                calendarId: calendarId || target.calendarId || '',
                 reminders: reminder >= 0 ? [reminder] : [],
                 description: eventDescription,
             }).catch(err => {
@@ -404,8 +403,8 @@ export function MobileEventEditModal({
                         </p>
                     </div>
 
-                    {/* Calendar Selection (Task only, writable calendars) */}
-                    {isTask && availableCalendars.length > 0 && (
+                    {/* Calendar Selection */}
+                    {availableCalendars.length > 0 && (
                         <div className="space-y-1.5">
                             <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                                 <CalendarIcon className="w-3.5 h-3.5" />
@@ -449,23 +448,6 @@ export function MobileEventEditModal({
                                     ))}
                                 </div>
                             )}
-                        </div>
-                    )}
-
-                    {/* Event calendar (read-only) */}
-                    {!isTask && selectedCalendar && (
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <CalendarIcon className="w-3.5 h-3.5" />
-                                カレンダー
-                            </label>
-                            <div className="flex items-center gap-2 px-3 py-2.5 text-sm border rounded-lg bg-muted/30">
-                                <div
-                                    className="w-3 h-3 rounded-full flex-shrink-0"
-                                    style={{ backgroundColor: selectedCalendar.background_color || '#4285F4' }}
-                                />
-                                <span className="text-muted-foreground">{selectedCalendar.name}</span>
-                            </div>
                         </div>
                     )}
 
