@@ -96,7 +96,7 @@ case "$TUNNEL" in
   cloudflare)
     echo ""
     echo "Opening a temporary phone preview URL."
-    echo "Open the https://*.trycloudflare.com URL shown below on your phone."
+    echo "Open the https://*.trycloudflare.com/dashboard?desktop=1&view=map URL on your phone for the PC dashboard."
     exec cloudflared tunnel --url "http://localhost:$PORT"
     ;;
   ngrok)

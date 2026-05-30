@@ -13,6 +13,11 @@ extract_url() {
   grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com|https://[^[:space:]]*ngrok[^[:space:]]*' "$LOG_FILE" 2>/dev/null | tail -n 1 || true
 }
 
+desktop_dashboard_url() {
+  local url="${1%/}"
+  echo "$url/dashboard?desktop=1&view=map"
+}
+
 case "${1:-start}" in
   start)
     if ! command -v tmux >/dev/null 2>&1; then
@@ -27,7 +32,7 @@ case "${1:-start}" in
     for _ in $(seq 1 45); do
       url="$(extract_url)"
       if [ -n "$url" ]; then
-        echo "$url"
+        desktop_dashboard_url "$url"
         exit 0
       fi
       sleep 1
@@ -46,7 +51,7 @@ case "${1:-start}" in
 
     url="$(extract_url)"
     if [ -n "$url" ]; then
-      echo "$url"
+      desktop_dashboard_url "$url"
     fi
     ;;
   stop)

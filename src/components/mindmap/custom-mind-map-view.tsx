@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Copy, Edit3, ExternalLink, Loader2, Maximize2, MoreHorizontal, Minus, Plus, RotateCcw, StickyNote, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Maximize2, MoreHorizontal, Minus, Plus, RotateCcw, StickyNote, Trash2 } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -75,8 +75,6 @@ const TOUCH_PINCH_SENSITIVITY = 1;
 const DESKTOP_GESTURE_SENSITIVITY = 1.35;
 const DONE_NODE_HIDE_DELAY_MS = 300;
 const DONE_UNDO_WINDOW_MS = 5000;
-const CODEX_WEB_URL = "https://chatgpt.com/codex";
-
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
@@ -176,14 +174,6 @@ const formatDateShort = (value: string | null) => {
     return `${date.getMonth() + 1}/${date.getDate()}`;
 };
 
-const normalizeClipboardText = (value: string | null | undefined) =>
-    (value ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
-
-const buildNodeCodexPrompt = (node: MindMapModelNode) => [
-    normalizeClipboardText(node.title),
-    normalizeClipboardText(node.memo),
-].filter(Boolean).join("\n\n");
-
 function CustomBranchPath({
     source,
     target,
@@ -272,14 +262,13 @@ function CustomTaskNode({
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const isCodexWaitingForExecution = codexState?.state === "awaiting_approval" && codexState.label === "実行待ち";
     const scheduledLabel = formatDateShort(node.scheduledAt);
-    const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode;
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
     }, [initialEditValue, isEditing, node.title]);
 
     useEffect(() => {
-        if (!isMobile || !menuOpen) return;
+        if (!menuOpen) return;
         const handlePointerDown = (event: PointerEvent) => {
             const target = event.target;
             if (target instanceof Node && wrapperRef.current?.contains(target)) return;
@@ -287,12 +276,12 @@ function CustomTaskNode({
         };
         window.addEventListener("pointerdown", handlePointerDown);
         return () => window.removeEventListener("pointerdown", handlePointerDown);
-    }, [isMobile, menuOpen]);
+    }, [menuOpen]);
 
     useEffect(() => {
-        if (!isMobile || selected) return;
+        if (selected) return;
         setMenuOpen(false);
-    }, [isMobile, selected]);
+    }, [selected]);
 
     useEffect(() => {
         if (!triggerEdit) {
@@ -375,24 +364,9 @@ function CustomTaskNode({
         setMenuOpen(false);
         if (!action) return;
         void Promise.resolve(action()).catch(error => {
-            console.error("[CustomMindMap] Mobile node menu action failed:", error);
+            console.error("[CustomMindMap] Node menu action failed:", error);
         });
     }, []);
-
-    const openNodeInCodexWeb = useCallback(async () => {
-        const prompt = buildNodeCodexPrompt(node);
-        if (!prompt) return;
-        try {
-            if (!navigator.clipboard?.writeText) {
-                throw new Error("clipboard unavailable");
-            }
-            await navigator.clipboard.writeText(prompt);
-        } catch {
-            window.alert("クリップボードコピーに失敗しました。ノード内容を手動でコピーしてください。");
-            return;
-        }
-        window.location.href = CODEX_WEB_URL;
-    }, [node]);
 
     useEffect(() => {
         onEditingChange?.(node.id, isEditing);
@@ -712,30 +686,31 @@ function CustomTaskNode({
                             </button>
                             {menuOpen && (
                                 <div
-                                    className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-lg border bg-popover py-1 text-[13px] text-popover-foreground shadow-xl"
+                                    className="absolute right-0 top-9 z-50 w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onClick={(event) => event.stopPropagation()}
                                 >
+                                    <div className="border-b px-3 py-2">
+                                        <div className="truncate text-xs font-semibold">{node.title}</div>
+                                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                            {codexState && (
+                                                <span className="rounded bg-muted px-1.5 py-0.5">
+                                                    Codex {codexState.label}
+                                                </span>
+                                            )}
+                                            {scheduledLabel && <span>{scheduledLabel}</span>}
+                                            {node.estimatedDisplayMinutes > 0 && <span>{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>}
+                                        </div>
+                                    </div>
                                     <button
                                         type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, openNodeInCodexWeb)}
+                                        className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
+                                        onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <ExternalLink className="h-4 w-4 text-emerald-500" />
-                                        Codexで開く
+                                        <MoreHorizontal className="h-4 w-4" />
+                                        Codexで開始
                                     </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => {
-                                            const prompt = buildNodeCodexPrompt(node);
-                                            if (!prompt || !navigator.clipboard?.writeText) return;
-                                            return navigator.clipboard.writeText(prompt);
-                                        })}
-                                    >
-                                        <Copy className="h-4 w-4" />
-                                        内容をコピー
-                                    </button>
+                                    <div className="my-1 border-t" />
                                     <button
                                         type="button"
                                         className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
@@ -751,15 +726,6 @@ function CustomTaskNode({
                                     >
                                         <Edit3 className="h-4 w-4" />
                                         編集
-                                    </button>
-                                    <div className="my-1 border-t" />
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
-                                    >
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        詳細パネル
                                     </button>
                                     <button
                                         type="button"
@@ -797,23 +763,104 @@ function CustomTaskNode({
                             )}
                         </div>
                     ) : (
-                        <button
-                            type="button"
-                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-muted/30 hover:text-muted-foreground"
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                onOpenLinkedMemos?.(node.id);
-                            }}
-                            title="関連メモ"
-                            aria-label="関連メモを開く"
-                        >
-                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="currentColor">
-                                <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
-                                <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
-                                <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
-                            </svg>
-                        </button>
+                        <div className="relative">
+                            <button
+                                type="button"
+                                className={cn(
+                                    "flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-muted/30 hover:text-muted-foreground",
+                                    menuOpen && "bg-muted/50 text-foreground"
+                                )}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    onSelectNode(node.id, { additive: false });
+                                    setMenuOpen(prev => !prev);
+                                }}
+                                title="ノードメニュー"
+                                aria-label="ノードメニューを開く"
+                                aria-expanded={menuOpen}
+                            >
+                                <MoreHorizontal className="h-3.5 w-3.5" />
+                            </button>
+                            {menuOpen && (
+                                <div
+                                    className="absolute right-0 top-6 z-50 w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <div className="border-b px-3 py-2">
+                                        <div className="truncate text-xs font-semibold">{node.title}</div>
+                                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                            {codexState && (
+                                                <span className="rounded bg-muted px-1.5 py-0.5">
+                                                    Codex {codexState.label}
+                                                </span>
+                                            )}
+                                            {scheduledLabel && <span>{scheduledLabel}</span>}
+                                            {node.estimatedDisplayMinutes > 0 && <span>{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>}
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
+                                        onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
+                                    >
+                                        <MoreHorizontal className="h-4 w-4" />
+                                        Codexで開始
+                                    </button>
+                                    <div className="my-1 border-t" />
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onOpenLinkedMemos?.(node.id))}
+                                    >
+                                        <StickyNote className="h-4 w-4" />
+                                        メモを開く
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => beginEditing())}
+                                    >
+                                        <Edit3 className="h-4 w-4" />
+                                        編集
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onAddChild?.(node.id))}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        子を追加
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onAddSibling?.(node.id))}
+                                    >
+                                        <Plus className="h-4 w-4 rotate-90" />
+                                        兄弟を追加
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onUpdateStatus?.(node.id, node.isDone ? "todo" : "done"))}
+                                    >
+                                        <Check className="h-4 w-4" />
+                                        {node.isDone ? "未完了に戻す" : "完了にする"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-destructive hover:bg-destructive/10"
+                                        onClick={(event) => handleMenuAction(event, () => onDelete?.(node.id))}
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        削除
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>

@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils"
 import { FocusmapLogo } from "@/components/ui/focusmap-logo"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
+import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 
 interface HeaderProps {
     spaces?: Space[]
@@ -88,6 +89,8 @@ export function Header({
     }
 
     const { activeView, setActiveView } = useView()
+    const forceDesktopDashboard = useForceDesktopDashboard()
+    const desktopFlexClass = forceDesktopDashboard ? "flex" : "hidden md:flex"
 
     const handleLogoClick = () => {
         if (onLogoClick) {
@@ -151,7 +154,11 @@ export function Header({
     }
 
     return (
-        <header className="h-14 border-b hidden md:flex items-center justify-between px-4 bg-background z-50 flex-shrink-0">
+        <header className={cn(
+            "relative h-14 border-b items-center justify-between px-4 bg-background z-50 flex-shrink-0",
+            desktopFlexClass,
+            forceDesktopDashboard && "min-w-[1120px]",
+        )}>
             {/* Left: Logo & current workspace */}
             <div className="flex min-w-0 max-w-[440px] items-center gap-3">
                 <button
@@ -185,7 +192,7 @@ export function Header({
             </div>
 
             {/* Center: View Tabs */}
-            <div className="hidden md:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
+            <div className={cn("items-center gap-2 absolute left-1/2 -translate-x-1/2", desktopFlexClass)}>
                 <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
                     {viewTabs.map(tab => (
                         <Button

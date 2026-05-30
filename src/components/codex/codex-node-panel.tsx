@@ -7,7 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { CodexDirPicker } from "@/components/codex/codex-dir-picker"
+import { ExternalLink } from "lucide-react"
+
+const CHATGPT_CODEX_APP_URL = "https://chatgpt.com/app/codex"
 
 type NodeInfo = {
   taskId: string
@@ -25,227 +27,103 @@ type NodeInfo = {
 type CodexNodePanelProps = {
   open: boolean
   node: NodeInfo
-  /** 作業場所の履歴候補 */
   candidates: string[]
   onClose: () => void
-  /** codex_work_dir を tasks に保存 */
   onPersistDir: (taskId: string, dir: string) => Promise<void> | void
-  /** 関連メモ編集ダイアログを開く */
   onOpenMemo?: (taskId: string) => void
-  /** 完了/未完了トグル */
   onToggleComplete?: (taskId: string, done: boolean) => void
-  /** 子ノード追加 */
   onAddChild?: (taskId: string) => void
-  /** ノード削除 */
   onDelete?: (taskId: string) => void
 }
 
-function buildDefaultPrompt(title: string, memo: string): string {
-  const t = title.trim()
-  const m = memo.trim()
-  return m ? `${t}\n\n${m}` : t
+function buildCodexPrompt(heading: string, detail: string): string {
+  return [heading.trim(), detail.trim()].filter(Boolean).join("\n\n")
 }
 
-function statusLabel(status: string | null): { dot: string; text: string } | null {
-  if (status === "running") return { dot: "bg-amber-400 animate-pulse", text: "作業中" }
-  if (status === "done") return { dot: "bg-emerald-500", text: "完了" }
-  if (status === "failed") return { dot: "bg-rose-500", text: "失敗" }
-  return null
-}
+export function CodexNodePanel({ open, node, onClose }: CodexNodePanelProps) {
+  const [heading, setHeading] = useState(node.title)
+  const [detail, setDetail] = useState(node.memo)
+  const [error, setError] = useState<string | null>(null)
 
-// マインドマップのノードから Codex を「メニューで」操作するパネル。
-//   - 実行/往復は全部ここから（プロンプト編集ボックスで毎回確認して再注入）
-//   - 作業場所(cwd) と 状態 と 最新の返信 を一元表示
-//   - 1ノード=1会話: thread があれば「続けて送る」(resume)、無ければ新規(thread/start)
-export function CodexNodePanel({ open, node, candidates, onClose, onPersistDir, onOpenMemo, onToggleComplete, onAddChild, onDelete }: CodexNodePanelProps) {
-  const [cwd, setCwd] = useState<string>(node.cwd ?? "")
-  const [promptText, setPromptText] = useState<string>(buildDefaultPrompt(node.title, node.memo))
-  const [threadId, setThreadId] = useState<string | null>(null)
-  const [status, setStatus] = useState<string | null>(node.status)
-  const [reply, setReply] = useState<string>("")
-  const [showFull, setShowFull] = useState(false)
-  const [sending, setSending] = useState(false)
-  const [sent, setSent] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [pickerOpen, setPickerOpen] = useState(false)
-
-  // 開いたら最新の実行(返信/スレッド/状態)を取得
   useEffect(() => {
     if (!open) return
-    setCwd(node.cwd ?? "")
-    setPromptText(buildDefaultPrompt(node.title, node.memo))
-    setSent(false)
-    setErr(null)
-    let aborted = false
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/codex/node-thread?taskId=${encodeURIComponent(node.taskId)}`)
-        if (!res.ok) return
-        const data = await res.json().catch(() => ({}))
-        if (aborted || !data?.task) return
-        setThreadId(data.task.thread_id ?? null)
-        setStatus(data.task.status === "running" ? "running" : data.task.status === "failed" ? "failed" : data.task.status ? "done" : node.status)
-        setReply(typeof data.task.reply === "string" ? data.task.reply : "")
-        if (!node.cwd && data.task.cwd) setCwd(data.task.cwd)
-      } catch {
-        /* ignore */
-      }
-    })()
-    return () => { aborted = true }
-  }, [open, node.taskId, node.cwd, node.title, node.memo, node.status])
+    setHeading(node.title)
+    setDetail(node.memo)
+    setError(null)
+  }, [open, node.title, node.memo])
 
-  const run = useCallback(async () => {
-    const prompt = promptText.trim()
-    if (!prompt || sending) return
-    if (!cwd.trim()) { setPickerOpen(true); return }
-    setSending(true)
-    setErr(null)
-    try {
-      const res = await fetch("/api/ai-tasks/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          cwd: cwd.trim(),
-          executor: "codex",
-          source_task_id: node.taskId,
-          codex_resume_thread_id: threadId || undefined,
-          approval_type: "auto",
-          scheduled_at: new Date().toISOString(),
-        }),
-      })
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}))
-        setErr(e?.error ?? `送信失敗 (${res.status})`)
-        return
-      }
-      setSent(true)
-      setStatus("running")
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSending(false)
+  const startCodex = useCallback(async () => {
+    const prompt = buildCodexPrompt(heading, detail)
+    if (!prompt) {
+      setError("Codexに渡す内容を入力してください")
+      return
     }
-  }, [promptText, sending, cwd, node.taskId, threadId])
 
-  const st = statusLabel(status)
+    setError(null)
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable")
+      }
+      await navigator.clipboard.writeText(prompt)
+    } catch {
+      setError("クリップボードへコピーできませんでした。内容をコピーしてからCodexを開いてください。")
+      return
+    }
+
+    window.location.href = CHATGPT_CODEX_APP_URL
+  }, [detail, heading])
 
   return (
-    <>
-      <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              {st && <span className={`h-2.5 w-2.5 rounded-full ${st.dot}`} />}
-              <span className="truncate">{node.title}</span>
-            </DialogTitle>
-          </DialogHeader>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
+      <DialogContent className="flex max-h-[92dvh] w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden border-border/70 p-0 xl:!max-w-[1200px]">
+        <DialogHeader className="border-b border-border/70 px-6 py-5 text-left">
+          <DialogTitle className="text-xl font-semibold leading-tight">
+            {node.title}
+          </DialogTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            メモ見出しとメモ詳細を整えてからCodexで開始します
+          </p>
+        </DialogHeader>
 
-          {/* メタ情報（顔から移設） */}
-          {(node.scheduledLabel || node.priority != null || node.estimatedLabel) && (
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-              {node.estimatedLabel && <span className="rounded bg-muted px-1.5 py-0.5">{node.estimatedLabel}</span>}
-              {node.priority != null && <span className="rounded bg-muted px-1.5 py-0.5">P{node.priority}</span>}
-              {node.scheduledLabel && <span className="rounded bg-muted px-1.5 py-0.5">{node.scheduledLabel}</span>}
-            </div>
-          )}
+        <div className="min-h-0 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
+            <label className="space-y-2">
+              <span className="text-sm text-muted-foreground">メモ見出し</span>
+              <input
+                value={heading}
+                onChange={(event) => setHeading(event.target.value)}
+                className="h-12 w-full rounded-lg border border-border/70 bg-background px-3 text-base outline-none focus:border-primary"
+                placeholder="メモ見出し"
+              />
+            </label>
 
-          <div className="text-[11px] font-semibold text-muted-foreground">Codex作業</div>
-          {/* 状態・作業場所 */}
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">状態</span>
-              <span>{st ? st.text : "未実行"}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 text-muted-foreground">作業場所</span>
-              <span className="flex-1 truncate font-mono text-[11px]" title={cwd}>{cwd || "未設定"}</span>
-              <button type="button" onClick={() => setPickerOpen(true)}
-                className="shrink-0 rounded-md border border-border/60 px-2 py-0.5 hover:bg-muted">変更</button>
-            </div>
-          </div>
-
-          {/* プロンプト編集（再注入） */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-medium text-muted-foreground">送るプロンプト（編集可）</span>
-              <button type="button" onClick={() => setPromptText(buildDefaultPrompt(node.title, node.memo))}
-                className="text-[11px] text-primary hover:underline">↻ ノード内容から作り直す</button>
-            </div>
-            <textarea
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-              rows={4}
-              className="w-full resize-y rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm"
-              placeholder="Codex に送る指示…"
-            />
-            <button
-              type="button"
-              onClick={run}
-              disabled={sending || !promptText.trim()}
-              className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-            >
-              {sending ? "送信中…" : threadId ? "続けて送る（この会話に注入）" : "注入して実行"}
-            </button>
-            {sent && <p className="text-[11px] text-emerald-500">送信しました（最大1分でMacが実行 → 完了で🟢）</p>}
-            {err && <p className="text-[11px] text-rose-500">{err}</p>}
-          </div>
-
-          {/* 返信 */}
-          {reply && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-muted-foreground">Codexの返信</span>
-                <button type="button" onClick={() => setShowFull((v) => !v)}
-                  className="text-[11px] text-primary hover:underline">{showFull ? "要約" : "全文"}</button>
-              </div>
-              <div className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-xs">
-                {showFull ? reply : reply.slice(0, 280) + (reply.length > 280 ? "…" : "")}
-              </div>
-            </div>
-          )}
-
-          {threadId && (
-            <p className="text-[10px] text-muted-foreground">
-              スレッド {threadId.slice(0, 8)} — Codexアプリ / ペアリング済みスマホにも表示されます
-            </p>
-          )}
-
-          {/* メモ / アクション */}
-          <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-            {onOpenMemo && (node.hasMemo || node.memo) && (
-              <button type="button" onClick={() => onOpenMemo(node.taskId)}
-                className="rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted">📝 関連メモを編集</button>
-            )}
-            {onToggleComplete && (
-              <button type="button" onClick={() => onToggleComplete(node.taskId, !node.isDone)}
-                className="rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted">
-                {node.isDone ? "完了を取消" : "完了にする"}
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={startCodex}
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-base font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+              >
+                <ExternalLink className="h-5 w-5" />
+                Codexで開始
               </button>
-            )}
-            {onAddChild && (
-              <button type="button" onClick={() => { onAddChild(node.taskId); onClose(); }}
-                className="rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted">＋ 子ノード追加</button>
-            )}
-            {onDelete && (
-              <button type="button" onClick={() => { onDelete(node.taskId); onClose(); }}
-                className="ml-auto rounded-md border border-rose-300 px-2.5 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-400">削除</button>
-            )}
+            </div>
           </div>
-        </DialogContent>
-      </Dialog>
 
-      <CodexDirPicker
-        open={pickerOpen}
-        nodeTitle={node.title}
-        candidates={candidates}
-        onCancel={() => setPickerOpen(false)}
-        onConfirm={(dir) => {
-          setPickerOpen(false)
-          setCwd(dir)
-          void onPersistDir(node.taskId, dir)
-        }}
-      />
-    </>
+          <label className="mt-8 block space-y-2">
+            <span className="text-sm text-muted-foreground">メモ詳細</span>
+            <textarea
+              value={detail}
+              onChange={(event) => setDetail(event.target.value)}
+              className="min-h-[44dvh] w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary"
+              placeholder="Codexに渡したい背景、条件、成果物を書いてください"
+            />
+          </label>
+
+          {error && (
+            <p className="mt-3 text-sm text-rose-500">{error}</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

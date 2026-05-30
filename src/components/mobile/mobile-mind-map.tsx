@@ -1,7 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
+import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import type { Project, Task } from "@/types/database"
 
 type MobileCustomDropPosition = "above" | "below" | "as-child"
@@ -37,6 +40,8 @@ export function MobileMindMap({
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
+    const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
+    const { getBySourceId } = useMemoAiTasks()
 
     const taskMap = useMemo(() => {
         const map = new Map<string, Task>()
@@ -45,6 +50,63 @@ export function MobileMindMap({
         }
         return map
     }, [groups, tasks])
+    const allMindMapTasks = useMemo(() => [...groups, ...tasks], [groups, tasks])
+
+    const codexRunByNodeId = useMemo(() => {
+        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {}
+        for (const task of allMindMapTasks) {
+            const aiTask = getBySourceId(task.id)
+            const uiState = getCodexTaskUiState(aiTask)
+            if (!aiTask || !uiState) continue
+            const aiResult = aiTask.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
+                ? aiTask.result as Record<string, unknown>
+                : {}
+            result[task.id] = {
+                state: uiState.state,
+                taskId: aiTask.id,
+                label: uiState.label,
+                lastActivityAt: typeof aiResult.last_activity_at === "string" ? aiResult.last_activity_at : null,
+            }
+        }
+        return result
+    }, [allMindMapTasks, getBySourceId])
+
+    const codexDirCandidates = useMemo(() => {
+        const set = new Set<string>()
+        for (const task of allMindMapTasks) {
+            const dir = (task.codex_work_dir ?? "").trim()
+            if (dir) set.add(dir)
+        }
+        const repo = (project.repo_path ?? "").trim()
+        if (repo) set.add(repo)
+        return Array.from(set)
+    }, [allMindMapTasks, project.repo_path])
+
+    const codexPanelNode = useMemo(() => {
+        if (!codexPanelTaskId) return null
+        const task = taskMap.get(codexPanelTaskId)
+        if (!task) return null
+        return {
+            taskId: task.id,
+            title: task.title,
+            memo: (task.memo ?? "").trim(),
+            cwd: task.codex_work_dir ?? null,
+            status: task.codex_status ?? null,
+            scheduledLabel: task.scheduled_at ? task.scheduled_at.slice(0, 10) : null,
+            priority: task.priority ?? null,
+            estimatedLabel: task.estimated_time ? `${task.estimated_time}分` : null,
+            isDone: task.status === "done",
+            hasMemo: !!(task.memo && task.memo.trim()),
+        }
+    }, [codexPanelTaskId, taskMap])
+
+    const persistCodexDir = useCallback(async (taskId: string, dir: string) => {
+        try {
+            await onUpdateTask?.(taskId, { codex_work_dir: dir })
+        } catch {
+            // パネル上の選択は維持し、次回保存で復旧できるようにする。
+        }
+    }, [onUpdateTask])
 
     const isDescendant = useCallback((ancestorId: string, childId: string) => {
         let current = taskMap.get(childId)
@@ -265,28 +327,45 @@ export function MobileMindMap({
     }, [groups, isDescendant, onReorderTask, onUpdateTask, project.id, taskMap])
 
     return (
-        <CustomMindMapView
-            project={project}
-            groups={groups}
-            tasks={tasks}
-            isMobile
-            collapsedTaskIds={collapsedTaskIds}
-            selectedNodeId={selectedNodeId}
-            selectedNodeIds={selectedNodeIds}
-            onSelectNode={handleSelectNode}
-            onSelectNodes={handleSelectNodes}
-            onToggleCollapse={handleToggleCollapse}
-            pendingEditNodeId={pendingEditNodeId}
-            onAddRootNode={handleAddRootNode}
-            onAddChildNode={handleAddChildNode}
-            onAddSiblingNode={handleAddSiblingNode}
-            onPromoteNode={handlePromoteNode}
-            onDeleteNode={handleDeleteNode}
-            onSaveTitle={handleSaveTitle}
-            onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
-            onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
-            onOpenLinkedMemos={onOpenLinkedMemos}
-            onMoveTask={handleMoveTask}
-        />
+        <>
+            <CustomMindMapView
+                project={project}
+                groups={groups}
+                tasks={tasks}
+                isMobile
+                collapsedTaskIds={collapsedTaskIds}
+                selectedNodeId={selectedNodeId}
+                selectedNodeIds={selectedNodeIds}
+                onSelectNode={handleSelectNode}
+                onSelectNodes={handleSelectNodes}
+                onToggleCollapse={handleToggleCollapse}
+                pendingEditNodeId={pendingEditNodeId}
+                onAddRootNode={handleAddRootNode}
+                onAddChildNode={handleAddChildNode}
+                onAddSiblingNode={handleAddSiblingNode}
+                onPromoteNode={handlePromoteNode}
+                onDeleteNode={handleDeleteNode}
+                onSaveTitle={handleSaveTitle}
+                onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
+                onOpenLinkedMemos={onOpenLinkedMemos}
+                onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
+                codexRunByNodeId={codexRunByNodeId}
+                onMoveTask={handleMoveTask}
+            />
+            {codexPanelNode && (
+                <CodexNodePanel
+                    open
+                    node={codexPanelNode}
+                    candidates={codexDirCandidates}
+                    onClose={() => setCodexPanelTaskId(null)}
+                    onPersistDir={persistCodexDir}
+                    onOpenMemo={onOpenLinkedMemos}
+                    onToggleComplete={(taskId, done) => { void onUpdateTask?.(taskId, { status: done ? "done" : "todo" }) }}
+                    onAddChild={(taskId) => { void handleAddChildNode(taskId) }}
+                    onDelete={(taskId) => { void handleDeleteNode(taskId) }}
+                />
+            )}
+        </>
     )
 }

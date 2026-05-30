@@ -16,29 +16,48 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('ai_tasks')
-    .select('id, status, codex_thread_id, cwd, result, created_at')
+    .select('id, prompt, status, error, codex_thread_id, cwd, result, created_at, started_at, completed_at')
     .eq('user_id', user.id)
     .eq('source_task_id', taskId)
-    .eq('executor', 'codex')
+    .in('executor', ['codex', 'codex_app'])
     .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(12)
 
   if (error) return NextResponse.json({ error: 'query failed' }, { status: 500 })
-  if (!data) return NextResponse.json({ task: null })
+  if (!data || data.length === 0) return NextResponse.json({ task: null, history: [] })
 
-  const result = (data.result ?? {}) as Record<string, unknown>
-  const reply =
-    typeof result.live_log === 'string' ? result.live_log :
-    typeof result.message === 'string' ? result.message : ''
+  const history = data.map((row) => {
+    const result = (row.result ?? {}) as Record<string, unknown>
+    const threadId =
+      typeof row.codex_thread_id === 'string' && row.codex_thread_id ? row.codex_thread_id :
+      typeof result.codex_thread_id === 'string' ? result.codex_thread_id : null
+    const reply =
+      typeof result.live_log === 'string' ? result.live_log :
+      typeof result.message === 'string' ? result.message : ''
+
+    return {
+      id: row.id,
+      prompt: row.prompt,
+      status: row.status,
+      error: row.error,
+      thread_id: threadId,
+      cwd: row.cwd,
+      reply,
+      created_at: row.created_at,
+      started_at: row.started_at,
+      completed_at: row.completed_at,
+    }
+  })
+  const latest = history[0]
 
   return NextResponse.json({
     task: {
-      id: data.id,
-      status: data.status,
-      thread_id: data.codex_thread_id,
-      cwd: data.cwd,
-      reply,
+      id: latest.id,
+      status: latest.status,
+      thread_id: latest.thread_id,
+      cwd: latest.cwd,
+      reply: latest.reply,
     },
+    history,
   })
 }

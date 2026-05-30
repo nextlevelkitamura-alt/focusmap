@@ -26,6 +26,7 @@ import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
 import { preloadDashboardPanels, preloadDashboardView } from "@/lib/dashboard-preload"
 import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport"
+import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-memos-dialog"
 
 function DashboardPaneFallback() {
@@ -151,7 +152,11 @@ export function DashboardClient({
     // --- View State ---
     // isViewReady = localStorage からビュー復元完了（SSRフラッシュ防止）
     const { activeView, setActiveView, isViewReady } = useView()
-    const isMobileViewport = useIsNarrowViewport()
+    const isNarrowViewport = useIsNarrowViewport()
+    const forceDesktopDashboard = useForceDesktopDashboard()
+    const isMobileViewport = isNarrowViewport && !forceDesktopDashboard
+    const desktopFlexClass = forceDesktopDashboard ? "flex" : "hidden md:flex"
+    const desktopDashboardWidthClass = forceDesktopDashboard ? "min-w-[1120px]" : ""
 
     useEffect(() => {
         if (!isViewReady || typeof window === "undefined") return
@@ -1244,7 +1249,7 @@ export function DashboardClient({
                             onProjectSaved={handleProjectSavedFromSwitcher}
                             onSpaceSaved={handleSpaceSavedFromSwitcher}
                             showAllProjectsOption
-                            className="md:hidden"
+                            className={forceDesktopDashboard ? "hidden" : "md:hidden"}
                         />
                         <WishlistView
                             projects={projects}
@@ -1261,7 +1266,7 @@ export function DashboardClient({
 
                 {/* === Desktop: AI View === */}
                 {!isMobileViewport && activeView === 'ai' && (
-                    <div className="flex-1 w-full overflow-hidden hidden md:flex">
+                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiView
                             selectedSpaceId={selectedSpaceId}
                             selectedProjectId={selectedProjectId}
@@ -1270,14 +1275,14 @@ export function DashboardClient({
                 )}
 
                 {!isMobileViewport && activeView === 'automation' && (
-                    <div className="flex-1 w-full overflow-hidden hidden md:flex">
+                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AutoChatView spaceId={selectedSpaceId} projectId={selectedProjectId} />
                     </div>
                 )}
 
                 {/* === Desktop: AI Todos View === */}
                 {!isMobileViewport && activeView === 'ai-todos' && (
-                    <div className="flex-1 w-full overflow-hidden hidden md:flex">
+                    <div className={cn("flex-1 w-full overflow-hidden", desktopFlexClass, desktopDashboardWidthClass)}>
                         <AiTodosView initialTasks={[]} initialSnapshot={null} sessionDate={getTodayDateString()} />
                     </div>
                 )}
@@ -1287,13 +1292,15 @@ export function DashboardClient({
                 <TodayDateProvider selectedDate={todaySelectedDate} setSelectedDate={setTodaySelectedDate}>
                 <div className={cn(
                     "flex-1 w-full relative gap-0 overflow-hidden",
-                    "hidden md:flex",
+                    desktopFlexClass,
+                    desktopDashboardWidthClass,
                     (activeView === 'ai' || activeView === 'automation' || activeView === 'ideal' || activeView === 'ai-todos' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Today タブでは非表示。サイドバーが常に折りたたまれているため不要) */}
                 {activeView !== 'today' && (
                     <div className={cn(
-                        "absolute top-4 z-50 hidden md:flex transition-all duration-300 ease-in-out",
+                        "absolute top-4 z-50 transition-all duration-300 ease-in-out",
+                        desktopFlexClass,
                         isLeftSidebarCollapsed ? "left-4" : "left-[220px]"
                     )}>
                         <Button
@@ -1314,7 +1321,8 @@ export function DashboardClient({
                 {/* Pane 1: Left Sidebar */}
                 <div
                     className={cn(
-                        "hidden md:flex flex-none overflow-hidden h-full transition-all duration-300 ease-in-out",
+                        "flex-none overflow-hidden h-full transition-all duration-300 ease-in-out",
+                        desktopFlexClass,
                         isLeftSidebarCollapsed ? "w-0 opacity-0" : "w-52 opacity-100"
                     )}
                     style={isLeftSidebarCollapsed ? {} : { minWidth: '13rem' }}

@@ -100,6 +100,7 @@ type TaskNodeData = {
     onUpdateMemo?: (memo: string | null) => void;
     onRegisterSchedule?: (params: { scheduledAt: string | null; estimatedMinutes: number; calendarId: string | null }) => Promise<void>;
     onOpenLinkedMemos?: () => void;
+    onOpenCodexPanel?: () => void;
 };
 
 type MindMapCallbacks = {
@@ -1293,6 +1294,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     // Codex ノードパネル（実行/往復/作業場所/プロンプト編集を一元化）の対象ノード
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null);
+    const mindMapTaskNodes = useMemo(() => [...groups, ...tasks], [groups, tasks]);
 
     // ノードの「Codex」ボタン / 状態アイコン → Codex ノードパネルを開く（実行はパネルから）
     const handleRunCodex = useCallback((taskId: string) => {
@@ -1307,19 +1309,19 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // よく使う候補（履歴の codex_work_dir + プロジェクトの repo_path）
     const codexDirCandidates = useMemo(() => {
         const set = new Set<string>();
-        for (const t of tasks) {
+        for (const t of mindMapTaskNodes) {
             const d = (t.codex_work_dir ?? '').trim();
             if (d) set.add(d);
         }
         const repo = (project?.repo_path ?? '').trim();
         if (repo) set.add(repo);
         return Array.from(set);
-    }, [tasks, project?.repo_path]);
+    }, [mindMapTaskNodes, project?.repo_path]);
 
     // パネルに渡すノード情報
     const codexPanelNode = useMemo(() => {
         if (!codexPanelTaskId) return null;
-        const task = tasks.find(t => t.id === codexPanelTaskId);
+        const task = mindMapTaskNodes.find(t => t.id === codexPanelTaskId);
         if (!task) return null;
         return {
             taskId: task.id,
@@ -1333,7 +1335,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             isDone: task.status === 'done',
             hasMemo: !!(task.memo && task.memo.trim()),
         };
-    }, [codexPanelTaskId, tasks]);
+    }, [codexPanelTaskId, mindMapTaskNodes]);
 
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null, source: 'user' | 'system') => {
         if (source === 'user') {
@@ -2295,10 +2297,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onDragStart: (tid: string, title: string) => cbs.startDrag(tid, title),
                     onDragEnd: () => cbs.endDrag(),
                     onOpenLinkedMemos: () => onOpenLinkedMemos?.(taskId),
+                    onOpenCodexPanel: () => handleRunCodex(taskId),
                 },
             };
         });
-    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget, handleResizeNode, isNarrow, onOpenLinkedMemos]);
+    }, [callbacks, structureNodes, taskDataMap, selectedNodeIds, pendingEditNodeId, collapsedTaskIds, displaySettings, project?.title, project?.id, dropTarget, handleResizeNode, handleRunCodex, isNarrow, onOpenLinkedMemos]);
 
     // Sync computed static layout to controllable local state
     useEffect(() => {

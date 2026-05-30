@@ -29,6 +29,14 @@ export function ViewProvider({ children }: { children: React.ReactNode }) {
     // Read localStorage after mount (client-only)
     useEffect(() => {
         queueMicrotask(() => {
+            const requestedView = new URLSearchParams(window.location.search).get('view') as DashboardView | null
+            if (requestedView && VALID_VIEWS.includes(requestedView)) {
+                try { localStorage.setItem(STORAGE_KEY, requestedView) } catch {}
+                setActiveViewState(requestedView)
+                setIsViewReady(true)
+                return
+            }
+
             const saved = localStorage.getItem(STORAGE_KEY) as DashboardView | null
             if (saved && VALID_VIEWS.includes(saved)) {
                 if (saved === 'automation') {
