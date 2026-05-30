@@ -323,6 +323,60 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => expect(onAddSiblingNode).toHaveBeenCalledWith("root-1"))
   })
 
+  test("focuses the newly created sibling after using the mobile keyboard accessory", async () => {
+    installOpenKeyboardViewport()
+    const onAddSiblingNode = vi.fn()
+    const onSaveTitle = vi.fn()
+    const rootTask = makeTask({ id: "root-1", title: "Root task" })
+    const newSibling = makeTask({ id: "root-2", title: "", order_index: 1 })
+    const commonProps = {
+      project,
+      tasks: [],
+      isMobile: true,
+      collapsedTaskIds: new Set<string>(),
+      onSelectNode: vi.fn(),
+      onSelectNodes: vi.fn(),
+      onToggleCollapse: vi.fn(),
+      onAddSiblingNode,
+      onSaveTitle,
+    }
+
+    const view = render(
+      <CustomMindMapView
+        {...commonProps}
+        groups={[rootTask]}
+        pendingEditNodeId="root-1"
+        selectedNodeId="root-1"
+        selectedNodeIds={new Set(["root-1"])}
+      />
+    )
+
+    const input = await screen.findByDisplayValue("Root task")
+    fireEvent.change(input, { target: { value: "Renamed root" } })
+    fireEvent.click(await screen.findByRole("button", { name: "兄弟ノード追加" }))
+
+    await waitFor(() => {
+      expect(onSaveTitle).toHaveBeenCalledWith("root-1", "Renamed root")
+      expect(onAddSiblingNode).toHaveBeenCalledWith("root-1")
+    })
+
+    view.rerender(
+      <CustomMindMapView
+        {...commonProps}
+        groups={[{ ...rootTask, title: "Renamed root" }, newSibling]}
+        pendingEditNodeId="root-2"
+        selectedNodeId="root-2"
+        selectedNodeIds={new Set(["root-2"])}
+      />
+    )
+
+    const newInput = await screen.findByDisplayValue("")
+    await waitFor(() => {
+      expect(newInput).toHaveFocus()
+      expect(newInput.closest('[data-id="root-2"]')).not.toBeNull()
+    })
+  })
+
   test("routes the mobile keyboard accessory delete action to the active node", async () => {
     installOpenKeyboardViewport()
     const onDeleteNode = vi.fn()

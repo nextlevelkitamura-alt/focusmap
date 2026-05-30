@@ -134,7 +134,7 @@ type UndoableDoneNode = {
 };
 
 type CustomTaskEditController = {
-    finishEditing: () => Promise<void>;
+    finishEditing: (options?: { refocus?: boolean }) => Promise<void>;
 };
 
 type WebKitGestureEvent = Event & {
@@ -297,13 +297,15 @@ function CustomTaskNode({
         return nextTitle;
     }, [editValue, node.id, node.title, onSaveTitle]);
 
-    const finishEditing = useCallback(async () => {
+    const finishEditing = useCallback(async (options: { refocus?: boolean } = {}) => {
         if (isFinishingEditRef.current) return;
         isFinishingEditRef.current = true;
         try {
             await saveValue();
             setIsEditing(false);
-            requestAnimationFrame(() => wrapperRef.current?.focus());
+            if (options.refocus !== false) {
+                requestAnimationFrame(() => wrapperRef.current?.focus());
+            }
         } finally {
             setTimeout(() => {
                 isFinishingEditRef.current = false;
@@ -404,7 +406,7 @@ function CustomTaskNode({
 
         if (event.key === "Tab") {
             event.preventDefault();
-            await finishEditing();
+            await finishEditing({ refocus: false });
             if (event.shiftKey) {
                 await onPromote?.(node.id);
             } else {
@@ -1645,21 +1647,21 @@ export function CustomMindMapView({
         editControllersRef.current.delete(taskId);
     }, []);
 
-    const finishActiveEdit = useCallback(async (taskId: string) => {
-        await editControllersRef.current.get(taskId)?.finishEditing();
+    const finishActiveEdit = useCallback(async (taskId: string, options?: { refocus?: boolean }) => {
+        await editControllersRef.current.get(taskId)?.finishEditing(options);
     }, []);
 
     const handleAccessoryAddChild = useCallback(async () => {
         const taskId = activeEditingTaskId;
         if (!taskId) return;
-        await finishActiveEdit(taskId);
+        await finishActiveEdit(taskId, { refocus: false });
         await onAddChildNode?.(taskId);
     }, [activeEditingTaskId, finishActiveEdit, onAddChildNode]);
 
     const handleAccessoryAddSibling = useCallback(async () => {
         const taskId = activeEditingTaskId;
         if (!taskId) return;
-        await finishActiveEdit(taskId);
+        await finishActiveEdit(taskId, { refocus: false });
         await onAddSiblingNode?.(taskId);
     }, [activeEditingTaskId, finishActiveEdit, onAddSiblingNode]);
 
