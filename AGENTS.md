@@ -6,8 +6,13 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 
 ## まず読む
 1. [docs/plans/focusmap-pivot.md](docs/plans/focusmap-pivot.md) — 方向転換計画（最重要）
-2. [docs/CONTEXT.md](docs/CONTEXT.md) — 既存コードの全体像
+2. [docs/CONTEXT.md](docs/CONTEXT.md) — 既存コードの全体像・現在の主要仕様
 3. [docs/ROADMAP.md](docs/ROADMAP.md) — 既存機能の履歴
+
+## 仕様更新ルール
+- 実装方針・同期方式・主要UI・データフローを変えたら、同じ作業内で [docs/CONTEXT.md](docs/CONTEXT.md) の該当セクションも更新する
+- Codex.app連携、ai_tasks、マインドマップ操作、runnerの巡回間隔はチャットに残さず `docs/CONTEXT.md` を正にする
+- 新しい仕様書を増やす前に、既存の `docs/CONTEXT.md` / `docs/plans/*` / `docs/specs/*` に追記できないか確認する
 
 ## 技術スタック
 - Next.js (App Router) / React / TypeScript

@@ -127,6 +127,56 @@ Goals → Projects → TaskGroups → Tasks
 | `useCalendarEvents` | Google Calendarイベント取得 | sidebar-calendar.tsx |
 | `useCalendars` | ユーザーカレンダー一覧・選択管理 | calendar-selector.tsx |
 | `useTimer` | タスクタイマー | center-pane.tsx |
+| `useMemoAiTasks` | マインドマップ/メモ起点の最新 `ai_tasks` 状態を取得し、Codex状態バッジへ反映 | mind-map.tsx / mindmap-linked-memos-dialog.tsx |
+
+---
+
+## 現在の主要仕様
+
+このセクションは、チャット履歴がなくても実装意図を復元できるようにするための現行仕様メモ。主要なUI・同期方式・データフローを変えた場合は、実装と同じコミットで更新する。
+
+### マインドマップとCodex.app連携
+
+- ノードからCodexへ渡す場合、Focusmapは作業本体を裏側で完結させるのではなく、Codex.app側を主軸にする。
+- Focusmap側は `ai_tasks` に待機レコードを作り、プロンプトをクリップボードへコピーし、Codex.appを開く補助をする。
+- Codex.appの新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。Focusmapは「実行待ち」「実行中」「確認待ち」を表示して、状態確認とログ同期に徹する。
+- プロンプト本文は、メモ見出しなどのラベルを足さず、ノード本文/メモ本文を改行区切りでそのまま渡す。
+- ノードの状態表示は `src/lib/codex-run-state.ts` の `getCodexTaskUiState` を正とする。
+  - `codex_manual_handoff=true` かつ `codex_thread_id` 未検出: `実行待ち`
+  - `status=running` または `result.codex_run_state=running`: `実行中`
+  - `awaiting_approval` / `needs_input` / `failed`: `確認待ち`
+  - `completed`: マップ上のCodex状態表示から外す
+- 実行中ノードは、右上の小さなスピナーではなく、ノード外周の緑色の動きで示す。
+- マインドマップ右上の更新アイコンは、Web側の `ai_tasks` 状態を手動再取得するためのもの。常駐runnerの即時スキャン強制ではない。
+
+### Codex同期ポリシー
+
+- `ai_tasks` が全ての起点。Codex.app連携では `executor='codex_app'` または `executor='codex'` を使う。
+- Mac常駐 `scripts/task-runner.ts` が `~/.codex/state_5.sqlite` と rollout JSONL を読み、`ai_tasks.result` に状態を同期する。
+- 実行中・スレッド検出直後は体感優先で短い間隔で追う。launchdの通常起動に加え、実行中は5秒間隔の追加follow-upを最大2回入れる。
+- Codex thread未検出の高速探索は開始後2分まで。2分を超えて見つからない場合は `monitoring_lost` として確認待ちにする。
+- 確認待ち・手動貼り付け待ち・needs_inputは、頻繁に追わない。`result.codex_last_checked_at` を使い、通常は30分ごとの再確認に抑える。
+- Focusmapで完了済みになったノードに紐づくCodex threadのアーカイブ/削除確認も、常時ではなく30分間隔の巡回に抑える。
+- Web側の `useMemoAiTasks` は、実行中のCodexタスクがある場合だけ5秒更新。実行中がない場合は1時間更新に後退し、必要なら手動更新アイコンで即時取得する。
+
+### Codexログ表示方針
+
+- Focusmapに表示する主ログは、Codexの日本語/ユーザー向け返答本文を中心にする。
+- `function_call` / `custom_tool_call` / `web_search_call` / `tool_search_call` などの内部コマンド開始ログは主ログへ混ぜない。
+- Codex.app bridgeが観測した追加情報は `result.codex_sync_log` に保持し、通常のチャット表示とは分ける。
+- `result.live_log` はチャットUIで表示できる本文、`result.codex_thread_snapshot` はCodex.app上のthread metadata、`codex_last_checked_at` はrunnerの同期間引き用。
+
+### 関連ファイル
+
+| 領域 | ファイル |
+|------|----------|
+| Codex状態判定/rollout解析 | `src/lib/codex-run-state.ts` |
+| Web側のai_tasks取得/更新間隔 | `src/hooks/useMemoAiTasks.ts` |
+| マインドマップ表示/状態バッジ/手動更新 | `src/components/mindmap/custom-mind-map-view.tsx` |
+| ダッシュボードからCodex状態を渡す層 | `src/components/dashboard/mind-map.tsx` |
+| Codex.app起動補助 | `src/app/api/codex/open-repo/route.ts` |
+| ノードに紐づくCodex thread取得 | `src/app/api/codex/node-thread/route.ts` |
+| Mac常駐runner/Codex同期 | `scripts/task-runner.ts` |
 
 ---
 
