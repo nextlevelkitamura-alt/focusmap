@@ -96,11 +96,13 @@ related: [focusmap-lite-mac-agent.md, unified-agent-chat.md]
 
 ## 実装フェーズ
 
-### Phase 0: スパイク確定（ほぼ完了）
-- [x] app-serverヘッドレス投入の実機検証（source='vscode'・アプリ表示）
-- [ ] スマホ（ChatGPTアプリ）表示の最終確認
-- [ ] `thread/resume`＋`turn/start` で往復が app-server経由でも継続するか検証
-- [ ] `workspace-write` で gws / Playwright が実際に呼べるか検証（汎用タスク成立性）
+### Phase 0: スパイク確定（完了）
+- [x] app-serverヘッドレス投入の実機検証（source='vscode'・アプリ表示・ユーザー目視確認済み）
+- [x] `thread/resume`＋`turn/start` で往復が app-server経由でも継続（合言葉を想起・確認済み）
+- [x] `workspace-write` でツール検証: gws実行OK・$HOME読み取りOK / ただし**ネットワークは既定で遮断**
+- [x] **`config:{sandbox_workspace_write:{network_access:true}}` を per-thread で渡すとネット許可（HTTP:200）** ← スイートスポット
+- [ ] スマホ（ChatGPTアプリ）表示の最終確認（PC表示は確認済み）
+- [ ] gws の実ネットワーク呼び出し（例: `gws calendar list`）が network_access=true で通るか（実データ最小確認）
 
 ### Phase 1: バックエンド relay
 - [ ] `codex-app-client.ts`（WSクライアント・再接続・タイムアウト・進捗イベント抽出）
@@ -123,9 +125,12 @@ related: [focusmap-lite-mac-agent.md, unified-agent-chat.md]
 
 ## 安全設計
 
-- **全開を継がない**: relay の `thread/start` は既定 `sandbox='workspace-write'` + `approvalPolicy='on-request'`。
-  ノードで明示エスカレーション時のみ `danger-full-access`。普段使いの `~/.codex/config.toml`（全開）とは
-  per-thread 指定で隔離する（`-c` 上書きや専用 `CODEX_HOME`/permissions profile も検討）。
+- **全開を継がない（実証済みの推奨モード）**: relay の `thread/start` は既定で
+  `sandbox='workspace-write'` + `config:{sandbox_workspace_write:{network_access:true}}` + `approvalPolicy='on-request'`。
+  → **書き込みはノードのcwd内に限定したまま、gws/Playwright/Web調査に必要なネットワークだけ許可**できる（HTTP:200実証）。
+  普段使いの `~/.codex/config.toml`（`danger-full-access/never` 全開）は per-thread指定で**継がない**。
+  ノードで真に必要なときだけ `danger-full-access` にエスカレーション。
+  - 検証事実: `workspace-write` 単体は gws実行・$HOME読みは可だが**ネット遮断**。network_accessで解禁。
 - **プロンプト規律（紙の盾）**: プロンプトに「不可逆・外部送信（メール送信・予定確定/削除・外部投稿・rm・git push）は
   実行前に一度確認を返す。読み取り・調査・下書きは確認不要」を明記。強制力はないため、本気の遮断は第2層に寄せる。
 - **第2層コードガード（任意・強制力あり）**: 既存 `DANGEROUS_SHELL_PATTERN` / `checkPromptSafety` を流用。
