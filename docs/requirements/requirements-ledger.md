@@ -1,0 +1,19 @@
+# Requirements Ledger
+
+Last updated: 2026-05-30
+
+| ID | Type | Requirement | Status | Priority | Evidence | Notes |
+|---|---|---|---|---|---|---|
+| REQ-001 | product | Raw wishlist/note memo content remains the source; structured memo items are stored separately. | needs_verification | high | `memo_structure_runs`, `memo_items`; `loadSourceMemo()` reads `ideal_goals`/`notes`; source rows are not overwritten as structured rows. | Need manual flow or tests to confirm source content survives edits/promotions. |
+| REQ-002 | product | Structure runs support both `wishlist` and `note` sources. | needs_verification | high | `MemoSourceTypeSchema`; migration `source_type` checks; `loadSourceMemo()` branches for `ideal_goals` and `notes`. | Needs route tests for both source types. |
+| REQ-003 | product | Structure runs are idempotent for same user, source, mode, input hash, and feedback. | needs_verification | high | Unique index on completed runs; route checks existing completed run before insert. | Migration unique index does not include `mode`, while route query does. Decide if this is intentional. |
+| REQ-004 | product | Memo item content is deduplicated per user, source, and content hash. | needs_verification | medium | `memo_items_unique_content_per_source_idx`; `memoItemContentHash()`; POST `/api/memo-items` reuses existing item. | Needs collision/update behavior tests. |
+| REQ-005 | product | Memo items support review/update lifecycle: inbox, organized, task_candidate, task, scheduled, done, dismissed, archived. | needs_verification | high | DB status check; PATCH `/api/memo-items`; link-task updates status to `task`, `scheduled`, or `done`. | UI coverage exists in wishlist detail, but needs verification. |
+| REQ-006 | product | Memo items can be linked into the mind map by creating or linking a task. | needs_verification | high | POST `/api/memo-items/[id]/link-task`; `memo_node_links`; task insert/link behavior. | Needs happy-path test and manual UI confirmation. |
+| REQ-007 | product | A memo item cannot be inserted as an active mind map node twice. | needs_verification | high | Unique index `memo_node_links_one_active_mindmap_link_idx`; route checks existing active link and handles 23505. | Good implementation evidence, still needs test/DB verification. |
+| REQ-008 | product | Mind map nodes can show linked structured memo context. | needs_verification | medium | GET `/api/mindmap/memo-links`; `mindmap-linked-memos-dialog`; wishlist/mindmap integration references. | Needs UI verification. |
+| REQ-009 | security | Users can only access their own memo-structure data. | needs_verification | high | RLS policies in migration; route queries filter by `user_id`. | Needs Supabase policy or route authorization tests. |
+| REQ-010 | product | Structured memo hierarchy is limited to the intended depth. | blocked | medium | Migration comment says "Structured 2-level"; schemas allow `parent_item_id`; prompt limits items but DB does not enforce depth. | Decide whether this is DB invariant, app invariant, or documentation-only. |
+| REQ-011 | delivery | MEMO-STRUCTURE migration has been applied and verified in the target Supabase environment. | blocked | high | Migration exists; `.temp/linked-project.json` exists. | No migration apply log or verification command result recorded. |
+| REQ-012 | delivery | Feature delivery state is tracked separately from the active `feature/codex-node-relay` branch work. | blocked | high | Git status shows many unrelated modified files on `feature/codex-node-relay`. | Avoid PR/deploy until change scope is separated or explicitly accepted. |
+| REQ-013 | process | Requirements, progress, contradictions, delivery state, and handoff docs exist in the repo. | done | high | `docs/requirements/*`, `docs/specs/memo-structure/*`, `docs/adr/0001-memo-structure-foundation.md`. | Process-only completion. |

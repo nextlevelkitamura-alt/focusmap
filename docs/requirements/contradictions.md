@@ -1,0 +1,11 @@
+# Contradictions
+
+Last updated: 2026-05-30
+
+| ID | Type | Summary | Status | Evidence | Impact | Next Step |
+|---|---|---|---|---|---|---|
+| ISSUE-001 | implementation_gap | Memo items are documented as "2-level", but the DB does not enforce max depth. | blocked | `memo_items.parent_item_id`; migration comment; no recursive/depth constraint. | Deeper trees can exist if inserted outside the current route assumptions. | Decide DB trigger/check vs app-only rule vs remove "2-level" claim. |
+| ISSUE-002 | design_gap | Route idempotency includes `mode`, but the DB unique index does not. | needs_verification | Route query filters `.eq('mode', mode.data)`; unique index is user/source/source_id/input_hash/feedback. | A quick and deep run with the same hash would conflict only if the hash did not encode mode; current hash includes mode. | Keep as-is if `input_hash` is the full effective input, otherwise include `mode` in index. |
+| ISSUE-003 | delivery_gap | MEMO-STRUCTURE delivery state is unclear. | blocked | Migration file exists, but no apply log/test result is recorded in requirements docs. | Cannot mark deployed or safe for release. | Run or locate Supabase migration verification and record result. |
+| ISSUE-004 | branch_scope | Active branch is about Codex relay, while MEMO-STRUCTURE docs/implementation also exist in the same repo. | blocked | `git status` on `feature/codex-node-relay` has many modified UI/API files. | A PR could mix unrelated changes unless staged carefully. | Split docs/verification into its own commit or branch after deciding with the owner. |
+| ISSUE-005 | stale_doc | `docs/status.md` is gitignored and was stale, so it cannot be the canonical project status. | resolved | `git check-ignore -v docs/status.md`; canonical handoff now lives in tracked `docs/requirements/session-handoff.md`. | Future sessions can resume from versioned docs instead of ignored local status. | Keep future session status in `docs/requirements/session-handoff.md`. |
