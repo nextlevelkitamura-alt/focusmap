@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
-import { ExternalLink, Loader2, Mic, Sparkles, Square } from "lucide-react"
+import { ExternalLink, Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
 
 const CHATGPT_CODEX_APP_URL = "https://chatgpt.com/app/codex"
 
@@ -35,24 +35,29 @@ type CodexNodePanelProps = {
   onToggleComplete?: (taskId: string, done: boolean) => void
   onAddChild?: (taskId: string) => void
   onDelete?: (taskId: string) => void
+  onSaveHeading?: (taskId: string, heading: string) => Promise<void> | void
 }
 
 function buildCodexPrompt(heading: string, detail: string): string {
   return [heading.trim(), detail.trim()].filter(Boolean).join("\n\n")
 }
 
-export function CodexNodePanel({ open, node, onClose }: CodexNodePanelProps) {
+export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNodePanelProps) {
   const [heading, setHeading] = useState(node.title)
+  const [savedHeading, setSavedHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
   const [error, setError] = useState<string | null>(null)
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
+  const [isSavingHeading, setIsSavingHeading] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setHeading(node.title)
+    setSavedHeading(node.title)
     setDetail(node.memo)
     setError(null)
     setIsGeneratingHeading(false)
+    setIsSavingHeading(false)
   }, [open, node.title, node.memo])
 
   const handleTranscribed = useCallback((text: string) => {
@@ -101,6 +106,37 @@ export function CodexNodePanel({ open, node, onClose }: CodexNodePanelProps) {
     }
   }, [detail, heading])
 
+  const normalizedHeading = heading.trim()
+  const hasUnsavedHeading = normalizedHeading.length > 0 && normalizedHeading !== savedHeading.trim()
+
+  const saveHeading = useCallback(async () => {
+    const nextHeading = heading.trim()
+    if (!nextHeading || nextHeading === savedHeading.trim()) return
+
+    setError(null)
+    setIsSavingHeading(true)
+    try {
+      if (onSaveHeading) {
+        await onSaveHeading(node.taskId, nextHeading)
+      } else {
+        const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: nextHeading }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(typeof data?.error?.message === "string" ? data.error.message : "見出しの保存に失敗しました")
+        }
+      }
+      setSavedHeading(nextHeading)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "見出しの保存に失敗しました")
+    } finally {
+      setIsSavingHeading(false)
+    }
+  }, [heading, node.taskId, onSaveHeading, savedHeading])
+
   const startCodex = useCallback(async () => {
     const prompt = buildCodexPrompt(heading, detail)
     if (!prompt) {
@@ -138,15 +174,37 @@ export function CodexNodePanel({ open, node, onClose }: CodexNodePanelProps) {
         </DialogHeader>
 
         <div className="min-h-0 overflow-y-auto px-6 py-5">
-          <label className="block space-y-2">
-            <span className="text-sm text-muted-foreground">メモ見出し</span>
-            <input
-              value={heading}
-              onChange={(event) => setHeading(event.target.value)}
-              className="h-12 w-full rounded-lg border border-border/70 bg-background px-3 text-base outline-none focus:border-primary"
-              placeholder="メモ見出し"
-            />
-          </label>
+          <div className="space-y-2">
+            <label className="text-sm text-muted-foreground" htmlFor="codex-memo-heading">
+              メモ見出し
+            </label>
+            <div className="relative">
+              <input
+                id="codex-memo-heading"
+                value={heading}
+                onChange={(event) => setHeading(event.target.value)}
+                className="h-12 w-full rounded-lg border border-border/70 bg-background px-3 pr-24 text-base outline-none focus:border-primary"
+                placeholder="メモ見出し"
+              />
+              {hasUnsavedHeading ? (
+                <button
+                  type="button"
+                  onClick={saveHeading}
+                  disabled={isSavingHeading}
+                  className="absolute right-2 top-1/2 inline-flex h-8 -translate-y-1/2 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
+                  aria-label="メモ見出しを保存"
+                  title="メモ見出しを保存"
+                >
+                  {isSavingHeading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  保存
+                </button>
+              ) : null}
+            </div>
+          </div>
 
           <div className="mt-8 space-y-2">
             <div className="flex items-center justify-between gap-3">
