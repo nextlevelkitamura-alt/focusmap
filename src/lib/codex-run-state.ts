@@ -42,7 +42,7 @@ export type CodexTaskUiState = {
   label: string
 }
 
-const MAX_LIVE_LOG_CHARS = 6000
+const MAX_LIVE_LOG_CHARS = 20_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -77,7 +77,7 @@ function timestampToIso(value: unknown): string | null {
   return null
 }
 
-function compactLine(value: string, max = 800) {
+function compactLine(value: string, max = 12_000) {
   return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim().slice(0, max)
 }
 

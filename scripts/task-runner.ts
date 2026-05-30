@@ -66,6 +66,7 @@ const STAFF_STATUS_STALE_RUNNING_MS = 45 * 60 * 1000
 const STAFF_STATUS_INTERACTIVE_LATE_LIMIT_MS = 15 * 60 * 1000
 const LOCAL_USER_ID_FILE = path.join(os.homedir(), '.config', 'life-manager', 'focusmap-user-id')
 const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
+const CODEX_LIVE_LOG_MAX_CHARS = 20_000
 
 type StaffStatusDueTask = {
   id: string
@@ -1134,7 +1135,7 @@ function appendUniqueLogBlock(blocks: string[], value: string): void {
   blocks.push(text)
 }
 
-function mergeCodexLiveLogs(blocks: string[], maxChars = 6000): string {
+function mergeCodexLiveLogs(blocks: string[], maxChars = CODEX_LIVE_LOG_MAX_CHARS): string {
   const merged: string[] = []
   for (const block of blocks) {
     for (const part of block.split(/\n{2,}/)) {
@@ -1487,8 +1488,8 @@ async function syncCodexLiveLogs(supabase: any): Promise<void> {
       const content = fs.readFileSync(logPath, 'utf-8')
       // ANSI エスケープシーケンス除去
       const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      // 末尾 6000 字（UI で読みやすい範囲）
-      const tail = cleaned.slice(-6000)
+      // UI で会話として読める範囲を残す
+      const tail = cleaned.slice(-CODEX_LIVE_LOG_MAX_CHARS)
       // 既存 result (steps/codex_thread_id) を保持したまま live_log のみ差し替え
       const merged = { ...(task.result ?? {}), executor: 'codex', live_log: tail }
       await supabase
@@ -2400,6 +2401,24 @@ async function claimDueTasksWithRunner(supabase: any, runner: AiRunner, limit = 
   return tasks
 }
 
+function immediateTaskIdFromArgs(): string | null {
+  const envTaskId = process.env.FOCUSMAP_IMMEDIATE_TASK_ID?.trim()
+  if (envTaskId) return envTaskId
+  const idx = process.argv.indexOf('--task-id')
+  const argTaskId = idx >= 0 ? process.argv[idx + 1]?.trim() : ''
+  return argTaskId || null
+}
+
+function dueTaskSelectColumns(): string {
+  return [
+    'id, user_id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, result',
+    'source_note_id, source_ideal_goal_id, source_task_id, executor',
+    schemaCapabilities.hasSharedAiTaskColumns
+      ? `space_id, package_id, package_snapshot, claimed_runner_id, claim_expires_at, run_visibility${schemaCapabilities.hasAiPackageVersioning ? ', package_version_id' : ''}`
+      : '',
+  ].filter(Boolean).join(', ')
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // メイン処理
 // ─────────────────────────────────────────────────────────────────────────
@@ -2419,99 +2438,113 @@ async function main() {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
   schemaCapabilities = await detectSchemaCapabilities(supabase)
-
-  // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
-  await reconcileRemoteControlSessions(supabase)
-  await cleanupStaleCodexTasks(supabase)
-
-  // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
-  await syncCodexLiveLogs(supabase)
-
-  // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
-  await syncCodexAppThreads(supabase)
-
-  // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
-  await recoverStaleStaffStatusTasks(supabase)
-
-  // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
-  const hostname = os.hostname()
-  try {
-    const localRunnerUserId = readLocalRunnerUserId()
-    if (localRunnerUserId) {
-      await ensureDefaultScanSettings(supabase, localRunnerUserId, hostname)
-    }
-    // ai_tasks を持つユーザーで scan_settings 未作成の人にデフォルトを入れる
-    const { data: activeUsers } = await supabase
-      .from('ai_tasks')
-      .select('user_id')
-      .limit(50)
-    const seen = new Set<string>()
-    for (const row of (activeUsers ?? []) as Array<{ user_id: string }>) {
-      if (seen.has(row.user_id)) continue
-      seen.add(row.user_id)
-      await ensureDefaultScanSettings(supabase, row.user_id, hostname)
-    }
-    await scanAndSync(supabase, hostname)
-  } catch (e) {
-    console.error('[task-runner] repo scan error:', e instanceof Error ? e.message : e)
-  }
-
-  // ─── 1. runner heartbeat → due task を atomic claim ─────────────────
+  const immediateTaskId = immediateTaskIdFromArgs()
   let dueTasks: StaffStatusDueTask[] = []
-  const runner = schemaCapabilities.hasAiRunnerTables && schemaCapabilities.hasSharedAiTaskColumns
-    ? await heartbeatRunner(supabase, hostname)
-    : null
-  if (runner) {
-    await syncRunnerPackageVersions(supabase, runner)
-    dueTasks = await claimDueTasksWithRunner(supabase, runner, 5)
-  } else if (
-    schemaCapabilities.hasAiRunnerTables &&
-    schemaCapabilities.hasSharedAiTaskColumns &&
-    process.env.FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER !== 'true'
-  ) {
-    console.log('[task-runner] Runner is not configured; skipping AI execution claims')
-  } else {
-    // Legacy fallback while the shared runner migration has not been applied, or when explicitly allowed.
-    const selectColumns = [
-      'id, user_id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, result',
-      'source_note_id, source_ideal_goal_id, source_task_id, executor',
-      schemaCapabilities.hasSharedAiTaskColumns
-        ? `space_id, package_id, package_snapshot, claimed_runner_id, claim_expires_at, run_visibility${schemaCapabilities.hasAiPackageVersioning ? ', package_version_id' : ''}`
-        : '',
-    ].filter(Boolean).join(', ')
-    const { data: rawDueTasks, error } = await supabase
+  let runner: AiRunner | null = null
+
+  if (immediateTaskId) {
+    const { data: immediateTask, error } = await supabase
       .from('ai_tasks')
-      .select(selectColumns)
+      .select(dueTaskSelectColumns())
+      .eq('id', immediateTaskId)
       .eq('status', 'pending')
       .not('scheduled_at', 'is', null)
-      .lte('scheduled_at', new Date().toISOString())
-      .order('scheduled_at', { ascending: true })
-      .limit(5)
+      .lte('scheduled_at', new Date(Date.now() + 5_000).toISOString())
+      .maybeSingle()
 
     if (error) {
-      console.error('[task-runner] DB error:', error.message)
-      if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
-        fs.writeFileSync(
-          PAUSE_FILE,
-          [
-            `Paused at ${new Date().toISOString()}`,
-            `Reason: ${error.message}`,
-            'Remove this file after the Supabase project restriction is lifted.',
-            '',
-          ].join('\n'),
-          'utf-8',
-        )
-        console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
-      }
+      console.error('[task-runner] immediate task lookup failed:', error.message)
       process.exit(1)
     }
 
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
-    dueTasks = ((rawDueTasks || []) as unknown as StaffStatusDueTask[]).filter(t => {
-      if (!t.recurrence_cron) return true
-      if (!t.completed_at) return true
-      return new Date(t.completed_at) < todayStart
-    })
+    dueTasks = immediateTask ? [immediateTask as StaffStatusDueTask] : []
+    console.log(`[task-runner] immediate dispatch requested: ${immediateTaskId}`)
+  } else {
+    // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
+    await reconcileRemoteControlSessions(supabase)
+    await cleanupStaleCodexTasks(supabase)
+
+    // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
+    await syncCodexLiveLogs(supabase)
+
+    // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
+    await syncCodexAppThreads(supabase)
+
+    // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
+    await recoverStaleStaffStatusTasks(supabase)
+
+    // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
+    const hostname = os.hostname()
+    try {
+      const localRunnerUserId = readLocalRunnerUserId()
+      if (localRunnerUserId) {
+        await ensureDefaultScanSettings(supabase, localRunnerUserId, hostname)
+      }
+      // ai_tasks を持つユーザーで scan_settings 未作成の人にデフォルトを入れる
+      const { data: activeUsers } = await supabase
+        .from('ai_tasks')
+        .select('user_id')
+        .limit(50)
+      const seen = new Set<string>()
+      for (const row of (activeUsers ?? []) as Array<{ user_id: string }>) {
+        if (seen.has(row.user_id)) continue
+        seen.add(row.user_id)
+        await ensureDefaultScanSettings(supabase, row.user_id, hostname)
+      }
+      await scanAndSync(supabase, hostname)
+    } catch (e) {
+      console.error('[task-runner] repo scan error:', e instanceof Error ? e.message : e)
+    }
+
+    // ─── 1. runner heartbeat → due task を atomic claim ─────────────────
+    runner = schemaCapabilities.hasAiRunnerTables && schemaCapabilities.hasSharedAiTaskColumns
+      ? await heartbeatRunner(supabase, hostname)
+      : null
+    if (runner) {
+      await syncRunnerPackageVersions(supabase, runner)
+      dueTasks = await claimDueTasksWithRunner(supabase, runner, 5)
+    } else if (
+      schemaCapabilities.hasAiRunnerTables &&
+      schemaCapabilities.hasSharedAiTaskColumns &&
+      process.env.FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER !== 'true'
+    ) {
+      console.log('[task-runner] Runner is not configured; skipping AI execution claims')
+    } else {
+      // Legacy fallback while the shared runner migration has not been applied, or when explicitly allowed.
+      const { data: rawDueTasks, error } = await supabase
+        .from('ai_tasks')
+        .select(dueTaskSelectColumns())
+        .eq('status', 'pending')
+        .not('scheduled_at', 'is', null)
+        .lte('scheduled_at', new Date().toISOString())
+        .order('scheduled_at', { ascending: true })
+        .limit(5)
+
+      if (error) {
+        console.error('[task-runner] DB error:', error.message)
+        if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
+          fs.writeFileSync(
+            PAUSE_FILE,
+            [
+              `Paused at ${new Date().toISOString()}`,
+              `Reason: ${error.message}`,
+              'Remove this file after the Supabase project restriction is lifted.',
+              '',
+            ].join('\n'),
+            'utf-8',
+          )
+          console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
+        }
+        process.exit(1)
+      }
+
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+      dueTasks = ((rawDueTasks || []) as unknown as StaffStatusDueTask[]).filter(t => {
+        if (!t.recurrence_cron) return true
+        if (!t.completed_at) return true
+        return new Date(t.completed_at) < todayStart
+      })
+    }
   }
 
   if (!dueTasks || dueTasks.length === 0) {

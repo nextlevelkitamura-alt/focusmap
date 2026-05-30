@@ -14,6 +14,8 @@ import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import type { Project, Task } from "@/types/database"
 
+const CODEX_DISPLAY_LOG_CHARS = 20_000
+
 type LinkedMemoDialogTarget = {
   taskId: string
   requestKey: number
@@ -190,12 +192,13 @@ export function MindmapLinkedMemosDialog({
   const codexMessage = stringValue(codexResult.message)
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
-  const codexLogCandidates = [codexMessage, codexLiveLog, codexPreview]
+  const codexPrimaryLogs = [codexMessage, codexLiveLog].filter(Boolean)
+  const codexLogCandidates = (codexPrimaryLogs.length > 0 ? codexPrimaryLogs : [codexPreview])
     .map(sanitizeCodexDisplayLog)
     .filter(Boolean)
   const codexLogBlocks = codexLogCandidates
     .filter((value, index, arr) => arr.findIndex(other => other.includes(value)) === index)
-  const codexDisplayLog = codexLogBlocks.join("\n\n").slice(-6000)
+  const codexDisplayLog = codexLogBlocks.join("\n\n").slice(-CODEX_DISPLAY_LOG_CHARS)
   const sentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexConversation = getCodexConversation(codexDisplayLog, sentPrompt)
   const codexChatEntries = codexConversation.entries
@@ -319,6 +322,8 @@ export function MindmapLinkedMemosDialog({
       }
       setJustSentPrompt(prompt)
       await refreshAiTasks()
+      window.setTimeout(() => void refreshAiTasks(), 1200)
+      window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Codex送信に失敗しました")
     } finally {
@@ -408,7 +413,7 @@ export function MindmapLinkedMemosDialog({
                     ) : (
                       <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-start">
                         <div className="max-w-[78%] rounded-2xl border border-amber-500/25 bg-background px-4 py-3 text-sm leading-7 shadow-sm">
-                          <div className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">回答待ち</div>
+                          <div className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">Codex回答</div>
                           <div className="whitespace-pre-wrap break-words">{entry.text}</div>
                         </div>
                       </div>

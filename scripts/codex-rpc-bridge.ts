@@ -46,6 +46,7 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const WS_URL = 'ws://127.0.0.1:7878'
 const OVERALL_TIMEOUT_MS = 15 * 60 * 1000 // 15分
 const CONNECT_TIMEOUT_MS = 10_000
+const LIVE_LOG_MAX_CHARS = 20_000
 const LOG_FILE_TEMPLATE = (taskId: string) => `/tmp/codex-bridge-${taskId}.log`
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -409,7 +410,7 @@ async function main() {
       const trimEntries = () => {
         if (logEntries.length > 200) logEntries.splice(0, logEntries.length - 200)
       }
-      const buildLiveLog = (maxChars = 6000) => {
+      const buildLiveLog = (maxChars = LIVE_LOG_MAX_CHARS) => {
         const active = [...activeAgentMessages.values()]
           .filter(Boolean)
           .map(text => `[assistant:streaming] ${text}`)
@@ -437,7 +438,7 @@ async function main() {
       const markAwaitingApproval = async (command: string) => {
         waitingOnApproval = true
         const now = new Date().toISOString()
-        const liveLog = buildLiveLog(6000)
+        const liveLog = buildLiveLog()
         await pushStep(supabase, taskId, makeStep('approval_requested', `承認待ち: ${command.slice(0, 120)}`), {
           liveLog,
           message: liveLog || '(本文なし)',
@@ -457,7 +458,7 @@ async function main() {
       const markApprovalResolved = async () => {
         waitingOnApproval = false
         await pushStep(supabase, taskId, makeStep('turn_started', 'Codex.app で実行中'), {
-          liveLog: buildLiveLog(6000),
+          liveLog: buildLiveLog(),
           metadata: {
             session_health: 'active',
             codex_run_state: 'running',
@@ -582,7 +583,7 @@ async function main() {
         flushTimer = null
       }
 
-      const finalLog = buildLiveLog(6000)
+      const finalLog = buildLiveLog()
       const hasAssistantOutput = finalLog.includes('[assistant')
       const outcome = resolveTurnOutcome({
         status: completedStatus,

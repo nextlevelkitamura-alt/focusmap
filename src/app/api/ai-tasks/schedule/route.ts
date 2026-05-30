@@ -1,6 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { spawn } from 'child_process'
+import fs from 'fs'
+import path from 'path'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+
+export const runtime = 'nodejs'
+
+function requestImmediateCodexAppDispatch(taskId: string): void {
+  if (process.env.FOCUSMAP_DISABLE_LOCAL_CODEX_DISPATCH === 'true') return
+
+  const root = process.cwd()
+  const localTsx = path.join(root, 'node_modules', '.bin', 'tsx')
+  const hasLocalTsx = fs.existsSync(localTsx)
+  const command = hasLocalTsx ? localTsx : 'npx'
+  const args = hasLocalTsx
+    ? ['scripts/task-runner.ts', '--task-id', taskId, '--fast']
+    : ['--yes', 'tsx', 'scripts/task-runner.ts', '--task-id', taskId, '--fast']
+  const outPath = path.join(root, 'scripts', 'task-runner.log')
+  const errPath = path.join(root, 'scripts', 'task-runner.err')
+
+  let outFd: number | null = null
+  let errFd: number | null = null
+  try {
+    outFd = fs.openSync(outPath, 'a')
+    errFd = fs.openSync(errPath, 'a')
+    const child = spawn(command, args, {
+      cwd: root,
+      detached: true,
+      stdio: ['ignore', outFd, errFd],
+      env: {
+        ...process.env,
+        FOCUSMAP_IMMEDIATE_TASK_ID: taskId,
+      },
+    })
+    child.unref()
+    console.log(`[ai-tasks/schedule] immediate Codex.app dispatch requested: ${taskId}`)
+  } catch (err) {
+    console.error('[ai-tasks/schedule] immediate Codex.app dispatch failed:', err instanceof Error ? err.message : err)
+  } finally {
+    if (outFd !== null) {
+      try { fs.closeSync(outFd) } catch {}
+    }
+    if (errFd !== null) {
+      try { fs.closeSync(errFd) } catch {}
+    }
+  }
+}
+
+function canUseLocalDispatch(req: NextRequest): boolean {
+  if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_DISPATCH === 'true') return true
+  return ['localhost', '127.0.0.1', '::1'].includes(req.nextUrl.hostname)
+}
 
 // cronのバリデーション（5フィールド形式）
 function isValidCron(expr: string): boolean {
@@ -122,6 +173,14 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('[ai-tasks/schedule]', error.message)
     return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+  }
+
+  if (
+    resolvedExecutor === 'codex_app' &&
+    canUseLocalDispatch(req) &&
+    new Date(scheduled_at).getTime() <= Date.now() + 5_000
+  ) {
+    requestImmediateCodexAppDispatch(data.id)
   }
 
   return NextResponse.json(data, { status: 201 })
