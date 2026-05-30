@@ -177,7 +177,7 @@ export function Header({
                             onProjectCreated={onProjectCreated}
                             onProjectSaved={onProjectSaved}
                             onSpaceSaved={onSpaceSaved}
-                            showAllProjectsOption={activeView === 'long-term'}
+                            showAllProjectsOption={activeView === 'today' || activeView === 'long-term'}
                             className="max-w-[280px] border-b-0 bg-transparent px-0 py-0"
                         />
                     </>
