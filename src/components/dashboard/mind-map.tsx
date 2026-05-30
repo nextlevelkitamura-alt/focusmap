@@ -1134,7 +1134,20 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onRemoveOptimisticEvent,
     });
     const allTasksByIdForCodex = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task])), [groups, tasks]);
-    const { bySourceId: aiTasksBySourceId, getBySourceId: getAiTaskBySourceId } = useMemoAiTasks();
+    const {
+        bySourceId: aiTasksBySourceId,
+        getBySourceId: getAiTaskBySourceId,
+        refresh: refreshAiTasks,
+    } = useMemoAiTasks();
+    const [isRefreshingCodexTasks, setIsRefreshingCodexTasks] = useState(false);
+    const handleRefreshCodexTasks = useCallback(async () => {
+        setIsRefreshingCodexTasks(true);
+        try {
+            await refreshAiTasks();
+        } finally {
+            setIsRefreshingCodexTasks(false);
+        }
+    }, [refreshAiTasks]);
     const appliedCodexCompletionKeysRef = useRef(new Set<string>());
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {};
@@ -2975,6 +2988,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                 onOpenLinkedMemos={onOpenLinkedMemos}
                 onRunCodex={handleRunCodex}
+                onRefreshCodex={handleRefreshCodexTasks}
+                isRefreshingCodex={isRefreshingCodexTasks}
                 codexRunByNodeId={codexRunByNodeId}
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}

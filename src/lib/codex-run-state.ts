@@ -95,33 +95,6 @@ function isInternalUserMessage(value: string): boolean {
     text.includes("\n<environment_context>")
 }
 
-function summarizeToolCall(payload: Record<string, unknown>): string {
-  const name = typeof payload.name === "string" ? payload.name : "tool"
-  const rawArgs = typeof payload.arguments === "string" ? payload.arguments : ""
-  if (!rawArgs) return name
-
-  try {
-    const args = JSON.parse(rawArgs) as Record<string, unknown>
-    const command = typeof args.cmd === "string"
-      ? args.cmd
-      : typeof args.command === "string"
-        ? args.command
-        : ""
-    if (command) return command
-
-    const query = typeof args.q === "string"
-      ? args.q
-      : typeof args.query === "string"
-        ? args.query
-        : ""
-    if (query) return `${name}: ${query}`
-  } catch {
-    return `${name}: ${rawArgs.slice(0, 240)}`
-  }
-
-  return name
-}
-
 function appendLog(logs: string[], line: string) {
   const text = compactLine(line)
   if (!text) return
@@ -207,14 +180,12 @@ export function parseCodexRollout(
       continue
     }
 
-    if (payloadType === "function_call" || payloadType === "custom_tool_call") {
-      appendLog(logs, `[command:started] ${summarizeToolCall(payload)}`)
-      continue
-    }
-
-    if (payloadType === "web_search_call" || payloadType === "tool_search_call") {
-      const query = safeText(payload.action) || safeText(payload)
-      appendLog(logs, `[command:started] ${payloadType.replace(/_call$/, "")}${query ? `: ${query}` : ""}`)
+    if (
+      payloadType === "function_call" ||
+      payloadType === "custom_tool_call" ||
+      payloadType === "web_search_call" ||
+      payloadType === "tool_search_call"
+    ) {
       continue
     }
 

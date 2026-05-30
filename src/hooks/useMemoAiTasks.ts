@@ -5,15 +5,18 @@ import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
+const RUNNING_STATUSES: AiTask['status'][] = ['pending', 'running']
 const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
-const IDLE_REFRESH_INTERVAL_MS = 15_000
+const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 
-function hasActiveCodexTask(tasks: Map<string, AiTask>) {
+function hasRunningCodexTask(tasks: Map<string, AiTask>) {
   for (const task of tasks.values()) {
-    if (
-      (task.executor === 'codex' || task.executor === 'codex_app') &&
-      ACTIVE_STATUSES.includes(task.status)
-    ) {
+    if (task.executor !== 'codex' && task.executor !== 'codex_app') continue
+    if (RUNNING_STATUSES.includes(task.status)) return true
+    const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
+      ? task.result as Record<string, unknown>
+      : {}
+    if (result.codex_run_state === 'running') {
       return true
     }
   }
@@ -60,7 +63,7 @@ export function useMemoAiTasks() {
     fetchInitial()
   }, [fetchInitial])
 
-  const refreshIntervalMs = hasActiveCodexTask(bySourceId)
+  const refreshIntervalMs = hasRunningCodexTask(bySourceId)
     ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
 

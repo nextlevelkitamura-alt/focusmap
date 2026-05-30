@@ -174,7 +174,8 @@ describe("CustomMindMapView keyboard operations", () => {
     renderMap({ onOpenLinkedMemos })
 
     const node = getNode("Root task", "root-1")
-    fireEvent.click(within(node).getByRole("button", { name: "関連メモを開く" }))
+    fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))
+    fireEvent.click(within(node).getByRole("button", { name: "メモを開く" }))
 
     expect(onOpenLinkedMemos).toHaveBeenCalledWith("root-1")
   })

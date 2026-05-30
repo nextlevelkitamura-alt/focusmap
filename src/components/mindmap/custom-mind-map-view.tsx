@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Maximize2, MoreHorizontal, Minus, Plus, RotateCcw, StickyNote, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Maximize2, MoreHorizontal, Minus, Plus, RefreshCw, RotateCcw, StickyNote, Trash2 } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -43,6 +43,8 @@ type CustomMindMapViewProps = {
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
     onRunCodex?: (taskId: string) => void | Promise<void>;
+    onRefreshCodex?: () => void | Promise<void>;
+    isRefreshingCodex?: boolean;
     codexRunByNodeId?: Record<string, CodexNodeState>;
     onMoveTask?: (params: {
         taskId: string;
@@ -958,6 +960,8 @@ export function CustomMindMapView({
     onResizeNode,
     onOpenLinkedMemos,
     onRunCodex,
+    onRefreshCodex,
+    isRefreshingCodex = false,
     codexRunByNodeId = {},
     onMoveTask,
     onMoveTasks,
@@ -1995,6 +1999,18 @@ export function CustomMindMapView({
                     >
                         <Maximize2 className="h-3.5 w-3.5" />
                     </button>
+                    {onRefreshCodex && (
+                        <button
+                            type="button"
+                            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60"
+                            onClick={() => { void onRefreshCodex(); }}
+                            disabled={isRefreshingCodex}
+                            title="Codex状態を更新"
+                            aria-label="Codex状態を更新"
+                        >
+                            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshingCodex && "animate-spin")} />
+                        </button>
+                    )}
                 </div>
                 <input
                     aria-label="ズーム"

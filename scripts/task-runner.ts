@@ -78,6 +78,10 @@ const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
 const CODEX_LIVE_LOG_MAX_CHARS = 20_000
 const CODEX_ACTIVE_SYNC_INTERVAL_MS = 5_000
 const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 2
+const CODEX_THREAD_MATCH_FAST_WINDOW_MS = 2 * 60_000
+const CODEX_AWAITING_RECHECK_MS = 30 * 60_000
+const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
+const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
 
 type StaffStatusDueTask = {
   id: string
@@ -110,6 +114,7 @@ type MonitoredCodexTask = {
   prompt: string
   codex_thread_id: string | null
   started_at: string | null
+  created_at?: string | null
   cwd: string | null
   executor: string | null
   result: Record<string, unknown> | null
@@ -189,6 +194,44 @@ function asResultRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
+}
+
+function parseTimeMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : null
+  }
+  return null
+}
+
+function readJsonTimestamp(pathname: string): number | null {
+  try {
+    if (!fs.existsSync(pathname)) return null
+    const raw = fs.readFileSync(pathname, 'utf-8')
+    const parsed = JSON.parse(raw) as { checkedAt?: unknown }
+    return parseTimeMs(parsed.checkedAt)
+  } catch {
+    return null
+  }
+}
+
+function writeJsonTimestamp(pathname: string, checkedAt: string): void {
+  try {
+    fs.mkdirSync(path.dirname(pathname), { recursive: true })
+    fs.writeFileSync(pathname, JSON.stringify({ checkedAt }), 'utf-8')
+  } catch {
+    // 同期のスロットリング情報なので、書けなくても本処理は続ける。
+  }
+}
+
+function shouldRunIntervalScan(pathname: string, intervalMs: number, nowMs = Date.now()): boolean {
+  const lastMs = readJsonTimestamp(pathname)
+  if (lastMs != null && nowMs - lastMs < intervalMs) return false
+  writeJsonTimestamp(pathname, new Date(nowMs).toISOString())
+  return true
 }
 
 function nextStaffStatusRetry(task: StaffStatusDueTask): { retryAt: string; retryCount: number; retryDelayMinutes: number } {
@@ -1188,6 +1231,64 @@ function sqlText(value: string): string {
   return value.replace(/'/g, "''")
 }
 
+function codexTaskThreadId(task: MonitoredCodexTask): string | null {
+  if (task.codex_thread_id) return task.codex_thread_id
+  const result = asResultRecord(task.result)
+  return typeof result.codex_thread_id === 'string' && result.codex_thread_id.trim()
+    ? result.codex_thread_id
+    : null
+}
+
+function codexTaskStartedAtMs(task: MonitoredCodexTask, nowMs: number): number {
+  return parseTimeMs(task.started_at) ?? parseTimeMs(task.created_at) ?? nowMs
+}
+
+function codexTaskLastCheckedAtMs(task: MonitoredCodexTask): number | null {
+  const result = asResultRecord(task.result)
+  return parseTimeMs(result.codex_last_checked_at)
+}
+
+function codexTaskRunState(task: MonitoredCodexTask): string | null {
+  const result = asResultRecord(task.result)
+  return typeof result.codex_run_state === 'string' ? result.codex_run_state : null
+}
+
+function shouldSyncCodexTaskNow(task: MonitoredCodexTask, nowMs = Date.now()): boolean {
+  const result = asResultRecord(task.result)
+  const threadId = codexTaskThreadId(task)
+  const startedMs = codexTaskStartedAtMs(task, nowMs)
+  const lastCheckedMs = codexTaskLastCheckedAtMs(task)
+  const ageMs = nowMs - startedMs
+  const runState = codexTaskRunState(task)
+  const isRunning = task.status === 'running' || task.status === 'pending' || runState === 'running'
+
+  if (isRunning) {
+    if (!threadId && ageMs > CODEX_THREAD_MATCH_FAST_WINDOW_MS) {
+      return lastCheckedMs == null || nowMs - lastCheckedMs >= CODEX_AWAITING_RECHECK_MS
+    }
+    return true
+  }
+
+  const manualHandoff = result.codex_manual_handoff === true
+  if (!threadId && manualHandoff) {
+    return lastCheckedMs == null || nowMs - lastCheckedMs >= CODEX_AWAITING_RECHECK_MS
+  }
+
+  if (task.status === 'awaiting_approval' || task.status === 'needs_input' || runState === 'awaiting_approval') {
+    return lastCheckedMs == null || nowMs - lastCheckedMs >= CODEX_AWAITING_RECHECK_MS
+  }
+
+  return false
+}
+
+function shouldFastFollowCodexTask(task: MonitoredCodexTask, nowMs = Date.now()): boolean {
+  const threadId = codexTaskThreadId(task)
+  const ageMs = nowMs - codexTaskStartedAtMs(task, nowMs)
+  const runState = codexTaskRunState(task)
+  if (!threadId) return task.status === 'running' && ageMs <= CODEX_THREAD_MATCH_FAST_WINDOW_MS
+  return task.status === 'running' || runState === 'running'
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -1535,10 +1636,10 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
   if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
 
   // codex_app / codex 両 executor の実行中・確認待ちタスクを監視する。
-  // Codex.app 側で追加turnが始まると awaiting_approval → running に戻すため、確認待ちも対象に含める。
+  // 実行中は細かく追い、確認待ち以降は codex_last_checked_at で間引く。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
+    .select('id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
@@ -1546,12 +1647,15 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
   if (!tasks || tasks.length === 0) return { monitored: 0, fastFollow: false }
 
   const monitoredTasks = tasks as MonitoredCodexTask[]
+  const nowMs = Date.now()
+  const nowIso = new Date(nowMs).toISOString()
+  const dueTasks = monitoredTasks.filter(task => shouldSyncCodexTaskNow(task, nowMs))
   const stats: CodexSyncStats = {
     monitored: monitoredTasks.length,
-    fastFollow: monitoredTasks.some(task => task.status === 'running' || task.status === 'needs_input'),
+    fastFollow: dueTasks.some(task => shouldFastFollowCodexTask(task, nowMs)),
   }
 
-  for (const task of monitoredTasks) {
+  for (const task of dueTasks) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
     if (!threadId) {
@@ -1571,9 +1675,9 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
     }
 
     if (!threadId) {
-      const startedMs = task.started_at ? new Date(task.started_at).getTime() : Date.now()
-      if (task.status === 'running' && Date.now() - startedMs > 2 * 60_000) {
-        const current = (task.result ?? {}) as Record<string, unknown>
+      const startedMs = codexTaskStartedAtMs(task, nowMs)
+      const current = (task.result ?? {}) as Record<string, unknown>
+      if (task.status === 'running' && nowMs - startedMs > CODEX_THREAD_MATCH_FAST_WINDOW_MS) {
         await supabase
           .from('ai_tasks')
           .update({
@@ -1586,7 +1690,18 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
               live_log: typeof current.live_log === 'string'
                 ? current.live_log
                 : 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
-              last_activity_at: new Date().toISOString(),
+              last_activity_at: nowIso,
+              codex_last_checked_at: nowIso,
+            },
+          })
+          .eq('id', task.id)
+      } else {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            result: {
+              ...current,
+              codex_last_checked_at: nowIso,
             },
           })
           .eq('id', task.id)
@@ -1634,16 +1749,16 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
       let codexState: CodexRunState = parsed.state
       let reviewReason: CodexReviewReason = parsed.reviewReason
       const lastActivityAt = bridge.lastActivityAt ?? parsed.lastActivityAt
-      let liveLog = mergeCodexLiveLogs([parsed.liveLog, ...bridge.logBlocks])
+      let liveLog = mergeCodexLiveLogs([parsed.liveLog])
 
       if (bridge.awaitingApproval) {
         codexState = 'awaiting_approval'
         reviewReason = 'approval_requested'
         appendUniqueLogBlock(bridge.logBlocks, `[approval-requested] ${bridge.approvalCommand ?? '(command)'}`)
-        liveLog = mergeCodexLiveLogs([parsed.liveLog, ...bridge.logBlocks])
+        liveLog = mergeCodexLiveLogs([parsed.liveLog])
       } else if (codexState === 'running' && parsed.sawTaskStarted && liveLog) {
         const lastActivityMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
-        if (Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > CODEX_APP_IDLE_REVIEW_MS) {
+        if (Number.isFinite(lastActivityMs) && nowMs - lastActivityMs > CODEX_APP_IDLE_REVIEW_MS) {
           codexState = 'awaiting_approval'
           reviewReason = 'monitoring_lost'
           liveLog = mergeCodexLiveLogs([
@@ -1684,6 +1799,8 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
         codex_run_state: codexState,
         codex_review_reason: reviewReason,
         last_activity_at: lastActivityAt,
+        codex_last_checked_at: nowIso,
+        codex_sync_log: bridge.logBlocks,
         codex_thread_snapshot: {
           title: row.title ?? null,
           preview: row.preview ?? null,
@@ -1745,7 +1862,9 @@ async function syncActiveCodexFollowUps(
     await sleep(CODEX_ACTIVE_SYNC_INTERVAL_MS)
     await syncCodexLiveLogs(supabase)
     stats = await syncCodexAppThreads(supabase)
-    await syncCompletedFocusmapNodesToCodexArchive(supabase)
+    if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
+      await syncCompletedFocusmapNodesToCodexArchive(supabase)
+    }
   }
 }
 
@@ -2762,7 +2881,9 @@ async function main() {
 
     // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
     const codexSyncStats = await syncCodexAppThreads(supabase)
-    await syncCompletedFocusmapNodesToCodexArchive(supabase)
+    if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
+      await syncCompletedFocusmapNodesToCodexArchive(supabase)
+    }
     await syncActiveCodexFollowUps(supabase, codexSyncStats)
 
     // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─

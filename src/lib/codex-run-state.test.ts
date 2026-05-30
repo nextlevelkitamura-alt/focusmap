@@ -19,7 +19,7 @@ describe("parseCodexRollout", () => {
     expect(parsed.reviewReason).toBe("started")
     expect(parsed.liveLog).toContain("作業を始めます")
     expect(parsed.liveLog.match(/作業を始めます/g)?.length).toBe(1)
-    expect(parsed.liveLog).toContain("[command:started] exec_command")
+    expect(parsed.liveLog).not.toContain("[command:started] exec_command")
     expect(parsed.liveLog).not.toContain("internal instructions")
     expect(parsed.liveLog).not.toContain("AGENTS.md")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:02.000Z")
@@ -38,7 +38,7 @@ describe("parseCodexRollout", () => {
     ].join("\n"))
 
     expect(parsed.liveLog).toContain("[user] この方針で続けて")
-    expect(parsed.liveLog).toContain("[command:started] npm test -- --run src/lib/codex-run-state.test.ts")
+    expect(parsed.liveLog).not.toContain("[command:started] npm test -- --run src/lib/codex-run-state.test.ts")
     expect(parsed.liveLog).toContain("[assistant] 続きの結果です")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:03.000Z")
   })
