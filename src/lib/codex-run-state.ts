@@ -44,6 +44,12 @@ export type CodexTaskUiState = {
 
 const MAX_LIVE_LOG_CHARS = 20_000
 
+export function shouldCompleteSourceTaskForCodexReview(
+  reason: CodexReviewReason,
+): reason is Extract<CodexReviewReason, "archived" | "thread_deleted"> {
+  return reason === "archived" || reason === "thread_deleted"
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }

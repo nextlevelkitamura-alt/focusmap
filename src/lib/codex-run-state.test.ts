@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { getCodexTaskUiState, parseCodexRollout } from "./codex-run-state"
+import { getCodexTaskUiState, parseCodexRollout, shouldCompleteSourceTaskForCodexReview } from "./codex-run-state"
 
 const row = (payload: Record<string, unknown>, timestamp = "2026-05-30T08:00:00.000Z") =>
   JSON.stringify({ timestamp, type: "event_msg", payload })
@@ -49,5 +49,15 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })?.state).toBe("awaiting_approval")
     expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toBeNull()
     expect(getCodexTaskUiState({ executor: "claude", status: "running", result: null })).toBeNull()
+  })
+})
+
+describe("shouldCompleteSourceTaskForCodexReview", () => {
+  test("only treats user-closed Codex sessions as source task completion", () => {
+    expect(shouldCompleteSourceTaskForCodexReview("archived")).toBe(true)
+    expect(shouldCompleteSourceTaskForCodexReview("thread_deleted")).toBe(true)
+    expect(shouldCompleteSourceTaskForCodexReview("completed")).toBe(false)
+    expect(shouldCompleteSourceTaskForCodexReview("monitoring_lost")).toBe(false)
+    expect(shouldCompleteSourceTaskForCodexReview("approval_requested")).toBe(false)
   })
 })

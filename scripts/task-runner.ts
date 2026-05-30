@@ -24,7 +24,13 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
-import { parseCodexRollout, type CodexReviewReason, type CodexRunState, type CodexThreadSnapshot } from '../src/lib/codex-run-state'
+import {
+  parseCodexRollout,
+  shouldCompleteSourceTaskForCodexReview,
+  type CodexReviewReason,
+  type CodexRunState,
+  type CodexThreadSnapshot,
+} from '../src/lib/codex-run-state'
 
 // ES モジュール対応の __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -90,6 +96,17 @@ type StaffStatusDueTask = {
   claim_expires_at?: string | null
   run_visibility?: 'private' | 'space' | null
   result?: Record<string, unknown> | null
+}
+
+type MonitoredCodexTask = {
+  id: string
+  prompt: string
+  codex_thread_id: string | null
+  started_at: string | null
+  executor: string | null
+  result: Record<string, unknown> | null
+  status: string
+  source_task_id: string | null
 }
 
 type AiRunner = {
@@ -1216,6 +1233,54 @@ function readCodexBridgeObservation(taskId: string): CodexBridgeObservation {
   return observation
 }
 
+async function completeCodexTaskClosedFromApp(
+  supabase: SupabaseClient,
+  task: MonitoredCodexTask,
+  opts: { threadId: string; reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>; liveLog?: string },
+): Promise<void> {
+  const now = new Date().toISOString()
+  const current = (task.result ?? {}) as Record<string, unknown>
+  const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
+  const fallbackLog = opts.reason === 'archived'
+    ? 'Codex thread がCodex.app側でアーカイブされたため、マップノードを完了にしました。'
+    : 'Codex thread が削除されたため、マップノードを完了にしました。'
+  const liveLog = opts.liveLog
+    || (typeof current.live_log === 'string' ? current.live_log : '')
+    || fallbackLog
+
+  if (task.source_task_id) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ status: 'done', stage: 'done', updated_at: now })
+      .eq('id', task.source_task_id)
+
+    if (error) {
+      console.error(`[codex-app] failed to complete source task ${task.source_task_id}:`, error.message)
+    }
+  }
+
+  await supabase
+    .from('ai_tasks')
+    .update({
+      status: 'completed',
+      error: null,
+      completed_at: now,
+      result: {
+        ...current,
+        executor,
+        codex_thread_id: opts.threadId,
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: opts.reason,
+        codex_source_task_completed: Boolean(task.source_task_id),
+        codex_source_task_completed_at: task.source_task_id ? now : null,
+        live_log: liveLog,
+        message: `${fallbackLog}\n\n${liveLog}`.trim(),
+        last_activity_at: now,
+      },
+    })
+    .eq('id', task.id)
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function syncCodexAppThreads(supabase: any): Promise<void> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
@@ -1232,16 +1297,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 
   if (!tasks || tasks.length === 0) return
 
-  for (const task of tasks as Array<{
-    id: string
-    prompt: string
-    codex_thread_id: string | null
-    started_at: string | null
-    executor: string | null
-    result: Record<string, unknown> | null
-    status: string
-    source_task_id: string | null
-  }>) {
+  for (const task of tasks as MonitoredCodexTask[]) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
     if (!threadId) {
@@ -1295,47 +1351,8 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         { encoding: 'utf-8', timeout: 5000 },
       ).trim()
       if (!stateOut) {
-        const current = (task.result ?? {}) as Record<string, unknown>
-        const now = new Date().toISOString()
-        if (task.source_task_id) {
-          await supabase
-            .from('tasks')
-            .update({ status: 'done', stage: 'done' })
-            .eq('id', task.source_task_id)
-          await supabase
-            .from('ai_tasks')
-            .update({
-              status: 'completed',
-              completed_at: now,
-              result: {
-                ...current,
-                executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
-                codex_thread_id: threadId,
-                codex_run_state: 'awaiting_approval',
-                codex_review_reason: 'thread_deleted',
-                live_log: 'Codex thread が削除されたため、マップノードを完了にしました。',
-                last_activity_at: now,
-              },
-            })
-            .eq('id', task.id)
-          console.log(`[codex-app] thread deleted, source task completed: ${task.id} -> ${task.source_task_id}`)
-          continue
-        }
-        await supabase
-          .from('ai_tasks')
-          .update({
-            status: 'awaiting_approval',
-            result: {
-              ...current,
-              executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
-              codex_thread_id: threadId,
-              codex_run_state: 'awaiting_approval',
-              codex_review_reason: 'monitoring_lost',
-              live_log: typeof current.live_log === 'string' ? current.live_log : 'Codex thread がローカルDBから見つかりません。Codex.app側の状態確認が必要です。',
-              last_activity_at: new Date().toISOString(),
-            },
-          })
-          .eq('id', task.id)
+        await completeCodexTaskClosedFromApp(supabase, task, { threadId, reason: 'thread_deleted' })
+        console.log(`[codex-app] thread deleted, task completed: ${task.id}${task.source_task_id ? ` -> ${task.source_task_id}` : ''}`)
         continue
       }
 
@@ -1389,6 +1406,17 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
       if (!liveLog) liveLog = fallbackLog
 
       const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
+
+      const closureReason = archived ? 'archived' : reviewReason
+      if (shouldCompleteSourceTaskForCodexReview(closureReason)) {
+        await completeCodexTaskClosedFromApp(supabase, task, {
+          threadId,
+          reason: closureReason,
+          liveLog,
+        })
+        console.log(`[codex-app] thread ${closureReason}, task completed: ${task.id}${task.source_task_id ? ` -> ${task.source_task_id}` : ''}`)
+        continue
+      }
 
       // 既存 steps を保持しつつ thread 検出を step として記録
       const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
