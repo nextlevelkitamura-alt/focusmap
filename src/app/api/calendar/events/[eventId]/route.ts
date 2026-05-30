@@ -582,7 +582,7 @@ export async function PATCH(
       existingEvent = existingEventByGoogleId;
     }
 
-    const sourceCalendarId = existingEvent?.calendar_id || body.originalCalendarId || calendarId || 'primary';
+    const sourceCalendarId = body.originalCalendarId || existingEvent?.calendar_id || calendarId || 'primary';
     const destinationCalendarId = calendarId || sourceCalendarId || 'primary';
 
     const calendarIdsToCheck = Array.from(new Set([sourceCalendarId, destinationCalendarId].filter(Boolean)));

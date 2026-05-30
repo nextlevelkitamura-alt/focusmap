@@ -345,6 +345,7 @@ export function useTodayViewLogic({
         googleEventId: string
         calendarId: string
         originalCalendarId?: string
+        estimated_time?: number
         reminders?: number[]
         description?: string
     }) => {
@@ -400,6 +401,7 @@ export function useTodayViewLogic({
                 googleEventId: updates.googleEventId,
                 calendarId: updates.calendarId,
                 originalCalendarId: updates.originalCalendarId || event.calendar_id,
+                estimated_time: updates.estimated_time ?? durationMinutes,
                 reminders: updates.reminders,
                 ...(updates.description !== undefined ? { description: updates.description } : {}),
             }),
@@ -1031,7 +1033,7 @@ export function useTodayViewLogic({
                 ))
                 broadcastCalendarEventDetailUpdate({
                     eventId: task.calendar_event_id || task.id,
-                    googleEventId: task.google_event_id,
+                    googleEventId: task.google_event_id || undefined,
                     calendarId: data.calendar_id || nextCalendarId,
                     previousCalendarId: task.calendar_id || nextCalendarId,
                     taskId,
@@ -1125,7 +1127,7 @@ export function useTodayViewLogic({
             googleEventId: updates.googleEventId,
             calendarId: updates.calendarId,
             previousCalendarId: sourceCalendarId,
-            taskId: previousEvent?.task_id,
+            taskId: previousEvent?.task_id || previousTask?.id,
             title: updates.title,
             startTime: updates.start_time,
             endTime: updates.end_time,
@@ -1153,13 +1155,31 @@ export function useTodayViewLogic({
                     ...(updates.description !== undefined ? { description: updates.description } : {}),
                 }),
             })
+            const data = await res.json().catch(() => ({}))
             if (!res.ok) {
-                const data = await res.json()
                 throw new Error(data.error?.message || 'Failed to update event')
+            }
+            const effectiveGoogleEventId = data.google_event_id || updates.googleEventId
+            const effectiveCalendarId = data.calendar_id || updates.calendarId
+            if (effectiveGoogleEventId !== updates.googleEventId || effectiveCalendarId !== updates.calendarId) {
+                setLocalCalendarEvents(prev => prev.map(e =>
+                    e.google_event_id === updates.googleEventId && (e.calendar_id === sourceCalendarId || e.id === eventId)
+                        ? { ...e, google_event_id: effectiveGoogleEventId, calendar_id: effectiveCalendarId }
+                        : e
+                ))
+                setLocalTasks(prev => prev.map(task =>
+                    task.google_event_id === updates.googleEventId
+                        ? { ...task, google_event_id: effectiveGoogleEventId, calendar_id: effectiveCalendarId }
+                        : task
+                ))
             }
             invalidateCalendarCache()
             broadcastCalendarSync()
             if (previousEvent) {
+                const previousDurationMinutes = Math.max(
+                    1,
+                    Math.round((new Date(previousEvent.end_time).getTime() - new Date(previousEvent.start_time).getTime()) / 60000)
+                )
                 const undoUpdates = {
                     title: previousEvent.title,
                     start_time: previousEvent.start_time,
@@ -1167,10 +1187,11 @@ export function useTodayViewLogic({
                     googleEventId: previousEvent.google_event_id,
                     calendarId: previousEvent.calendar_id,
                     originalCalendarId: updates.calendarId,
+                    estimated_time: previousEvent.estimated_time ?? previousDurationMinutes,
                     reminders: previousEvent.reminders,
                     description: previousEvent.description,
                 }
-                const redoUpdates = updates
+                const redoUpdates = { ...updates, estimated_time: durationMinutes }
                 pushAction({
                     description: `「${previousEvent.title}」の予定を編集`,
                     undo: async () => {
