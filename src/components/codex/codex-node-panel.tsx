@@ -15,6 +15,11 @@ type NodeInfo = {
   memo: string
   cwd: string | null
   status: string | null
+  scheduledLabel?: string | null
+  priority?: number | null
+  estimatedLabel?: string | null
+  isDone?: boolean
+  hasMemo?: boolean
 }
 
 type CodexNodePanelProps = {
@@ -25,6 +30,14 @@ type CodexNodePanelProps = {
   onClose: () => void
   /** codex_work_dir を tasks に保存 */
   onPersistDir: (taskId: string, dir: string) => Promise<void> | void
+  /** 関連メモ編集ダイアログを開く */
+  onOpenMemo?: (taskId: string) => void
+  /** 完了/未完了トグル */
+  onToggleComplete?: (taskId: string, done: boolean) => void
+  /** 子ノード追加 */
+  onAddChild?: (taskId: string) => void
+  /** ノード削除 */
+  onDelete?: (taskId: string) => void
 }
 
 function buildDefaultPrompt(title: string, memo: string): string {
@@ -44,7 +57,7 @@ function statusLabel(status: string | null): { dot: string; text: string } | nul
 //   - 実行/往復は全部ここから（プロンプト編集ボックスで毎回確認して再注入）
 //   - 作業場所(cwd) と 状態 と 最新の返信 を一元表示
 //   - 1ノード=1会話: thread があれば「続けて送る」(resume)、無ければ新規(thread/start)
-export function CodexNodePanel({ open, node, candidates, onClose, onPersistDir }: CodexNodePanelProps) {
+export function CodexNodePanel({ open, node, candidates, onClose, onPersistDir, onOpenMemo, onToggleComplete, onAddChild, onDelete }: CodexNodePanelProps) {
   const [cwd, setCwd] = useState<string>(node.cwd ?? "")
   const [promptText, setPromptText] = useState<string>(buildDefaultPrompt(node.title, node.memo))
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -124,10 +137,20 @@ export function CodexNodePanel({ open, node, candidates, onClose, onPersistDir }
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               {st && <span className={`h-2.5 w-2.5 rounded-full ${st.dot}`} />}
-              <span className="truncate">Codex作業 — {node.title}</span>
+              <span className="truncate">{node.title}</span>
             </DialogTitle>
           </DialogHeader>
 
+          {/* メタ情報（顔から移設） */}
+          {(node.scheduledLabel || node.priority != null || node.estimatedLabel) && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              {node.estimatedLabel && <span className="rounded bg-muted px-1.5 py-0.5">{node.estimatedLabel}</span>}
+              {node.priority != null && <span className="rounded bg-muted px-1.5 py-0.5">P{node.priority}</span>}
+              {node.scheduledLabel && <span className="rounded bg-muted px-1.5 py-0.5">{node.scheduledLabel}</span>}
+            </div>
+          )}
+
+          <div className="text-[11px] font-semibold text-muted-foreground">Codex作業</div>
           {/* 状態・作業場所 */}
           <div className="space-y-2 text-xs">
             <div className="flex items-center gap-2">
@@ -187,6 +210,28 @@ export function CodexNodePanel({ open, node, candidates, onClose, onPersistDir }
               スレッド {threadId.slice(0, 8)} — Codexアプリ / ペアリング済みスマホにも表示されます
             </p>
           )}
+
+          {/* メモ / アクション */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+            {onOpenMemo && (node.hasMemo || node.memo) && (
+              <button type="button" onClick={() => onOpenMemo(node.taskId)}
+                className="rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted">📝 関連メモを編集</button>
+            )}
+            {onToggleComplete && (
+              <button type="button" onClick={() => onToggleComplete(node.taskId, !node.isDone)}
+                className="rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted">
+                {node.isDone ? "完了を取消" : "完了にする"}
+              </button>
+            )}
+            {onAddChild && (
+              <button type="button" onClick={() => { onAddChild(node.taskId); onClose(); }}
+                className="rounded-md border border-border/60 px-2.5 py-1 text-xs hover:bg-muted">＋ 子ノード追加</button>
+            )}
+            {onDelete && (
+              <button type="button" onClick={() => { onDelete(node.taskId); onClose(); }}
+                className="ml-auto rounded-md border border-rose-300 px-2.5 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-400">削除</button>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 

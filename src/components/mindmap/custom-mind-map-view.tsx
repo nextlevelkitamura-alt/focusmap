@@ -577,51 +577,6 @@ function CustomTaskNode({
                     />
                 )}
 
-                {isMemoNode && (
-                    <button
-                        type="button"
-                        className={cn(
-                            "shrink-0 rounded-[4px] px-1.5 text-[9px] font-medium leading-5 transition-colors",
-                            "active:scale-95 active:bg-amber-300 dark:active:bg-amber-500/40",
-                            !onOpenLinkedMemos && "cursor-default",
-                            node.isDone
-                                ? "bg-muted text-muted-foreground"
-                                : "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200"
-                        )}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onOpenLinkedMemos?.(node.id);
-                        }}
-                        title="関連メモを編集"
-                        aria-label="関連メモを編集"
-                    >
-                        メモ
-                    </button>
-                )}
-
-                {isMemoNode && onRunCodex && (
-                    <button
-                        type="button"
-                        className={cn(
-                            "shrink-0 rounded-[4px] px-1.5 text-[9px] font-medium leading-5 transition-colors",
-                            "active:scale-95 active:bg-indigo-300 dark:active:bg-indigo-500/40",
-                            node.isDone
-                                ? "bg-muted text-muted-foreground"
-                                : "bg-indigo-200 text-indigo-900 dark:bg-indigo-500/25 dark:text-indigo-200"
-                        )}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onRunCodex?.(node.id);
-                        }}
-                        title="Codexで実行（作業ディレクトリ必須・アプリ/スマホにスレッド表示）"
-                        aria-label="Codexで実行"
-                    >
-                        Codex
-                    </button>
-                )}
-
                 <div className="flex shrink-0 flex-col items-center leading-none">
                     {node.hasChildren && (
                         <button
@@ -651,10 +606,10 @@ function CustomTaskNode({
                         onPointerDown={(event) => event.stopPropagation()}
                         onClick={(event) => {
                             event.stopPropagation();
-                            onOpenLinkedMemos?.(node.id);
+                            onRunCodex?.(node.id);
                         }}
-                        title="関連メモ"
-                        aria-label="関連メモを開く"
+                        title="ノードメニュー（詳細・メモ・Codex）"
+                        aria-label="ノードメニューを開く"
                     >
                         <svg className="h-3 w-3" viewBox="0 0 12 12" fill="currentColor">
                             <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
@@ -665,20 +620,6 @@ function CustomTaskNode({
                 </div>
             </div>
 
-            {hasMeta && (
-                <div className="flex flex-wrap items-center gap-1 pl-4 text-[10px] text-muted-foreground">
-                    {node.estimatedDisplayMinutes > 0 && (
-                        <span className="rounded bg-muted px-1 leading-4">{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>
-                    )}
-                    {node.priority != null && (
-                        <span className="rounded bg-muted px-1 leading-4">P{node.priority}</span>
-                    )}
-                    {scheduledLabel && (
-                        <span className="rounded bg-muted px-1 leading-4">{scheduledLabel}</span>
-                    )}
-                    {node.hasMemo && <StickyNote className="h-3 w-3" />}
-                </div>
-            )}
             {onResize && (
                 <div
                     role="separator"

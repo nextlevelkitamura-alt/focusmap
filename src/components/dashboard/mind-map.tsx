@@ -1276,6 +1276,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             memo: (task.memo ?? '').trim(),
             cwd: task.codex_work_dir ?? null,
             status: task.codex_status ?? null,
+            scheduledLabel: task.scheduled_at ? task.scheduled_at.slice(0, 10) : null,
+            priority: task.priority ?? null,
+            estimatedLabel: task.estimated_time ? `${task.estimated_time}分` : null,
+            isDone: task.status === 'done',
+            hasMemo: !!(task.memo && task.memo.trim()),
         };
     }, [codexPanelTaskId, tasks]);
 
@@ -2926,6 +2931,10 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     candidates={codexDirCandidates}
                     onClose={() => setCodexPanelTaskId(null)}
                     onPersistDir={persistCodexDir}
+                    onOpenMemo={onOpenLinkedMemos}
+                    onToggleComplete={(taskId, done) => { void onUpdateTask?.(taskId, { status: done ? 'done' : 'todo' }); }}
+                    onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}
+                    onDelete={(taskId) => { void callbacks.deleteTask(taskId); }}
                 />
             )}
 
