@@ -48,7 +48,7 @@ const WS_URL = 'ws://127.0.0.1:7878'
 const OVERALL_TIMEOUT_MS = 15 * 60 * 1000 // 15分
 const CONNECT_TIMEOUT_MS = 10_000
 const POST_COMPLETION_GRACE_MS = 5_000
-const LIVE_LOG_MAX_CHARS = 20_000
+const LIVE_LOG_MAX_CHARS = 80_000
 const OPEN_CODEX_THREAD = process.env.FOCUSMAP_CODEX_OPEN_THREAD !== '0'
 const LOG_FILE_TEMPLATE = (taskId: string) => `/tmp/codex-bridge-${taskId}.log`
 
