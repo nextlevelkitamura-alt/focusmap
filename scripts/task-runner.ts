@@ -2739,8 +2739,10 @@ async function main() {
       continue
     }
 
-    // ─── メモから起動: executor 別に分岐 ───
-    if ((task.source_note_id || task.source_ideal_goal_id) && task.cwd) {
+    // ─── メモ/ノードから起動: executor 別に分岐 ───
+    //   codex/codex_app は source(note/ideal) が無くても（マインドマップのノード=task 由来でも）
+    //   cwd さえあれば codex 分岐に入れる。これが無いと codex タスクが claude にフォールスルーしていた。
+    if (task.cwd && (task.source_note_id || task.source_ideal_goal_id || task.executor === 'codex' || task.executor === 'codex_app')) {
       // 元メモを取得（タイトル付与・チャット名生成用）
       let memoTitle: string | undefined
       let memoDescription: string | undefined
