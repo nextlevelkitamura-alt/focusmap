@@ -100,6 +100,13 @@ function getCodexConversation(value: string, prompt: string): CodexConversation 
     entries.push(entry)
   }
 
+  const pushProcessLog = (block: string) => {
+    const key = block.replace(/\s+/g, " ").trim()
+    if (key && !processLogs.some(log => log.replace(/\s+/g, " ").trim() === key)) {
+      processLogs.push(block)
+    }
+  }
+
   const flushAssistant = () => {
     const requestStart = assistantBlocks.findIndex(block =>
       /ください|教えて|選んで|回答して|入力して|\?|？/.test(block) ||
@@ -109,10 +116,7 @@ function getCodexConversation(value: string, prompt: string): CodexConversation 
     const requestBlocks = requestStart >= 0 ? assistantBlocks.slice(requestStart) : assistantBlocks
 
     for (const block of logBlocks) {
-      const key = block.replace(/\s+/g, " ").trim()
-      if (key && !processLogs.some(log => log.replace(/\s+/g, " ").trim() === key)) {
-        processLogs.push(block)
-      }
+      pushProcessLog(block)
     }
 
     const requestText = requestBlocks.join("\n\n").trim()
@@ -126,6 +130,22 @@ function getCodexConversation(value: string, prompt: string): CodexConversation 
     if (block.replace(/\s+/g, " ").trim() === promptKey) continue
     if (/^\[(developer|system|user|tool:)\]/i.test(block)) continue
     if (/^Codex セッションは確認待ちです。/i.test(block)) continue
+
+    const process = block.match(/^\[(command:[^\]]+|approval-requested|approval-resolved)\]\s*([\s\S]+)/i)
+    if (process?.[1]) {
+      const tag = process[1].toLowerCase()
+      const body = process[2]?.trim() ?? ""
+      if (tag === "approval-requested") {
+        pushProcessLog(`承認待ち\n${body}`)
+      } else if (tag === "approval-resolved") {
+        pushProcessLog("承認済み")
+      } else if (tag === "command:started") {
+        pushProcessLog(`実行開始\n${body}`)
+      } else if (tag === "command:completed") {
+        pushProcessLog(`実行完了\n${body}`)
+      }
+      continue
+    }
 
     const event = block.match(/^\[Codex\]\s*([\s\S]+)/i)
     if (event?.[1]?.trim()) {

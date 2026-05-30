@@ -6,6 +6,7 @@ export type CodexReviewReason =
   | "aborted"
   | "archived"
   | "thread_deleted"
+  | "approval_requested"
   | "monitoring_lost"
   | "unknown"
 
@@ -83,6 +84,8 @@ function compactLine(value: string, max = 800) {
 function appendLog(logs: string[], line: string) {
   const text = compactLine(line)
   if (!text) return
+  const key = text.replace(/\s+/g, " ")
+  if (logs.some(log => log.replace(/\s+/g, " ") === key)) return
   logs.push(text)
   while (logs.join("\n").length > MAX_LIVE_LOG_CHARS && logs.length > 1) {
     logs.shift()
@@ -209,12 +212,11 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   if (rawState === "awaiting_approval") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
-  if (rawState === "running") {
-    return { state: "running", label: "実行中" }
-  }
-
   if (task.status === "awaiting_approval" || task.status === "needs_input" || task.status === "failed") {
     return { state: "awaiting_approval", label: "確認待ち" }
+  }
+  if (rawState === "running") {
+    return { state: "running", label: "実行中" }
   }
   if (task.status === "pending" || task.status === "running") {
     return { state: "running", label: "実行中" }

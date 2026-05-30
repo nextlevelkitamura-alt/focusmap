@@ -24,7 +24,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
-import { parseCodexRollout, type CodexThreadSnapshot } from '../src/lib/codex-run-state'
+import { parseCodexRollout, type CodexReviewReason, type CodexRunState, type CodexThreadSnapshot } from '../src/lib/codex-run-state'
 
 // ES モジュール対応の __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -65,6 +65,7 @@ const STAFF_STATUS_RETRY_MAX_MS = 30 * 60 * 1000
 const STAFF_STATUS_STALE_RUNNING_MS = 45 * 60 * 1000
 const STAFF_STATUS_INTERACTIVE_LATE_LIMIT_MS = 15 * 60 * 1000
 const LOCAL_USER_ID_FILE = path.join(os.homedir(), '.config', 'life-manager', 'focusmap-user-id')
+const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
 
 type StaffStatusDueTask = {
   id: string
@@ -1112,6 +1113,108 @@ async function launchCodexRemote(opts: {
  * ~/.codex/state_5.sqlite と rollout JSONL を読み、Codex系タスクの状態とログを同期する。
  * launchd の StartInterval=15 に合わせ、UI はこの result.live_log を追う。
  */
+type CodexBridgeObservation = {
+  awaitingApproval: boolean
+  approvalCommand: string | null
+  lastActivityAt: string | null
+  logBlocks: string[]
+}
+
+function timestampMsToIso(value: unknown): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const ms = value > 10_000_000_000 ? value : value * 1000
+  return new Date(ms).toISOString()
+}
+
+function appendUniqueLogBlock(blocks: string[], value: string): void {
+  const text = value.trim()
+  if (!text) return
+  const key = text.replace(/\s+/g, ' ')
+  if (blocks.some(block => block.replace(/\s+/g, ' ') === key)) return
+  blocks.push(text)
+}
+
+function mergeCodexLiveLogs(blocks: string[], maxChars = 6000): string {
+  const merged: string[] = []
+  for (const block of blocks) {
+    for (const part of block.split(/\n{2,}/)) {
+      appendUniqueLogBlock(merged, part)
+    }
+  }
+  return merged.join('\n\n').slice(-maxChars)
+}
+
+function readCodexBridgeObservation(taskId: string): CodexBridgeObservation {
+  const observation: CodexBridgeObservation = {
+    awaitingApproval: false,
+    approvalCommand: null,
+    lastActivityAt: null,
+    logBlocks: [],
+  }
+  const logPath = `/tmp/codex-bridge-${taskId}.log`
+  if (!fs.existsSync(logPath)) return observation
+
+  let raw = ''
+  try {
+    raw = fs.readFileSync(logPath, 'utf-8')
+  } catch {
+    return observation
+  }
+
+  for (const line of raw.split('\n').slice(-1500)) {
+    if (!line.startsWith('← ')) continue
+    let message: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(line.slice(2))
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+      message = parsed as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const method = typeof message.method === 'string' ? message.method : ''
+    if (!method) continue
+
+    const params = asResultRecord(message.params)
+    const item = asResultRecord(params.item)
+    const activityAt = timestampMsToIso(params.completedAtMs ?? params.startedAtMs ?? item.completedAtMs ?? item.startedAtMs)
+    if (activityAt) observation.lastActivityAt = activityAt
+
+    if (method === 'thread/status/changed') {
+      const status = asResultRecord(params.status)
+      const flags = Array.isArray(status.activeFlags) ? status.activeFlags : []
+      observation.awaitingApproval = flags.includes('waitingOnApproval')
+      continue
+    }
+
+    if (method === 'item/commandExecution/requestApproval') {
+      const command = typeof params.command === 'string' ? params.command : '(command)'
+      observation.awaitingApproval = true
+      observation.approvalCommand = command
+      appendUniqueLogBlock(observation.logBlocks, `[approval-requested] ${command}`)
+      continue
+    }
+
+    if (method === 'serverRequest/resolved') {
+      observation.awaitingApproval = false
+      appendUniqueLogBlock(observation.logBlocks, '[approval-resolved] Codex app-server request resolved')
+      continue
+    }
+
+    const itemType = typeof item.type === 'string' ? item.type : ''
+    if (itemType === 'commandExecution') {
+      const command = typeof item.command === 'string' ? item.command : '(command)'
+      if (method === 'item/started') {
+        appendUniqueLogBlock(observation.logBlocks, `[command:started] ${command}`)
+      } else if (method === 'item/completed') {
+        const exitCode = typeof item.exitCode === 'number' ? `\nexit=${item.exitCode}` : ''
+        appendUniqueLogBlock(observation.logBlocks, `[command:completed] ${command}${exitCode}`)
+      }
+    }
+  }
+
+  return observation
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function syncCodexAppThreads(supabase: any): Promise<void> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
@@ -1248,6 +1351,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         }
       }
       const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
+      const bridge = readCodexBridgeObservation(task.id)
 
       const fallbackLog = [
         `📱 ${task.executor === 'codex' ? 'Codex CLI' : 'Codex.app'} セッション ${threadId.slice(0, 8)}`,
@@ -1259,7 +1363,29 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         '── プレビュー ──',
         row.preview ?? '(空)',
       ].join('\n')
-      const liveLog = parsed.liveLog || fallbackLog
+      let codexState: CodexRunState = parsed.state
+      let reviewReason: CodexReviewReason = parsed.reviewReason
+      const lastActivityAt = bridge.lastActivityAt ?? parsed.lastActivityAt
+      let liveLog = mergeCodexLiveLogs([parsed.liveLog, ...bridge.logBlocks])
+
+      if (bridge.awaitingApproval) {
+        codexState = 'awaiting_approval'
+        reviewReason = 'approval_requested'
+        appendUniqueLogBlock(bridge.logBlocks, `[approval-requested] ${bridge.approvalCommand ?? '(command)'}`)
+        liveLog = mergeCodexLiveLogs([parsed.liveLog, ...bridge.logBlocks])
+      } else if (codexState === 'running' && parsed.sawTaskStarted && liveLog) {
+        const lastActivityMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
+        if (Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > CODEX_APP_IDLE_REVIEW_MS) {
+          codexState = 'awaiting_approval'
+          reviewReason = 'monitoring_lost'
+          liveLog = mergeCodexLiveLogs([
+            liveLog,
+            '[Codex] ログ更新が止まったため確認待ちにしました',
+          ])
+        }
+      }
+
+      if (!liveLog) liveLog = fallbackLog
 
       const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
 
@@ -1276,9 +1402,9 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         live_log: liveLog,
         executor,
         codex_thread_id: threadId,
-        codex_run_state: parsed.state,
-        codex_review_reason: parsed.reviewReason,
-        last_activity_at: parsed.lastActivityAt,
+        codex_run_state: codexState,
+        codex_review_reason: reviewReason,
+        last_activity_at: lastActivityAt,
         codex_thread_snapshot: {
           title: row.title ?? null,
           preview: row.preview ?? null,
@@ -1294,9 +1420,9 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 
       const updates: Record<string, unknown> = { result: baseResult }
 
-      if (parsed.state === 'awaiting_approval') {
+      if (codexState === 'awaiting_approval') {
         const completedIdx = steps.findIndex(s => s.key === 'completed')
-        const completedStep = makeStep('completed', `確認待ち（${parsed.reviewReason}）`)
+        const completedStep = makeStep('completed', `確認待ち（${reviewReason}）`)
         if (completedIdx >= 0) steps[completedIdx] = completedStep
         else steps.push(completedStep)
         updates.status = 'awaiting_approval'
@@ -1304,10 +1430,10 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
           ...baseResult,
           steps,
           message: `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`,
-          session_health: 'stopped',
+          session_health: reviewReason === 'approval_requested' ? 'waiting_on_approval' : 'stopped',
           awaiting_approval_at: new Date().toISOString(),
         }
-      } else if (parsed.state === 'running' && task.status !== 'running') {
+      } else if (codexState === 'running' && task.status !== 'running') {
         const runningIdx = steps.findIndex(s => s.key === 'turn_started')
         const runningStep = makeStep('turn_started', 'Codex.app で実行中')
         if (runningIdx >= 0) steps[runningIdx] = runningStep

@@ -309,11 +309,20 @@ async function main() {
   const rawPrompt = fs.readFileSync(promptFile, 'utf-8')
   const prompt = dedupeRepeatedPromptBlocks(rawPrompt)
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+  let waitingOnApproval = false
   const logFile = LOG_FILE_TEMPLATE(taskId)
   try { fs.unlinkSync(logFile) } catch { /* ignore */ }
   fs.writeFileSync(logFile, '', 'utf-8')
 
   const overallTimer = setTimeout(async () => {
+    if (waitingOnApproval) {
+      await supabase.from('ai_tasks').update({
+        status: 'awaiting_approval',
+        error: null,
+        completed_at: null,
+      }).eq('id', taskId)
+      process.exit(0)
+    }
     await pushStep(supabase, taskId, makeStep('completed', `タイムアウト (${OVERALL_TIMEOUT_MS / 60_000}分)`, 'failed'))
     await supabase.from('ai_tasks').update({
       status: 'failed',
@@ -425,6 +434,42 @@ async function main() {
         trimEntries()
         scheduleFlushLog()
       }
+      const markAwaitingApproval = async (command: string) => {
+        waitingOnApproval = true
+        const now = new Date().toISOString()
+        const liveLog = buildLiveLog(6000)
+        await pushStep(supabase, taskId, makeStep('approval_requested', `承認待ち: ${command.slice(0, 120)}`), {
+          liveLog,
+          message: liveLog || '(本文なし)',
+          metadata: {
+            session_health: 'waiting_on_approval',
+            codex_run_state: 'awaiting_approval',
+            codex_review_reason: 'approval_requested',
+            last_activity_at: now,
+            awaiting_approval_at: now,
+          },
+        })
+        await supabase.from('ai_tasks').update({
+          status: 'awaiting_approval',
+          error: null,
+        }).eq('id', taskId)
+      }
+      const markApprovalResolved = async () => {
+        waitingOnApproval = false
+        await pushStep(supabase, taskId, makeStep('turn_started', 'Codex.app で実行中'), {
+          liveLog: buildLiveLog(6000),
+          metadata: {
+            session_health: 'active',
+            codex_run_state: 'running',
+            codex_review_reason: 'started',
+            last_activity_at: new Date().toISOString(),
+          },
+        })
+        await supabase.from('ai_tasks').update({
+          status: 'running',
+          error: null,
+        }).eq('id', taskId)
+      }
 
       let completed = false
       let completedStatus = 'completed'
@@ -478,8 +523,10 @@ async function main() {
         if (method === 'item/commandExecution/requestApproval') {
           const command = typeof params.command === 'string' ? params.command : '(command)'
           appendLogEntry(`[approval-requested] ${command}`)
+          void markAwaitingApproval(command).catch(() => { /* ignore */ })
         } else if (method === 'serverRequest/resolved') {
           appendLogEntry('[approval-resolved] Codex app-server request resolved')
+          void markApprovalResolved().catch(() => { /* ignore */ })
         }
 
         // 完了系: turn/* で complet|finish|end|done をマッチ
