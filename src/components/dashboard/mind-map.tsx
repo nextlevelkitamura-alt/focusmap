@@ -31,6 +31,8 @@ import {
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { getMindMapViewportBounds, getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
+import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
 
 type ProjectNodeData = {
     label?: string;
@@ -1130,7 +1132,52 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onAddOptimisticEvent,
         onRemoveOptimisticEvent,
     });
-        const groupsJson = JSON.stringify(groups?.map(g => ({
+    const allTasksByIdForCodex = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task])), [groups, tasks]);
+    const { getBySourceId: getAiTaskBySourceId } = useMemoAiTasks();
+    const codexRunByNodeId = useMemo(() => {
+        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {};
+        for (const task of allTasksByIdForCodex.values()) {
+            const aiTask = getAiTaskBySourceId(task.id);
+            const uiState = getCodexTaskUiState(aiTask);
+            if (!aiTask || !uiState) continue;
+            const aiResult = aiTask.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
+                ? aiTask.result as Record<string, unknown>
+                : {};
+            result[task.id] = {
+                state: uiState.state,
+                taskId: aiTask.id,
+                label: uiState.label,
+                lastActivityAt: typeof aiResult.last_activity_at === "string" ? aiResult.last_activity_at : null,
+            };
+        }
+        return result;
+    }, [allTasksByIdForCodex, getAiTaskBySourceId]);
+    const canLaunchCodex = !!project?.repo_path;
+    const handleLaunchCodexNode = useCallback(async (taskId: string) => {
+        const task = allTasksByIdForCodex.get(taskId);
+        if (!task) throw new Error("タスクが見つかりません");
+        if (!project?.repo_path) throw new Error("プロジェクトにリポジトリパスが未設定です");
+
+        const prompt = (task.memo?.trim() || task.title || "このタスクを進めてください").trim();
+        const res = await fetch("/api/ai-tasks/schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                prompt,
+                cwd: project.repo_path,
+                approval_type: "auto",
+                source_task_id: task.id,
+                scheduled_at: new Date().toISOString(),
+                executor: "codex_app",
+                space_id: project.space_id ?? null,
+            }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err?.error || `Codex送信に失敗しました (${res.status})`);
+        }
+    }, [allTasksByIdForCodex, project?.repo_path, project?.space_id]);
+    const groupsJson = JSON.stringify(groups?.map(g => ({
         id: g?.id,
         title: g?.title,
         status: g?.status ?? 'todo',
@@ -1153,7 +1200,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             source: g?.source ?? null,
             node_width: g?.node_width ?? null,
         })) ?? []);
-        const tasksJson = JSON.stringify(tasks?.map(t => ({
+    const tasksJson = JSON.stringify(tasks?.map(t => ({
         id: t?.id,
         title: t?.title,
         status: t?.status,
@@ -2875,6 +2922,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                 onOpenLinkedMemos={onOpenLinkedMemos}
+                codexRunByNodeId={codexRunByNodeId}
+                canLaunchCodex={canLaunchCodex}
+                onLaunchCodexNode={handleLaunchCodexNode}
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
             />

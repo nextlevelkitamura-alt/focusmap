@@ -1294,7 +1294,7 @@ export function WishlistCardDetail({
                   needsConfig && !active ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
                 )}>
                   {active
-                    ? `${taskExecutor === "codex" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
+                    ? `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
                     : !item.project_id
                       ? "⚠ プロジェクト未設定（Claude には必須、Codex は任意）"
                       : "Claude = スマホで監視 / Codex = Mac で Codex.app 起動、ペアリング済の mobile にも自動表示"}
@@ -1349,8 +1349,7 @@ export function WishlistCardDetail({
                         setLaunchExecutor('codex')
                         setIsLaunchingCodex(true)
                         try {
-                          // codex --remote 経由で app-server に接続
-                          // → Codex.app/mobile に thread が表示され、プロンプトも自動送信される
+                          // codex app-server 経由で Codex.app に見える thread を作成し、初回turnだけ送信する
                           await onLaunchCodex(item)
                           setLaunchStep('sent')
                         } catch (e) {
@@ -1364,7 +1363,7 @@ export function WishlistCardDetail({
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
                       {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">自動送信・mobile表示可</span>
+                      <span className="text-[10px] text-muted-foreground">初回送信・ログ同期</span>
                     </Button>
                   )}
                 </div>

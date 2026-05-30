@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Loader2, Maximize2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -18,6 +18,7 @@ import {
     getViewportTransformAtPoint,
 } from "@/lib/mindmap-viewport";
 import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
+import type { CodexRunState } from "@/lib/codex-run-state";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -41,6 +42,9 @@ type CustomMindMapViewProps = {
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
+    codexRunByNodeId?: Record<string, CodexNodeState>;
+    canLaunchCodex?: boolean;
+    onLaunchCodexNode?: (taskId: string) => void | Promise<void>;
     onMoveTask?: (params: {
         taskId: string;
         targetId: string;
@@ -51,6 +55,13 @@ type CustomMindMapViewProps = {
         targetId: string;
         position: CustomDropPosition;
     }) => void | Promise<void>;
+};
+
+type CodexNodeState = {
+    state: CodexRunState;
+    taskId: string;
+    label: string;
+    lastActivityAt?: string | null;
 };
 
 const PADDING = 72;
@@ -210,6 +221,9 @@ function CustomTaskNode({
     resizeScale,
     isMobile,
     onOpenLinkedMemos,
+    codexState,
+    canLaunchCodex,
+    onLaunchCodex,
     onEditingChange,
     onRegisterEditController,
 }: {
@@ -236,6 +250,9 @@ function CustomTaskNode({
     resizeScale: number;
     isMobile: boolean;
     onOpenLinkedMemos?: (taskId: string) => void;
+    codexState?: CodexNodeState | null;
+    canLaunchCodex?: boolean;
+    onLaunchCodex?: (taskId: string) => void | Promise<void>;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
 }) {
@@ -245,9 +262,12 @@ function CustomTaskNode({
     const handledTriggerEditRef = useRef<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
+    const [isLaunchingCodex, setIsLaunchingCodex] = useState(false);
+    const [launchError, setLaunchError] = useState<string | null>(null);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const scheduledLabel = formatDateShort(node.scheduledAt);
-    const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode;
+    const hasCodexLaunch = !!onLaunchCodex;
+    const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode || hasCodexLaunch;
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -456,6 +476,21 @@ function CustomTaskNode({
         target.addEventListener("pointercancel", cleanup);
     }, [isEditing, isMobile, node.id, node.width, onResize, resizeScale]);
 
+    const handleLaunchCodex = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!onLaunchCodex || !canLaunchCodex || codexState || isLaunchingCodex) return;
+        setLaunchError(null);
+        setIsLaunchingCodex(true);
+        try {
+            await onLaunchCodex(node.id);
+        } catch (error) {
+            setLaunchError(error instanceof Error ? error.message : "Codex送信に失敗しました");
+        } finally {
+            setIsLaunchingCodex(false);
+        }
+    }, [canLaunchCodex, codexState, isLaunchingCodex, node.id, onLaunchCodex]);
+
     return (
         <div
             ref={wrapperRef}
@@ -498,6 +533,23 @@ function CustomTaskNode({
             )}
             {isMemoNode && (
                 <div className={cn("absolute -left-0.5 top-1 bottom-1 w-1 rounded-full", node.isDone ? "bg-muted-foreground/35" : "bg-amber-400")} />
+            )}
+            {codexState?.state === "running" && (
+                <div
+                    className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/70 bg-background shadow-[0_0_12px_rgba(16,185,129,0.45)]"
+                    title="Codex 実行中"
+                    aria-label="Codex 実行中"
+                >
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+                </div>
+            )}
+            {codexState?.state === "awaiting_approval" && (
+                <div
+                    className="absolute -right-2 -top-2 rounded-full border border-amber-400/70 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-amber-900 shadow-sm dark:bg-amber-500/20 dark:text-amber-200"
+                    title="Codex 確認待ち"
+                >
+                    確認待ち
+                </div>
             )}
             <div className="flex items-center gap-1">
                 <button
@@ -629,6 +681,29 @@ function CustomTaskNode({
                         <span className="rounded bg-muted px-1 leading-4">{scheduledLabel}</span>
                     )}
                     {node.hasMemo && <StickyNote className="h-3 w-3" />}
+                    {onLaunchCodex && !codexState && (
+                        <button
+                            type="button"
+                            disabled={!canLaunchCodex || isLaunchingCodex}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={handleLaunchCodex}
+                            className={cn(
+                                "inline-flex h-5 items-center gap-1 rounded border px-1 text-[10px] font-medium leading-none transition-colors",
+                                canLaunchCodex
+                                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+                                    : "cursor-not-allowed border-muted bg-muted/40 text-muted-foreground"
+                            )}
+                            title={canLaunchCodex ? "Codexに送信" : "プロジェクトにリポジトリパスを設定してください"}
+                        >
+                            {isLaunchingCodex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
+                            Codex
+                        </button>
+                    )}
+                </div>
+            )}
+            {launchError && (
+                <div className="pl-4 text-[10px] leading-4 text-red-600 dark:text-red-300">
+                    {launchError}
                 </div>
             )}
             {onResize && (
@@ -723,6 +798,9 @@ export function CustomMindMapView({
     onUpdateStatus,
     onResizeNode,
     onOpenLinkedMemos,
+    codexRunByNodeId = {},
+    canLaunchCodex = false,
+    onLaunchCodexNode,
     onMoveTask,
     onMoveTasks,
 }: CustomMindMapViewProps) {
@@ -827,6 +905,13 @@ export function CustomMindMapView({
         const node = nodeById.get(activeEditingTaskId);
         return node?.kind === "task" ? node : null;
     }, [activeEditingTaskId, nodeById]);
+    const codexSummary = useMemo(() => {
+        const states = Object.values(codexRunByNodeId);
+        return {
+            running: states.filter(state => state.state === "running").length,
+            awaitingApproval: states.filter(state => state.state === "awaiting_approval").length,
+        };
+    }, [codexRunByNodeId]);
 
     useEffect(() => {
         zoomRef.current = zoom;
@@ -1698,6 +1783,21 @@ export function CustomMindMapView({
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
+            {(codexSummary.running > 0 || codexSummary.awaitingApproval > 0) && (
+                <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
+                    {codexSummary.running > 0 && (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            実行中{codexSummary.running}
+                        </span>
+                    )}
+                    {codexSummary.awaitingApproval > 0 && (
+                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                            確認待ち{codexSummary.awaitingApproval}
+                        </span>
+                    )}
+                </div>
+            )}
             <div className={cn(
                 "absolute z-20 flex flex-col gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
                 isMobile ? "right-2 top-2" : "right-3 top-14"
@@ -1843,6 +1943,9 @@ export function CustomMindMapView({
                                 resizeScale={zoom}
                                 isMobile={isMobile}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
+                                codexState={codexRunByNodeId[node.id] ?? null}
+                                canLaunchCodex={canLaunchCodex}
+                                onLaunchCodex={onLaunchCodexNode}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
                             />

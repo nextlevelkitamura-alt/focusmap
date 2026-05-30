@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ExternalLink, Loader2, StickyNote } from "lucide-react"
+import { Bot, ExternalLink, Loader2, StickyNote } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -10,6 +10,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import type { IdealGoalWithItems } from "@/types/database"
 
 type LinkedMemoDialogTarget = {
@@ -68,6 +70,39 @@ function durationLabel(minutes: number | null | undefined) {
   return `${minutes}分`
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function reviewReasonLabel(value: string | null) {
+  if (value === "completed") return "実行完了"
+  if (value === "aborted") return "停止"
+  if (value === "archived") return "アーカイブ"
+  if (value === "monitoring_lost") return "監視確認"
+  if (value === "started") return "実行開始"
+  return value || null
+}
+
+function sanitizeCodexDisplayLog(value: string): string {
+  const seen = new Set<string>()
+  return value
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(block => block && !/^\[(developer|system|user)\]/i.test(block))
+    .filter(block => {
+      const key = block.replace(/\s+/g, " ")
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .join("\n\n")
+    .trim()
+}
+
 export function MindmapLinkedMemosDialog({
   target,
   onOpenChange,
@@ -78,6 +113,25 @@ export function MindmapLinkedMemosDialog({
   const [taskTitle, setTaskTitle] = useState("")
   const [memos, setMemos] = useState<IdealGoalWithItems[]>([])
   const [notes, setNotes] = useState<LinkedNote[]>([])
+  const { getBySourceId: getAiTaskBySourceId } = useMemoAiTasks()
+  const codexTask = target?.taskId ? getAiTaskBySourceId(target.taskId) : null
+  const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
+  const codexUiState = getCodexTaskUiState(codexTask)
+  const codexResult = asRecord(codexTask?.result)
+  const codexSnapshot = asRecord(codexResult.codex_thread_snapshot)
+  const codexThreadId = stringValue(codexResult.codex_thread_id) || codexTask?.codex_thread_id || ""
+  const codexReviewReason = reviewReasonLabel(stringValue(codexResult.codex_review_reason) || null)
+  const codexLastActivity = formatDate(stringValue(codexResult.last_activity_at))
+  const codexMessage = stringValue(codexResult.message)
+  const codexLiveLog = stringValue(codexResult.live_log)
+  const codexPreview = stringValue(codexSnapshot.preview)
+  const codexLogCandidates = [codexMessage, codexLiveLog, codexPreview]
+    .map(sanitizeCodexDisplayLog)
+    .filter(Boolean)
+  const codexLogBlocks = codexLogCandidates
+    .filter((value, index, arr) => arr.findIndex(other => other.includes(value)) === index)
+  const codexDisplayLog = codexLogBlocks.join("\n\n").slice(-6000)
+  const hasCodexRun = !!codexTask && isCodexTask
 
   useEffect(() => {
     if (!target) return
@@ -120,17 +174,20 @@ export function MindmapLinkedMemosDialog({
 
   const totalCount = memos.length + notes.length
   const title = taskTitle ? `「${taskTitle}」の関連メモ` : "関連メモ"
+  const description = isLoading
+    ? "読み込み中..."
+    : error
+      ? error
+      : `${totalCount}件のメモ${hasCodexRun && codexUiState ? ` / Codex ${codexUiState.label}` : ""}`
 
   return (
     <Dialog open={!!target} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[86dvh] w-[calc(100vw-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex max-h-[90dvh] w-[calc(100vw-1rem)] max-w-7xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <DialogTitle className="truncate text-base">{title}</DialogTitle>
-              <DialogDescription>
-                {isLoading ? "読み込み中..." : error ? error : `${totalCount}件のメモ`}
-              </DialogDescription>
+              <DialogDescription>{description}</DialogDescription>
             </div>
             {onOpenMemoHome && (
               <Button
@@ -157,7 +214,7 @@ export function MindmapLinkedMemosDialog({
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}
             </div>
-          ) : totalCount === 0 ? (
+          ) : totalCount === 0 && !hasCodexRun ? (
             <div className="flex min-h-[34vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
               <p>このノードに紐付くメモはありません</p>
               {onOpenMemoHome && (
@@ -167,12 +224,66 @@ export function MindmapLinkedMemosDialog({
               )}
             </div>
           ) : (
-            <section className="mx-auto w-full max-w-4xl space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold">メモ詳細</h3>
-                <span className="text-xs text-muted-foreground">{totalCount}件</span>
-              </div>
-              <div className="space-y-3">
+            <section className="mx-auto w-full max-w-6xl space-y-4">
+              {hasCodexRun && (
+                <section className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-4">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Bot className="h-4 w-4 text-emerald-500" />
+                        <h3 className="text-sm font-semibold">Codex状況</h3>
+                        {codexUiState && (
+                          <span className={codexUiState.state === "running"
+                            ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                            : "rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"}
+                          >
+                            {codexUiState.label}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        15秒ごとにCodexログを同期しています
+                        {codexReviewReason ? ` / ${codexReviewReason}` : ""}
+                        {codexLastActivity ? ` / 最終活動 ${codexLastActivity}` : ""}
+                      </p>
+                    </div>
+                    {codexThreadId && (
+                      <span className="rounded bg-background px-2 py-1 font-mono text-xs text-muted-foreground">
+                        thread {codexThreadId.slice(0, 8)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
+                    <div className="min-w-0 space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">送信プロンプト</div>
+                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-background/80 p-3 text-xs leading-5">
+                        {codexTask?.prompt?.trim() || "プロンプトは記録されていません"}
+                      </pre>
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Codexログ / 回答</div>
+                      {codexDisplayLog ? (
+                        <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border bg-background/80 p-3 font-mono text-xs leading-5">
+                          {codexDisplayLog}
+                        </pre>
+                      ) : (
+                        <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-background/50 px-3 py-8 text-sm text-muted-foreground">
+                          まだログはありません
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {totalCount > 0 ? (
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">メモ詳細</h3>
+                    <span className="text-xs text-muted-foreground">{totalCount}件</span>
+                  </div>
+                  <div className="space-y-3">
                 {memos.map(memo => {
                   const body = memo.description?.trim()
                   const scheduledAt = formatDate(memo.scheduled_at)
@@ -283,7 +394,13 @@ export function MindmapLinkedMemosDialog({
                     </article>
                   )
                 })}
-              </div>
+                  </div>
+                </section>
+              ) : (
+                <div className="rounded-md border border-dashed bg-muted/10 px-3 py-5 text-center text-sm text-muted-foreground">
+                  このノードに紐付くメモはありません
+                </div>
+              )}
             </section>
           )}
         </div>

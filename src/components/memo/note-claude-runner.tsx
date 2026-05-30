@@ -3,119 +3,11 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import QRCode from "react-qr-code"
-import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, Circle, XCircle, ExternalLink, RefreshCw } from "lucide-react"
+import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, ExternalLink, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import type { AiTask, AiTaskProgressState, AiTaskProgressSummary } from "@/types/ai-task"
-
-// ─────────────────────────────────────────────────────────────────────────
-// Codex 実行ステップタイムライン
-//   task-runner が ai_tasks.result.steps[] に進捗を蓄積するので、
-//   想定順序に沿ってチェックマーク／スピナー／⋯ で表示する
-// ─────────────────────────────────────────────────────────────────────────
-type CodexStepStatus = "done" | "active" | "failed"
-interface CodexStepRecord {
-  key: string
-  label: string
-  status: CodexStepStatus
-  at: string
-}
-
-const CODEX_STEP_ORDER: { key: string; label: string }[] = [
-  { key: "received", label: "Mac で受信" },
-  { key: "daemon_ready", label: "Codex daemon 接続OK" },
-  { key: "spawn", label: "Bridge プロセス起動" },
-  { key: "connected", label: "app-server に接続 (initialize OK)" },
-  { key: "thread_visible", label: "Thread 作成 (mobile / Codex.app に表示)" },
-  { key: "prompt_ready", label: "プロンプト準備完了" },
-  { key: "turn_started", label: "プロンプト送信完了" },
-  { key: "completed", label: "完了" },
-]
-
-function formatStepTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    return d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-  } catch {
-    return ""
-  }
-}
-
-function CodexStepTimeline({
-  steps,
-  isRunning,
-  failed,
-}: {
-  steps: CodexStepRecord[]
-  isRunning: boolean
-  failed: boolean
-}) {
-  // 既知の step key と未知の step key をマージ（custom step もそのまま末尾に並べる）
-  const byKey = new Map(steps.map(s => [s.key, s]))
-  const known = CODEX_STEP_ORDER.map(({ key, label }) => ({
-    key,
-    label,
-    record: byKey.get(key) ?? null,
-  }))
-  const unknown = steps.filter(s => !CODEX_STEP_ORDER.some(o => o.key === s.key))
-    .map(s => ({ key: s.key, label: s.label, record: s }))
-  const allRows = [...known, ...unknown]
-
-  // 最後に到達した既知ステップ (= done) を求める。
-  // その次のステップを「active」として表示（スピナー）
-  const lastDoneIdx = allRows.reduceRight<number>((acc, row, idx) => {
-    if (acc !== -1) return acc
-    return row.record?.status === "done" ? idx : -1
-  }, -1)
-
-  return (
-    <ol className="space-y-1 text-[11px]">
-      {allRows.map((row, idx) => {
-        const rec = row.record
-        const isFailed = rec?.status === "failed"
-        const isDone = rec?.status === "done"
-        const isExplicitlyActive = rec?.status === "active"
-        // 「次に進む予定」のステップ = 最後の done の直後 + まだ完了していない + 全体が running 中
-        const isImplicitActive = !rec && isRunning && !failed && idx === lastDoneIdx + 1
-        const isActiveLike = isExplicitlyActive || isImplicitActive
-
-        const Icon = isFailed
-          ? XCircle
-          : isDone
-            ? CheckCircle2
-            : isActiveLike
-              ? Loader2
-              : Circle
-
-        return (
-          <li
-            key={row.key}
-            className={cn(
-              "flex items-start gap-2 leading-tight",
-              isFailed ? "text-red-600 dark:text-red-300"
-                : isDone ? "text-foreground"
-                : isActiveLike ? "text-blue-600 dark:text-blue-300"
-                : "text-muted-foreground/60",
-            )}
-          >
-            <Icon className={cn(
-              "w-3.5 h-3.5 shrink-0 mt-[1px]",
-              isActiveLike && !isFailed && !isDone && "animate-spin",
-              isDone && "text-emerald-500",
-              isFailed && "text-red-500",
-            )} />
-            <span className="flex-1 min-w-0 break-words">{rec?.label ?? row.label}</span>
-            {rec?.at && (
-              <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-                {formatStepTime(rec.at)}
-              </span>
-            )}
-          </li>
-        )
-      })}
-    </ol>
-  )
-}
 
 interface NoteClaudeRunnerProps {
   noteId: string
@@ -298,8 +190,21 @@ export function NoteClaudeRunnerPanel({
     ? latestTask.result
     : null
   const resultMessage = typeof resultObj?.message === "string" ? resultObj.message : null
+  const isCodexTask = latestTask.executor === "codex" || latestTask.executor === "codex_app"
+  const codexUiState = getCodexTaskUiState(latestTask)
+  const codexLiveLog = typeof resultObj?.live_log === "string" ? resultObj.live_log : ""
+  const codexThreadId = typeof resultObj?.codex_thread_id === "string"
+    ? resultObj.codex_thread_id
+    : latestTask.codex_thread_id
+  const codexReviewReason = typeof resultObj?.codex_review_reason === "string" ? resultObj.codex_review_reason : null
   const progressSummary = progressOverride ?? getProgressSummary(resultObj)
   const progressPercent = progressSummary ? Math.max(0, Math.min(100, Math.round(progressSummary.progress_percent))) : null
+  const headerStatusLabel = codexUiState?.label ?? (STATUS_LABEL[latestTask.status] ?? latestTask.status)
+  const headerStatusClass = codexUiState
+    ? codexUiState.state === "running"
+      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+    : STATUS_COLOR[latestTask.status] ?? "bg-muted text-muted-foreground"
 
   const checkProgress = async () => {
     if (!latestTask || isCheckingProgress) return
@@ -360,7 +265,11 @@ export function NoteClaudeRunnerPanel({
         className="flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-t-md px-2.5 py-1.5 text-left hover:bg-muted/40"
       >
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          {latestTask.status === "completed" ? (
+          {codexUiState?.state === "running" ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500 shrink-0" />
+          ) : codexUiState?.state === "awaiting_approval" ? (
+            <Terminal className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          ) : latestTask.status === "completed" ? (
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
           ) : latestTask.status === "failed" ? (
             <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
@@ -372,9 +281,9 @@ export function NoteClaudeRunnerPanel({
           )}
           <span className={cn(
             "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
-            STATUS_COLOR[latestTask.status] ?? "bg-muted text-muted-foreground",
+            headerStatusClass,
           )}>
-            {STATUS_LABEL[latestTask.status] ?? latestTask.status}
+            {headerStatusLabel}
           </span>
           <span className={cn(
             "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
@@ -384,7 +293,16 @@ export function NoteClaudeRunnerPanel({
           )}>
             {latestTask.executor === "codex" || latestTask.executor === "codex_app" ? "◎ Codex" : "▲ Claude"}
           </span>
-          {progressSummary && (
+          {codexUiState ? (
+            <span className={cn(
+              "text-[11px] px-1.5 py-0.5 rounded font-medium shrink-0",
+              codexUiState.state === "running"
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+            )}>
+              {codexUiState.label}
+            </span>
+          ) : progressSummary && (
             <span className={cn(
               "text-[11px] px-1.5 py-0.5 rounded font-medium shrink-0",
               PROGRESS_STATE_COLOR[progressSummary.state] ?? PROGRESS_STATE_COLOR.unknown,
@@ -393,7 +311,9 @@ export function NoteClaudeRunnerPanel({
             </span>
           )}
           <span className="min-w-0 flex-1 basis-24 truncate text-[11px] text-muted-foreground">
-            {progressSummary && progressPercent !== null
+            {codexUiState
+              ? `Codex ${codexUiState.label}${codexReviewReason ? ` / ${codexReviewReason}` : ""}`
+              : progressSummary && progressPercent !== null
               ? `${progressPercent}% / ${PROGRESS_STATE_LABEL[progressSummary.state] ?? "不明"} / ${progressSummary.current_step || progressSummary.summary}`
               : "セッション"}
           </span>
@@ -404,6 +324,59 @@ export function NoteClaudeRunnerPanel({
       {expanded && (
         // 展開時の最大高さ。Claude QR 表示時の高さを目安に頭打ち（masonry でカードが伸びすぎないため）
         <div className="border-t px-2.5 py-2 space-y-2 max-h-[420px] overflow-y-auto">
+          {isCodexTask && (
+            <div className="rounded-md border bg-muted/20 p-2 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium">Codex 状態</span>
+                    {codexUiState && (
+                      <span className={cn(
+                        "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        codexUiState.state === "running"
+                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                          : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                      )}>
+                        {codexUiState.label}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                    15秒ごとにCodexログを同期
+                    {codexReviewReason ? ` / ${codexReviewReason}` : ""}
+                  </p>
+                </div>
+                {codexUiState?.state === "running" && <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />}
+              </div>
+              {codexThreadId && (
+                <div className="rounded bg-background/70 px-2 py-1.5 text-[10px] leading-4 text-muted-foreground">
+                  thread <span className="font-mono">{codexThreadId.slice(0, 8)}</span>
+                </div>
+              )}
+              {codexLiveLog ? (
+                <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
+                  {codexLiveLog.slice(-3000)}
+                </pre>
+              ) : (
+                <div className="rounded bg-muted/20 px-2 py-1.5 text-[10px] text-muted-foreground italic">
+                  まだログはありません
+                </div>
+              )}
+              {latestTask.status !== "completed" && codexUiState?.state === "awaiting_approval" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={markCompleted}
+                  className="h-8 w-full border-emerald-500/40 text-[11px] text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+                >
+                  <CheckCircle2 className="mr-1 h-3 w-3" />
+                  確認して完了にする
+                </Button>
+              )}
+            </div>
+          )}
+          {!isCodexTask && (
           <div className="rounded-md border bg-muted/20 p-2 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -527,6 +500,7 @@ export function NoteClaudeRunnerPanel({
               </div>
             )}
           </div>
+          )}
 
           {/* セッションURLが取れるまでの待機表示（Claude のみ）*/}
           {latestTask.executor !== "codex" && latestTask.executor !== "codex_app" && isActive && !url && (
@@ -536,58 +510,8 @@ export function NoteClaudeRunnerPanel({
             </div>
           )}
 
-          {/* Codex: 進捗ステップタイムライン（実行中・完了・失敗で常に表示）*/}
-          {latestTask.executor === "codex" && (() => {
-            const resultObj = typeof latestTask.result === "object" && latestTask.result !== null
-              ? (latestTask.result as { steps?: CodexStepRecord[]; live_log?: string; codex_thread_id?: string })
-              : {}
-            const steps = Array.isArray(resultObj.steps) ? resultObj.steps : []
-            const liveLog = resultObj.live_log
-            const threadId = resultObj.codex_thread_id
-            const isFailed = latestTask.status === "failed"
-            const isRunning = isActive
-
-            return (
-              <div className="space-y-2">
-                {steps.length > 0 && (
-                  <div className="rounded-md border bg-muted/20 p-2">
-                    <CodexStepTimeline
-                      steps={steps}
-                      isRunning={isRunning}
-                      failed={isFailed}
-                    />
-                    {threadId && (
-                      <div className="mt-2 pt-2 border-t text-[10px] text-muted-foreground">
-                        thread <span className="font-mono">{threadId.slice(0, 8)}</span> ＝
-                        スマホ ChatGPT app の 💻 アイコンから接続できます
-                      </div>
-                    )}
-                  </div>
-                )}
-                {/* ライブログ（起動直後は空、Codex が走ると流れ始める） */}
-                {isRunning && (
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      ライブログ（task-runner サイクルごとに更新）
-                    </div>
-                    {liveLog ? (
-                      <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
-                        {liveLog.slice(-2500)}
-                      </pre>
-                    ) : (
-                      <div className="rounded bg-muted/20 px-2 py-1.5 text-[10px] text-muted-foreground italic">
-                        まだ出力なし（起動直後）
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })()}
-
           {/* リモートセッションURL（Claude のみ） */}
-          {latestTask.executor !== "codex" && url && (
+          {!isCodexTask && url && (
             <div className="space-y-2">
               <div className="flex flex-col sm:flex-row gap-2">
                 {/* QRコード（PCで見るときに有用） */}
@@ -626,7 +550,7 @@ export function NoteClaudeRunnerPanel({
           {latestTask.prompt && (
             <details className="text-[11px]">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                {latestTask.executor === "codex" ? "Codex" : "Claude"} に送られたプロンプト（{latestTask.prompt.length} 字）
+                {isCodexTask ? "Codex" : "Claude"} に送られたプロンプト（{latestTask.prompt.length} 字）
               </summary>
               <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4">
                 {latestTask.prompt}
@@ -639,7 +563,7 @@ export function NoteClaudeRunnerPanel({
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                {latestTask.executor === "codex" ? "Codex" : "Claude"} 実行完了
+                {isCodexTask ? "Codex" : "Claude"} 実行完了
                 <span className="text-muted-foreground font-normal">（{resultMessage.length} 字）</span>
               </div>
               <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-emerald-500/5 border border-emerald-500/20 p-2 text-[10px] leading-4 font-mono">

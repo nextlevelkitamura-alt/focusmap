@@ -10,7 +10,7 @@
  * thread だけ作られて止まる問題があったため、JSON-RPC 直接通信に切替。
  *
  * 起動:
- *   npx ts-node --esm scripts/codex-rpc-bridge.ts <taskId> <cwd> <promptFile>
+ *   npx ts-node --esm scripts/codex-rpc-bridge.ts <taskId> <cwd> <promptFile> [codex|codex_app]
  *
  * task-runner.ts から detached child process として spawn される。
  * 1 タスクで 1 プロセス。完了/失敗で exit する。
@@ -59,6 +59,7 @@ interface CodexStep {
   at: string
 }
 type AiTaskTerminalStatus = 'awaiting_approval' | 'failed'
+let ACTIVE_EXECUTOR: 'codex' | 'codex_app' = 'codex'
 
 function makeStep(key: string, label: string, status: CodexStepStatus = 'done'): CodexStep {
   return { key, label, status, at: new Date().toISOString() }
@@ -206,7 +207,7 @@ async function pushStep(
   if (idx >= 0) steps[idx] = step
   else steps.push(step)
 
-  const merged: Record<string, unknown> = { ...current, executor: 'codex', steps }
+  const merged: Record<string, unknown> = { ...current, executor: ACTIVE_EXECUTOR, steps }
   if (extra?.liveLog !== undefined) merged.live_log = extra.liveLog
   if (extra?.threadId) merged.codex_thread_id = extra.threadId
   if (extra?.message) merged.message = extra.message
@@ -286,11 +287,12 @@ class RpcClient {
 // メイン: 引数から taskId / cwd / promptFile を受け取り 1 タスク実行
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
-  const [, , taskId, cwd, promptFile] = process.argv
+  const [, , taskId, cwd, promptFile, executorArg] = process.argv
   if (!taskId || !cwd || !promptFile) {
-    console.error('Usage: codex-rpc-bridge.ts <taskId> <cwd> <promptFile>')
+    console.error('Usage: codex-rpc-bridge.ts <taskId> <cwd> <promptFile> [codex|codex_app]')
     process.exit(2)
   }
+  ACTIVE_EXECUTOR = executorArg === 'codex_app' ? 'codex_app' : 'codex'
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     console.error('NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 未設定')
     process.exit(2)
@@ -515,7 +517,13 @@ async function main() {
       }
       if (!turnOk) throw new Error('turn/start 全 shape で失敗')
 
-      await pushStep(supabase, taskId, makeStep('turn_started', 'プロンプト送信完了 (turn/start)'))
+      await pushStep(supabase, taskId, makeStep('turn_started', 'プロンプト送信完了 (turn/start)'), {
+        metadata: {
+          codex_run_state: 'running',
+          codex_review_reason: 'started',
+          last_activity_at: new Date().toISOString(),
+        },
+      })
 
       // ─── 完了待ち ───
       while (!completed) {
@@ -549,6 +557,8 @@ async function main() {
             metadata: {
               ...resultMetadata,
               session_health: 'stopped',
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'completed',
               awaiting_approval_at: new Date().toISOString(),
             },
           })
@@ -559,7 +569,15 @@ async function main() {
       } else {
         const errorText = `${outcome.error ?? `Codex turn ${completedStatus}`}: ${finalLog.slice(0, 500)}`
         await pushStep(supabase, taskId, makeStep('completed', outcome.label, 'failed'),
-          { liveLog: finalLog, message: finalLog || '(本文なし)', metadata: resultMetadata })
+          {
+            liveLog: finalLog,
+            message: finalLog || '(本文なし)',
+            metadata: {
+              ...resultMetadata,
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'aborted',
+            },
+          })
         await supabase.from('ai_tasks').update({
           status: outcome.status,
           error: errorText.slice(0, 1000),

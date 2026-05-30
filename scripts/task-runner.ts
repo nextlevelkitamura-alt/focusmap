@@ -24,6 +24,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
+import { parseCodexRollout, type CodexThreadSnapshot } from '../src/lib/codex-run-state'
 
 // ES モジュール対応の __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -77,6 +78,7 @@ type StaffStatusDueTask = {
   completed_at: string | null
   source_note_id: string | null
   source_ideal_goal_id: string | null
+  source_task_id: string | null
   executor: 'claude' | 'codex' | 'codex_app' | null
   space_id?: string | null
   package_id?: string | null
@@ -1006,7 +1008,7 @@ async function pushCodexStep(
   supabase: SupabaseClient<any, any, any, any, any>,
   taskId: string,
   step: CodexStep,
-  extra?: { liveLog?: string; threadId?: string; message?: string },
+  extra?: { liveLog?: string; threadId?: string; message?: string; executor?: 'codex' | 'codex_app'; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const { data } = await supabase.from('ai_tasks').select('result').eq('id', taskId).maybeSingle()
   const current = (data?.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
@@ -1015,10 +1017,11 @@ async function pushCodexStep(
   if (idx >= 0) steps[idx] = step
   else steps.push(step)
 
-  const merged: Record<string, unknown> = { ...current, executor: 'codex', steps }
+  const merged: Record<string, unknown> = { ...current, executor: extra?.executor ?? current.executor ?? 'codex', steps }
   if (extra?.liveLog !== undefined) merged.live_log = extra.liveLog
   if (extra?.threadId) merged.codex_thread_id = extra.threadId
   if (extra?.message) merged.message = extra.message
+  if (extra?.metadata) Object.assign(merged, extra.metadata)
   await supabase.from('ai_tasks').update({ result: merged }).eq('id', taskId)
 }
 
@@ -1034,6 +1037,7 @@ async function launchCodexRemote(opts: {
   taskId: string
   prompt: string  // GLM 整理済プロンプト
   cwd: string
+  executor?: 'codex' | 'codex_app'
   displayTitle?: string  // 「メモ見出し · 詳細」形式
   memoTitle?: string  // チャット名生成用のタイトルだけ
   memoDescription?: string  // 同じく詳細だけ
@@ -1084,7 +1088,7 @@ async function launchCodexRemote(opts: {
     const outFd = fs.openSync(bridgeLog, 'a')
     const child = spawn(
       '/usr/local/bin/npx',
-      ['ts-node', '--esm', bridgePath, opts.taskId, opts.cwd, promptFile],
+      ['ts-node', '--esm', bridgePath, opts.taskId, opts.cwd, promptFile, opts.executor ?? 'codex'],
       {
         detached: true,
         stdio: ['ignore', outFd, outFd],
@@ -1104,57 +1108,22 @@ async function launchCodexRemote(opts: {
   return { success: true, sessionName }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Codex.app 起動（codex:// URL スキーム経由、Mac proxy パターン）
-//   - スマホから API → DB → task-runner → open codex://... → Codex.app
-//   - Codex.app の threads DB (~/.codex/state_5.sqlite) で進捗追跡
-//   - ペアリング済の ChatGPT mobile からも見える可能性あり
-// ─────────────────────────────────────────────────────────────────────────
-function launchCodexApp(opts: {
-  taskId: string
-  prompt: string
-  cwd: string | null
-  memoTitle?: string
-  memoDescription?: string
-}): { success: true; openedAt: string } | { success: false; error: string } {
-  // プロンプト組み立て: タイトル / 詳細 / 本体 をシンプルに改行で繋ぐ（マークアップなし）
-  const fullPrompt = buildPromptWithMemo({
-    memoTitle: opts.memoTitle,
-    memoDescription: opts.memoDescription,
-    prompt: opts.prompt,
-  })
-
-  // codex://new?prompt=...&path=...
-  const params = new URLSearchParams()
-  params.set('prompt', fullPrompt)
-  if (opts.cwd) params.set('path', opts.cwd)
-  const url = `codex://new?${params.toString()}`
-
-  try {
-    // macOS `open` でアプリ起動 + URL 引き渡し
-    execSync(`open ${JSON.stringify(url)}`, { stdio: 'ignore', timeout: 5000 })
-    return { success: true, openedAt: new Date().toISOString() }
-  } catch (err) {
-    return { success: false, error: `open 失敗: ${err instanceof Error ? err.message : String(err)}` }
-  }
-}
-
 /**
- * ~/.codex/state_5.sqlite を読み、codex_app タスクに対応するスレッドを探して
- * Supabase の result に進捗を同期する。
- * 1分おき（task-runner サイクル）に実行。
+ * ~/.codex/state_5.sqlite と rollout JSONL を読み、Codex系タスクの状態とログを同期する。
+ * launchd の StartInterval=15 に合わせ、UI はこの result.live_log を追う。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function syncCodexAppThreads(supabase: any): Promise<void> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return
 
-  // codex_app / codex 両 executor の running タスク取得（どちらも threads DB を共有）
+  // codex_app / codex 両 executor の実行中・確認待ちタスクを監視する。
+  // Codex.app 側で追加turnが始まると awaiting_approval → running に戻すため、確認待ちも対象に含める。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, executor, result, tmux_session_name')
+    .select('id, prompt, codex_thread_id, started_at, executor, result, status')
     .in('executor', ['codex_app', 'codex'])
-    .eq('status', 'running')
+    .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
 
   if (!tasks || tasks.length === 0) return
@@ -1166,7 +1135,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
     started_at: string | null
     executor: string | null
     result: Record<string, unknown> | null
-    tmux_session_name: string | null
+    status: string
   }>) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
@@ -1192,28 +1161,69 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
       }
     }
 
-    if (!threadId) continue
+    if (!threadId) {
+      const startedMs = task.started_at ? new Date(task.started_at).getTime() : Date.now()
+      if (task.status === 'running' && Date.now() - startedMs > 2 * 60_000) {
+        const current = (task.result ?? {}) as Record<string, unknown>
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'awaiting_approval',
+            result: {
+              ...current,
+              executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'monitoring_lost',
+              live_log: typeof current.live_log === 'string' ? current.live_log : 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
+              last_activity_at: new Date().toISOString(),
+            },
+          })
+          .eq('id', task.id)
+      }
+      continue
+    }
 
     // thread 状態取得
     try {
       const stateOut = execSync(
-        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT title, tokens_used, has_user_event, archived, updated_at_ms, preview FROM threads WHERE id = '${threadId}'"`,
+        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT title, tokens_used, has_user_event, archived, updated_at_ms, preview, rollout_path, source, cwd FROM threads WHERE id = '${threadId}'"`,
         { encoding: 'utf-8', timeout: 5000 },
       ).trim()
-      if (!stateOut) continue
+      if (!stateOut) {
+        const current = (task.result ?? {}) as Record<string, unknown>
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'awaiting_approval',
+            result: {
+              ...current,
+              executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
+              codex_thread_id: threadId,
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'monitoring_lost',
+              live_log: typeof current.live_log === 'string' ? current.live_log : 'Codex thread がローカルDBから見つかりません。Codex.app側の状態確認が必要です。',
+              last_activity_at: new Date().toISOString(),
+            },
+          })
+          .eq('id', task.id)
+        continue
+      }
 
-      const rows = JSON.parse(stateOut) as Array<{
-        title?: string
-        tokens_used?: number
-        has_user_event?: number
-        archived?: number
-        updated_at_ms?: number
-        preview?: string
-      }>
+      const rows = JSON.parse(stateOut) as CodexThreadSnapshot[]
       if (rows.length === 0) continue
       const row = rows[0]
+      const archived = row.archived === 1 || row.archived === true
+      let rolloutRaw = ''
+      if (row.rollout_path && fs.existsSync(row.rollout_path)) {
+        try {
+          rolloutRaw = fs.readFileSync(row.rollout_path, 'utf-8')
+        } catch {
+          rolloutRaw = ''
+        }
+      }
+      const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
 
-      const liveLog = [
+      const fallbackLog = [
         `📱 ${task.executor === 'codex' ? 'Codex CLI' : 'Codex.app'} セッション ${threadId.slice(0, 8)}`,
         `タイトル: ${row.title ?? '(未設定)'}`,
         `トークン使用: ${row.tokens_used ?? 0}`,
@@ -1223,6 +1233,7 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         '── プレビュー ──',
         row.preview ?? '(空)',
       ].join('\n')
+      const liveLog = parsed.liveLog || fallbackLog
 
       const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
 
@@ -1236,34 +1247,50 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 
       const baseResult: Record<string, unknown> = {
         ...current,
-        live_log: executor === 'codex' ? (current.live_log ?? liveLog) : liveLog,
+        live_log: liveLog,
         executor,
         codex_thread_id: threadId,
+        codex_run_state: parsed.state,
+        codex_review_reason: parsed.reviewReason,
+        last_activity_at: parsed.lastActivityAt,
+        codex_thread_snapshot: {
+          title: row.title ?? null,
+          preview: row.preview ?? null,
+          tokens_used: row.tokens_used ?? null,
+          has_user_event: row.has_user_event ?? null,
+          archived,
+          updated_at_ms: row.updated_at_ms ?? null,
+          source: row.source ?? null,
+          cwd: row.cwd ?? null,
+        },
         steps,
       }
 
       const updates: Record<string, unknown> = { result: baseResult }
 
-      // 完了候補判定:
-      //   - codex_app (codex:// URL): threads.archived = 1 で完了候補
-      //     （codex:// は prefill のみで自動送信されない＝ユーザー操作待ち）
-      //   - codex (JSON-RPC bridge): bridge が turn/completed 受信後に
-      //     awaiting_approval に更新するため、ここでは何もしない
-      const isArchived = row.archived === 1
-      const isComplete = isArchived && executor !== 'codex'
-
-      if (isComplete) {
+      if (parsed.state === 'awaiting_approval') {
         const completedIdx = steps.findIndex(s => s.key === 'completed')
-        const completedStep = makeStep('completed', '完了候補（アーカイブ済・確認待ち）')
+        const completedStep = makeStep('completed', `確認待ち（${parsed.reviewReason}）`)
         if (completedIdx >= 0) steps[completedIdx] = completedStep
         else steps.push(completedStep)
         updates.status = 'awaiting_approval'
         updates.result = {
           ...baseResult,
           steps,
-          message: `Codex.app セッションは完了候補です。内容を確認して完了にしてください。\n\n${liveLog}`,
+          message: `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`,
           session_health: 'stopped',
           awaiting_approval_at: new Date().toISOString(),
+        }
+      } else if (parsed.state === 'running' && task.status !== 'running') {
+        const runningIdx = steps.findIndex(s => s.key === 'turn_started')
+        const runningStep = makeStep('turn_started', 'Codex.app で実行中')
+        if (runningIdx >= 0) steps[runningIdx] = runningStep
+        else steps.push(runningStep)
+        updates.status = 'running'
+        updates.result = {
+          ...baseResult,
+          steps,
+          session_health: 'active',
         }
       }
       await supabase
@@ -2295,7 +2322,7 @@ async function main() {
     // Legacy fallback while the shared runner migration has not been applied, or when explicitly allowed.
     const selectColumns = [
       'id, user_id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, result',
-      'source_note_id, source_ideal_goal_id, executor',
+      'source_note_id, source_ideal_goal_id, source_task_id, executor',
       schemaCapabilities.hasSharedAiTaskColumns
         ? `space_id, package_id, package_snapshot, claimed_runner_id, claim_expires_at, run_visibility${schemaCapabilities.hasAiPackageVersioning ? ', package_version_id' : ''}`
         : '',
@@ -2730,13 +2757,51 @@ async function main() {
       continue
     }
 
-    // ─── メモから起動: executor 別に分岐 ───
-    if ((task.source_note_id || task.source_ideal_goal_id) && task.cwd) {
-      // 元メモを取得（タイトル付与・チャット名生成用）
+    // ─── メモ / マインドマップノードから起動: executor 別に分岐 ───
+    if (task.source_note_id || task.source_ideal_goal_id || task.source_task_id) {
+      const executor: 'claude' | 'codex' | 'codex_app' =
+        task.executor === 'codex_app' ? 'codex_app' :
+        task.executor === 'codex' ? 'codex' :
+        'claude'
+      const now = new Date().toISOString()
+      if (!task.cwd) {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'awaiting_approval',
+            error: 'Codex/Claude 実行にはプロジェクトのリポジトリパスが必要です',
+            result: {
+              ...asResultRecord(task.result),
+              executor,
+              ...(executor === 'codex_app' || executor === 'codex' ? {
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'monitoring_lost',
+              } : {}),
+            },
+          })
+          .eq('id', task.id)
+        console.error(`[task-runner] Source task has no cwd: ${task.id}`)
+        continue
+      }
+
+      // 元メモ/タスクを取得（タイトル付与・チャット名生成用）
       let memoTitle: string | undefined
       let memoDescription: string | undefined
       let displayTitle: string | undefined
-      if (task.source_ideal_goal_id) {
+      if (task.source_task_id) {
+        const { data: sourceTask } = await supabase
+          .from('tasks')
+          .select('title, memo')
+          .eq('id', task.source_task_id)
+          .maybeSingle()
+        if (sourceTask?.title) {
+          memoTitle = String(sourceTask.title).trim()
+          memoDescription = sourceTask.memo ? String(sourceTask.memo).trim() : undefined
+          const titlePart = memoTitle.slice(0, 30)
+          const descPart = memoDescription ? memoDescription.replace(/\s+/g, ' ').slice(0, 30) : ''
+          displayTitle = descPart ? `${titlePart} · ${descPart}` : titlePart
+        }
+      } else if (task.source_ideal_goal_id) {
         const { data: memo } = await supabase
           .from('ideal_goals')
           .select('title, description')
@@ -2761,49 +2826,90 @@ async function main() {
         }
       }
 
-      const executor: 'claude' | 'codex' | 'codex_app' =
-        task.executor === 'codex_app' ? 'codex_app' :
-        task.executor === 'codex' ? 'codex' :
-        'claude'
-      const now = new Date().toISOString()
       const memoPrompt = buildPromptWithMemo({
         memoTitle,
         memoDescription,
         prompt: task.prompt,
       })
 
-      // ─── Codex.app executor (Mac proxy: open codex://...) ───
+      // ─── Codex.app executor (app-server 経由で thread 作成 + 初回 turn/start) ───
       if (executor === 'codex_app') {
-        notify(`Codex.app 起動: ${shortPrompt}`, 'Focusmap AI')
-        const result = launchCodexApp({
+        notify(`Codex.app 起動中: ${shortPrompt}`, 'Focusmap AI')
+
+        await pushCodexStep(supabase, task.id,
+          makeStep('received', 'Mac の task-runner が受信'),
+          { executor: 'codex_app', metadata: { codex_run_state: 'running', codex_review_reason: 'started' } })
+
+        const health = checkCodexAppServerReady()
+        if (!health.ready) {
+          await pushCodexStep(supabase, task.id,
+            makeStep('daemon_ready', `Codex daemon 未起動: ${health.error}`, 'failed'),
+            { executor: 'codex_app' })
+          await supabase
+            .from('ai_tasks')
+            .update({
+              status: 'awaiting_approval',
+              error: `codex app-server (ws://127.0.0.1:7878) に接続できません: ${health.error}`,
+              result: {
+                ...asResultRecord(task.result),
+                executor: 'codex_app',
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'monitoring_lost',
+                live_log: 'Codex daemon に接続できません。launchctl で com.focusmap.codex-app-server を確認してください。',
+              },
+            })
+            .eq('id', task.id)
+          notify(`Codex daemon 停止: ${shortPrompt}`, 'Focusmap AI')
+          console.error(`[task-runner] codex_app daemon unreachable: ${health.error}`)
+          continue
+        }
+        await pushCodexStep(supabase, task.id,
+          makeStep('daemon_ready', 'Codex daemon (ws://127.0.0.1:7878) 接続OK'),
+          { executor: 'codex_app' })
+
+        const result = await launchCodexRemote({
           taskId: task.id,
           prompt: memoPrompt,
           cwd: task.cwd,
+          executor: 'codex_app',
+          displayTitle,
           memoTitle,
           memoDescription,
         })
         if (!result.success) {
+          await pushCodexStep(supabase, task.id,
+            makeStep('spawn', `bridge 起動失敗: ${result.error}`, 'failed'),
+            { executor: 'codex_app' })
           await supabase
             .from('ai_tasks')
-            .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
+            .update({
+              status: 'awaiting_approval',
+              error: result.error.slice(0, 1000),
+              result: {
+                ...asResultRecord(task.result),
+                executor: 'codex_app',
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'monitoring_lost',
+              },
+            })
             .eq('id', task.id)
           console.error(`[task-runner] Codex.app launch failed: ${task.id}: ${result.error}`)
           continue
         }
 
-        await supabase
-          .from('ai_tasks')
-          .update({
-            result: {
-              message: 'Codex.app を起動しました。Mac の Codex アプリで内容を確認、ペアリング済ならスマホ ChatGPT app でも見られます',
-              executor: 'codex_app',
-              opened_at: result.openedAt,
+        await pushCodexStep(supabase, task.id,
+          makeStep('spawn', 'Codex app-server bridge プロセス起動'),
+          {
+            executor: 'codex_app',
+            metadata: {
+              codex_run_state: 'running',
+              codex_review_reason: 'started',
+              session_health: 'active',
             },
           })
-          .eq('id', task.id)
 
-        notify(`Codex.app 起動完了: ${shortPrompt}`, 'Focusmap AI')
-        console.log(`[task-runner] Codex.app launched: ${task.id} at ${result.openedAt}`)
+        notify(`Codex.app 実行開始: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Codex.app bridge spawned: ${task.id}`)
         continue
       }
 

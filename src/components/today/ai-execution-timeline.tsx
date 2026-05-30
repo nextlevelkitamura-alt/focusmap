@@ -21,6 +21,7 @@ import {
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { useAiTasks } from "@/hooks/useAiTasks"
 import { useScheduledTasks } from "@/hooks/useScheduledTasks"
 import type { AiTask, AiTaskProgressSummary, AiTaskStatus } from "@/types/ai-task"
@@ -267,6 +268,16 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
   const [expanded, setExpanded] = useState(false)
   const style = STATUS_STYLES[task.status]
   const progress = getProgressSummary(task)
+  const codexUiState = getCodexTaskUiState(task)
+  const displayStyle = codexUiState
+    ? {
+      label: codexUiState.label,
+      className: codexUiState.state === "running"
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+        : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+      dot: codexUiState.state === "running" ? "bg-emerald-400" : "bg-amber-400",
+    }
+    : style
   const liveLog = getLiveLog(task)
   const message = getMessage(task)
   const steps = getSteps(task)
@@ -277,20 +288,32 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
 
   return (
     <div className="relative pl-5">
-      <div className={cn("absolute left-0 top-4 h-2.5 w-2.5 rounded-full ring-4 ring-background", style.dot)} />
+      <div className={cn("absolute left-0 top-4 h-2.5 w-2.5 rounded-full ring-4 ring-background", displayStyle.dot)} />
       <div className="rounded-lg border border-border/60 bg-background/70 px-3 py-2.5 shadow-sm">
         <div className="flex items-start gap-2">
           <div className="shrink-0 pt-0.5">
-            <CompletionMark task={task} />
+            {codexUiState?.state === "running" ? (
+              <Loader2 className="h-4 w-4 animate-spin text-emerald-300" aria-hidden="true" />
+            ) : codexUiState?.state === "awaiting_approval" ? (
+              <Square className="h-4 w-4 text-amber-300" aria-hidden="true" />
+            ) : (
+              <CompletionMark task={task} />
+            )}
           </div>
           <div className="w-10 shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
             {displayTime(task)}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium", style.className)}>
-                <StatusIcon status={task.status} />
-                {style.label}
+              <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium", displayStyle.className)}>
+                {codexUiState?.state === "running" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : codexUiState?.state === "awaiting_approval" ? (
+                  <Clock className="h-3.5 w-3.5" />
+                ) : (
+                  <StatusIcon status={task.status} />
+                )}
+                {displayStyle.label}
               </span>
               <span className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 <Terminal className="h-3 w-3" />
@@ -317,7 +340,7 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
             <p className={cn(
               "mt-1.5 line-clamp-2 text-sm leading-snug text-foreground",
               task.status === "completed" && "text-muted-foreground line-through",
-              task.status === "failed" && "text-red-200",
+              task.status === "failed" && !codexUiState && "text-red-200",
             )}>
               {task.skill_id && <span className="font-medium text-primary">/{task.skill_id} </span>}
               {task.prompt}
@@ -328,7 +351,19 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
               {task.started_at && <span>開始 {format(new Date(task.started_at), "M/d HH:mm", { locale: ja })}</span>}
               {task.completed_at && <span>終了 {format(new Date(task.completed_at), "M/d HH:mm", { locale: ja })}</span>}
             </div>
-            {progress && (
+            {codexUiState ? (
+              <div className="mt-2">
+                <p className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+                  codexUiState.state === "running"
+                    ? "bg-emerald-500/10 text-emerald-300"
+                    : "bg-amber-500/10 text-amber-300"
+                )}>
+                  {codexUiState.state === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                  Codex {codexUiState.label}
+                </p>
+              </div>
+            ) : progress && (
               <div className="mt-2">
                 <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                   <div
@@ -370,14 +405,19 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
                 ))}
               </div>
             )}
-            {progress && (
+            {codexUiState ? (
+              <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+                <p className="font-medium text-foreground">Codex {codexUiState.label}</p>
+                <p className="mt-1">15秒ごとにCodexログを同期しています。</p>
+              </div>
+            ) : progress && (
               <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
                 <p className="font-medium text-foreground">{progress.current_step}</p>
                 <p className="mt-1 whitespace-pre-wrap">{progress.evidence}</p>
                 <p className="mt-1 text-primary/80">{progress.recommended_action}</p>
               </div>
             )}
-            {steps.length > 0 && (
+            {!codexUiState && steps.length > 0 && (
               <div className="space-y-1">
                 {steps.map((step, index) => (
                   <div key={`${step.key ?? step.label ?? index}-${index}`} className="flex gap-2 rounded-md bg-muted/30 px-2 py-1 text-[11px]">

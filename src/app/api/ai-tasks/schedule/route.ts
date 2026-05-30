@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, executor, space_id, run_visibility } = body as {
+  const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, source_task_id, executor, space_id, run_visibility } = body as {
     prompt?: string
     skill_id?: string
     scheduled_at?: string
@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
     cwd?: string
     source_note_id?: string
     source_ideal_goal_id?: string
+    source_task_id?: string
     executor?: 'claude' | 'codex' | 'codex_app'
     space_id?: string
     run_visibility?: string
@@ -64,19 +65,19 @@ export async function POST(req: NextRequest) {
     : 'auto'
 
   // 同一メモ（notes / ideal_goals）から pending/running のタスクが既にある場合は重複として拒否
-  const dupeColumn = source_ideal_goal_id ? 'source_ideal_goal_id' : source_note_id ? 'source_note_id' : null
-  const dupeValue = source_ideal_goal_id || source_note_id || null
+  const dupeColumn = source_task_id ? 'source_task_id' : source_ideal_goal_id ? 'source_ideal_goal_id' : source_note_id ? 'source_note_id' : null
+  const dupeValue = source_task_id || source_ideal_goal_id || source_note_id || null
   if (dupeColumn && dupeValue) {
     const { data: existing } = await supabase
       .from('ai_tasks')
       .select('id, status')
       .eq(dupeColumn, dupeValue)
-      .in('status', ['pending', 'running'])
+      .in('status', ['pending', 'running', 'awaiting_approval', 'needs_input'])
       .limit(1)
       .maybeSingle()
     if (existing) {
       return NextResponse.json(
-        { error: 'このメモは既に実行中または実行待ちです', existing_task_id: existing.id },
+        { error: 'この項目は既に実行中または確認待ちです', existing_task_id: existing.id },
         { status: 409 },
       )
     }
@@ -91,6 +92,7 @@ export async function POST(req: NextRequest) {
     space_id: space_id || null,
     source_note_id: source_note_id || null,
     source_ideal_goal_id: source_ideal_goal_id || null,
+    source_task_id: source_task_id || null,
   })
   if (resolvedSpace.error) {
     return NextResponse.json({ error: resolvedSpace.error }, { status: 403 })
@@ -110,6 +112,7 @@ export async function POST(req: NextRequest) {
       cwd: cwd || null,
       source_note_id: source_note_id || null,
       source_ideal_goal_id: source_ideal_goal_id || null,
+      source_task_id: source_task_id || null,
       executor: resolvedExecutor,
       run_visibility: normalizeVisibility(run_visibility, resolvedSpace.spaceId ? 'space' : 'private'),
     })
