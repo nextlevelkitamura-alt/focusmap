@@ -2351,6 +2351,8 @@ async function main() {
 
   // ─── 2. タスクを順次実行 ──────────────────────────────────────────────
   for (const task of dueTasks) {
+   // per-task エラー隔離: 1件の失敗で runner 全体を落とさない（他ジョブの巻き添えクラッシュ防止）
+   try {
     const shortPrompt = String(task.prompt).slice(0, 40)
     const startedAt = new Date().toISOString()
     console.log(`[task-runner] Starting: ${task.id} "${shortPrompt}"`)
@@ -3040,6 +3042,16 @@ async function main() {
     }
 
     console.log(`[task-runner] Done: ${task.id}`)
+   } catch (taskErr) {
+      console.error(`[task-runner] task ${task.id} isolated failure:`, taskErr)
+      try {
+        await supabase.from('ai_tasks').update({
+          status: 'failed',
+          error: `task-runner 内部エラー: ${taskErr instanceof Error ? taskErr.message : String(taskErr)}`.slice(0, 1000),
+          completed_at: new Date().toISOString(),
+        }).eq('id', task.id)
+      } catch { /* DB更新失敗も握りつぶす（ループ継続が最優先） */ }
+   }
   }
 }
 
