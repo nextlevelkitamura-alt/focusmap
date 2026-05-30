@@ -71,6 +71,18 @@ function taskErrorMessage(data: TaskResponse, fallback: string) {
   return fallback
 }
 
+async function openCodexAppForRepo(repoPath: string) {
+  const res = await fetch("/api/codex/open-repo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo_path: repoPath }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
+  }
+}
+
 function sanitizeCodexDisplayLog(value: string): string {
   const seen = new Set<string>()
   return value
@@ -458,6 +470,7 @@ export function MindmapLinkedMemosDialog({
   const codexThreadId = stringValue(codexResult.codex_thread_id)
   const codexThreadUrlFromResult = stringValue(codexResult.codex_thread_url)
   const codexThreadUrl = codexThreadId ? `codex://threads/${codexThreadId}` : codexThreadUrlFromResult
+  const codexRepoPath = selectedRepoPath || codexTask?.cwd?.trim() || ""
   const codexMessage = stringValue(codexResult.message)
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
@@ -615,7 +628,14 @@ export function MindmapLinkedMemosDialog({
       await createCodexTask("manual", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
-      window.location.href = "codex://"
+      try {
+        await openCodexAppForRepo(selectedRepoPath)
+      } catch (openErr) {
+        window.location.href = "codex://"
+        setError(openErr instanceof Error
+          ? `プロンプトはコピー済みです。Codex.appは通常起動しましたが、リポジトリ指定で開けませんでした: ${openErr.message}`
+          : "プロンプトはコピー済みです。Codex.appは通常起動しましたが、リポジトリ指定で開けませんでした")
+      }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
@@ -657,8 +677,20 @@ export function MindmapLinkedMemosDialog({
     }
   }
 
-  function handleOpenCodexThread() {
-    window.location.href = codexThreadUrl || "codex://"
+  async function handleOpenCodexThread() {
+    if (codexThreadUrl) {
+      window.location.href = codexThreadUrl
+      return
+    }
+    if (codexRepoPath) {
+      try {
+        await openCodexAppForRepo(codexRepoPath)
+        return
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
+      }
+    }
+    window.location.href = "codex://"
   }
 
   const title = task?.title || draftTitle || "ノード詳細"
@@ -727,7 +759,7 @@ export function MindmapLinkedMemosDialog({
                   <Button
                     type="button"
                     size="sm"
-                    onClick={handleOpenCodexThread}
+                    onClick={() => void handleOpenCodexThread()}
                     disabled={!codexThreadUrl && !codexManualHandoff}
                     className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
                   >
@@ -750,7 +782,7 @@ export function MindmapLinkedMemosDialog({
                       <div className="mb-1 text-xs font-medium text-muted-foreground">Codexで返信・確認</div>
                       <div className="text-muted-foreground">
                         {codexWaitingForAppSend
-                          ? "プロンプトはコピー済みです。Codex.appで貼り付けて送信してください。Focusmap側はあとからthread状態だけ同期します。"
+                          ? "プロンプトはコピー済みです。選択リポジトリをCodex.appで開いています。貼り付けて送信してください。Focusmap側はあとからthread状態だけ同期します。"
                           : "このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。"}
                       </div>
                     </div>
