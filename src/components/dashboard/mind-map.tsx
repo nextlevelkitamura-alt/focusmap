@@ -29,6 +29,7 @@ import {
     NODE_MIN_WIDTH, NODE_RESIZE_MAX_WIDTH,
 } from "@/lib/mindmap-layout";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
+import { CodexDirPicker } from "@/components/codex/codex-dir-picker";
 import { getMindMapViewportBounds, getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 
@@ -1239,30 +1240,21 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }, 1400);
     }, []);
 
-    // マインドマップのノード(task)から Codex を起動する。
-    //   - cwd は per-node 必須（未設定なら入力を促し、tasks.codex_work_dir に保存）
+    // Codex 作業ディレクトリ選択ダイアログの状態（未設定ノード用）
+    const [codexPicker, setCodexPicker] = useState<{ taskId: string; nodeTitle: string } | null>(null);
+
+    // 実際に Codex を起動する（dir 確定後）。
     //   - executor='codex' で /api/ai-tasks/schedule に投入 → task-runner → codex-rpc-bridge
     //     → app-server(ws://127.0.0.1:7878) に thread 作成（Codexアプリ/ペアリング済みスマホに表示）
     //     bridge が返信を ai_tasks.result(live_log) に回収するので FocusMap で往復できる
-    //   - プロンプトはノードの「タイトル + メモ詳細」
-    const handleRunCodex = useCallback(async (taskId: string) => {
+    //   - プロンプトはノードの「タイトル + メモ詳細」。dir は per-node に保存し次回から即実行
+    const runCodexWithDir = useCallback(async (taskId: string, dir: string) => {
         const task = tasks.find(t => t.id === taskId);
         if (!task) return;
-        let cwd = (task.codex_work_dir ?? '').trim();
-        if (!cwd) {
-            const input = typeof window !== 'undefined'
-                ? window.prompt('Codex 作業ディレクトリ（このMac上の絶対パス）を入力してください。\n例: /Users/you/project', '')
-                : null;
-            if (!input || !input.trim()) {
-                flashClipboardFeedback('作業ディレクトリが必要です（Codex実行を中止）');
-                return;
-            }
-            cwd = input.trim();
-            try {
-                await onUpdateTask?.(taskId, { codex_work_dir: cwd });
-            } catch {
-                // 永続化に失敗しても今回の実行は続行する
-            }
+        const cwd = dir.trim();
+        if (!cwd) { flashClipboardFeedback('作業ディレクトリが必要です'); return; }
+        if (cwd !== (task.codex_work_dir ?? '').trim()) {
+            try { await onUpdateTask?.(taskId, { codex_work_dir: cwd }); } catch { /* 永続化失敗でも続行 */ }
         }
         const memo = (task.memo ?? '').trim();
         const prompt = memo ? `${task.title}\n\n${memo}` : task.title;
@@ -1288,6 +1280,30 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             flashClipboardFeedback(`Codex起動失敗: ${e instanceof Error ? e.message : String(e)}`);
         }
     }, [tasks, onUpdateTask, flashClipboardFeedback]);
+
+    // ノードの「Codex」ボタン: dir 設定済みなら即実行、未設定なら選択ダイアログを開く。
+    const handleRunCodex = useCallback((taskId: string) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const existing = (task.codex_work_dir ?? '').trim();
+        if (existing) {
+            void runCodexWithDir(taskId, existing);
+        } else {
+            setCodexPicker({ taskId, nodeTitle: task.title });
+        }
+    }, [tasks, runCodexWithDir]);
+
+    // よく使う候補（履歴の codex_work_dir + プロジェクトの repo_path）
+    const codexDirCandidates = useMemo(() => {
+        const set = new Set<string>();
+        for (const t of tasks) {
+            const d = (t.codex_work_dir ?? '').trim();
+            if (d) set.add(d);
+        }
+        const repo = (project?.repo_path ?? '').trim();
+        if (repo) set.add(repo);
+        return Array.from(set);
+    }, [tasks, project?.repo_path]);
 
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null, source: 'user' | 'system') => {
         if (source === 'user') {
@@ -2929,6 +2945,19 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
             />
+            {codexPicker && (
+                <CodexDirPicker
+                    open
+                    nodeTitle={codexPicker.nodeTitle}
+                    candidates={codexDirCandidates}
+                    onCancel={() => setCodexPicker(null)}
+                    onConfirm={(dir) => {
+                        const target = codexPicker;
+                        setCodexPicker(null);
+                        if (target) void runCodexWithDir(target.taskId, dir);
+                    }}
+                />
+            )}
 
             {selectedNodeId && selectedNodeId !== 'project-root' && (
                 <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur border rounded-lg p-2 text-xs text-muted-foreground shadow-lg">
