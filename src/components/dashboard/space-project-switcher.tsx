@@ -26,6 +26,7 @@ interface SpaceProjectSwitcherProps {
   onProjectSaved?: (project: Project) => void
   /** スペース作成・更新を親に反映するコールバック (任意) */
   onSpaceSaved?: (space: Space) => void
+  showAllSpacesOption?: boolean
   showAllProjectsOption?: boolean
   className?: string
 }
@@ -50,6 +51,7 @@ export function SpaceProjectSwitcher({
   onProjectCreated,
   onProjectSaved,
   onSpaceSaved,
+  showAllSpacesOption = true,
   showAllProjectsOption = false,
   className,
 }: SpaceProjectSwitcherProps) {
@@ -65,7 +67,7 @@ export function SpaceProjectSwitcher({
   const currentProject =
     projects.find((p) => p.id === selectedProjectId && (!selectedSpaceId || p.space_id === selectedSpaceId)) || null
   const currentSpace =
-    spaces.find((s) => s.id === (selectedSpaceId ?? currentProject?.space_id)) || null
+    selectedSpaceId ? spaces.find((s) => s.id === selectedSpaceId) || null : null
 
   // Project switcher に表示する候補: 現在の space に属するもの (未選択時は全体)
   const visibleProjects = selectedSpaceId
@@ -74,13 +76,15 @@ export function SpaceProjectSwitcher({
 
   const handlePickSpace = (id: string | null) => {
     onSelectSpace(id)
-    if (showAllProjectsOption || !id) {
+    if (showAllProjectsOption) {
       onSelectProject(null)
     } else {
-      const currentProjectInSpace = projects.find(
-        (p) => p.id === selectedProjectId && p.space_id === id && !isArchived(p),
-      )
-      const firstProjectInSpace = projects.find((p) => p.space_id === id && !isArchived(p))
+      const currentProjectInSpace = id
+        ? projects.find((p) => p.id === selectedProjectId && p.space_id === id && !isArchived(p))
+        : projects.find((p) => p.id === selectedProjectId && !isArchived(p))
+      const firstProjectInSpace = id
+        ? projects.find((p) => p.space_id === id && !isArchived(p))
+        : projects.find((p) => !isArchived(p))
       onSelectProject(currentProjectInSpace?.id ?? firstProjectInSpace?.id ?? null)
     }
     setSpaceOpen(false)
@@ -169,7 +173,7 @@ export function SpaceProjectSwitcher({
             スペース
           </div>
           <div className="max-h-[50vh] overflow-y-auto">
-            {showAllProjectsOption && (
+            {showAllSpacesOption && (
               <button
                 onClick={() => handlePickSpace(null)}
                 className={cn(
