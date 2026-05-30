@@ -113,7 +113,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         }, [currentDate])
 
         // Fetch events — visibleCalendarIds が変わるとイベントを再取得
-        const { events, setEvents, refetch, isLoading, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
+        const { events, setEvents, refetch, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
             timeMin,
             timeMax,
             calendarIds: visibleCalendarIds.length > 0 ? visibleCalendarIds : undefined,
@@ -204,6 +204,7 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
                         location: event.location,
                         googleEventId: event.google_event_id,
                         calendarId: updates.calendar_id || event.calendar_id,
+                        originalCalendarId: event.calendar_id,
                         estimated_time: updates.estimated_time,
                         priority: updates.priority,
                         reminders: updates.reminders,

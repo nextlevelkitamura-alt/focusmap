@@ -3,11 +3,20 @@ import { createClient } from '@/utils/supabase/server';
 import { getCalendarClient } from '@/lib/google-calendar';
 import { classifyCalendarAuthError } from '@/lib/calendar-auth-errors';
 
+type CalendarClient = Awaited<ReturnType<typeof getCalendarClient>>['calendar'];
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string) {
+  return UUID_PATTERN.test(value);
+}
+
 function isMissingCalendarEventError(error: unknown) {
   if (!error || typeof error !== 'object') return false;
   const status = 'status' in error ? (error as { status?: unknown }).status : undefined;
   const code = 'code' in error ? (error as { code?: unknown }).code : undefined;
-  return status === 404 || code === 404;
+  const message = error instanceof Error ? error.message : String(error);
+  return status === 404 || code === 404 || status === 410 || code === 410 || message.includes('Not Found') || message.includes('notFound');
 }
 
 function popupReminderMinutes(
@@ -21,6 +30,25 @@ function popupReminderMinutes(
 
 function isWritableCalendar(accessLevel: string | null | undefined) {
   return accessLevel === 'owner' || accessLevel === 'writer';
+}
+
+async function findCalendarContainingEvent(
+  calendar: CalendarClient,
+  calendarIds: string[],
+  googleEventId: string
+) {
+  for (const candidateCalendarId of calendarIds) {
+    try {
+      await calendar.events.get({
+        calendarId: candidateCalendarId,
+        eventId: googleEventId,
+      });
+      return candidateCalendarId;
+    } catch (error) {
+      if (!isMissingCalendarEventError(error)) throw error;
+    }
+  }
+  return null;
 }
 
 /**
@@ -562,13 +590,17 @@ export async function PATCH(
       );
     }
 
-    const { data: existingEventById, error: existingEventByIdError } = await supabase
-      .from('calendar_events')
-      .select('id, calendar_id, google_event_id')
-      .eq('user_id', user.id)
-      .eq('id', eventId)
-      .maybeSingle();
-    if (existingEventByIdError) throw existingEventByIdError;
+    let existingEventById = null;
+    if (isUuid(eventId)) {
+      const { data, error: existingEventByIdError } = await supabase
+        .from('calendar_events')
+        .select('id, calendar_id, google_event_id')
+        .eq('user_id', user.id)
+        .eq('id', eventId)
+        .maybeSingle();
+      if (existingEventByIdError) throw existingEventByIdError;
+      existingEventById = data;
+    }
 
     let existingEvent = existingEventById;
     if (!existingEvent) {
@@ -582,19 +614,52 @@ export async function PATCH(
       existingEvent = existingEventByGoogleId;
     }
 
-    const sourceCalendarId = body.originalCalendarId || existingEvent?.calendar_id || calendarId || 'primary';
-    const destinationCalendarId = calendarId || sourceCalendarId || 'primary';
+    let taskSourceCalendarId: string | null = null;
+    if (!body.originalCalendarId && !existingEvent?.calendar_id) {
+      const { data: linkedTaskRows, error: linkedTaskLookupError } = await supabase
+        .from('tasks')
+        .select('calendar_id')
+        .eq('user_id', user.id)
+        .eq('google_event_id', googleEventId)
+        .not('calendar_id', 'is', null)
+        .limit(1);
+      if (linkedTaskLookupError) throw linkedTaskLookupError;
+      taskSourceCalendarId = linkedTaskRows?.[0]?.calendar_id ?? null;
+    }
 
-    const calendarIdsToCheck = Array.from(new Set([sourceCalendarId, destinationCalendarId].filter(Boolean)));
+    const explicitSourceCalendarId = body.originalCalendarId || existingEvent?.calendar_id || taskSourceCalendarId || null;
+    const destinationCalendarId = calendarId || explicitSourceCalendarId || 'primary';
+    let sourceCalendarId = explicitSourceCalendarId || destinationCalendarId;
+
     const { data: calendarAccessRows, error: calendarAccessError } = await supabase
       .from('user_calendars')
       .select('google_calendar_id, access_level')
-      .eq('user_id', user.id)
-      .in('google_calendar_id', calendarIdsToCheck);
+      .eq('user_id', user.id);
     if (calendarAccessError) throw calendarAccessError;
 
-    const readOnlyCalendar = calendarAccessRows?.find(row => !isWritableCalendar(row.access_level));
-    if (readOnlyCalendar) {
+    // Google Calendar イベントを更新
+    console.log('[events/update] Updating Google Calendar event:', googleEventId);
+    const { calendar } = await getCalendarClient(user.id);
+
+    if (!explicitSourceCalendarId) {
+      const sourceCandidates = Array.from(new Set([
+        sourceCalendarId,
+        destinationCalendarId,
+        'primary',
+        ...(calendarAccessRows || []).map(row => row.google_calendar_id),
+      ].filter((id): id is string => typeof id === 'string' && id.trim().length > 0)));
+      const discoveredSourceCalendarId = await findCalendarContainingEvent(calendar, sourceCandidates, googleEventId);
+      if (discoveredSourceCalendarId) {
+        sourceCalendarId = discoveredSourceCalendarId;
+      }
+    }
+
+    const calendarAccessById = new Map(
+      (calendarAccessRows || []).map(row => [row.google_calendar_id, row.access_level] as const)
+    );
+    const readOnlyCalendarId = Array.from(new Set([sourceCalendarId, destinationCalendarId]))
+      .find(id => calendarAccessById.has(id) && !isWritableCalendar(calendarAccessById.get(id)));
+    if (readOnlyCalendarId) {
       return NextResponse.json(
         {
           success: false,
@@ -606,10 +671,6 @@ export async function PATCH(
         { status: 403 }
       );
     }
-
-    // Google Calendar イベントを更新
-    console.log('[events/update] Updating Google Calendar event:', googleEventId);
-    const { calendar } = await getCalendarClient(user.id);
 
     const googleEvent: Record<string, unknown> = {
       summary: title,
@@ -661,27 +722,34 @@ export async function PATCH(
 
     console.log('[events/update] Updated Google Calendar event');
 
-    // DB も更新
-    let dbUpdateQuery = supabase
-      .from('calendar_events')
-      .update({
-        title,
-        start_time,
-        end_time,
-        description,
-        location,
-        calendar_id: destinationCalendarId,
-        google_event_id: effectiveGoogleEventId,
-        updated_at: new Date().toISOString(),
-        synced_at: new Date().toISOString(),
-      })
-      .eq('user_id', user.id);
-
-    dbUpdateQuery = existingEvent?.id
-      ? dbUpdateQuery.eq('id', existingEvent.id)
-      : dbUpdateQuery.eq('google_event_id', googleEventId);
-
-    const { error: dbError } = await dbUpdateQuery;
+    // DB も更新。キャッシュ行がない Google 予定でも、次回以降の移動元を失わないよう保存する。
+    const eventPayload = {
+      user_id: user.id,
+      google_event_id: effectiveGoogleEventId,
+      calendar_id: destinationCalendarId,
+      title,
+      description,
+      location,
+      start_time,
+      end_time,
+      is_all_day: false,
+      timezone: 'Asia/Tokyo',
+      updated_at: new Date().toISOString(),
+      synced_at: new Date().toISOString(),
+      reminders: Array.isArray(reminders) ? reminders : null,
+    };
+    const { error: dbError } = existingEvent?.id
+      ? await supabase
+          .from('calendar_events')
+          .update(eventPayload)
+          .eq('user_id', user.id)
+          .eq('id', existingEvent.id)
+      : await supabase
+          .from('calendar_events')
+          .upsert(eventPayload, {
+            onConflict: 'user_id,google_event_id',
+            ignoreDuplicates: false,
+          });
 
     if (dbError) {
       console.error('[events/update] Failed to update database:', dbError);
