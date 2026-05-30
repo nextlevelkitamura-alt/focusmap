@@ -1619,10 +1619,6 @@ export function WishlistView({
           isLoading: false,
           error: null,
         })
-        if (linkedItems.length === 1) {
-          setSelectedItem(linkedItems[0])
-          setDetailOpen(true)
-        }
       } catch (err) {
         if (cancelled) return
         setLinkedMemoFocus({
