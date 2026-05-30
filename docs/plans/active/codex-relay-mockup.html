@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FocusMap × Codex relay — UIモック</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+  .node{transition:all .15s}
+  .node:hover{transform:translateY(-1px)}
+  .pop{animation:pop .18s ease}
+  @keyframes pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
+  .typing span{animation:blink 1.2s infinite}
+  @keyframes blink{0%,100%{opacity:.2}50%{opacity:1}}
+  .phoneframe{width:390px;height:760px;border-radius:42px;border:12px solid #111827;box-shadow:0 30px 60px rgba(0,0,0,.35)}
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+<div class="max-w-[1200px] mx-auto p-5">
+  <header class="flex items-center justify-between mb-4">
+    <div>
+      <h1 class="text-xl font-bold">FocusMap × Codex relay <span class="text-slate-400 text-sm font-normal">UIモック（叩き台）</span></h1>
+      <p class="text-xs text-slate-500">マインドマップのノード → ローカルCodex → 往復会話。スマホはFocusMapモバイルWebで操作。</p>
+    </div>
+    <div class="flex gap-1 bg-white rounded-lg p-1 shadow-sm text-sm">
+      <button id="tabDesktop" class="px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium">🖥 デスクトップ</button>
+      <button id="tabMobile" class="px-3 py-1.5 rounded-md text-slate-600">📱 スマホ</button>
+    </div>
+  </header>
+
+  <!-- ============ DESKTOP ============ -->
+  <div id="desktop" class="grid grid-cols-[1fr_400px] gap-4">
+    <!-- マインドマップ -->
+    <section class="bg-white rounded-xl shadow-sm p-5 min-h-[560px] relative overflow-hidden">
+      <div class="text-xs text-slate-400 mb-4">マインドマップ</div>
+      <div class="flex items-center gap-3">
+        <div class="node bg-slate-800 text-white rounded-xl px-4 py-3 text-sm font-medium shadow">2026 事業ゴール</div>
+        <div class="h-px w-8 bg-slate-300"></div>
+        <div class="flex flex-col gap-3">
+          <div class="node bg-slate-100 rounded-lg px-3 py-2 text-sm">採用を強くする</div>
+          <button id="nodeBtn" onclick="selectNode()" class="node text-left bg-indigo-50 ring-2 ring-indigo-400 rounded-lg px-3 py-2 text-sm font-medium">
+            6月の求人LPを改善 <span class="text-[10px] text-indigo-500">● 選択中</span>
+          </button>
+          <div class="node bg-slate-100 rounded-lg px-3 py-2 text-sm">動画コンテンツ強化</div>
+        </div>
+      </div>
+
+      <!-- ノードのアクションパネル -->
+      <div id="nodePanel" class="pop absolute bottom-5 left-5 right-5 bg-white border border-slate-200 rounded-xl shadow-lg p-4">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="font-semibold text-sm">6月の求人LPを改善</div>
+            <div class="text-xs text-slate-500 mt-1">詳細: CVが低い。FV画像と訴求を見直したい。</div>
+            <div class="text-xs text-slate-500 mt-0.5">紐づくメモ: 競合は動画FV / スマホで崩れる報告</div>
+          </div>
+          <span class="text-[10px] bg-slate-100 rounded px-2 py-1 text-slate-500">ideal_item</span>
+        </div>
+        <div class="mt-3 border-t pt-3">
+          <label class="text-xs font-medium text-slate-600">作業ディレクトリ <span class="text-rose-500">*必須</span></label>
+          <div class="flex gap-2 mt-1">
+            <select id="dirSel" onchange="dirChange()" class="flex-1 text-xs border rounded-md px-2 py-1.5 bg-white">
+              <option value="">— 未設定 —</option>
+              <option value="1">…/nextlevel-career-site</option>
+              <option value="2">…/focusmap</option>
+            </select>
+            <label class="text-xs flex items-center gap-1 text-slate-600"><input type="checkbox" checked> ネット許可</label>
+          </div>
+          <div class="flex items-center gap-3 mt-2 text-xs text-slate-600">
+            権限:
+            <label class="flex items-center gap-1"><input type="radio" name="perm" checked> 標準(cwd内書込)</label>
+            <label class="flex items-center gap-1"><input type="radio" name="perm"> 全開</label>
+          </div>
+          <button id="runBtn" onclick="runCodex()" disabled
+            class="mt-3 w-full bg-slate-300 text-slate-500 cursor-not-allowed rounded-lg py-2 text-sm font-semibold">
+            ▶ Codexで実行
+          </button>
+          <div id="runHint" class="text-[11px] text-rose-500 mt-1">作業ディレクトリを設定してください</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 会話パネル（サイドパネル） -->
+    <aside id="convPanel" class="bg-white rounded-xl shadow-sm flex flex-col h-[560px] opacity-40">
+      <div class="border-b p-3">
+        <div class="flex items-center justify-between">
+          <div class="font-semibold text-sm">6月の求人LPを改善</div>
+          <span id="status" class="text-[11px] bg-slate-100 text-slate-500 rounded-full px-2 py-0.5">待機</span>
+        </div>
+        <div class="text-[11px] text-slate-400 mt-0.5">cwd: …/career-site ・ 標準権限 ・ <a class="text-indigo-500 underline" href="#">⧉純正アプリで開く</a></div>
+      </div>
+      <div id="msgs" class="flex-1 overflow-auto p-3 space-y-3 text-sm">
+        <div class="text-center text-xs text-slate-400 mt-20">「Codexで実行」で会話が始まります</div>
+      </div>
+      <div class="border-t p-2 flex gap-2">
+        <input id="reply" placeholder="返信を入力…" class="flex-1 text-sm border rounded-lg px-3 py-2" />
+        <button onclick="sendReply()" class="bg-indigo-600 text-white rounded-lg px-3 text-sm font-medium">送信</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- スレッド一覧 -->
+  <section class="bg-white rounded-xl shadow-sm p-4 mt-4 text-sm">
+    <div class="text-xs text-slate-400 mb-2">Codexスレッド一覧</div>
+    <div class="divide-y">
+      <div class="flex items-center gap-3 py-2"><span class="text-amber-500">●</span> 6月の求人LPを改善 <span class="text-xs text-slate-400 ml-auto">実行中 ・ …/career-site</span></div>
+      <div class="flex items-center gap-3 py-2"><span class="text-rose-500">⚠️</span> 採用動画の構成案づくり <span class="text-xs text-slate-400 ml-auto">承認待ち ・ …/video</span></div>
+      <div class="flex items-center gap-3 py-2"><span class="text-emerald-500">✓</span> 競合LPリサーチまとめ <span class="text-xs text-slate-400 ml-auto">完了 ・ …/research</span></div>
+    </div>
+  </section>
+
+  <!-- ============ MOBILE ============ -->
+  <div id="mobile" class="hidden justify-center py-6">
+    <div class="phoneframe bg-white overflow-hidden flex flex-col">
+      <div class="bg-indigo-600 text-white px-4 py-3 flex items-center gap-2 text-sm">
+        <span>←</span><span class="font-medium">6月の求人LPを改善</span>
+        <span class="ml-auto text-[11px] bg-white/20 rounded-full px-2 py-0.5">● 実行中</span>
+      </div>
+      <div class="flex-1 overflow-auto p-3 space-y-3 text-sm bg-slate-50">
+        <div class="bg-indigo-600 text-white rounded-2xl rounded-br-sm px-3 py-2 ml-auto w-fit max-w-[80%]">このノードのLP改善を進めて</div>
+        <div class="bg-white border rounded-2xl rounded-bl-sm px-3 py-2 w-fit max-w-[85%] shadow-sm">
+          達成すべきこと: FVの訴求と画像を見直しCV改善。
+          <div class="typing text-xs text-slate-400 mt-1">今: src/app/page.tsx を確認中<span>.</span><span>.</span><span>.</span></div>
+        </div>
+        <div class="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-sm">
+          ⚠️ 本番LPのコピーを書き換えます。実行していい？
+          <div class="flex gap-2 mt-2">
+            <button class="flex-1 bg-emerald-500 text-white rounded-lg py-1.5 text-xs font-medium">承認</button>
+            <button class="flex-1 bg-slate-200 rounded-lg py-1.5 text-xs">却下</button>
+          </div>
+        </div>
+      </div>
+      <div class="border-t p-2 flex gap-2 bg-white">
+        <input placeholder="返信…" class="flex-1 text-sm border rounded-full px-3 py-2" />
+        <button class="bg-indigo-600 text-white rounded-full w-10 h-10 flex items-center justify-center">↑</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="text-center text-xs text-slate-400 mt-6">※ これはクリック可能なモック（実機ではない）。デスクトップで「作業dir選択 → Codexで実行 → 返信」を試せます。</p>
+</div>
+
+<script>
+function selectNode(){ document.getElementById('nodePanel').classList.add('pop'); }
+function dirChange(){
+  const v=document.getElementById('dirSel').value;
+  const btn=document.getElementById('runBtn'), hint=document.getElementById('runHint');
+  if(v){ btn.disabled=false; btn.className="mt-3 w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-semibold"; hint.textContent="作業ディレクトリ設定済み — 実行できます"; hint.className="text-[11px] text-emerald-600 mt-1"; }
+  else { btn.disabled=true; btn.className="mt-3 w-full bg-slate-300 text-slate-500 cursor-not-allowed rounded-lg py-2 text-sm font-semibold"; hint.textContent="作業ディレクトリを設定してください"; hint.className="text-[11px] text-rose-500 mt-1"; }
+}
+function addMsg(html){ document.getElementById('msgs').insertAdjacentHTML('beforeend',html); const m=document.getElementById('msgs'); m.scrollTop=m.scrollHeight; }
+function runCodex(){
+  const c=document.getElementById('convPanel'); c.classList.remove('opacity-40');
+  document.getElementById('status').textContent='実行中'; document.getElementById('status').className='text-[11px] bg-amber-100 text-amber-700 rounded-full px-2 py-0.5';
+  document.getElementById('msgs').innerHTML='';
+  addMsg('<div class="bg-indigo-600 text-white rounded-2xl rounded-br-sm px-3 py-2 ml-auto w-fit max-w-[80%]">このノードのLP改善を進めて</div>');
+  setTimeout(()=>addMsg('<div class="bg-slate-50 border rounded-2xl rounded-bl-sm px-3 py-2 w-fit max-w-[90%]">達成すべきこと: FVの訴求と画像を見直しCV改善。<div class="typing text-xs text-slate-400 mt-1">今: src/app/page.tsx を確認中<span>.</span><span>.</span><span>.</span></div></div>'),500);
+  setTimeout(()=>{ addMsg('<div class="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">⚠️ 本番LPのコピーを書き換えます。実行していい？<div class="flex gap-2 mt-2"><button onclick="approve()" class="flex-1 bg-emerald-500 text-white rounded-lg py-1.5 text-xs font-medium">承認</button><button class="flex-1 bg-slate-200 rounded-lg py-1.5 text-xs">却下</button></div></div>');
+    document.getElementById('status').textContent='承認待ち'; document.getElementById('status').className='text-[11px] bg-rose-100 text-rose-700 rounded-full px-2 py-0.5';
+  },1600);
+}
+function approve(){ addMsg('<div class="bg-slate-50 border rounded-2xl rounded-bl-sm px-3 py-2 w-fit max-w-[90%]">✅ 反映しました。やったこと: FVコピー差し替え / 画像最適化。<br>次に決めること: 動画FVにするか静止画か。</div>');
+  document.getElementById('status').textContent='完了'; document.getElementById('status').className='text-[11px] bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5'; }
+function sendReply(){ const v=document.getElementById('reply').value.trim(); if(!v)return; addMsg('<div class="bg-indigo-600 text-white rounded-2xl rounded-br-sm px-3 py-2 ml-auto w-fit max-w-[80%]">'+v+'</div>'); document.getElementById('reply').value=''; setTimeout(()=>addMsg('<div class="bg-slate-50 border rounded-2xl rounded-bl-sm px-3 py-2 w-fit max-w-[90%]">了解、対応します。</div>'),500); }
+document.getElementById('tabDesktop').onclick=()=>{ show('desktop'); };
+document.getElementById('tabMobile').onclick=()=>{ show('mobile'); };
+function show(which){
+  const d=document.getElementById('desktop'), m=document.getElementById('mobile');
+  const td=document.getElementById('tabDesktop'), tm=document.getElementById('tabMobile');
+  if(which==='mobile'){ d.classList.add('hidden'); m.classList.remove('hidden'); m.classList.add('flex'); tm.className='px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium'; td.className='px-3 py-1.5 rounded-md text-slate-600'; }
+  else { m.classList.add('hidden'); m.classList.remove('flex'); d.classList.remove('hidden'); td.className='px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium'; tm.className='px-3 py-1.5 rounded-md text-slate-600'; }
+}
+</script>
+</body>
+</html>
