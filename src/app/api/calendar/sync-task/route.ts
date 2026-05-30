@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { syncTaskToCalendar, deleteTaskFromCalendar } from '@/lib/google-calendar';
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 /**
  * タスクをGoogleカレンダーに同期（新規作成）
  * POST /api/calendar/sync-task
@@ -119,10 +123,10 @@ export async function POST(request: NextRequest) {
       success: true,
       googleEventId: result.googleEventId,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[sync-task POST] Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to sync task' },
+      { error: getErrorMessage(error, 'Failed to sync task') },
       { status: 500 }
     );
   }
@@ -143,9 +147,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
-    const { taskId, scheduled_at, estimated_time, calendar_id, reminders } = await request.json();
+    const { taskId, scheduled_at, estimated_time, calendar_id, reminders, source_calendar_id } = await request.json();
 
-    console.log('[sync-task PATCH] Request:', { taskId, scheduled_at, estimated_time, calendar_id, reminders });
+    console.log('[sync-task PATCH] Request:', { taskId, scheduled_at, estimated_time, calendar_id, source_calendar_id, reminders });
 
     if (!taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
@@ -177,6 +181,7 @@ export async function PATCH(request: NextRequest) {
       estimated_time,
       google_event_id: task.google_event_id,
       calendar_id,
+      source_calendar_id: source_calendar_id || task.calendar_id,
       memo: task.memo,
       reminders,
     });
@@ -185,10 +190,10 @@ export async function PATCH(request: NextRequest) {
       success: true,
       googleEventId: result.googleEventId,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[sync-task PATCH] Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to update task' },
+      { error: getErrorMessage(error, 'Failed to update task') },
       { status: 500 }
     );
   }
@@ -264,10 +269,10 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({
       success: true,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[sync-task DELETE] Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to delete event' },
+      { error: getErrorMessage(error, 'Failed to delete event') },
       { status: 500 }
     );
   }

@@ -268,7 +268,13 @@ export function useTodayViewLogic({
             setLocalCalendarEvents(prev => prev.map(event => {
                 const matches =
                     event.id === detail.eventId ||
-                    (!!detail.googleEventId && event.google_event_id === detail.googleEventId && (!detail.calendarId || event.calendar_id === detail.calendarId))
+                    (!!detail.googleEventId &&
+                        event.google_event_id === detail.googleEventId &&
+                        (
+                            !detail.calendarId ||
+                            event.calendar_id === detail.calendarId ||
+                            event.calendar_id === detail.previousCalendarId
+                        ))
                 if (!matches) return event
                 return {
                     ...event,
@@ -338,6 +344,7 @@ export function useTodayViewLogic({
         end_time: string
         googleEventId: string
         calendarId: string
+        originalCalendarId?: string
         reminders?: number[]
         description?: string
     }) => {
@@ -374,6 +381,7 @@ export function useTodayViewLogic({
             eventId: event.id,
             googleEventId: updates.googleEventId,
             calendarId: updates.calendarId,
+            previousCalendarId: updates.originalCalendarId || event.calendar_id,
             taskId: event.task_id,
             title: updates.title,
             startTime: updates.start_time,
@@ -391,6 +399,7 @@ export function useTodayViewLogic({
                 end_time: updates.end_time,
                 googleEventId: updates.googleEventId,
                 calendarId: updates.calendarId,
+                originalCalendarId: updates.originalCalendarId || event.calendar_id,
                 reminders: updates.reminders,
                 ...(updates.description !== undefined ? { description: updates.description } : {}),
             }),
@@ -975,6 +984,68 @@ export function useTodayViewLogic({
             throw err
         }
 
+        const hasCalendarSyncUpdate =
+            !!task?.google_event_id &&
+            (
+                reminders !== undefined ||
+                taskUpdates.title !== undefined ||
+                taskUpdates.scheduled_at !== undefined ||
+                taskUpdates.estimated_time !== undefined ||
+                taskUpdates.calendar_id !== undefined ||
+                taskUpdates.memo !== undefined
+            )
+
+        if (task && hasCalendarSyncUpdate) {
+            const nextStartTime = taskUpdates.scheduled_at ?? task.scheduled_at
+            const nextDuration = taskUpdates.estimated_time ?? task.estimated_time
+            const nextCalendarId = taskUpdates.calendar_id ?? task.calendar_id
+
+            if (nextStartTime && nextDuration > 0 && nextCalendarId) {
+                const nextStart = new Date(nextStartTime)
+                const nextEnd = new Date(nextStart.getTime() + nextDuration * 60 * 1000)
+                const res = await fetch(`/api/calendar/events/${task.calendar_event_id || task.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: taskUpdates.title ?? task.title,
+                        start_time: nextStart.toISOString(),
+                        end_time: nextEnd.toISOString(),
+                        description: taskUpdates.memo !== undefined ? taskUpdates.memo : task.memo,
+                        googleEventId: task.google_event_id,
+                        calendarId: nextCalendarId,
+                        originalCalendarId: task.calendar_id || nextCalendarId,
+                        estimated_time: nextDuration,
+                        reminders,
+                    }),
+                })
+                const data = await res.json().catch(() => ({}))
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.error?.message || 'Failed to update linked Google Calendar event')
+                }
+
+                const effectiveGoogleEventId = data.google_event_id || task.google_event_id
+                setLocalTasks(prev => prev.map(t =>
+                    t.id === taskId
+                        ? { ...t, google_event_id: effectiveGoogleEventId, calendar_id: data.calendar_id || nextCalendarId }
+                        : t
+                ))
+                broadcastCalendarEventDetailUpdate({
+                    eventId: task.calendar_event_id || task.id,
+                    googleEventId: task.google_event_id,
+                    calendarId: data.calendar_id || nextCalendarId,
+                    previousCalendarId: task.calendar_id || nextCalendarId,
+                    taskId,
+                    title: taskUpdates.title ?? task.title,
+                    startTime: nextStart.toISOString(),
+                    endTime: nextEnd.toISOString(),
+                    reminders,
+                    ...(taskUpdates.memo !== undefined ? { description: taskUpdates.memo || undefined } : {}),
+                })
+                invalidateCalendarCache()
+                broadcastCalendarSync()
+            }
+        }
+
         if (task && Object.keys(taskUpdates).length > 0) {
             const undoUpdates: Partial<Task> = {}
             for (const key of Object.keys(taskUpdates) as Array<keyof Task>) {
@@ -1006,32 +1077,19 @@ export function useTodayViewLogic({
             })
         }
 
-        if (reminders !== undefined) {
-            if (task?.google_event_id && task?.calendar_id) {
-                fetch('/api/calendar/sync-task', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        taskId,
-                        scheduled_at: updates.scheduled_at || task.scheduled_at,
-                        estimated_time: updates.estimated_time || task.estimated_time,
-                        calendar_id: updates.calendar_id || task.calendar_id,
-                        reminders,
-                    }),
-                }).catch(err => {
-                    console.error('[useTodayViewLogic] Failed to update calendar reminder:', err)
-                })
-            }
-        }
     }, [onUpdateTask, localTasks, pushAction])
 
     // Save event
     const handleSaveEvent = useCallback(async (eventId: string, updates: {
-        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]; description?: string
+        title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; originalCalendarId?: string; reminders?: number[]; description?: string
     }) => {
         const previousEvents = localCalendarEvents
         const previousTasks = localTasks
         const previousEvent = localCalendarEvents.find(e => e.id === eventId)
+        const previousTask = updates.googleEventId
+            ? localTasks.find(task => task.google_event_id === updates.googleEventId)
+            : undefined
+        const sourceCalendarId = updates.originalCalendarId || previousEvent?.calendar_id || previousTask?.calendar_id || updates.calendarId
         const durationMinutes = Math.max(
             1,
             Math.round((new Date(updates.end_time).getTime() - new Date(updates.start_time).getTime()) / 60000)
@@ -1066,6 +1124,7 @@ export function useTodayViewLogic({
             eventId,
             googleEventId: updates.googleEventId,
             calendarId: updates.calendarId,
+            previousCalendarId: sourceCalendarId,
             taskId: previousEvent?.task_id,
             title: updates.title,
             startTime: updates.start_time,
@@ -1088,6 +1147,8 @@ export function useTodayViewLogic({
                     end_time: updates.end_time,
                     googleEventId: updates.googleEventId,
                     calendarId: updates.calendarId,
+                    originalCalendarId: sourceCalendarId,
+                    estimated_time: durationMinutes,
                     reminders: updates.reminders,
                     ...(updates.description !== undefined ? { description: updates.description } : {}),
                 }),
@@ -1105,6 +1166,7 @@ export function useTodayViewLogic({
                     end_time: previousEvent.end_time,
                     googleEventId: previousEvent.google_event_id,
                     calendarId: previousEvent.calendar_id,
+                    originalCalendarId: updates.calendarId,
                     reminders: previousEvent.reminders,
                     description: previousEvent.description,
                 }

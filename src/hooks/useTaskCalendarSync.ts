@@ -54,11 +54,15 @@ export function useTaskCalendarSync({
       }
 
       if (method === 'POST' || method === 'PATCH') {
+        const previousCalendarId = prevRef.current.calendar_id
         options.body = JSON.stringify({
           taskId,
           scheduled_at,
           estimated_time,
-          calendar_id
+          calendar_id,
+          ...(method === 'PATCH' && previousCalendarId && previousCalendarId !== calendar_id
+            ? { source_calendar_id: previousCalendarId }
+            : {})
         })
       } else if (method === 'DELETE') {
         options.body = JSON.stringify({
@@ -115,35 +119,15 @@ export function useTaskCalendarSync({
     }
   }
 
-  // カレンダー変更時の特別処理（古いイベントを削除→新しいカレンダーに作成）
+  // カレンダー変更時の特別処理（Google 側で既存イベントを move）
   const handleCalendarChange = async () => {
     const prev = prevRef.current
     const hasAllFields = scheduled_at && estimated_time && calendar_id
 
     // カレンダーが変更されていて、既存イベントがある場合
     if (hasAllFields && google_event_id && prev.calendar_id !== calendar_id && prev.calendar_id) {
-      setStatus('syncing')
-      setError(null)
-
       try {
-        // まず古いカレンダーから削除
-        const deleteOptions: RequestInit = {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            taskId,
-            google_event_id
-          })
-        }
-
-        const deleteResponse = await fetch('/api/calendar/sync-task', deleteOptions)
-
-        if (!deleteResponse.ok) {
-          throw new Error('Failed to delete old event')
-        }
-
-        // 削除成功後、新しいカレンダーに作成
-        await syncToCalendar('POST')
+        await syncToCalendar('PATCH')
 
         // 処理成功後、prevRef を更新
         prevRef.current = {

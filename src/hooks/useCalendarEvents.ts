@@ -159,6 +159,8 @@ export type CalendarEventDetailUpdate = {
   googleEventId?: string;
   /** New/current calendar id after an edit. Also scopes matching when unchanged. */
   calendarId?: string;
+  /** Calendar id before an edit, used when the event is moved to another calendar. */
+  previousCalendarId?: string;
   taskId?: string | null;
   title?: string;
   startTime?: string;
@@ -695,7 +697,13 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       commitEvents(prev => prev.map(calendarEvent => {
         const matches =
           calendarEvent.id === detail.eventId ||
-          (!!detail.googleEventId && calendarEvent.google_event_id === detail.googleEventId && (!detail.calendarId || calendarEvent.calendar_id === detail.calendarId));
+          (!!detail.googleEventId &&
+            calendarEvent.google_event_id === detail.googleEventId &&
+            (
+              !detail.calendarId ||
+              calendarEvent.calendar_id === detail.calendarId ||
+              calendarEvent.calendar_id === detail.previousCalendarId
+            ));
         if (!matches) return calendarEvent;
         return {
           ...calendarEvent,

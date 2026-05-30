@@ -22,7 +22,7 @@ interface MobileEventEditModalProps {
     isOpen: boolean
     onClose: () => void
     onSaveTask: (taskId: string, updates: { title?: string; scheduled_at?: string; estimated_time?: number; calendar_id?: string; memo?: string | null; reminders?: number[] }) => Promise<void>
-    onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; reminders?: number[]; description?: string }) => Promise<void>
+    onSaveEvent: (eventId: string, updates: { title: string; start_time: string; end_time: string; googleEventId: string; calendarId: string; originalCalendarId?: string; reminders?: number[]; description?: string }) => Promise<void>
     onDeleteTask?: (taskId: string) => void | Promise<void>
     onDeleteEvent?: (eventId: string, googleEventId: string, calendarId: string) => void | Promise<void>
     availableCalendars: { id: string; name: string; background_color?: string }[]
@@ -245,6 +245,7 @@ export function MobileEventEditModal({
                 end_time: newEnd.toISOString(),
                 googleEventId: target.googleEventId || '',
                 calendarId: calendarId || target.calendarId || '',
+                originalCalendarId: target.calendarId || undefined,
                 reminders: reminder >= 0 ? [reminder] : [],
                 description: eventDescription,
             }).catch(err => {

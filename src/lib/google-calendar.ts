@@ -1,8 +1,18 @@
-import { google } from 'googleapis';
+import { calendar_v3, google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
-import { CalendarEvent, GoogleCalendarEvent } from '@/types/calendar';
+import { CalendarEvent } from '@/types/calendar';
 import { resolveGoogleRedirectUriFromEnv } from '@/lib/google-oauth';
 import type { SupabaseClient } from '@supabase/supabase-js';
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function isPopupReminder(
+  reminder: calendar_v3.Schema$EventReminder
+): reminder is calendar_v3.Schema$EventReminder & { method: 'popup'; minutes: number } {
+  return reminder.method === 'popup' && typeof reminder.minutes === 'number';
+}
 
 /**
  * Google Calendar APIクライアントを取得
@@ -101,8 +111,8 @@ export async function getCalendarClient(userId: string, injectedClient?: Supabas
       const { credentials } = await oauth2Client.refreshAccessToken();
       oauth2Client.setCredentials(credentials);
       console.log('[getCalendarClient] Token refreshed successfully for user:', userId);
-    } catch (refreshError: any) {
-      const errorMessage = refreshError?.message || String(refreshError);
+    } catch (refreshError: unknown) {
+      const errorMessage = getErrorMessage(refreshError, String(refreshError));
       console.error('[getCalendarClient] Token refresh failed:', {
         userId,
         error: errorMessage,
@@ -162,7 +172,7 @@ export function taskToCalendarEvent(
     ? task.reminders.map(minutes => ({ method: 'popup' as const, minutes }))
     : [{ method: 'popup' as const, minutes: 0 }];
 
-  const event: any = {
+  const event: calendar_v3.Schema$Event = {
     summary: task.title,
     start: {
       dateTime: startDate.toISOString(),
@@ -206,6 +216,7 @@ export async function syncTaskToCalendar(
     estimated_time: number;
     google_event_id?: string | null;
     calendar_id?: string | null;
+    source_calendar_id?: string | null;
     memo?: string | null;
     reminders?: number[];
   },
@@ -222,6 +233,7 @@ export async function syncTaskToCalendar(
 
   // calendar_id が設定されていればそれを使用、なければデフォルト
   const calendarId = task.calendar_id || settings?.default_calendar_id || 'primary';
+  const sourceCalendarId = task.source_calendar_id || calendarId;
 
   try {
     // taskId を Extended Properties に含める
@@ -230,13 +242,34 @@ export async function syncTaskToCalendar(
     let googleEventId: string;
 
     if (task.google_event_id) {
-      // 既存イベントを更新
+      // 既存イベントを更新。カレンダー自体が変わっている場合は、先に Google 側で move する。
+      let targetGoogleEventId = task.google_event_id;
+      if (sourceCalendarId !== calendarId) {
+        const moveResponse = await calendar.events.move({
+          calendarId: sourceCalendarId,
+          eventId: task.google_event_id,
+          destination: calendarId,
+        });
+        targetGoogleEventId = moveResponse.data.id || task.google_event_id;
+      }
+
       const response = await calendar.events.update({
         calendarId,
-        eventId: task.google_event_id,
+        eventId: targetGoogleEventId,
         requestBody: event,
       });
       googleEventId = response.data.id!;
+
+      if (googleEventId !== task.google_event_id || sourceCalendarId !== calendarId) {
+        const { error: saveError } = await supabase
+          .from('tasks')
+          .update({ google_event_id: googleEventId, calendar_id: calendarId })
+          .eq('id', taskId)
+          .eq('user_id', userId);
+        if (saveError) {
+          throw new Error(`Failed to save moved google_event_id: ${saveError.message}`);
+        }
+      }
     } else {
       // べき等性チェック: Extended Properties で既存イベントを検索（リトライ時の重複防止）
       let existingEventId: string | null = null;
@@ -304,7 +337,8 @@ export async function syncTaskToCalendar(
     });
 
     return { success: true, googleEventId };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, 'Failed to sync task to calendar');
     // エラーログを記録
     await supabase.from('calendar_sync_log').insert({
       user_id: userId,
@@ -313,7 +347,7 @@ export async function syncTaskToCalendar(
       action: task.google_event_id ? 'update' : 'create',
       direction: 'to_calendar',
       status: 'error',
-      error_message: error.message,
+      error_message: errorMessage,
     });
 
     throw error;
@@ -360,7 +394,8 @@ export async function deleteTaskFromCalendar(
     });
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, 'Failed to delete task from calendar');
     // エラーログを記録
     await supabase.from('calendar_sync_log').insert({
       user_id: userId,
@@ -369,7 +404,7 @@ export async function deleteTaskFromCalendar(
       action: 'delete',
       direction: 'to_calendar',
       status: 'error',
-      error_message: error.message,
+      error_message: errorMessage,
     });
 
     throw error;
@@ -396,8 +431,8 @@ export async function fetchCalendarEvents(
     try {
       const calendarInfo = await calendar.calendarList.get({ calendarId });
       calendarDefaultReminders = (calendarInfo.data.defaultReminders || [])
-        .filter((r: any) => r.method === 'popup')
-        .map((r: any) => r.minutes as number);
+        .filter(isPopupReminder)
+        .map(r => r.minutes);
     } catch (calendarInfoError) {
       console.warn('[fetchCalendarEvents] Failed to fetch calendar default reminders:', {
         calendarId,
@@ -423,8 +458,8 @@ export async function fetchCalendarEvents(
 
       // リマインダー情報を抽出
       const reminderOverrides = (event.reminders?.overrides || [])
-        .filter((r: any) => r.method === 'popup')
-        .map((r: any) => r.minutes as number);
+        .filter(isPopupReminder)
+        .map(r => r.minutes);
 
       const usesCalendarDefault = event.reminders === undefined || event.reminders?.useDefault === true;
       const reminders: number[] = reminderOverrides.length > 0
@@ -458,9 +493,10 @@ export async function fetchCalendarEvents(
         reminders,
       };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, 'Failed to fetch calendar events');
     console.error('Failed to fetch calendar events:', error);
-    throw new Error(`Failed to fetch calendar events: ${error.message}`);
+    throw new Error(`Failed to fetch calendar events: ${errorMessage}`);
   }
 }
 
@@ -522,9 +558,10 @@ export async function fetchUserCalendars(
         googleUpdatedAt: undefined
       };
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, 'Failed to fetch calendars');
     console.error('Failed to fetch calendars:', error);
-    throw new Error(`Failed to fetch calendars: ${error.message}`);
+    throw new Error(`Failed to fetch calendars: ${errorMessage}`);
   }
 }
 
