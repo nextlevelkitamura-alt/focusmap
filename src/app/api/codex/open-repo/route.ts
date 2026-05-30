@@ -9,6 +9,7 @@ import { createClient } from "@/utils/supabase/server"
 export const runtime = "nodejs"
 
 const execFileAsync = promisify(execFile)
+const BUNDLED_CODEX = "/Applications/Codex.app/Contents/Resources/codex"
 
 async function activateCodexApp(): Promise<boolean> {
   try {
@@ -123,7 +124,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    await execFileAsync("/usr/bin/open", ["-a", "Codex", resolvedRepoPath], {
+    if (!fs.existsSync(BUNDLED_CODEX)) {
+      return NextResponse.json(
+        { error: "Codex.app の CLI が見つかりません。/Applications/Codex.app を確認してください" },
+        { status: 500 },
+      )
+    }
+
+    await execFileAsync(BUNDLED_CODEX, ["app", resolvedRepoPath], {
       timeout: 10_000,
       windowsHide: true,
     })
@@ -136,5 +144,10 @@ export async function POST(req: NextRequest) {
 
   const activated = await activateCodexApp()
 
-  return NextResponse.json({ ok: true, repo_path: resolvedRepoPath, activated })
+  return NextResponse.json({
+    ok: true,
+    repo_path: resolvedRepoPath,
+    activated,
+    command: "codex app",
+  })
 }
