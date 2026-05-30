@@ -1152,31 +1152,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
         return result;
     }, [allTasksByIdForCodex, getAiTaskBySourceId]);
-    const canLaunchCodex = !!project?.repo_path;
-    const handleLaunchCodexNode = useCallback(async (taskId: string) => {
-        const task = allTasksByIdForCodex.get(taskId);
-        if (!task) throw new Error("タスクが見つかりません");
-        if (!project?.repo_path) throw new Error("プロジェクトにリポジトリパスが未設定です");
-
-        const prompt = (task.memo?.trim() || task.title || "このタスクを進めてください").trim();
-        const res = await fetch("/api/ai-tasks/schedule", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                prompt,
-                cwd: project.repo_path,
-                approval_type: "auto",
-                source_task_id: task.id,
-                scheduled_at: new Date().toISOString(),
-                executor: "codex_app",
-                space_id: project.space_id ?? null,
-            }),
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err?.error || `Codex送信に失敗しました (${res.status})`);
-        }
-    }, [allTasksByIdForCodex, project?.repo_path, project?.space_id]);
     const groupsJson = JSON.stringify(groups?.map(g => ({
         id: g?.id,
         title: g?.title,
@@ -2923,8 +2898,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                 onOpenLinkedMemos={onOpenLinkedMemos}
                 codexRunByNodeId={codexRunByNodeId}
-                canLaunchCodex={canLaunchCodex}
-                onLaunchCodexNode={handleLaunchCodexNode}
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
             />

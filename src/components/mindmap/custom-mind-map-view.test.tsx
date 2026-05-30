@@ -102,8 +102,6 @@ describe("CustomMindMapView keyboard operations", () => {
           label: "実行中",
         },
       },
-      canLaunchCodex: true,
-      onLaunchCodexNode: vi.fn(),
     })
 
     expect(screen.getByText("実行中1")).toBeInTheDocument()

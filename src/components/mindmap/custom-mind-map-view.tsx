@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, ChevronDown, ChevronRight, Loader2, Maximize2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, Maximize2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -43,8 +43,6 @@ type CustomMindMapViewProps = {
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
     codexRunByNodeId?: Record<string, CodexNodeState>;
-    canLaunchCodex?: boolean;
-    onLaunchCodexNode?: (taskId: string) => void | Promise<void>;
     onMoveTask?: (params: {
         taskId: string;
         targetId: string;
@@ -222,8 +220,6 @@ function CustomTaskNode({
     isMobile,
     onOpenLinkedMemos,
     codexState,
-    canLaunchCodex,
-    onLaunchCodex,
     onEditingChange,
     onRegisterEditController,
 }: {
@@ -251,8 +247,6 @@ function CustomTaskNode({
     isMobile: boolean;
     onOpenLinkedMemos?: (taskId: string) => void;
     codexState?: CodexNodeState | null;
-    canLaunchCodex?: boolean;
-    onLaunchCodex?: (taskId: string) => void | Promise<void>;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
 }) {
@@ -262,12 +256,9 @@ function CustomTaskNode({
     const handledTriggerEditRef = useRef<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
-    const [isLaunchingCodex, setIsLaunchingCodex] = useState(false);
-    const [launchError, setLaunchError] = useState<string | null>(null);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const scheduledLabel = formatDateShort(node.scheduledAt);
-    const hasCodexLaunch = !!onLaunchCodex;
-    const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode || hasCodexLaunch;
+    const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode;
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -476,21 +467,6 @@ function CustomTaskNode({
         target.addEventListener("pointercancel", cleanup);
     }, [isEditing, isMobile, node.id, node.width, onResize, resizeScale]);
 
-    const handleLaunchCodex = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!onLaunchCodex || !canLaunchCodex || codexState || isLaunchingCodex) return;
-        setLaunchError(null);
-        setIsLaunchingCodex(true);
-        try {
-            await onLaunchCodex(node.id);
-        } catch (error) {
-            setLaunchError(error instanceof Error ? error.message : "Codex送信に失敗しました");
-        } finally {
-            setIsLaunchingCodex(false);
-        }
-    }, [canLaunchCodex, codexState, isLaunchingCodex, node.id, onLaunchCodex]);
-
     return (
         <div
             ref={wrapperRef}
@@ -681,29 +657,6 @@ function CustomTaskNode({
                         <span className="rounded bg-muted px-1 leading-4">{scheduledLabel}</span>
                     )}
                     {node.hasMemo && <StickyNote className="h-3 w-3" />}
-                    {onLaunchCodex && !codexState && (
-                        <button
-                            type="button"
-                            disabled={!canLaunchCodex || isLaunchingCodex}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={handleLaunchCodex}
-                            className={cn(
-                                "inline-flex h-5 items-center gap-1 rounded border px-1 text-[10px] font-medium leading-none transition-colors",
-                                canLaunchCodex
-                                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-                                    : "cursor-not-allowed border-muted bg-muted/40 text-muted-foreground"
-                            )}
-                            title={canLaunchCodex ? "Codexに送信" : "プロジェクトにリポジトリパスを設定してください"}
-                        >
-                            {isLaunchingCodex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
-                            Codex
-                        </button>
-                    )}
-                </div>
-            )}
-            {launchError && (
-                <div className="pl-4 text-[10px] leading-4 text-red-600 dark:text-red-300">
-                    {launchError}
                 </div>
             )}
             {onResize && (
@@ -799,8 +752,6 @@ export function CustomMindMapView({
     onResizeNode,
     onOpenLinkedMemos,
     codexRunByNodeId = {},
-    canLaunchCodex = false,
-    onLaunchCodexNode,
     onMoveTask,
     onMoveTasks,
 }: CustomMindMapViewProps) {
@@ -1944,8 +1895,6 @@ export function CustomMindMapView({
                                 isMobile={isMobile}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
                                 codexState={codexRunByNodeId[node.id] ?? null}
-                                canLaunchCodex={canLaunchCodex}
-                                onLaunchCodex={onLaunchCodexNode}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
                             />

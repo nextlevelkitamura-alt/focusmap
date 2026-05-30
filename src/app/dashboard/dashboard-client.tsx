@@ -1523,14 +1523,11 @@ export function DashboardClient({
             )}
             <MindmapLinkedMemosDialog
                 target={mindmapLinkedMemoTarget}
+                projects={projects}
                 onOpenChange={(open) => {
                     if (!open) setMindmapLinkedMemoTarget(null)
                 }}
-                onOpenMemoHome={() => {
-                    setMindmapLinkedMemoTarget(null)
-                    setIsMemoSplitOpen(false)
-                    setActiveView('long-term')
-                }}
+                onTaskUpdated={handleUpdateTaskWithQuickSync}
             />
             </TimerProvider>
         </DragProvider>
