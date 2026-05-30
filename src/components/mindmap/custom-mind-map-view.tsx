@@ -554,6 +554,23 @@ function CustomTaskNode({
                     </div>
                 )}
 
+                {node.codexStatus && (
+                    <span
+                        className={cn(
+                            "shrink-0 rounded-full",
+                            node.codexStatus === "running" && "h-2 w-2 bg-amber-400 animate-pulse",
+                            node.codexStatus === "done" && "h-2 w-2 bg-emerald-500",
+                            node.codexStatus === "failed" && "h-2 w-2 bg-rose-500",
+                        )}
+                        title={
+                            node.codexStatus === "running" ? "Codex 作業中" :
+                            node.codexStatus === "done" ? "Codex 完了" :
+                            node.codexStatus === "failed" ? "Codex 失敗" : ""
+                        }
+                        aria-label={`Codex状態: ${node.codexStatus}`}
+                    />
+                )}
+
                 {isMemoNode && (
                     <button
                         type="button"

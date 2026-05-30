@@ -218,6 +218,8 @@ export interface Database {
                     node_width: number | null
                     // Codex relay（任意: 既存の楽観更新リテラルを壊さないため optional）
                     codex_work_dir?: string | null
+                    codex_thread_id?: string | null
+                    codex_status?: string | null
                 }
                 Insert: {
                     id?: string

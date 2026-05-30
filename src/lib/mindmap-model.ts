@@ -34,6 +34,8 @@ export type MindMapModelNode = {
     hasMemoImages: boolean;
     isHabit: boolean;
     parentIsHabit: boolean;
+    /** Codex relay の作業状態（'running'|'done'|'failed'|null）。顔の状態アイコン用 */
+    codexStatus: string | null;
 };
 
 export type MindMapModelEdge = {
@@ -172,6 +174,7 @@ export function buildMindMapModel({
         hasMemoImages: false,
         isHabit: false,
         parentIsHabit: false,
+        codexStatus: null,
     };
     nodes.push(projectNode);
 
@@ -222,6 +225,7 @@ export function buildMindMapModel({
             hasMemoImages: taskHasMemoImages,
             isHabit: task.is_habit ?? false,
             parentIsHabit: parentTask?.is_habit ?? false,
+            codexStatus: task.codex_status ?? null,
         };
         nodes.push(node);
         taskById.set(node.id, node);

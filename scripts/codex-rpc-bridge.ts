@@ -312,8 +312,24 @@ async function main() {
   try { fs.unlinkSync(logFile) } catch { /* ignore */ }
   fs.writeFileSync(logFile, '', 'utf-8')
 
+  // ノード(task)への状態書き戻し: ai_task に紐づく source_task_id を引く。
+  //   マインドマップの顔の Codex 状態アイコン(🟡作業中→🟢完了/🔴失敗)はこの tasks.codex_status を見る。
+  let sourceTaskId: string | null = null
+  try {
+    const { data: linkRow } = await supabase.from('ai_tasks').select('source_task_id').eq('id', taskId).maybeSingle()
+    sourceTaskId = (linkRow?.source_task_id as string | null) ?? null
+  } catch { /* ignore */ }
+  const updateNodeCodex = async (status: 'running' | 'done' | 'failed', threadId?: string) => {
+    if (!sourceTaskId) return
+    const patch: Record<string, unknown> = { codex_status: status }
+    if (threadId) patch.codex_thread_id = threadId
+    try { await supabase.from('tasks').update(patch).eq('id', sourceTaskId) } catch { /* ignore */ }
+  }
+  await updateNodeCodex('running')
+
   const overallTimer = setTimeout(async () => {
     await pushStep(supabase, taskId, makeStep('completed', `タイムアウト (${OVERALL_TIMEOUT_MS / 60_000}分)`, 'failed'))
+    await updateNodeCodex('failed')
     await supabase.from('ai_tasks').update({
       status: 'failed',
       error: `Codex 実行が ${OVERALL_TIMEOUT_MS / 60_000}分以内に完了しませんでした`,
@@ -392,6 +408,7 @@ async function main() {
           : `Thread 作成 (mobile/Codex.app に表示, id ${threadId.slice(0, 8)})`),
         { threadId })
       await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
+      await updateNodeCodex('running', threadId)
 
       await pushStep(supabase, taskId, makeStep('prompt_ready', `プロンプト準備完了 (${prompt.length}文字)`), {
         metadata: {
@@ -570,6 +587,7 @@ async function main() {
           status: outcome.status,
           error: null,
         }).eq('id', taskId)
+        await updateNodeCodex('done', threadId)
       } else {
         const errorText = `${outcome.error ?? `Codex turn ${completedStatus}`}: ${finalLog.slice(0, 500)}`
         await pushStep(supabase, taskId, makeStep('completed', outcome.label, 'failed'),
@@ -579,6 +597,7 @@ async function main() {
           error: errorText.slice(0, 1000),
           completed_at: new Date().toISOString(),
         }).eq('id', taskId)
+        await updateNodeCodex('failed', threadId)
       }
 
       ws.close()
@@ -593,6 +612,7 @@ async function main() {
         error: msg.slice(0, 1000),
         completed_at: new Date().toISOString(),
       }).eq('id', taskId)
+      await updateNodeCodex('failed')
       ws.close()
       clearTimeout(overallTimer)
       process.exit(1)

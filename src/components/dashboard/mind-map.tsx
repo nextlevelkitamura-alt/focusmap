@@ -1268,6 +1268,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     approval_type: 'auto',
                     scheduled_at: new Date().toISOString(),
                     executor: 'codex',
+                    source_task_id: taskId,
                 }),
             });
             if (!res.ok) {
