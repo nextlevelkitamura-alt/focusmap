@@ -229,7 +229,6 @@ export function MindmapLinkedMemosDialog({
   const codexChatEntries = codexConversation.entries
   const codexAssistantEntries = codexChatEntries.filter(entry => entry.kind === "request")
   const codexUserEntries = codexChatEntries.filter(entry => entry.kind === "user")
-  const codexEventEntries = codexChatEntries.filter(entry => entry.kind === "event")
   const codexProcessLogs = codexConversation.processLogs
   const hasCodexRun = (!!codexTask && isCodexTask) || !!justSentPrompt
   const codexCompleted = isCodexTask && codexTask?.status === "completed"
@@ -408,164 +407,124 @@ export function MindmapLinkedMemosDialog({
               {error}
             </div>
           ) : hasCodexRun ? (
-            <section className="space-y-4">
-              {error && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {error}
+            <section className="flex min-h-[520px] flex-col overflow-hidden rounded-lg border bg-card">
+              <div className="sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Bot className="h-4 w-4 text-emerald-500" />
+                  <span className={codexStatusClass}>{codexStatusLabel}</span>
+                  <span className="text-xs text-muted-foreground">送信済み</span>
+                  {codexThreadId ? (
+                    <span className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={codexThreadId}>
+                      {codexThreadId}
+                    </span>
+                  ) : (
+                    <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                      thread作成中
+                    </span>
+                  )}
+                  <span className="text-xs text-muted-foreground">ログ {codexProcessLogs.length}</span>
+                  <span className="text-xs text-muted-foreground">出力 {codexAssistantEntries.length}</span>
+                  {codexUserEntries.length > 0 && (
+                    <span className="text-xs text-muted-foreground">追加入力 {codexUserEntries.length}</span>
+                  )}
                 </div>
-              )}
-
-              <div className="rounded-lg border bg-card">
-                <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <Bot className="h-4 w-4 text-emerald-500" />
-                    <span className={codexStatusClass}>{codexStatusLabel}</span>
-                    <span className="text-xs text-muted-foreground">送信済み</span>
-                    {codexThreadId ? (
-                      <span className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={codexThreadId}>
-                        {codexThreadId}
-                      </span>
-                    ) : (
-                      <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                        thread作成中
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void refreshAiTasks()}
-                      className="h-8 gap-1.5"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      ログ更新
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleOpenCodexThread}
-                      disabled={!codexThreadUrl}
-                      className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Codexで開く
-                    </Button>
-                  </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void refreshAiTasks()}
+                    className="h-8 gap-1.5"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    ログ更新
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleOpenCodexThread}
+                    disabled={!codexThreadUrl}
+                    className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Codexで開く
+                  </Button>
                 </div>
+              </div>
 
-                <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-                  <div className="min-w-0 space-y-3">
-                    <div className="rounded-md border bg-background px-3 py-3 text-sm leading-7">
-                      <div className="mb-1 text-xs font-medium text-muted-foreground">Codexで返信・確認</div>
-                      <div className="text-muted-foreground">
-                        このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。
-                      </div>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+                {error && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {error}
+                  </div>
+                )}
+
+                <div className="flex justify-start">
+                  <div className="max-w-[78%] rounded-2xl border bg-background px-4 py-3 text-sm leading-7 shadow-sm">
+                    <div className="mb-1 text-xs font-medium text-muted-foreground">Codexで返信・確認</div>
+                    <div className="text-muted-foreground">
+                      このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。
                     </div>
+                  </div>
+                </div>
 
-                    {sentPrompt && (
-                      <details className="rounded-lg border bg-muted/10 text-xs">
-                        <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
-                          送信内容
-                        </summary>
-                        <div className="border-t px-3 py-3">
-                          <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-3 py-2 leading-5 text-foreground">
-                            {sentPrompt}
-                          </div>
+                {sentPrompt && (
+                  <div className="flex justify-end">
+                    <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
+                      <div className="mb-1 text-xs font-medium text-muted-foreground">送信済み</div>
+                      <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words">{sentPrompt}</div>
+                    </div>
+                  </div>
+                )}
+
+                <details className="mx-auto w-full max-w-[82%] rounded-lg border bg-muted/10 text-xs">
+                  <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
+                    同期ログ {codexProcessLogs.length}
+                  </summary>
+                  <div className="space-y-2 border-t px-3 py-3">
+                    {codexProcessLogs.length > 0 ? (
+                      codexProcessLogs.map((log, index) => (
+                        <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
+                          {log}
                         </div>
-                      </details>
-                    )}
-
-                    <details className="rounded-lg border bg-muted/10 text-xs">
-                      <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
-                        同期ログ {codexProcessLogs.length}
-                      </summary>
-                      <div className="space-y-2 border-t px-3 py-3">
-                        {codexProcessLogs.length > 0 ? (
-                          codexProcessLogs.map((log, index) => (
-                            <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
-                              {log}
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
-                            まだログは同期されていません
-                          </div>
-                        )}
+                      ))
+                    ) : (
+                      <div className="rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
+                        まだログは同期されていません
                       </div>
-                    </details>
-
-                    <details className="rounded-lg border bg-muted/10 text-xs">
-                      <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
-                        Codex出力の同期 {codexAssistantEntries.length}
-                      </summary>
-                      <div className="space-y-2 border-t px-3 py-3">
-                        {codexAssistantEntries.length > 0 ? (
-                          codexAssistantEntries.map((entry, index) => (
-                            <div key={`${index}-${entry.text.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-6 text-foreground">
-                              {entry.text}
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
-                            Codex.app側の出力は未同期です
-                          </div>
-                        )}
-                      </div>
-                    </details>
-
-                    {codexUserEntries.length > 0 && (
-                      <details className="rounded-lg border bg-muted/10 text-xs">
-                        <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
-                          Codex側の追加入力 {codexUserEntries.length}
-                        </summary>
-                        <div className="space-y-2 border-t px-3 py-3">
-                          {codexUserEntries.map((entry, index) => (
-                            <div key={`${index}-${entry.text.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-foreground">
-                              {entry.text}
-                            </div>
-                          ))}
-                        </div>
-                      </details>
                     )}
                   </div>
+                </details>
 
-                  <aside className="space-y-3 rounded-lg border bg-muted/10 px-3 py-3 text-xs">
-                    <div className="font-medium text-muted-foreground">同期状態</div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">スレッド</span>
-                        <span className="max-w-[11rem] truncate font-mono text-foreground" title={codexThreadId || undefined}>
-                          {codexThreadId || "作成中"}
+                {codexChatEntries.length > 0 ? (
+                  codexChatEntries.map((entry, index) => (
+                    entry.kind === "event" ? (
+                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-center">
+                        <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+                          {entry.text}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">状態</span>
-                        <span className="text-foreground">{codexStatusLabel}</span>
+                    ) : entry.kind === "user" ? (
+                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-end">
+                        <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
+                          <div className="mb-1 text-xs font-medium text-muted-foreground">Codex側で送信</div>
+                          <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words">{entry.text}</div>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">ログ</span>
-                        <span className="text-foreground">{codexProcessLogs.length}</span>
+                    ) : (
+                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-start">
+                        <div className="max-w-[78%] rounded-2xl border border-amber-500/25 bg-background px-4 py-3 text-sm leading-7 shadow-sm">
+                          <div className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">Codex出力（同期）</div>
+                          <div className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words">{entry.text}</div>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">出力</span>
-                        <span className="text-foreground">{codexAssistantEntries.length}</span>
-                      </div>
-                    </div>
-
-                    {codexEventEntries.length > 0 && (
-                      <div className="space-y-2 border-t pt-3">
-                        <div className="font-medium text-muted-foreground">イベント</div>
-                        {codexEventEntries.map((entry, index) => (
-                          <div key={`${index}-${entry.text.slice(0, 20)}`} className="rounded-md bg-background px-2 py-1.5 leading-5 text-muted-foreground">
-                            {entry.text}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </aside>
-                </div>
+                    )
+                  ))
+                ) : (
+                  <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
+                    Codex.app側の出力は未同期です
+                  </div>
+                )}
               </div>
             </section>
           ) : (
