@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState, useEffect, useMemo, useCallback } from "react"
-import { Task, Project, IdealGoalWithItems } from "@/types/database"
+import { useRef, useState, useCallback } from "react"
+import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
     LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2
@@ -19,9 +19,7 @@ import { type QuickTaskData } from "@/components/today/quick-task-fab"
 import { PanelQuickTaskForm } from "@/components/dashboard/panel-quick-task-form"
 import { DesktopPanelFab } from "@/components/dashboard/desktop-panel-fab"
 import { useTrackpadNavigation } from "@/hooks/useTrackpadNavigation"
-import { useIdealTracking } from "@/hooks/useIdealTracking"
 import { useClickOutside } from "@/hooks/useClickOutside"
-import { Star } from "lucide-react"
 
 // --- Types ---
 
@@ -131,42 +129,6 @@ export function DesktopTodayPanel({
         onNavigateLeft: goToNextDay,
         onNavigateRight: goToPrevDay,
     })
-
-    // 理想像データ取得
-    const [ideals, setIdeals] = useState<IdealGoalWithItems[]>([])
-    const [habitIdealMap, setHabitIdealMap] = useState<Map<string, string>>(new Map())
-    useEffect(() => {
-        fetch('/api/ideals')
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (!data?.ideals) return
-                const allIdeals = data.ideals as IdealGoalWithItems[]
-                setIdeals(allIdeals)
-                const map = new Map<string, string>()
-                for (const ideal of allIdeals) {
-                    for (const item of ideal.ideal_items ?? []) {
-                        if (item.linked_habit_id) {
-                            map.set(item.linked_habit_id, ideal.title)
-                        }
-                    }
-                }
-                setHabitIdealMap(map)
-            })
-            .catch(() => {})
-    }, [])
-
-    // 理想進捗トラッキング
-    const todayStr = format(new Date(), 'yyyy-MM-dd')
-    const idealDateRange = useMemo(() => ({ from: todayStr, to: todayStr }), [todayStr])
-    const { todaySummary, toggleItemCompletion, refresh: refreshIdealTracking } = useIdealTracking(ideals, idealDateRange)
-
-    // 習慣完了時に理想進捗もリフレッシュ
-    const originalToggleCompletion = toggleCompletion
-    const wrappedToggleCompletion = useCallback(async (habitId: string) => {
-        await originalToggleCompletion(habitId)
-        // 少し待ってからリフレッシュ（DB反映を待つ）
-        setTimeout(() => refreshIdealTracking(), 500)
-    }, [originalToggleCompletion, refreshIdealTracking])
 
     const defaultQuickCreateCalendarId =
         calendars.find(c =>
@@ -332,7 +294,7 @@ export function DesktopTodayPanel({
                                                 setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
                                                 return
                                             }
-                                            if (isToday) wrappedToggleCompletion(item.habit.id)
+                                            if (isToday) toggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
                                             "flex items-center gap-1 px-2 py-1 rounded-full transition-all flex-shrink-0 border text-[11px]",
@@ -356,11 +318,6 @@ export function DesktopTodayPanel({
                                             )}>
                                                 {item.habit.title}
                                             </span>
-                                            {habitIdealMap.get(item.habit.id) && (
-                                                <span className="text-[8px] text-amber-600 dark:text-amber-400 whitespace-nowrap">
-                                                    {habitIdealMap.get(item.habit.id)}
-                                                </span>
-                                            )}
                                         </span>
                                         {hasChildren && (
                                             <span className="text-muted-foreground flex-shrink-0">
@@ -476,58 +433,7 @@ export function DesktopTodayPanel({
                 </div>
             ) : null}
 
-            {/* ④ 理想の今日の進捗 */}
-            {todaySummary && todaySummary.totalCount > 0 && (
-                <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-3 py-1.5">
-                    <div className="flex items-center gap-1.5 mb-1">
-                        <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />
-                        <span className="text-[10px] font-medium text-muted-foreground flex-1">
-                            理想の進捗
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                            {todaySummary.completedCount}/{todaySummary.totalCount}
-                        </span>
-                    </div>
-                    {/* アイテム単位のチェックリスト */}
-                    <div className="space-y-0.5">
-                        {todaySummary.items.map(item => {
-                            const isCompleted = item.completionStatus === 'completed'
-                            const isHabitSource = item.source === 'habit'
-                            return (
-                                <button
-                                    key={item.idealItem.id}
-                                    onClick={() => {
-                                        if (!isHabitSource) {
-                                            toggleItemCompletion(item.idealItem.id, todayStr)
-                                        }
-                                    }}
-                                    disabled={isHabitSource}
-                                    className={cn(
-                                        "w-full flex items-center gap-1.5 py-0.5 rounded transition-colors text-left",
-                                        !isHabitSource && "hover:bg-muted/40 active:bg-muted/60"
-                                    )}
-                                >
-                                    {isCompleted
-                                        ? <CheckSquare className="w-3 h-3 text-amber-500 flex-shrink-0" />
-                                        : <Square className="w-3 h-3 text-muted-foreground/40 flex-shrink-0" />
-                                    }
-                                    <span className={cn(
-                                        "text-[11px] flex-1 truncate",
-                                        isCompleted && "line-through text-muted-foreground"
-                                    )}>
-                                        {item.idealItem.title}
-                                    </span>
-                                    <span className="text-[9px] text-muted-foreground/50 flex-shrink-0">
-                                        {item.idealGoalTitle}
-                                    </span>
-                                </button>
-                            )
-                        })}
-                    </div>
-                </div>
-            )}
-
-            {/* ⑤ Timeline content */}
+            {/* Timeline content */}
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
                 {/* Schedule summary */}
                 <div className="flex-shrink-0 px-3 py-1 border-b border-border/20">

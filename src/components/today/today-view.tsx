@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState, useEffect, useMemo, useCallback } from "react"
-import { Task, Project, IdealGoalWithItems } from "@/types/database"
+import { useRef, useState } from "react"
+import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
     LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, Inbox, Trash2
@@ -17,9 +17,6 @@ import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
 import { formatTime } from "@/contexts/TimerContext"
-import { useIdealTracking } from "@/hooks/useIdealTracking"
-import { Star } from "lucide-react"
-import { useView } from "@/contexts/ViewContext"
 
 // --- Types ---
 
@@ -38,7 +35,6 @@ interface TodayViewProps {
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const [activeTab, setActiveTab] = useState<'today' | 'inbox'>('today')
-    const { setActiveView } = useView()
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -47,41 +43,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onCreateSubTask,
         onDeleteTask,
     })
-
-    // 理想像データ取得
-    const [ideals, setIdeals] = useState<IdealGoalWithItems[]>([])
-    const [habitIdealMap, setHabitIdealMap] = useState<Map<string, string>>(new Map())
-    useEffect(() => {
-        fetch('/api/ideals')
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (!data?.ideals) return
-                const allIdeals = data.ideals as IdealGoalWithItems[]
-                setIdeals(allIdeals)
-                const map = new Map<string, string>()
-                for (const allIdeal of allIdeals) {
-                    for (const item of allIdeal.ideal_items ?? []) {
-                        if (item.linked_habit_id) {
-                            map.set(item.linked_habit_id, allIdeal.title)
-                        }
-                    }
-                }
-                setHabitIdealMap(map)
-            })
-            .catch(() => {})
-    }, [])
-
-    // 理想進捗トラッキング
-    const todayStr = format(new Date(), 'yyyy-MM-dd')
-    const idealDateRange = useMemo(() => ({ from: todayStr, to: todayStr }), [todayStr])
-    const { todaySummary, toggleItemCompletion, refresh: refreshIdealTracking } = useIdealTracking(ideals, idealDateRange)
-
-    // 習慣完了時に理想進捗もリフレッシュ
-    const originalToggleCompletion = logic.toggleCompletion
-    const wrappedToggleCompletion = useCallback(async (habitId: string) => {
-        await originalToggleCompletion(habitId)
-        setTimeout(() => refreshIdealTracking(), 500)
-    }, [originalToggleCompletion, refreshIdealTracking])
+    const { scrollPositionRef } = logic
 
     // Swipe left/right to change date
     useSwipeNavigation({
@@ -286,7 +248,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                                 logic.setExpandedHabitId(prev => prev === item.habit.id ? null : item.habit.id)
                                                 return
                                             }
-                                            if (logic.isToday) wrappedToggleCompletion(item.habit.id)
+                                            if (logic.isToday) logic.toggleCompletion(item.habit.id)
                                         }}
                                         className={cn(
                                             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full transition-all flex-shrink-0 border",
@@ -313,11 +275,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                             )}>
                                                 {item.habit.title}
                                             </span>
-                                            {habitIdealMap.get(item.habit.id) && (
-                                                <span className="text-[8px] text-amber-600 dark:text-amber-400 whitespace-nowrap">
-                                                    {habitIdealMap.get(item.habit.id)}
-                                                </span>
-                                            )}
                                         </span>
                                         {hasChildren && (
                                             <span className="text-[10px] text-muted-foreground flex-shrink-0">
@@ -438,55 +395,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                 </div>
             ) : null}
 
-            {/* 今日のアクション（習慣連携以外の理想アイテム） */}
-            {activeTab === 'today' && todaySummary && todaySummary.items.some(i => i.source !== 'habit') && (
-                <div className="flex-shrink-0 border-b border-border/30 bg-background/40 px-4 py-1.5">
-                    <div className="flex items-center gap-1.5 mb-1">
-                        <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />
-                        <span className="text-[10px] font-medium text-muted-foreground flex-1">
-                            今日のアクション
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                            {todaySummary.completedCount}/{todaySummary.totalCount}
-                        </span>
-                    </div>
-                    {/* アイテム単位のチェックリスト */}
-                    <div className="space-y-0.5">
-                        {todaySummary.items.filter(item => item.source !== 'habit').map(item => {
-                            const isCompleted = item.completionStatus === 'completed'
-                            return (
-                                <div
-                                    key={item.idealItem.id}
-                                    className="w-full flex items-center gap-1.5 py-2 rounded transition-colors"
-                                >
-                                    <button
-                                        onClick={() => toggleItemCompletion(item.idealItem.id, todayStr)}
-                                        className="flex items-center gap-1.5 flex-1 min-w-0 hover:bg-muted/40 active:bg-muted/60 rounded py-0.5 px-0.5 text-left"
-                                    >
-                                        {isCompleted
-                                            ? <CheckSquare className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                                            : <Square className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
-                                        }
-                                        <span className={cn(
-                                            "text-xs flex-1 truncate",
-                                            isCompleted && "line-through text-muted-foreground"
-                                        )}>
-                                            {item.idealItem.title}
-                                        </span>
-                                    </button>
-                                    <button
-                                        onClick={() => setActiveView('ideal')}
-                                        className="text-[9px] text-muted-foreground/50 flex-shrink-0 hover:text-amber-500 active:text-amber-600 transition-colors py-0.5 px-1 rounded"
-                                    >
-                                        {item.idealGoalTitle}
-                                    </button>
-                                </div>
-                            )
-                        })}
-                    </div>
-                </div>
-            )}
-
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
                 {activeTab === 'inbox' ? (
@@ -605,8 +513,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             onCreateSubTask={logic.onCreateSubTask}
                             onDeleteSubTask={logic.handleDeleteTask}
                             projectNameMap={logic.projectNameMap}
-                            initialScrollTop={logic.scrollPositionRef.current}
-                            onScrollPositionChange={(pos) => { logic.scrollPositionRef.current = pos }}
+                            initialScrollTop={scrollPositionRef.current}
+                            onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
                             onQuickCreateTask={onCreateQuickTask}
                             defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                             selectedDate={logic.selectedDate}
