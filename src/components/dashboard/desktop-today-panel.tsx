@@ -27,6 +27,7 @@ interface DesktopTodayPanelProps {
     allTasks: Task[]
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
     projects?: Project[]
+    selectedProjectId?: string | null
     onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
@@ -42,6 +43,7 @@ export function DesktopTodayPanel({
     allTasks,
     onUpdateTask,
     projects = [],
+    selectedProjectId = null,
     onCreateQuickTask,
     onCreateSubTask,
     onDeleteTask,
@@ -65,6 +67,7 @@ export function DesktopTodayPanel({
         allTasks,
         onUpdateTask,
         projects,
+        selectedProjectId,
         onCreateSubTask,
         onDeleteTask,
     })
@@ -117,6 +120,8 @@ export function DesktopTodayPanel({
         toggleCompletion,
         toggleEventCompletion,
         toggleTask,
+        handleConvertEventToMemo,
+        handleConvertCalendarPayloadToMemo,
         writableCalendars,
     } = logic
 
@@ -487,6 +492,8 @@ export function DesktopTodayPanel({
                         childTasksMap={childTasksMap}
                         onCreateSubTask={logicOnCreateSubTask}
                         onDeleteSubTask={handleDeleteTask}
+                        onCreateMemoFromEvent={handleConvertEventToMemo}
+                        onCreateMemoFromCalendarPayload={handleConvertCalendarPayloadToMemo}
                         projectNameMap={projectNameMap}
                         // eslint-disable-next-line react-hooks/refs
                         initialScrollTop={scrollPositionRef.current}

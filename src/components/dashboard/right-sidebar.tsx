@@ -20,6 +20,7 @@ interface RightSidebarProps {
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     tasks?: Task[]
     projects?: Project[]
+    selectedProjectId?: string | null
     onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>

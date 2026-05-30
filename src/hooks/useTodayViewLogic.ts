@@ -19,6 +19,16 @@ import { isSameDay, format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { useTodayDateContext } from "@/contexts/TodayDateContext"
 import { dedupeGoogleEventTasks } from "@/lib/google-event-task-dedupe"
+import { WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
+import { invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
+import {
+    CALENDAR_EVENT_TO_MEMO_CONVERTED_EVENT,
+    buildCalendarEventMemoPayload,
+    broadcastCalendarEventToMemoConverted,
+    type CalendarEventMemoPayload,
+    confirmCalendarEventMemoDeleteScope,
+    convertCalendarEventToMemo,
+} from "@/lib/calendar-event-to-memo"
 
 // --- Types ---
 
@@ -26,6 +36,7 @@ export interface UseTodayViewLogicOptions {
     allTasks: Task[]
     onUpdateTask: (taskId: string, updates: Partial<Task>) => Promise<void>
     projects?: Project[]
+    selectedProjectId?: string | null
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
 }
@@ -50,6 +61,7 @@ export function useTodayViewLogic({
     allTasks,
     onUpdateTask,
     projects = [],
+    selectedProjectId = null,
     onCreateSubTask: onCreateSubTaskProp,
     onDeleteTask: onDeleteTaskProp,
 }: UseTodayViewLogicOptions) {
@@ -263,6 +275,7 @@ export function useTodayViewLogic({
                     ...(detail.title !== undefined ? { title: detail.title } : {}),
                     ...(detail.startTime !== undefined ? { start_time: detail.startTime } : {}),
                     ...(detail.endTime !== undefined ? { end_time: detail.endTime } : {}),
+                    ...(detail.calendarId !== undefined ? { calendar_id: detail.calendarId } : {}),
                     ...(detail.reminders !== undefined ? { reminders: detail.reminders } : {}),
                     ...(detail.description !== undefined ? { description: detail.description } : {}),
                 }
@@ -340,6 +353,7 @@ export function useTodayViewLogic({
                     title: updates.title,
                     start_time: updates.start_time,
                     end_time: updates.end_time,
+                    calendar_id: updates.calendarId || e.calendar_id,
                     reminders: updates.reminders,
                     ...(updates.description !== undefined ? { description: updates.description } : {}),
                 }
@@ -1030,6 +1044,7 @@ export function useTodayViewLogic({
                     title: updates.title,
                     start_time: updates.start_time,
                     end_time: updates.end_time,
+                    calendar_id: updates.calendarId || e.calendar_id,
                     reminders: updates.reminders,
                     ...(updates.description !== undefined ? { description: updates.description } : {}),
                 }
@@ -1306,6 +1321,73 @@ export function useTodayViewLogic({
         const task = await handleConvertEventToTask(event)
         if (task) setPendingExpandTaskId(task.id)
     }, [handleConvertEventToTask])
+
+    const applyCalendarEventToMemoOptimism = useCallback((payload: CalendarEventMemoPayload) => {
+        const now = new Date().toISOString()
+        setLocalCalendarEvents(prev => prev.filter(candidate =>
+            candidate.id !== payload.eventId &&
+            !(candidate.google_event_id === payload.googleEventId && candidate.calendar_id === payload.calendarId)
+        ))
+        setLocalTasks(prev => prev.flatMap(task => {
+            if (task.google_event_id !== payload.googleEventId || task.calendar_id !== payload.calendarId) return [task]
+            if (task.source === 'google_event') return []
+            return [{
+                ...task,
+                scheduled_at: null,
+                google_event_id: null,
+                calendar_id: null,
+                updated_at: now,
+            }]
+        }))
+    }, [])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        const handler = (event: Event) => {
+            const payload = (event as CustomEvent<CalendarEventMemoPayload>).detail
+            if (!payload?.googleEventId || !payload.calendarId) return
+            applyCalendarEventToMemoOptimism(payload)
+        }
+        window.addEventListener(CALENDAR_EVENT_TO_MEMO_CONVERTED_EVENT, handler)
+        return () => window.removeEventListener(CALENDAR_EVENT_TO_MEMO_CONVERTED_EVENT, handler)
+    }, [applyCalendarEventToMemoOptimism])
+
+    const handleConvertCalendarPayloadToMemo = useCallback(async (payload: CalendarEventMemoPayload) => {
+        const deleteScope = confirmCalendarEventMemoDeleteScope(payload)
+        if (!deleteScope) return
+
+        const previousEvents = localCalendarEvents
+        const previousTasks = localTasks
+        applyCalendarEventToMemoOptimism(payload)
+        broadcastCalendarOptimisticEventRemoval(payload.eventId, payload.googleEventId, payload.calendarId)
+
+        try {
+            await convertCalendarEventToMemo(payload, {
+                projectId: selectedProjectId,
+                deleteScope,
+            })
+
+            invalidateWishlistItemsCache()
+            invalidateCalendarCache()
+            broadcastCalendarSync()
+            broadcastCalendarEventToMemoConverted(payload)
+            window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT, {
+                detail: { source: "calendar-event-to-memo" },
+            }))
+        } catch (err) {
+            console.error("[useTodayViewLogic] handleConvertEventToMemo failed:", err)
+            setLocalCalendarEvents(previousEvents)
+            setLocalTasks(previousTasks)
+            broadcastCalendarSync()
+            alert(`メモ作成に失敗しました: ${err instanceof Error ? err.message : "不明なエラー"}`)
+        }
+    }, [applyCalendarEventToMemoOptimism, localCalendarEvents, localTasks, selectedProjectId])
+
+    const handleConvertEventToMemo = useCallback(async (event: CalendarEvent) => {
+        const payload = buildCalendarEventMemoPayload(event)
+        if (!payload) return
+        await handleConvertCalendarPayloadToMemo(payload)
+    }, [handleConvertCalendarPayloadToMemo])
 
     // Delete event
     // 削除する Google Calendar event に紐づく Focusmap タスク（source 不問）も同時に削除する。
@@ -1787,6 +1869,8 @@ export function useTodayViewLogic({
         handleConvertEventToTask,
         handleEventStartTimer,
         handleEventToggleExpand,
+        handleConvertEventToMemo,
+        handleConvertCalendarPayloadToMemo,
         pendingExpandTaskId,
         setPendingExpandTaskId,
     }

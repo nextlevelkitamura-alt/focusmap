@@ -5,6 +5,7 @@ import { CalendarDays, Loader2, Sparkles } from "lucide-react"
 import type { IdealGoalWithItems, Project } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import {
+  CALENDAR_EVENT_MEMO_DRAG_MIME,
   SCHEDULED_MEMO_DRAG_MIME,
   SCHEDULED_MEMO_INDEX_EVENT,
   WISHLIST_REFRESH_EVENT,
@@ -20,6 +21,12 @@ import {
 import { useCalendars } from "@/hooks/useCalendars"
 import { cn } from "@/lib/utils"
 import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
+import {
+  broadcastCalendarEventToMemoConverted,
+  confirmCalendarEventMemoDeleteScope,
+  convertCalendarEventToMemo,
+  type CalendarEventMemoPayload,
+} from "@/lib/calendar-event-to-memo"
 
 type ColumnKey = "today" | "unsorted" | "scheduled" | "mapped" | "completed"
 type MemoItem = IdealGoalWithItems & {
@@ -37,12 +44,15 @@ type ScheduledMemoDragPayload = {
   calendarId?: string
   title?: string
 }
+type CalendarEventMemoDragPayload = CalendarEventMemoPayload
 
 declare global {
   interface Window {
     __focusmapScheduledMemoIndex?: Record<string, ScheduledMemoIndexEntry>
     __focusmapScheduledMemoDrag?: ScheduledMemoDragPayload | null
     __focusmapScheduledMemoDropHandler?: (payload: ScheduledMemoDragPayload) => void | Promise<void>
+    __focusmapCalendarEventMemoDrag?: CalendarEventMemoDragPayload | null
+    __focusmapCalendarEventMemoDropHandler?: (payload: CalendarEventMemoDragPayload) => void | Promise<void>
   }
 }
 
@@ -177,6 +187,28 @@ function readScheduledMemoPayload(event: DragEvent<HTMLElement>): ScheduledMemoD
   return window.__focusmapScheduledMemoDrag ?? null
 }
 
+function readCalendarEventMemoPayload(event: DragEvent<HTMLElement>): CalendarEventMemoDragPayload | null {
+  const raw = event.dataTransfer.getData(CALENDAR_EVENT_MEMO_DRAG_MIME)
+  if (raw) {
+    try {
+      return JSON.parse(raw) as CalendarEventMemoDragPayload
+    } catch {
+      // Fall through to text/plain/window fallback.
+    }
+  }
+
+  const plain = event.dataTransfer.getData("text/plain")
+  if (plain.startsWith("__focusmap_calendar_event_memo__")) {
+    try {
+      return JSON.parse(plain.slice("__focusmap_calendar_event_memo__".length)) as CalendarEventMemoDragPayload
+    } catch {
+      // Fall through to window fallback.
+    }
+  }
+
+  return window.__focusmapCalendarEventMemoDrag ?? null
+}
+
 function dispatchWishlistRefresh() {
   window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT, {
     detail: { source: TODAY_MEMO_REFRESH_SOURCE },
@@ -211,6 +243,7 @@ function buildMemoCalendarEvent(item: MemoItem, calendarId: string, calendarColo
 interface TodayMemoBoardProps {
   projects: Project[]
   selectedSpaceId?: string | null
+  selectedProjectId?: string | null
   scheduleFocusMemoId?: string | null
   scheduleFocusRequestKey?: number | null
   onClearScheduleFocus?: () => void
@@ -226,6 +259,7 @@ interface TodayMemoBoardProps {
 export function TodayMemoBoard({
   projects,
   selectedSpaceId = null,
+  selectedProjectId = null,
   scheduleFocusMemoId = null,
   scheduleFocusRequestKey = null,
   onClearScheduleFocus,
@@ -241,9 +275,11 @@ export function TodayMemoBoard({
   const lastWheelMoveAtRef = useRef(0)
   const touchStartColumnIndexRef = useRef<number | null>(null)
   const touchStartXRef = useRef<number | null>(null)
+  const dropzoneRef = useRef<HTMLDivElement | null>(null)
   const { calendars } = useCalendars()
   const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(null)
   const [scheduledMemoDragOver, setScheduledMemoDragOver] = useState(false)
+  const [calendarEventMemoDragOver, setCalendarEventMemoDragOver] = useState(false)
   const [pendingMemoIds, setPendingMemoIds] = useState<Set<string>>(() => new Set())
 
   const projectById = useMemo(
@@ -278,7 +314,10 @@ export function TodayMemoBoard({
 
   const fetchItems = useCallback(async () => {
     try {
-      const nextItems = await fetchWishlistItems({ spaceId: selectedSpaceId })
+      const nextItems = await fetchWishlistItems({
+        spaceId: selectedSpaceId,
+        projectId: selectedProjectId,
+      })
       setItems(nextItems as MemoItem[])
       setError(null)
     } catch (e) {
@@ -286,7 +325,7 @@ export function TodayMemoBoard({
     } finally {
       setIsLoading(false)
     }
-  }, [selectedSpaceId])
+  }, [selectedProjectId, selectedSpaceId])
 
   useEffect(() => { void fetchItems() }, [fetchItems])
 
@@ -332,6 +371,8 @@ export function TodayMemoBoard({
     return () => {
       window.__focusmapScheduledMemoIndex = {}
       window.__focusmapScheduledMemoDrag = null
+      window.__focusmapCalendarEventMemoDrag = null
+      window.__focusmapCalendarEventMemoDropHandler = undefined
       window.dispatchEvent(new CustomEvent(SCHEDULED_MEMO_INDEX_EVENT, { detail: {} }))
     }
   }, [])
@@ -696,6 +737,11 @@ export function TodayMemoBoard({
       || !!window.__focusmapScheduledMemoDrag
   }, [])
 
+  const isCalendarEventMemoDragEvent = useCallback((event: DragEvent<HTMLElement>) => {
+    return Array.from(event.dataTransfer.types).includes(CALENDAR_EVENT_MEMO_DRAG_MIME)
+      || !!window.__focusmapCalendarEventMemoDrag
+  }, [])
+
   const findScheduledMemoItem = useCallback((payload: ScheduledMemoDragPayload | null) => {
     if (!payload) return null
     if (payload.memoId) {
@@ -709,39 +755,86 @@ export function TodayMemoBoard({
   }, [items])
 
   const handleScheduledMemoDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!isScheduledMemoDragEvent(event)) return
+    if (!isScheduledMemoDragEvent(event) && !isCalendarEventMemoDragEvent(event)) return
     event.preventDefault()
     event.dataTransfer.dropEffect = "move"
-    setScheduledMemoDragOver(true)
-  }, [isScheduledMemoDragEvent])
+    setScheduledMemoDragOver(isScheduledMemoDragEvent(event))
+    setCalendarEventMemoDragOver(isCalendarEventMemoDragEvent(event))
+  }, [isCalendarEventMemoDragEvent, isScheduledMemoDragEvent])
 
   const handleScheduledMemoDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
     setScheduledMemoDragOver(false)
+    setCalendarEventMemoDragOver(false)
   }, [])
 
+  const createMemoFromCalendarEvent = useCallback(async (payload: CalendarEventMemoDragPayload) => {
+    const deleteScope = confirmCalendarEventMemoDeleteScope(payload)
+    if (!deleteScope) return
+
+    const tempMemoId = `calendar-event-memo-${payload.googleEventId}-${Date.now()}`
+    setMemoPending(tempMemoId, true)
+    broadcastCalendarOptimisticEventRemoval(payload.eventId, payload.googleEventId, payload.calendarId)
+
+    try {
+      const data = await convertCalendarEventToMemo(payload, {
+        projectId: selectedProjectId,
+        deleteScope,
+      })
+
+      invalidateWishlistItemsCache()
+      invalidateCalendarCache()
+      if (data.item) {
+        setItems(curr => curr.some(item => item.id === data.item.id)
+          ? curr
+          : [data.item as MemoItem, ...curr])
+      }
+      scrollToColumn("unsorted")
+      broadcastCalendarSync()
+      broadcastCalendarEventToMemoConverted(payload)
+      dispatchWishlistRefresh()
+    } catch (e) {
+      broadcastCalendarSync()
+      setError(e instanceof Error ? e.message : "予定をメモにできませんでした")
+    } finally {
+      setMemoPending(tempMemoId, false)
+    }
+  }, [scrollToColumn, selectedProjectId, setMemoPending])
+
   const handleScheduledMemoDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!isScheduledMemoDragEvent(event)) return
+    if (!isScheduledMemoDragEvent(event) && !isCalendarEventMemoDragEvent(event)) return
     event.preventDefault()
-    const payload = readScheduledMemoPayload(event)
-    const item = findScheduledMemoItem(payload)
+    const calendarPayload = isCalendarEventMemoDragEvent(event)
+      ? readCalendarEventMemoPayload(event)
+      : null
+    const scheduledPayload = !calendarPayload && isScheduledMemoDragEvent(event)
+      ? readScheduledMemoPayload(event)
+      : null
     window.__focusmapScheduledMemoDrag = null
+    window.__focusmapCalendarEventMemoDrag = null
     setScheduledMemoDragOver(false)
+    setCalendarEventMemoDragOver(false)
+    if (calendarPayload) {
+      void createMemoFromCalendarEvent(calendarPayload)
+      return
+    }
+    const item = findScheduledMemoItem(scheduledPayload)
     if (!item) {
-      setError("メモに紐づく予定だけ戻せます")
+      setError("予定をメモにする情報を取得できませんでした")
       return
     }
     scrollToColumn("unsorted")
-    void handleUnscheduleMemo(item, payload?.calendarId)
-  }, [findScheduledMemoItem, handleUnscheduleMemo, isScheduledMemoDragEvent, scrollToColumn])
+    void handleUnscheduleMemo(item, scheduledPayload?.calendarId)
+  }, [createMemoFromCalendarEvent, findScheduledMemoItem, handleUnscheduleMemo, isCalendarEventMemoDragEvent, isScheduledMemoDragEvent, scrollToColumn])
 
   useLayoutEffect(() => {
     const handler = async (payload: ScheduledMemoDragPayload) => {
       const item = findScheduledMemoItem(payload)
       window.__focusmapScheduledMemoDrag = null
       setScheduledMemoDragOver(false)
+      setCalendarEventMemoDragOver(false)
       if (!item) {
-        setError("メモに紐づく予定だけ戻せます")
+        setError("予定をメモにする情報を取得できませんでした")
         return
       }
       scrollToColumn("unsorted")
@@ -754,6 +847,54 @@ export function TodayMemoBoard({
       }
     }
   }, [findScheduledMemoItem, handleUnscheduleMemo, scrollToColumn])
+
+  useLayoutEffect(() => {
+    const handler = async (payload: CalendarEventMemoDragPayload) => {
+      window.__focusmapCalendarEventMemoDrag = null
+      setScheduledMemoDragOver(false)
+      setCalendarEventMemoDragOver(false)
+      await createMemoFromCalendarEvent(payload)
+    }
+    window.__focusmapCalendarEventMemoDropHandler = handler
+    return () => {
+      if (window.__focusmapCalendarEventMemoDropHandler === handler) {
+        window.__focusmapCalendarEventMemoDropHandler = undefined
+      }
+    }
+  }, [createMemoFromCalendarEvent])
+
+  useEffect(() => {
+    const handlePointerMove = (event: MouseEvent) => {
+      const hasScheduledPayload = !!window.__focusmapScheduledMemoDrag
+      const hasCalendarPayload = !!window.__focusmapCalendarEventMemoDrag
+      if (!hasScheduledPayload && !hasCalendarPayload) {
+        setScheduledMemoDragOver(false)
+        setCalendarEventMemoDragOver(false)
+        return
+      }
+
+      const rect = dropzoneRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const isInside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+
+      setScheduledMemoDragOver(isInside && hasScheduledPayload)
+      setCalendarEventMemoDragOver(isInside && hasCalendarPayload)
+    }
+    const clear = () => {
+      setScheduledMemoDragOver(false)
+      setCalendarEventMemoDragOver(false)
+    }
+    window.addEventListener("mousemove", handlePointerMove)
+    window.addEventListener("mouseup", clear)
+    return () => {
+      window.removeEventListener("mousemove", handlePointerMove)
+      window.removeEventListener("mouseup", clear)
+    }
+  }, [])
 
   if (isLoading) {
     return (
@@ -773,10 +914,11 @@ export function TodayMemoBoard({
 
   return (
     <div
+      ref={dropzoneRef}
       data-scheduled-memo-dropzone="true"
       className={cn(
         "relative flex h-full flex-col overflow-hidden bg-background",
-        scheduledMemoDragOver && "ring-2 ring-primary/60 ring-inset",
+        (scheduledMemoDragOver || calendarEventMemoDragOver) && "ring-2 ring-primary/60 ring-inset",
       )}
       onDragOver={handleScheduledMemoDragOver}
       onDragLeave={handleScheduledMemoDragLeave}
@@ -849,10 +991,15 @@ export function TodayMemoBoard({
         </div>
       )}
 
-      {scheduledMemoDragOver && (
-        <div className="pointer-events-none absolute left-3 right-3 top-[92px] z-30 rounded-md border border-primary/50 bg-primary/15 px-3 py-2 text-center text-xs font-medium text-primary shadow-sm">
-          ドロップで予定を解除して未予定へ戻す
-        </div>
+      {(scheduledMemoDragOver || calendarEventMemoDragOver) && (
+        <>
+          <div className="pointer-events-none absolute inset-0 z-20 bg-primary/[0.03]" />
+          <div className="pointer-events-none absolute bottom-3 right-0 top-3 z-30 w-2 rounded-l-full bg-primary shadow-[0_0_24px_rgba(59,130,246,0.55)]" />
+          <div className="pointer-events-none absolute right-3 top-1/2 z-30 -translate-y-1/2 rounded-md border border-primary/50 bg-background/95 px-3 py-2 text-center text-xs font-medium text-primary shadow-lg">
+            <div className="text-[10px] text-muted-foreground">カレンダー境界</div>
+            <div>ドロップで予定をメモにする</div>
+          </div>
+        </>
       )}
 
       <div

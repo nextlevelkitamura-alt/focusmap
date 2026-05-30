@@ -41,6 +41,9 @@ export const MEMO_DRAG_MIME = "application/x-focusmap-memo" as const
 /** Custom DataTransfer MIME type for scheduled memo → memo board D&D */
 export const SCHEDULED_MEMO_DRAG_MIME = "application/x-focusmap-scheduled-memo" as const
 
+/** Custom DataTransfer MIME type for calendar event → memo board D&D */
+export const CALENDAR_EVENT_MEMO_DRAG_MIME = "application/x-focusmap-calendar-event-memo" as const
+
 /** Custom event name for sharing scheduled memo ids with calendar panes */
 export const SCHEDULED_MEMO_INDEX_EVENT = "focusmap:scheduled-memo-index" as const
 

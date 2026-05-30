@@ -16,6 +16,7 @@ interface DesktopRightPanelProps {
     onUpdateTask?: (taskId: string, updates: Partial<Task>) => Promise<void>
     tasks?: Task[]
     projects?: Project[]
+    selectedProjectId?: string | null
     onCreateQuickTask?: (data: QuickTaskData) => Promise<void>
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
@@ -30,6 +31,7 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
         onUpdateTask,
         tasks = [],
         projects = [],
+        selectedProjectId = null,
         onCreateQuickTask,
         onCreateSubTask,
         onDeleteTask,
@@ -51,6 +53,7 @@ export const DesktopRightPanel = forwardRef<DesktopRightPanelRef, DesktopRightPa
                 allTasks={tasks}
                 onUpdateTask={onUpdateTask || (async () => {})}
                 projects={projects}
+                selectedProjectId={selectedProjectId}
                 onCreateQuickTask={onCreateQuickTask}
                 onCreateSubTask={onCreateSubTask}
                 onDeleteTask={onDeleteTask}

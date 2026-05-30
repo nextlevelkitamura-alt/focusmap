@@ -185,9 +185,11 @@ export function DashboardClient({
     )
 
     // Auto-select first project when space changes (NOTE: deps are primitives only)
+    const allowsAllProjects = activeView === 'today' || activeView === 'long-term'
+
     useEffect(() => {
         queueMicrotask(() => {
-            if (activeView === 'long-term' && selectedProjectId === null) return
+            if (allowsAllProjects && selectedProjectId === null) return
             const projectsInSpace = selectedSpaceId === null
                 ? projects
                 : projects.filter(p => p.space_id === selectedSpaceId)
@@ -197,7 +199,7 @@ export function DashboardClient({
                 setSelectedProjectId(null)
             }
         })
-    }, [activeView, projects, selectedProjectId, selectedSpaceId])
+    }, [allowsAllProjects, projects, selectedProjectId, selectedSpaceId])
 
     const selectedProject = useMemo(() =>
         projects.find(p => p.id === selectedProjectId),
@@ -1385,6 +1387,7 @@ export function DashboardClient({
                                     <TodayMemoBoard
                                         projects={projects}
                                         selectedSpaceId={selectedSpaceId}
+                                        selectedProjectId={selectedProjectId}
                                         scheduleFocusMemoId={todayMemoScheduleFocus?.memoId ?? null}
                                         scheduleFocusRequestKey={todayMemoScheduleFocus?.requestKey ?? null}
                                         onClearScheduleFocus={() => setTodayMemoScheduleFocus(null)}
@@ -1500,6 +1503,7 @@ export function DashboardClient({
                             onUpdateTask={handleUpdateTaskWithQuickSync}
                             tasks={allTasksMerged}
                             projects={projects}
+                            selectedProjectId={selectedProjectId}
                             onCreateQuickTask={handleCreateQuickTask}
                             onCreateSubTask={handleCreateSubTask}
                             onDeleteTask={handleDeleteTaskFromToday}

@@ -6,13 +6,17 @@ import { CalendarEvent } from "@/types/calendar"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
 import { useTouchDrag, DragItem } from "@/hooks/useTouchDrag"
 import { useClickOutside } from "@/hooks/useClickOutside"
-import { Play, Pause, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp } from "lucide-react"
+import { Play, Pause, Square, CheckSquare, GripVertical, Plus, ChevronDown, ChevronUp, StickyNote } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { SubTaskSection } from "./sub-task-list"
 import type { TimeBlock } from "@/lib/time-block"
-import { MEMO_DRAG_MIME, SCHEDULED_MEMO_DRAG_MIME, SCHEDULED_MEMO_INDEX_EVENT } from "@/lib/calendar-constants"
+import { CALENDAR_EVENT_MEMO_DRAG_MIME, MEMO_DRAG_MIME, SCHEDULED_MEMO_DRAG_MIME, SCHEDULED_MEMO_INDEX_EVENT } from "@/lib/calendar-constants"
 import { calculateTodayTimelineLayout } from "@/lib/today-timeline-layout"
+import {
+    buildCalendarEventMemoPayload,
+    type CalendarEventMemoPayload,
+} from "@/lib/calendar-event-to-memo"
 
 // --- Constants ---
 const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
@@ -36,6 +40,7 @@ type ScheduledMemoDragPayload = {
     calendarId?: string
     title: string
 }
+type CalendarEventMemoDragPayload = CalendarEventMemoPayload
 
 // --- Types ---
 
@@ -53,6 +58,8 @@ interface TodayTimelineCalendarProps {
     onDeleteSubTask?: (taskId: string) => void
     onConvertEventAndStartTimer?: (event: CalendarEvent) => void
     onConvertEventAndExpand?: (event: CalendarEvent) => void
+    onCreateMemoFromEvent?: (event: CalendarEvent) => void
+    onCreateMemoFromCalendarPayload?: (payload: CalendarEventMemoPayload) => void
     pendingExpandTaskId?: string | null
     projectNameMap?: Map<string, string>
     initialScrollTop?: number
@@ -105,6 +112,25 @@ function snapUp(minutes: number): number {
     return Math.ceil(minutes / QUICK_CREATE_MINUTES) * QUICK_CREATE_MINUTES
 }
 
+function buildCalendarEventMemoPayloadFromTimeBlock(item: TimeBlock): CalendarEventMemoPayload | null {
+    if (item.originalEvent) return buildCalendarEventMemoPayload(item.originalEvent)
+    if (!item.googleEventId || !item.calendarId) return null
+    return {
+        eventId: item.originalTask?.calendar_event_id || item.googleEventId,
+        googleEventId: item.googleEventId,
+        calendarId: item.calendarId,
+        title: item.title || "無題の予定",
+        description: item.originalTask?.memo ?? null,
+        location: null,
+        startTime: item.startTime.toISOString(),
+        endTime: item.endTime.toISOString(),
+        isAllDay: false,
+        timezone: "Asia/Tokyo",
+        recurrence: null,
+        recurringEventId: null,
+    }
+}
+
 // --- Main Component ---
 export function TodayTimelineCalendar({
     timelineItems,
@@ -128,6 +154,8 @@ export function TodayTimelineCalendar({
     selectedDate,
     onConvertEventAndStartTimer,
     onConvertEventAndExpand,
+    onCreateMemoFromEvent,
+    onCreateMemoFromCalendarPayload,
     pendingExpandTaskId,
     syncFailedIds,
     scrollToHourRequest,
@@ -180,12 +208,14 @@ export function TodayTimelineCalendar({
     } | null>(null)
     const desktopDragContextRef = useRef<{
         item: DragItem
+        startClientX: number
         startClientY: number
         lastClientX: number
         lastClientY: number
         initialOffsetInItem: number
         hasMoved: boolean
         scheduledMemoPayload?: ScheduledMemoDragPayload
+        calendarEventMemoPayload?: CalendarEventMemoDragPayload
     } | null>(null)
     const desktopDragPreviewRef = useRef<{
         item: DragItem
@@ -202,6 +232,8 @@ export function TodayTimelineCalendar({
     // メモカード（HTML5 native draggable）からのドロップ受信
     const [memoDragOver, setMemoDragOver] = useState<{ topPx: number; durationMinutes: number; title: string; startTime: Date } | null>(null)
     const [scheduledMemoIndex, setScheduledMemoIndex] = useState<Record<string, ScheduledMemoIndexEntry>>({})
+    const [returningScheduledMemo, setReturningScheduledMemo] = useState<ScheduledMemoDragPayload | null>(null)
+    const [returningCalendarEventMemo, setReturningCalendarEventMemo] = useState<CalendarEventMemoDragPayload | null>(null)
 
     useEffect(() => {
         const syncScheduledMemoIndex = () => {
@@ -297,6 +329,7 @@ export function TodayTimelineCalendar({
         e.dataTransfer.setData("text/plain", `__focusmap_scheduled_memo__${serialized}`)
         e.dataTransfer.effectAllowed = "move"
         window.__focusmapScheduledMemoDrag = payload
+        setReturningScheduledMemo(payload)
         desktopDragContextRef.current = null
         desktopDragPreviewRef.current = null
         setDesktopDragState(null)
@@ -310,13 +343,50 @@ export function TodayTimelineCalendar({
         setTimeout(() => ghost.remove(), 0)
     }, [])
 
+    const handleCalendarEventMemoPayloadDragStart = useCallback((
+        e: ReactDragEvent<HTMLButtonElement>,
+        payload: CalendarEventMemoDragPayload,
+    ) => {
+        e.stopPropagation()
+        const serialized = JSON.stringify(payload)
+        try {
+            e.dataTransfer.setData(CALENDAR_EVENT_MEMO_DRAG_MIME, serialized)
+        } catch {
+            // Some browsers reject custom MIME types.
+        }
+        e.dataTransfer.setData("text/plain", `__focusmap_calendar_event_memo__${serialized}`)
+        e.dataTransfer.effectAllowed = "move"
+        window.__focusmapCalendarEventMemoDrag = payload
+        setReturningCalendarEventMemo(payload)
+        desktopDragContextRef.current = null
+        desktopDragPreviewRef.current = null
+        setDesktopDragState(null)
+
+        const ghost = document.createElement("div")
+        ghost.style.cssText = "position:fixed;top:-9999px;left:0;pointer-events:none;"
+        ghost.className = "rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-white shadow-lg"
+        ghost.textContent = `${payload.title} をメモにする`
+        document.body.appendChild(ghost)
+        e.dataTransfer.setDragImage(ghost, 12, 16)
+        setTimeout(() => ghost.remove(), 0)
+    }, [])
+
     const handleScheduledMemoDragEnd = useCallback(() => {
         window.__focusmapScheduledMemoDrag = null
+        window.__focusmapCalendarEventMemoDrag = null
+        setReturningScheduledMemo(null)
+        setReturningCalendarEventMemo(null)
     }, [])
 
     // ドラッグ操作終了時にプレビューをクリア（drop されなくても消す）
     useEffect(() => {
-        const clear = () => setMemoDragOver(null)
+        const clear = () => {
+            setMemoDragOver(null)
+            setReturningScheduledMemo(null)
+            setReturningCalendarEventMemo(null)
+            window.__focusmapScheduledMemoDrag = null
+            window.__focusmapCalendarEventMemoDrag = null
+        }
         window.addEventListener("dragend", clear)
         return () => window.removeEventListener("dragend", clear)
     }, [])
@@ -361,6 +431,7 @@ export function TodayTimelineCalendar({
         item: DragItem,
         itemTop: number,
         scheduledMemoPayload?: ScheduledMemoDragPayload,
+        calendarEventMemoPayload?: CalendarEventMemoDragPayload | null,
     ) => {
         if (!onDragDrop || e.button !== 0) return
 
@@ -377,12 +448,14 @@ export function TodayTimelineCalendar({
 
         desktopDragContextRef.current = {
             item,
+            startClientX: e.clientX,
             startClientY: e.clientY,
             lastClientX: e.clientX,
             lastClientY: e.clientY,
             initialOffsetInItem,
             hasMoved: false,
             scheduledMemoPayload,
+            calendarEventMemoPayload: calendarEventMemoPayload ?? undefined,
         }
 
         const onMouseMove = (moveEvent: MouseEvent) => {
@@ -395,6 +468,16 @@ export function TodayTimelineCalendar({
             if (!ctx.hasMoved) {
                 ctx.hasMoved = true
                 if (document.body) document.body.style.userSelect = 'none'
+            }
+
+            const isReturningToMemo = moveEvent.clientX < ctx.startClientX - 24
+            if (isReturningToMemo && ctx.scheduledMemoPayload) {
+                window.__focusmapScheduledMemoDrag = ctx.scheduledMemoPayload
+                setReturningScheduledMemo(ctx.scheduledMemoPayload)
+            }
+            if (isReturningToMemo && ctx.calendarEventMemoPayload) {
+                window.__focusmapCalendarEventMemoDrag = ctx.calendarEventMemoPayload
+                setReturningCalendarEventMemo(ctx.calendarEventMemoPayload)
             }
 
             updateDesktopDragPreview(ctx.item, moveEvent.clientY, ctx.initialOffsetInItem)
@@ -418,6 +501,18 @@ export function TodayTimelineCalendar({
                 desktopDragContextRef.current = null
                 desktopDragPreviewRef.current = null
                 setDesktopDragState(null)
+                setReturningScheduledMemo(null)
+                setReturningCalendarEventMemo(null)
+                return
+            }
+            if (ctx?.hasMoved && ctx.calendarEventMemoPayload && memoDropzone && window.__focusmapCalendarEventMemoDropHandler) {
+                window.__focusmapCalendarEventMemoDrag = null
+                void window.__focusmapCalendarEventMemoDropHandler(ctx.calendarEventMemoPayload)
+                desktopDragContextRef.current = null
+                desktopDragPreviewRef.current = null
+                setDesktopDragState(null)
+                setReturningScheduledMemo(null)
+                setReturningCalendarEventMemo(null)
                 return
             }
 
@@ -432,6 +527,10 @@ export function TodayTimelineCalendar({
             desktopDragContextRef.current = null
             desktopDragPreviewRef.current = null
             setDesktopDragState(null)
+            window.__focusmapScheduledMemoDrag = null
+            window.__focusmapCalendarEventMemoDrag = null
+            setReturningScheduledMemo(null)
+            setReturningCalendarEventMemo(null)
         }
 
         window.addEventListener('mousemove', onMouseMove)
@@ -885,6 +984,22 @@ export function TodayTimelineCalendar({
                             aria-hidden="true"
                         />
 
+                        {(memoDragOver || returningScheduledMemo || returningCalendarEventMemo) && (
+                            <div className="pointer-events-none absolute inset-y-0 left-0 z-40 flex items-center">
+                                <div className={cn(
+                                    "h-full w-2 rounded-r-full shadow-[0_0_24px_rgba(245,158,11,0.55)]",
+                                    returningScheduledMemo || returningCalendarEventMemo ? "bg-primary" : "bg-amber-500",
+                                )} />
+                                <div className={cn(
+                                    "ml-2 rounded-md border bg-background/95 px-3 py-2 text-xs font-medium shadow-lg",
+                                    returningScheduledMemo || returningCalendarEventMemo ? "border-primary/50 text-primary" : "border-amber-500/50 text-amber-500",
+                                )}>
+                                    <div className="text-[10px] text-muted-foreground">メモ境界</div>
+                                    <div>{returningScheduledMemo || returningCalendarEventMemo ? "左へドロップで予定をメモ化" : "右へドロップで予定化"}</div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* メモ D&D プレビュー枠（所要時間分の縦長半透明枠） */}
                         {memoDragOver && (
                             <div
@@ -1035,6 +1150,21 @@ export function TodayTimelineCalendar({
                                 calendarId: item.calendarId,
                                 title: scheduledMemo.title || item.title,
                             } satisfies ScheduledMemoDragPayload) : undefined
+                            const calendarEventMemoPayload = !scheduledMemoPayload && item.originalEvent?.sync_status !== "pending"
+                                ? buildCalendarEventMemoPayloadFromTimeBlock(item)
+                                : !scheduledMemoPayload && !item.originalEvent
+                                    ? buildCalendarEventMemoPayloadFromTimeBlock(item)
+                                    : null
+                            const isReturningScheduledMemo =
+                                !!returningScheduledMemo &&
+                                !!item.googleEventId &&
+                                returningScheduledMemo.googleEventId === item.googleEventId &&
+                                (!returningScheduledMemo.calendarId || returningScheduledMemo.calendarId === item.calendarId)
+                            const isReturningCalendarEventMemo =
+                                !!returningCalendarEventMemo &&
+                                !!item.googleEventId &&
+                                returningCalendarEventMemo.googleEventId === item.googleEventId &&
+                                returningCalendarEventMemo.calendarId === item.calendarId
 
                             return (
                                 <div
@@ -1044,6 +1174,7 @@ export function TodayTimelineCalendar({
                                         "absolute select-none",
                                         isDragTarget ? "touch-none" : "touch-pan-y",
                                         (isDragTarget || desktopDragState?.item.id === id) && "invisible",
+                                        (isReturningScheduledMemo || isReturningCalendarEventMemo) && "scale-[0.98] opacity-20 blur-[0.5px] transition-all duration-150",
                                         isExpanded ? "z-30" : "z-20"
                                     )}
                                     data-time-item="true"
@@ -1053,7 +1184,7 @@ export function TodayTimelineCalendar({
                                         left: `calc((100% - ${GUTTER_WIDTH}px) * ${leftPercent / 100} + 2px)`,
                                         width: `calc((100% - ${GUTTER_WIDTH}px) * ${widthPercent / 100} - 4px)`,
                                     }}
-                                    onMouseDown={(e) => handleDesktopItemMouseDown(e, dragItem, item.top, scheduledMemoPayload)}
+                                    onMouseDown={(e) => handleDesktopItemMouseDown(e, dragItem, item.top, scheduledMemoPayload, calendarEventMemoPayload)}
                                     {...touchHandlers}
                                 >
                                     {isEvent ? (
@@ -1067,8 +1198,19 @@ export function TodayTimelineCalendar({
                                             onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && item.originalEvent?.sync_status !== "pending" && onItemTap ? () => onItemTap(item) : undefined}
                                             onStartTimer={onConvertEventAndStartTimer && item.originalEvent && item.originalEvent.sync_status !== "pending" ? () => onConvertEventAndStartTimer(item.originalEvent!) : undefined}
                                             onToggleExpand={onConvertEventAndExpand && item.originalEvent && item.originalEvent.sync_status !== "pending" ? () => onConvertEventAndExpand(item.originalEvent!) : undefined}
+                                            onCreateMemo={calendarEventMemoPayload && !scheduledMemoPayload
+                                                ? () => {
+                                                    if (onCreateMemoFromCalendarPayload) onCreateMemoFromCalendarPayload(calendarEventMemoPayload)
+                                                    else if (onCreateMemoFromEvent && item.originalEvent) onCreateMemoFromEvent(item.originalEvent)
+                                                }
+                                                : undefined}
+                                            calendarMemoDrag={calendarEventMemoPayload ? {
+                                                title: "左へドラッグしてメモにする",
+                                                onDragStart: (event) => handleCalendarEventMemoPayloadDragStart(event, calendarEventMemoPayload),
+                                                onDragEnd: handleScheduledMemoDragEnd,
+                                            } : undefined}
                                             scheduledMemoDrag={scheduledMemoPayload ? {
-                                                title: "メモに戻す",
+                                                title: "左へドラッグしてメモにする",
                                                 onDragStart: (event) => handleScheduledMemoDragStart(event, item, {
                                                     memoId: scheduledMemoPayload.memoId,
                                                     title: scheduledMemoPayload.title,
@@ -1096,6 +1238,12 @@ export function TodayTimelineCalendar({
                                                 accentColor={item.googleEventId ? item.color : undefined}
                                                 isSyncing={!item.googleEventId && !!item.originalTask?.calendar_id && !syncFailedIds?.has(item.originalTask.id)}
                                                 isSyncFailed={!item.googleEventId && !!syncFailedIds?.has(item.originalTask?.id ?? '')}
+                                                onCreateMemo={calendarEventMemoPayload ? () => onCreateMemoFromCalendarPayload?.(calendarEventMemoPayload) : undefined}
+                                                calendarMemoDrag={calendarEventMemoPayload ? {
+                                                    title: "左へドラッグしてメモにする",
+                                                    onDragStart: (event) => handleCalendarEventMemoPayloadDragStart(event, calendarEventMemoPayload),
+                                                    onDragEnd: handleScheduledMemoDragEnd,
+                                                } : undefined}
                                             />
                                             {isExpanded && onCreateSubTask && (
                                                 <div className="relative z-40">
@@ -1175,6 +1323,8 @@ function EventBlock({
     onTap,
     onStartTimer,
     onToggleExpand,
+    onCreateMemo,
+    calendarMemoDrag,
     scheduledMemoDrag,
 }: {
     event: CalendarEvent
@@ -1186,6 +1336,12 @@ function EventBlock({
     onTap?: () => void
     onStartTimer?: () => void
     onToggleExpand?: () => void
+    onCreateMemo?: () => void
+    calendarMemoDrag?: {
+        title: string
+        onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void
+        onDragEnd: () => void
+    }
     scheduledMemoDrag?: {
         title: string
         onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void
@@ -1206,20 +1362,27 @@ function EventBlock({
     const rgb = hexToRgb(eventHex)
     const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${isPendingSync ? 0.12 : 0.25})` : undefined
     const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${isPendingSync ? 0.18 : 0.35})` : undefined
-    const memoDragHandle = scheduledMemoDrag ? (
+    const memoDragSource = scheduledMemoDrag ?? calendarMemoDrag
+    const memoDragHandle = memoDragSource ? (
         <button
             type="button"
             draggable
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            onDragStart={scheduledMemoDrag.onDragStart}
-            onDragEnd={scheduledMemoDrag.onDragEnd}
-            aria-label="予定をメモへ戻す"
-            title={scheduledMemoDrag.title}
-            className="cursor-grab rounded p-0.5 text-muted-foreground/70 hover:bg-background/30 hover:text-foreground active:cursor-grabbing"
+            onClick={(e) => {
+                e.stopPropagation()
+                if (calendarMemoDrag && !scheduledMemoDrag) onCreateMemo?.()
+            }}
+            onDragStart={memoDragSource.onDragStart}
+            onDragEnd={memoDragSource.onDragEnd}
+            aria-label={scheduledMemoDrag ? "予定をメモへ戻す" : "予定をメモにする"}
+            title={memoDragSource.title}
+            className={cn(
+                "cursor-grab rounded p-0.5 text-muted-foreground/70 hover:bg-background/30 hover:text-foreground active:cursor-grabbing",
+                calendarMemoDrag && !scheduledMemoDrag && "text-amber-600 dark:text-amber-300"
+            )}
         >
-            <GripVertical className="h-3.5 w-3.5" />
+            {scheduledMemoDrag ? <GripVertical className="h-3.5 w-3.5" /> : <StickyNote className="h-3.5 w-3.5" />}
         </button>
     ) : null
 
@@ -1271,6 +1434,16 @@ function EventBlock({
                     </span>
                     <div className="ml-auto flex-shrink-0 flex items-center gap-1">
                         {memoDragHandle}
+                        {showInlineActions && onCreateMemo && !calendarMemoDrag && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onCreateMemo() }}
+                                aria-label={`${event.title}をメモにする`}
+                                title="メモにする"
+                                className="p-0.5 text-muted-foreground/70 hover:text-foreground focus:outline-none rounded"
+                            >
+                                <StickyNote className="w-3.5 h-3.5" />
+                            </button>
+                        )}
                         {showInlineActions && onStartTimer && (
                             <button
                                 onClick={(e) => { e.stopPropagation(); onStartTimer() }}
@@ -1328,9 +1501,19 @@ function EventBlock({
                             {event.location}
                         </div>
                     )}
-                    {(memoDragHandle || (showInlineActions && (onStartTimer || onToggleExpand))) && (
+                    {(memoDragHandle || (showInlineActions && (onCreateMemo || onStartTimer || onToggleExpand))) && (
                         <div className="mt-0.5 flex items-center justify-end gap-1">
                             {memoDragHandle}
+                            {showInlineActions && onCreateMemo && !calendarMemoDrag && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onCreateMemo() }}
+                                    aria-label={`${event.title}をメモにする`}
+                                    title="メモにする"
+                                    className="p-1 rounded-full active:bg-muted text-muted-foreground/70 hover:text-foreground focus:outline-none"
+                                >
+                                    <StickyNote className="w-4 h-4" />
+                                </button>
+                            )}
                             {showInlineActions && onStartTimer && (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); onStartTimer() }}
@@ -1376,6 +1559,8 @@ function TaskBlock({
     accentColor,
     isSyncing = false,
     isSyncFailed = false,
+    onCreateMemo,
+    calendarMemoDrag,
 }: {
     task: Task
     currentTime: Date
@@ -1394,6 +1579,12 @@ function TaskBlock({
     accentColor?: string
     isSyncing?: boolean
     isSyncFailed?: boolean
+    onCreateMemo?: () => void
+    calendarMemoDrag?: {
+        title: string
+        onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void
+        onDragEnd: () => void
+    }
 }) {
     const isNow = currentTime >= startTime && currentTime < endTime
     const isRunning = timer.runningTaskId === task.id
@@ -1424,6 +1615,23 @@ function TaskBlock({
     const finalStyle = isSyncing && !isRunning && !isDone
         ? { ...baseStyle, borderLeftColor: `${TASK_HEX}60`, backgroundColor: taskBgSyncing, boxShadow: 'none' }
         : baseStyle
+    const memoButton = calendarMemoDrag ? (
+        <button
+            type="button"
+            draggable
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onCreateMemo?.() }}
+            onDragStart={calendarMemoDrag.onDragStart}
+            onDragEnd={calendarMemoDrag.onDragEnd}
+            aria-label={`${task.title}をメモにする`}
+            title={calendarMemoDrag.title}
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
+        >
+            <StickyNote className="h-3 w-3" />
+            <span>メモへ</span>
+        </button>
+    ) : null
 
     return (
         <div
@@ -1469,6 +1677,7 @@ function TaskBlock({
                     </span>
                     {showInlineActions && (
                         <div className="ml-auto flex-shrink-0 flex items-center gap-1">
+                            {memoButton}
                             {isRunning ? (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
@@ -1563,6 +1772,7 @@ function TaskBlock({
                                 "flex-shrink-0 flex",
                                 isTallCard ? "flex-col items-end gap-1" : "items-center gap-1"
                             )}>
+                                {memoButton}
                                 {isRunning ? (
                                     <button
                                         onClick={(e) => { e.stopPropagation(); timer.pauseTimer() }}
