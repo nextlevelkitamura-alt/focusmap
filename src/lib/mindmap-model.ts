@@ -30,6 +30,7 @@ export type MindMapModelNode = {
     estimatedAutoMinutes: number;
     estimatedIsOverride: boolean;
     source: string | null;
+    memo: string | null;
     hasMemo: boolean;
     hasMemoImages: boolean;
     isHabit: boolean;
@@ -170,6 +171,7 @@ export function buildMindMapModel({
         estimatedAutoMinutes: 0,
         estimatedIsOverride: false,
         source: null,
+        memo: null,
         hasMemo: false,
         hasMemoImages: false,
         isHabit: false,
@@ -221,6 +223,7 @@ export function buildMindMapModel({
             estimatedAutoMinutes,
             estimatedIsOverride,
             source: task.source ?? null,
+            memo: task.memo ?? null,
             hasMemo: taskHasMemo,
             hasMemoImages: taskHasMemoImages,
             isHabit: task.is_habit ?? false,

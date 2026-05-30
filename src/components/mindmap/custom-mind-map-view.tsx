@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Maximize2, Minus, Plus, RotateCcw, StickyNote } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Edit3, ExternalLink, Loader2, Maximize2, MoreHorizontal, Minus, Plus, RotateCcw, StickyNote, Trash2 } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -18,6 +18,7 @@ import {
     getViewportTransformAtPoint,
 } from "@/lib/mindmap-viewport";
 import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
+import type { CodexRunState } from "@/lib/codex-run-state";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -42,6 +43,7 @@ type CustomMindMapViewProps = {
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onOpenLinkedMemos?: (taskId: string) => void;
     onRunCodex?: (taskId: string) => void | Promise<void>;
+    codexRunByNodeId?: Record<string, CodexNodeState>;
     onMoveTask?: (params: {
         taskId: string;
         targetId: string;
@@ -52,6 +54,13 @@ type CustomMindMapViewProps = {
         targetId: string;
         position: CustomDropPosition;
     }) => void | Promise<void>;
+};
+
+type CodexNodeState = {
+    state: CodexRunState;
+    taskId: string;
+    label: string;
+    lastActivityAt?: string | null;
 };
 
 const PADDING = 72;
@@ -66,6 +75,7 @@ const TOUCH_PINCH_SENSITIVITY = 1;
 const DESKTOP_GESTURE_SENSITIVITY = 1.35;
 const DONE_NODE_HIDE_DELAY_MS = 300;
 const DONE_UNDO_WINDOW_MS = 5000;
+const CODEX_WEB_URL = "https://chatgpt.com/codex";
 
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
@@ -166,6 +176,14 @@ const formatDateShort = (value: string | null) => {
     return `${date.getMonth() + 1}/${date.getDate()}`;
 };
 
+const normalizeClipboardText = (value: string | null | undefined) =>
+    (value ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+
+const buildNodeCodexPrompt = (node: MindMapModelNode) => [
+    normalizeClipboardText(node.title),
+    normalizeClipboardText(node.memo),
+].filter(Boolean).join("\n\n");
+
 function CustomBranchPath({
     source,
     target,
@@ -212,6 +230,7 @@ function CustomTaskNode({
     isMobile,
     onOpenLinkedMemos,
     onRunCodex,
+    codexState,
     onEditingChange,
     onRegisterEditController,
 }: {
@@ -239,6 +258,7 @@ function CustomTaskNode({
     isMobile: boolean;
     onOpenLinkedMemos?: (taskId: string) => void;
     onRunCodex?: (taskId: string) => void | Promise<void>;
+    codexState?: CodexNodeState | null;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
 }) {
@@ -248,6 +268,7 @@ function CustomTaskNode({
     const handledTriggerEditRef = useRef<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
+    const [menuOpen, setMenuOpen] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const scheduledLabel = formatDateShort(node.scheduledAt);
     const hasMeta = node.estimatedDisplayMinutes > 0 || node.priority != null || !!scheduledLabel || node.hasMemo || node.hasMemoImages || isMemoNode;
@@ -255,6 +276,22 @@ function CustomTaskNode({
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
     }, [initialEditValue, isEditing, node.title]);
+
+    useEffect(() => {
+        if (!isMobile || !menuOpen) return;
+        const handlePointerDown = (event: PointerEvent) => {
+            const target = event.target;
+            if (target instanceof Node && wrapperRef.current?.contains(target)) return;
+            setMenuOpen(false);
+        };
+        window.addEventListener("pointerdown", handlePointerDown);
+        return () => window.removeEventListener("pointerdown", handlePointerDown);
+    }, [isMobile, menuOpen]);
+
+    useEffect(() => {
+        if (!isMobile || selected) return;
+        setMenuOpen(false);
+    }, [isMobile, selected]);
 
     useEffect(() => {
         if (!triggerEdit) {
@@ -327,6 +364,34 @@ function CustomTaskNode({
         setEditValue(value ?? (initialEditValue ?? node.title));
         setIsEditing(true);
     }, [initialEditValue, node.title]);
+
+    const handleMenuAction = useCallback((
+        event: React.MouseEvent<HTMLButtonElement>,
+        action?: () => void | Promise<void>,
+    ) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuOpen(false);
+        if (!action) return;
+        void Promise.resolve(action()).catch(error => {
+            console.error("[CustomMindMap] Mobile node menu action failed:", error);
+        });
+    }, []);
+
+    const openNodeInCodexWeb = useCallback(async () => {
+        const prompt = buildNodeCodexPrompt(node);
+        if (!prompt) return;
+        try {
+            if (!navigator.clipboard?.writeText) {
+                throw new Error("clipboard unavailable");
+            }
+            await navigator.clipboard.writeText(prompt);
+        } catch {
+            window.alert("クリップボードコピーに失敗しました。ノード内容を手動でコピーしてください。");
+            return;
+        }
+        window.location.href = CODEX_WEB_URL;
+    }, [node]);
 
     useEffect(() => {
         onEditingChange?.(node.id, isEditing);
@@ -504,6 +569,23 @@ function CustomTaskNode({
             {isMemoNode && (
                 <div className={cn("absolute -left-0.5 top-1 bottom-1 w-1 rounded-full", node.isDone ? "bg-muted-foreground/35" : "bg-amber-400")} />
             )}
+            {codexState?.state === "running" && (
+                <div
+                    className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/70 bg-background shadow-[0_0_12px_rgba(16,185,129,0.45)]"
+                    title="Codex 実行中"
+                    aria-label="Codex 実行中"
+                >
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+                </div>
+            )}
+            {codexState?.state === "awaiting_approval" && (
+                <div
+                    className="absolute -right-2 -top-2 rounded-full border border-amber-400/70 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-amber-900 shadow-sm dark:bg-amber-500/20 dark:text-amber-200"
+                    title="Codex 確認待ち"
+                >
+                    確認待ち
+                </div>
+            )}
             <div className="flex items-center gap-1">
                 <button
                     type="button"
@@ -602,23 +684,132 @@ function CustomTaskNode({
                             {node.collapsed ? <ChevronRight className="h-3 w-3" strokeWidth={3} /> : <ChevronDown className="h-3 w-3" strokeWidth={3} />}
                         </button>
                     )}
-                    <button
-                        type="button"
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-muted/30 hover:text-muted-foreground"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onRunCodex?.(node.id);
-                        }}
-                        title="ノードメニュー（詳細・メモ・Codex）"
-                        aria-label="ノードメニューを開く"
-                    >
-                        <svg className="h-3 w-3" viewBox="0 0 12 12" fill="currentColor">
-                            <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
-                            <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
-                            <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
-                        </svg>
-                    </button>
+                    {isMobile ? (
+                        <div className="relative">
+                            <button
+                                type="button"
+                                className={cn(
+                                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm transition-colors",
+                                    menuOpen ? "border-primary text-foreground" : "border-border active:bg-muted"
+                                )}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    onSelectNode(node.id, { additive: false });
+                                    setMenuOpen(prev => !prev);
+                                }}
+                                title="ノードメニュー"
+                                aria-label="ノードメニューを開く"
+                                aria-expanded={menuOpen}
+                            >
+                                <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                            {menuOpen && (
+                                <div
+                                    className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-lg border bg-popover py-1 text-[13px] text-popover-foreground shadow-xl"
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, openNodeInCodexWeb)}
+                                    >
+                                        <ExternalLink className="h-4 w-4 text-emerald-500" />
+                                        Codexで開く
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => {
+                                            const prompt = buildNodeCodexPrompt(node);
+                                            if (!prompt || !navigator.clipboard?.writeText) return;
+                                            return navigator.clipboard.writeText(prompt);
+                                        })}
+                                    >
+                                        <Copy className="h-4 w-4" />
+                                        内容をコピー
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onOpenLinkedMemos?.(node.id))}
+                                    >
+                                        <StickyNote className="h-4 w-4" />
+                                        メモを開く
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => beginEditing())}
+                                    >
+                                        <Edit3 className="h-4 w-4" />
+                                        編集
+                                    </button>
+                                    <div className="my-1 border-t" />
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
+                                    >
+                                        <MoreHorizontal className="h-4 w-4" />
+                                        詳細パネル
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onAddChild?.(node.id))}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        子を追加
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onAddSibling?.(node.id))}
+                                    >
+                                        <Plus className="h-4 w-4 rotate-90" />
+                                        兄弟を追加
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                        onClick={(event) => handleMenuAction(event, () => onUpdateStatus?.(node.id, node.isDone ? "todo" : "done"))}
+                                    >
+                                        <Check className="h-4 w-4" />
+                                        {node.isDone ? "未完了に戻す" : "完了にする"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-destructive hover:bg-destructive/10"
+                                        onClick={(event) => handleMenuAction(event, () => onDelete?.(node.id))}
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        削除
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <button
+                            type="button"
+                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-muted/30 hover:text-muted-foreground"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onRunCodex?.(node.id);
+                            }}
+                            title="ノードメニュー（詳細・メモ・Codex）"
+                            aria-label="ノードメニューを開く"
+                        >
+                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="currentColor">
+                                <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
+                                <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
+                                <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
+                            </svg>
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -715,6 +906,7 @@ export function CustomMindMapView({
     onResizeNode,
     onOpenLinkedMemos,
     onRunCodex,
+    codexRunByNodeId = {},
     onMoveTask,
     onMoveTasks,
 }: CustomMindMapViewProps) {
@@ -819,6 +1011,13 @@ export function CustomMindMapView({
         const node = nodeById.get(activeEditingTaskId);
         return node?.kind === "task" ? node : null;
     }, [activeEditingTaskId, nodeById]);
+    const codexSummary = useMemo(() => {
+        const states = Object.values(codexRunByNodeId);
+        return {
+            running: states.filter(state => state.state === "running").length,
+            awaitingApproval: states.filter(state => state.state === "awaiting_approval").length,
+        };
+    }, [codexRunByNodeId]);
 
     useEffect(() => {
         zoomRef.current = zoom;
@@ -1690,6 +1889,21 @@ export function CustomMindMapView({
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
+            {(codexSummary.running > 0 || codexSummary.awaitingApproval > 0) && (
+                <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
+                    {codexSummary.running > 0 && (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            実行中{codexSummary.running}
+                        </span>
+                    )}
+                    {codexSummary.awaitingApproval > 0 && (
+                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                            確認待ち{codexSummary.awaitingApproval}
+                        </span>
+                    )}
+                </div>
+            )}
             <div className={cn(
                 "absolute z-20 flex flex-col gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
                 isMobile ? "right-2 top-2" : "right-3 top-14"
@@ -1836,6 +2050,7 @@ export function CustomMindMapView({
                                 isMobile={isMobile}
                                 onOpenLinkedMemos={onOpenLinkedMemos}
                                 onRunCodex={onRunCodex}
+                                codexState={codexRunByNodeId[node.id] ?? null}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
                             />

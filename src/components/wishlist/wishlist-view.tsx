@@ -497,15 +497,14 @@ export function WishlistView({
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const { pushAction } = useUndoRedo()
 
-  // メモから AI エージェント（Claude / Codex）を起動
+  // メモから AI エージェント（Claude / Codex.app）を起動
   // title/description は source_ideal_goal_id から task-runner が再取得する。
   // ここで両方を連結すると、最終プロンプトで二重送信になる。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
-    // codex_app は repo_path 任意（Codex.app 側でユーザーが選べる）
-    // claude / codex (headless) は必須
-    if (!repoPath && executor !== 'codex_app') {
+    // Claude / Codex.app ともにローカル実行のcwdが必要
+    if (!repoPath) {
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 

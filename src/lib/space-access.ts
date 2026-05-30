@@ -85,6 +85,7 @@ export async function resolveAiTaskSpaceId(
     space_id?: string | null
     source_ideal_goal_id?: string | null
     source_note_id?: string | null
+    source_task_id?: string | null
     parent_task_id?: string | null
     project_id?: string | null
     fallback_space_id?: string | null
@@ -120,6 +121,19 @@ export async function resolveAiTaskSpaceId(
     const spaceId = await getProjectSpaceId(supabase, data?.project_id)
     if (spaceId && !(await canEditSpace(supabase, userId, spaceId))) {
       return { spaceId: null, error: 'No edit access to the note space' }
+    }
+    if (spaceId) return { spaceId }
+  }
+
+  if (input.source_task_id) {
+    const { data } = await supabase
+      .from('tasks')
+      .select('project_id')
+      .eq('id', input.source_task_id)
+      .maybeSingle()
+    const spaceId = await getProjectSpaceId(supabase, data?.project_id)
+    if (spaceId && !(await canEditSpace(supabase, userId, spaceId))) {
+      return { spaceId: null, error: 'No edit access to the task space' }
     }
     if (spaceId) return { spaceId }
   }

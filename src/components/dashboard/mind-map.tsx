@@ -32,6 +32,8 @@ import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { CodexNodePanel } from "@/components/codex/codex-node-panel";
 import { getMindMapViewportBounds, getViewportTransformAtPoint } from "@/lib/mindmap-viewport";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
+import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
 
 type ProjectNodeData = {
     label?: string;
@@ -1131,7 +1133,57 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onAddOptimisticEvent,
         onRemoveOptimisticEvent,
     });
-        const groupsJson = JSON.stringify(groups?.map(g => ({
+    const allTasksByIdForCodex = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task])), [groups, tasks]);
+    const { bySourceId: aiTasksBySourceId, getBySourceId: getAiTaskBySourceId } = useMemoAiTasks();
+    const appliedCodexCompletionKeysRef = useRef(new Set<string>());
+    const codexRunByNodeId = useMemo(() => {
+        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {};
+        for (const task of allTasksByIdForCodex.values()) {
+            const aiTask = getAiTaskBySourceId(task.id);
+            const uiState = getCodexTaskUiState(aiTask);
+            if (!aiTask || !uiState) continue;
+            const aiResult = aiTask.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
+                ? aiTask.result as Record<string, unknown>
+                : {};
+            result[task.id] = {
+                state: uiState.state,
+                taskId: aiTask.id,
+                label: uiState.label,
+                lastActivityAt: typeof aiResult.last_activity_at === "string" ? aiResult.last_activity_at : null,
+            };
+        }
+        return result;
+    }, [allTasksByIdForCodex, getAiTaskBySourceId]);
+    const codexCompletedNodeUpdates = useMemo(() => {
+        const updates: Array<{ taskId: string; key: string }> = [];
+        for (const task of allTasksByIdForCodex.values()) {
+            if (task.status === "done") continue;
+            const aiTask = aiTasksBySourceId.get(task.id);
+            if (!aiTask || (aiTask.executor !== "codex" && aiTask.executor !== "codex_app")) continue;
+            if (aiTask.status !== "completed") continue;
+            const aiResult = aiTask.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
+                ? aiTask.result as Record<string, unknown>
+                : {};
+            const reason = typeof aiResult.codex_review_reason === "string" ? aiResult.codex_review_reason : "";
+            const closedFromCodex =
+                aiResult.codex_source_task_completed === true ||
+                reason === "archived" ||
+                reason === "thread_deleted";
+            if (!closedFromCodex) continue;
+            const completedAt = typeof aiTask.completed_at === "string" ? aiTask.completed_at : "";
+            updates.push({ taskId: task.id, key: `${task.id}:${aiTask.id}:${completedAt || reason}` });
+        }
+        return updates;
+    }, [aiTasksBySourceId, allTasksByIdForCodex]);
+    useEffect(() => {
+        if (!onUpdateTask || codexCompletedNodeUpdates.length === 0) return;
+        for (const update of codexCompletedNodeUpdates) {
+            if (appliedCodexCompletionKeysRef.current.has(update.key)) continue;
+            appliedCodexCompletionKeysRef.current.add(update.key);
+            void onUpdateTask(update.taskId, { status: "done", stage: "done" });
+        }
+    }, [codexCompletedNodeUpdates, onUpdateTask]);
+    const groupsJson = JSON.stringify(groups?.map(g => ({
         id: g?.id,
         title: g?.title,
         status: g?.status ?? 'todo',
@@ -1154,7 +1206,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             source: g?.source ?? null,
             node_width: g?.node_width ?? null,
         })) ?? []);
-        const tasksJson = JSON.stringify(tasks?.map(t => ({
+    const tasksJson = JSON.stringify(tasks?.map(t => ({
         id: t?.id,
         title: t?.title,
         status: t?.status,
@@ -2921,6 +2973,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                 onOpenLinkedMemos={onOpenLinkedMemos}
                 onRunCodex={handleRunCodex}
+                codexRunByNodeId={codexRunByNodeId}
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
             />

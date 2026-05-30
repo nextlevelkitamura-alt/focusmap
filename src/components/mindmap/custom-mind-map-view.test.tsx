@@ -93,6 +93,21 @@ afterEach(() => {
 })
 
 describe("CustomMindMapView keyboard operations", () => {
+  test("shows Codex running summary and node spinner", () => {
+    renderMap({
+      codexRunByNodeId: {
+        "root-1": {
+          state: "running",
+          taskId: "ai-task-1",
+          label: "実行中",
+        },
+      },
+    })
+
+    expect(screen.getByText("実行中1")).toBeInTheDocument()
+    expect(screen.getByLabelText("Codex 実行中")).toBeInTheDocument()
+  })
+
   test("adds a child with Tab and a sibling with Enter", async () => {
     const onAddChildNode = vi.fn()
     const onAddSiblingNode = vi.fn()

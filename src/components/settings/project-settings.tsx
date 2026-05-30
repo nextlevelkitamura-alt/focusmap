@@ -145,6 +145,7 @@ export function ProjectSettings({ initialProjects, initialSpaces }: ProjectSetti
               key={project.id}
               value={project.repo_path ?? null}
               onChange={(path) => updateProjectRepoPath(project, path ?? "")}
+              allowCustom={false}
               triggerVariant="row"
               rowLabel={project.title}
               disabled={savingKey === `project-repo:${project.id}`}

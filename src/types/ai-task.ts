@@ -87,6 +87,8 @@ export interface AiTask {
   source_note_id: string | null
   /** ideal_goals テーブルのメモから起動された場合の元アイテムID */
   source_ideal_goal_id: string | null
+  /** tasks テーブルのマインドマップノードから起動された場合の元タスクID */
+  source_task_id: string | null
   /** claude --remote-control が発行する claude.ai/code セッションURL */
   remote_session_url: string | null
   /** tmux セッション名（後から attach / kill に使用） */
@@ -95,7 +97,7 @@ export interface AiTask {
    * 実行 AI エージェント
    * - 'claude': Claude Code Remote Control (tmux内、スマホアプリ接続)
    * - 'codex': Codex CLI headless (codex exec、ライブログ捕捉)
-   * - 'codex_app': Codex.app を Mac で起動（codex:// URL）+ thread DB 追跡
+   * - 'codex_app': Codex.app 連携（手動ハンドオフ、または app-server 経由の初回turn実行）
    */
   executor: 'claude' | 'codex' | 'codex_app'
   /** Codex.app の thread ID (~/.codex/state_5.sqlite) */

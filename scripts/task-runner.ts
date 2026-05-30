@@ -20,10 +20,18 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { spawn, spawnSync } from 'child_process'
 import { execSync } from 'child_process'
+import WebSocket from 'ws'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
+import {
+  parseCodexRollout,
+  shouldCompleteSourceTaskForCodexReview,
+  type CodexReviewReason,
+  type CodexRunState,
+  type CodexThreadSnapshot,
+} from '../src/lib/codex-run-state'
 
 // ES モジュール対応の __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -64,6 +72,12 @@ const STAFF_STATUS_RETRY_MAX_MS = 30 * 60 * 1000
 const STAFF_STATUS_STALE_RUNNING_MS = 45 * 60 * 1000
 const STAFF_STATUS_INTERACTIVE_LATE_LIMIT_MS = 15 * 60 * 1000
 const LOCAL_USER_ID_FILE = path.join(os.homedir(), '.config', 'life-manager', 'focusmap-user-id')
+const CODEX_APP_WS_URL = 'ws://127.0.0.1:7878'
+const CODEX_APP_RPC_TIMEOUT_MS = 5_000
+const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
+const CODEX_LIVE_LOG_MAX_CHARS = 20_000
+const CODEX_ACTIVE_SYNC_INTERVAL_MS = 5_000
+const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 2
 
 type StaffStatusDueTask = {
   id: string
@@ -77,6 +91,7 @@ type StaffStatusDueTask = {
   completed_at: string | null
   source_note_id: string | null
   source_ideal_goal_id: string | null
+  source_task_id: string | null
   executor: 'claude' | 'codex' | 'codex_app' | null
   codex_thread_id?: string | null
   codex_resume_thread_id?: string | null
@@ -88,6 +103,27 @@ type StaffStatusDueTask = {
   claim_expires_at?: string | null
   run_visibility?: 'private' | 'space' | null
   result?: Record<string, unknown> | null
+}
+
+type MonitoredCodexTask = {
+  id: string
+  prompt: string
+  codex_thread_id: string | null
+  started_at: string | null
+  cwd: string | null
+  executor: string | null
+  result: Record<string, unknown> | null
+  status: string
+  source_task_id: string | null
+}
+
+type CodexRpcEnvelope = {
+  jsonrpc?: string
+  id?: number
+  method?: string
+  params?: unknown
+  result?: unknown
+  error?: { code?: number; message?: string }
 }
 
 type AiRunner = {
@@ -1008,7 +1044,7 @@ async function pushCodexStep(
   supabase: SupabaseClient<any, any, any, any, any>,
   taskId: string,
   step: CodexStep,
-  extra?: { liveLog?: string; threadId?: string; message?: string },
+  extra?: { liveLog?: string; threadId?: string; message?: string; executor?: 'codex' | 'codex_app'; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const { data } = await supabase.from('ai_tasks').select('result').eq('id', taskId).maybeSingle()
   const current = (data?.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
@@ -1017,10 +1053,11 @@ async function pushCodexStep(
   if (idx >= 0) steps[idx] = step
   else steps.push(step)
 
-  const merged: Record<string, unknown> = { ...current, executor: 'codex', steps }
+  const merged: Record<string, unknown> = { ...current, executor: extra?.executor ?? current.executor ?? 'codex', steps }
   if (extra?.liveLog !== undefined) merged.live_log = extra.liveLog
   if (extra?.threadId) merged.codex_thread_id = extra.threadId
   if (extra?.message) merged.message = extra.message
+  if (extra?.metadata) Object.assign(merged, extra.metadata)
   await supabase.from('ai_tasks').update({ result: merged }).eq('id', taskId)
 }
 
@@ -1036,6 +1073,7 @@ async function launchCodexRemote(opts: {
   taskId: string
   prompt: string  // GLM 整理済プロンプト
   cwd: string
+  executor?: 'codex' | 'codex_app'
   displayTitle?: string  // 「メモ見出し · 詳細」形式
   memoTitle?: string  // チャット名生成用のタイトルだけ
   memoDescription?: string  // 同じく詳細だけ
@@ -1086,7 +1124,7 @@ async function launchCodexRemote(opts: {
     const bridgeLog = `/tmp/codex-bridge-stdout-${opts.taskId}.log`
     const outFd = fs.openSync(bridgeLog, 'a')
     // bridge は tsx で起動する（このプロジェクトは ts-node 未導入。run-task-runner.sh と同じ tsx を使う）
-    const bridgeArgs = [opts.taskId, opts.cwd, promptFile, opts.resumeThreadId ?? '']
+    const bridgeArgs = [opts.taskId, opts.cwd, promptFile, opts.resumeThreadId ?? '', opts.executor ?? 'codex']
     const tsxBin = path.resolve(__dirname, '..', 'node_modules', '.bin', 'tsx')
     const useLocalTsx = fs.existsSync(tsxBin)
     const child = spawn(
@@ -1111,83 +1149,416 @@ async function launchCodexRemote(opts: {
   return { success: true, sessionName }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Codex.app 起動（codex:// URL スキーム経由、Mac proxy パターン）
-//   - スマホから API → DB → task-runner → open codex://... → Codex.app
-//   - Codex.app の threads DB (~/.codex/state_5.sqlite) で進捗追跡
-//   - ペアリング済の ChatGPT mobile からも見える可能性あり
-// ─────────────────────────────────────────────────────────────────────────
-function launchCodexApp(opts: {
-  taskId: string
-  prompt: string
-  cwd: string | null
-  memoTitle?: string
-  memoDescription?: string
-}): { success: true; openedAt: string } | { success: false; error: string } {
-  // プロンプト組み立て: タイトル / 詳細 / 本体 をシンプルに改行で繋ぐ（マークアップなし）
-  const fullPrompt = buildPromptWithMemo({
-    memoTitle: opts.memoTitle,
-    memoDescription: opts.memoDescription,
-    prompt: opts.prompt,
-  })
-
-  // codex://new?prompt=...&path=...
-  const params = new URLSearchParams()
-  params.set('prompt', fullPrompt)
-  if (opts.cwd) params.set('path', opts.cwd)
-  const url = `codex://new?${params.toString()}`
-
-  try {
-    // macOS `open` でアプリ起動 + URL 引き渡し
-    execSync(`open ${JSON.stringify(url)}`, { stdio: 'ignore', timeout: 5000 })
-    return { success: true, openedAt: new Date().toISOString() }
-  } catch (err) {
-    return { success: false, error: `open 失敗: ${err instanceof Error ? err.message : String(err)}` }
-  }
+/**
+ * ~/.codex/state_5.sqlite と rollout JSONL を読み、Codex系タスクの状態とログを同期する。
+ * launchd の StartInterval=15 に合わせ、UI はこの result.live_log を追う。
+ */
+type CodexBridgeObservation = {
+  awaitingApproval: boolean
+  approvalCommand: string | null
+  lastActivityAt: string | null
+  logBlocks: string[]
 }
 
-/**
- * ~/.codex/state_5.sqlite を読み、codex_app タスクに対応するスレッドを探して
- * Supabase の result に進捗を同期する。
- * 1分おき（task-runner サイクル）に実行。
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function syncCodexAppThreads(supabase: any): Promise<void> {
+function timestampMsToIso(value: unknown): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const ms = value > 10_000_000_000 ? value : value * 1000
+  return new Date(ms).toISOString()
+}
+
+function appendUniqueLogBlock(blocks: string[], value: string): void {
+  const text = value.trim()
+  if (!text) return
+  const key = text.replace(/\s+/g, ' ')
+  if (blocks.some(block => block.replace(/\s+/g, ' ') === key)) return
+  blocks.push(text)
+}
+
+function mergeCodexLiveLogs(blocks: string[], maxChars = CODEX_LIVE_LOG_MAX_CHARS): string {
+  const merged: string[] = []
+  for (const block of blocks) {
+    for (const part of block.split(/\n{2,}/)) {
+      appendUniqueLogBlock(merged, part)
+    }
+  }
+  return merged.join('\n\n').slice(-maxChars)
+}
+
+function sqlText(value: string): string {
+  return value.replace(/'/g, "''")
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function codexHandoffTokenForTask(task: MonitoredCodexTask): string | null {
+  const resultToken = asResultRecord(task.result).codex_handoff_token
+  if (typeof resultToken === 'string' && resultToken.trim()) return resultToken.trim()
+
+  const match = task.prompt.match(/Focusmap同期ID:\s*(FM-[A-Za-z0-9._:-]+)/)
+  return match?.[1]?.trim() || null
+}
+
+function codexThreadCwdCondition(cwd: string | null | undefined): string {
+  const value = cwd?.trim()
+  return value ? ` AND cwd = '${sqlText(value)}'` : ''
+}
+
+function findCodexThreadBySql(dbPath: string, where: string): string | null {
+  const out = execSync(
+    `sqlite3 ${JSON.stringify(dbPath)} "SELECT id FROM threads WHERE ${where} ORDER BY created_at_ms DESC LIMIT 1"`,
+    { encoding: 'utf-8', timeout: 5000 },
+  ).trim()
+  return out || null
+}
+
+function findMatchingCodexThread(dbPath: string, task: MonitoredCodexTask): string | null {
+  const sinceMs = task.started_at ? new Date(task.started_at).getTime() - 60_000 : Date.now() - 15 * 60_000
+  const token = codexHandoffTokenForTask(task)
+  const cwdCondition = codexThreadCwdCondition(task.cwd)
+
+  const candidates: string[] = []
+  if (token) {
+    const tokenCondition = `first_user_message LIKE '%Focusmap同期ID: ${sqlText(token)}%' AND updated_at_ms >= ${sinceMs}`
+    if (cwdCondition) candidates.push(`${tokenCondition}${cwdCondition}`)
+    candidates.push(tokenCondition)
+  }
+
+  const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
+  const prefixCondition = `first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs}`
+  if (cwdCondition) candidates.push(`${prefixCondition}${cwdCondition}`)
+  candidates.push(prefixCondition)
+
+  for (const where of candidates) {
+    const threadId = findCodexThreadBySql(dbPath, where)
+    if (threadId) return threadId
+  }
+  return null
+}
+
+function readCodexBridgeObservation(taskId: string): CodexBridgeObservation {
+  const observation: CodexBridgeObservation = {
+    awaitingApproval: false,
+    approvalCommand: null,
+    lastActivityAt: null,
+    logBlocks: [],
+  }
+  const logPath = `/tmp/codex-bridge-${taskId}.log`
+  if (!fs.existsSync(logPath)) return observation
+
+  let raw = ''
+  try {
+    raw = fs.readFileSync(logPath, 'utf-8')
+  } catch {
+    return observation
+  }
+
+  for (const line of raw.split('\n').slice(-1500)) {
+    if (!line.startsWith('← ')) continue
+    let message: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(line.slice(2))
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+      message = parsed as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const method = typeof message.method === 'string' ? message.method : ''
+    if (!method) continue
+
+    const params = asResultRecord(message.params)
+    const item = asResultRecord(params.item)
+    const activityAt = timestampMsToIso(params.completedAtMs ?? params.startedAtMs ?? item.completedAtMs ?? item.startedAtMs)
+    if (activityAt) observation.lastActivityAt = activityAt
+
+    if (method === 'thread/status/changed') {
+      const status = asResultRecord(params.status)
+      const flags = Array.isArray(status.activeFlags) ? status.activeFlags : []
+      observation.awaitingApproval = flags.includes('waitingOnApproval')
+      continue
+    }
+
+    if (method === 'item/commandExecution/requestApproval') {
+      const command = typeof params.command === 'string' ? params.command : '(command)'
+      observation.awaitingApproval = true
+      observation.approvalCommand = command
+      appendUniqueLogBlock(observation.logBlocks, `[approval-requested] ${command}`)
+      continue
+    }
+
+    if (method === 'serverRequest/resolved') {
+      observation.awaitingApproval = false
+      appendUniqueLogBlock(observation.logBlocks, '[approval-resolved] Codex app-server request resolved')
+      continue
+    }
+
+    const itemType = typeof item.type === 'string' ? item.type : ''
+    if (itemType === 'commandExecution') {
+      const command = typeof item.command === 'string' ? item.command : '(command)'
+      if (method === 'item/started') {
+        appendUniqueLogBlock(observation.logBlocks, `[command:started] ${command}`)
+      } else if (method === 'item/completed') {
+        const exitCode = typeof item.exitCode === 'number' ? `\nexit=${item.exitCode}` : ''
+        appendUniqueLogBlock(observation.logBlocks, `[command:completed] ${command}${exitCode}`)
+      }
+    }
+  }
+
+  return observation
+}
+
+async function completeCodexTaskClosedFromApp(
+  supabase: SupabaseClient,
+  task: MonitoredCodexTask,
+  opts: { threadId: string; reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>; liveLog?: string },
+): Promise<void> {
+  const now = new Date().toISOString()
+  const current = (task.result ?? {}) as Record<string, unknown>
+  const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
+  const completionNotice = opts.reason === 'archived'
+    ? 'Codex thread がCodex.app側でアーカイブされたため、マップノードを完了にしました。'
+    : 'Codex thread が削除されたため、マップノードを完了にしました。'
+  const baseLiveLog = opts.liveLog
+    || (typeof current.live_log === 'string' ? current.live_log : '')
+  const liveLog = mergeCodexLiveLogs([
+    baseLiveLog,
+    `[Codex] ${completionNotice}`,
+  ])
+
+  if (task.source_task_id) {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ status: 'done', stage: 'done', updated_at: now })
+      .eq('id', task.source_task_id)
+
+    if (error) {
+      console.error(`[codex-app] failed to complete source task ${task.source_task_id}:`, error.message)
+    }
+  }
+
+  await supabase
+    .from('ai_tasks')
+    .update({
+      status: 'completed',
+      error: null,
+      completed_at: now,
+      result: {
+        ...current,
+        executor,
+        codex_thread_id: opts.threadId,
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: opts.reason,
+        codex_source_task_completed: Boolean(task.source_task_id),
+        codex_source_task_completed_at: task.source_task_id ? now : null,
+        live_log: liveLog,
+        message: liveLog,
+        last_activity_at: now,
+      },
+    })
+    .eq('id', task.id)
+}
+
+async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set<string>> {
+  const uniqueThreadIds = [...new Set(threadIds.filter(Boolean))]
+  const archived = new Set<string>()
+  if (uniqueThreadIds.length === 0) return archived
+
+  return new Promise(resolve => {
+    const ws = new WebSocket(CODEX_APP_WS_URL)
+    let nextId = 0
+    const pending = new Map<number, (msg: CodexRpcEnvelope) => void>()
+    let settled = false
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      try { ws.close() } catch { /* ignore */ }
+      resolve(archived)
+    }
+
+    const timer = setTimeout(() => {
+      console.warn('[codex-app] archive RPC timed out; will retry on next runner cycle')
+      finish()
+    }, CODEX_APP_RPC_TIMEOUT_MS * Math.max(2, uniqueThreadIds.length + 1))
+
+    const call = (method: string, params?: unknown) => {
+      const id = ++nextId
+      const payload = { jsonrpc: '2.0', id, method, params }
+      return new Promise<CodexRpcEnvelope>((resolveCall, rejectCall) => {
+        const callTimer = setTimeout(() => {
+          pending.delete(id)
+          rejectCall(new Error(`RPC timeout: ${method}`))
+        }, CODEX_APP_RPC_TIMEOUT_MS)
+        pending.set(id, msg => {
+          clearTimeout(callTimer)
+          resolveCall(msg)
+        })
+        ws.send(JSON.stringify(payload))
+      })
+    }
+
+    ws.on('message', data => {
+      let msg: CodexRpcEnvelope
+      try {
+        msg = JSON.parse(data.toString()) as CodexRpcEnvelope
+      } catch {
+        return
+      }
+      if (typeof msg.id === 'number' && pending.has(msg.id)) {
+        const resolveCall = pending.get(msg.id)!
+        pending.delete(msg.id)
+        resolveCall(msg)
+      }
+    })
+
+    ws.on('error', err => {
+      console.warn('[codex-app] archive RPC connection failed:', err.message)
+      clearTimeout(timer)
+      finish()
+    })
+
+    ws.on('open', async () => {
+      try {
+        const init = await call('initialize', {
+          clientInfo: { name: 'focusmap', version: '0.1.0' },
+        })
+        if (init.error) throw new Error(init.error.message ?? 'initialize failed')
+
+        for (const threadId of uniqueThreadIds) {
+          const resp = await call('thread/archive', { threadId }).catch(error => ({
+            error: { message: error instanceof Error ? error.message : String(error) },
+          }) as CodexRpcEnvelope)
+          if (resp.error) {
+            console.warn(`[codex-app] thread/archive failed for ${threadId}:`, resp.error.message)
+          } else {
+            archived.add(threadId)
+          }
+        }
+      } catch (error) {
+        console.warn('[codex-app] archive RPC failed:', error instanceof Error ? error.message : error)
+      } finally {
+        clearTimeout(timer)
+        finish()
+      }
+    })
+  })
+}
+
+async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient): Promise<void> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return
 
-  // codex_app / codex 両 executor の running タスク取得（どちらも threads DB を共有）
+  const { data: aiTasks, error } = await supabase
+    .from('ai_tasks')
+    .select('id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
+    .in('executor', ['codex_app', 'codex'])
+    .not('source_task_id', 'is', null)
+    .not('codex_thread_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (error) {
+    console.error('[codex-app] completed source task scan failed:', error.message)
+    return
+  }
+  const monitored = (aiTasks ?? []) as MonitoredCodexTask[]
+  const sourceTaskIds = [...new Set(monitored.map(task => task.source_task_id).filter((id): id is string => !!id))]
+  if (sourceTaskIds.length === 0) return
+
+  const { data: sourceTasks, error: sourceError } = await supabase
+    .from('tasks')
+    .select('id, status, stage')
+    .in('id', sourceTaskIds)
+
+  if (sourceError) {
+    console.error('[codex-app] source task status scan failed:', sourceError.message)
+    return
+  }
+
+  const doneSourceIds = new Set(
+    ((sourceTasks ?? []) as Array<{ id: string; status: string | null; stage: string | null }>)
+      .filter(task => task.status === 'done' || task.stage === 'done')
+      .map(task => task.id),
+  )
+  if (doneSourceIds.size === 0) return
+
+  const archiveCandidates: MonitoredCodexTask[] = []
+  for (const task of monitored) {
+    if (!task.source_task_id || !task.codex_thread_id || !doneSourceIds.has(task.source_task_id)) continue
+
+    const result = (task.result ?? {}) as Record<string, unknown>
+    const reason = typeof result.codex_review_reason === 'string' ? result.codex_review_reason : ''
+    if (task.status === 'completed' && (reason === 'archived' || reason === 'thread_deleted')) continue
+
+    try {
+      const stateOut = execSync(
+        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT archived FROM threads WHERE id = '${sqlText(task.codex_thread_id)}' LIMIT 1"`,
+        { encoding: 'utf-8', timeout: 5000 },
+      ).trim()
+      const row = stateOut ? (JSON.parse(stateOut) as Array<{ archived?: number | boolean }>)[0] : null
+      if (row && (row.archived === 1 || row.archived === true)) {
+        await completeCodexTaskClosedFromApp(supabase, task, {
+          threadId: task.codex_thread_id,
+          reason: 'archived',
+        })
+      } else if (row) {
+        archiveCandidates.push(task)
+      }
+    } catch (scanError) {
+      console.error('[codex-app] failed to inspect thread archive state:', scanError instanceof Error ? scanError.message : scanError)
+    }
+  }
+
+  if (archiveCandidates.length === 0) return
+
+  const archivedThreadIds = await archiveCodexThreadsViaAppServer(
+    archiveCandidates.map(task => task.codex_thread_id).filter((id): id is string => !!id),
+  )
+  for (const task of archiveCandidates) {
+    if (!task.codex_thread_id || !archivedThreadIds.has(task.codex_thread_id)) continue
+    await completeCodexTaskClosedFromApp(supabase, task, {
+      threadId: task.codex_thread_id,
+      reason: 'archived',
+    })
+    console.log(`[codex-app] source task done, thread archived: ${task.id} -> ${task.source_task_id}`)
+  }
+}
+
+type CodexSyncStats = {
+  monitored: number
+  fastFollow: boolean
+}
+
+async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncStats> {
+  const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
+  if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
+
+  // codex_app / codex 両 executor の実行中・確認待ちタスクを監視する。
+  // Codex.app 側で追加turnが始まると awaiting_approval → running に戻すため、確認待ちも対象に含める。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, executor, result, tmux_session_name')
+    .select('id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
-    .eq('status', 'running')
+    .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
 
-  if (!tasks || tasks.length === 0) return
+  if (!tasks || tasks.length === 0) return { monitored: 0, fastFollow: false }
 
-  for (const task of tasks as Array<{
-    id: string
-    prompt: string
-    codex_thread_id: string | null
-    started_at: string | null
-    executor: string | null
-    result: Record<string, unknown> | null
-    tmux_session_name: string | null
-  }>) {
+  const monitoredTasks = tasks as MonitoredCodexTask[]
+  const stats: CodexSyncStats = {
+    monitored: monitoredTasks.length,
+    fastFollow: monitoredTasks.some(task => task.status === 'running' || task.status === 'needs_input'),
+  }
+
+  for (const task of monitoredTasks) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = task.codex_thread_id
     if (!threadId) {
-      // プロンプト先頭40文字（# タイトル...）でマッチ
-      const promptPrefix = task.prompt.slice(0, 40).replace(/'/g, "''")
-      const sinceMs = task.started_at ? new Date(task.started_at).getTime() - 60_000 : 0
       try {
-        const out = execSync(
-          `sqlite3 ${JSON.stringify(dbPath)} "SELECT id FROM threads WHERE first_user_message LIKE '${promptPrefix}%' AND updated_at_ms >= ${sinceMs} ORDER BY created_at_ms DESC LIMIT 1"`,
-          { encoding: 'utf-8', timeout: 5000 },
-        ).trim()
-        if (out) {
-          threadId = out
+        const matchedThreadId = findMatchingCodexThread(dbPath, task)
+        if (matchedThreadId) {
+          threadId = matchedThreadId
           await supabase
             .from('ai_tasks')
             .update({ codex_thread_id: threadId })
@@ -1199,28 +1570,58 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
       }
     }
 
-    if (!threadId) continue
+    if (!threadId) {
+      const startedMs = task.started_at ? new Date(task.started_at).getTime() : Date.now()
+      if (task.status === 'running' && Date.now() - startedMs > 2 * 60_000) {
+        const current = (task.result ?? {}) as Record<string, unknown>
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'awaiting_approval',
+            result: {
+              ...current,
+              executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'monitoring_lost',
+              live_log: typeof current.live_log === 'string'
+                ? current.live_log
+                : 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
+              last_activity_at: new Date().toISOString(),
+            },
+          })
+          .eq('id', task.id)
+      }
+      continue
+    }
 
     // thread 状態取得
     try {
       const stateOut = execSync(
-        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT title, tokens_used, has_user_event, archived, updated_at_ms, preview FROM threads WHERE id = '${threadId}'"`,
+        `sqlite3 -json ${JSON.stringify(dbPath)} "SELECT title, tokens_used, has_user_event, archived, updated_at_ms, preview, rollout_path, source, cwd FROM threads WHERE id = '${threadId}'"`,
         { encoding: 'utf-8', timeout: 5000 },
       ).trim()
-      if (!stateOut) continue
+      if (!stateOut) {
+        await completeCodexTaskClosedFromApp(supabase, task, { threadId, reason: 'thread_deleted' })
+        console.log(`[codex-app] thread deleted, task completed: ${task.id}${task.source_task_id ? ` -> ${task.source_task_id}` : ''}`)
+        continue
+      }
 
-      const rows = JSON.parse(stateOut) as Array<{
-        title?: string
-        tokens_used?: number
-        has_user_event?: number
-        archived?: number
-        updated_at_ms?: number
-        preview?: string
-      }>
+      const rows = JSON.parse(stateOut) as CodexThreadSnapshot[]
       if (rows.length === 0) continue
       const row = rows[0]
+      const archived = row.archived === 1 || row.archived === true
+      let rolloutRaw = ''
+      if (row.rollout_path && fs.existsSync(row.rollout_path)) {
+        try {
+          rolloutRaw = fs.readFileSync(row.rollout_path, 'utf-8')
+        } catch {
+          rolloutRaw = ''
+        }
+      }
+      const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
+      const bridge = readCodexBridgeObservation(task.id)
 
-      const liveLog = [
+      const fallbackLog = [
         `📱 ${task.executor === 'codex' ? 'Codex CLI' : 'Codex.app'} セッション ${threadId.slice(0, 8)}`,
         `タイトル: ${row.title ?? '(未設定)'}`,
         `トークン使用: ${row.tokens_used ?? 0}`,
@@ -1230,8 +1631,42 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
         '── プレビュー ──',
         row.preview ?? '(空)',
       ].join('\n')
+      let codexState: CodexRunState = parsed.state
+      let reviewReason: CodexReviewReason = parsed.reviewReason
+      const lastActivityAt = bridge.lastActivityAt ?? parsed.lastActivityAt
+      let liveLog = mergeCodexLiveLogs([parsed.liveLog, ...bridge.logBlocks])
+
+      if (bridge.awaitingApproval) {
+        codexState = 'awaiting_approval'
+        reviewReason = 'approval_requested'
+        appendUniqueLogBlock(bridge.logBlocks, `[approval-requested] ${bridge.approvalCommand ?? '(command)'}`)
+        liveLog = mergeCodexLiveLogs([parsed.liveLog, ...bridge.logBlocks])
+      } else if (codexState === 'running' && parsed.sawTaskStarted && liveLog) {
+        const lastActivityMs = lastActivityAt ? Date.parse(lastActivityAt) : Number.NaN
+        if (Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs > CODEX_APP_IDLE_REVIEW_MS) {
+          codexState = 'awaiting_approval'
+          reviewReason = 'monitoring_lost'
+          liveLog = mergeCodexLiveLogs([
+            liveLog,
+            '[Codex] ログ更新が止まったため確認待ちにしました',
+          ])
+        }
+      }
+
+      if (!liveLog) liveLog = fallbackLog
 
       const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
+
+      const closureReason = archived ? 'archived' : reviewReason
+      if (shouldCompleteSourceTaskForCodexReview(closureReason)) {
+        await completeCodexTaskClosedFromApp(supabase, task, {
+          threadId,
+          reason: closureReason,
+          liveLog,
+        })
+        console.log(`[codex-app] thread ${closureReason}, task completed: ${task.id}${task.source_task_id ? ` -> ${task.source_task_id}` : ''}`)
+        continue
+      }
 
       // 既存 steps を保持しつつ thread 検出を step として記録
       const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
@@ -1243,34 +1678,50 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
 
       const baseResult: Record<string, unknown> = {
         ...current,
-        live_log: executor === 'codex' ? (current.live_log ?? liveLog) : liveLog,
+        live_log: liveLog,
         executor,
         codex_thread_id: threadId,
+        codex_run_state: codexState,
+        codex_review_reason: reviewReason,
+        last_activity_at: lastActivityAt,
+        codex_thread_snapshot: {
+          title: row.title ?? null,
+          preview: row.preview ?? null,
+          tokens_used: row.tokens_used ?? null,
+          has_user_event: row.has_user_event ?? null,
+          archived,
+          updated_at_ms: row.updated_at_ms ?? null,
+          source: row.source ?? null,
+          cwd: row.cwd ?? null,
+        },
         steps,
       }
 
       const updates: Record<string, unknown> = { result: baseResult }
 
-      // 完了候補判定:
-      //   - codex_app (codex:// URL): threads.archived = 1 で完了候補
-      //     （codex:// は prefill のみで自動送信されない＝ユーザー操作待ち）
-      //   - codex (JSON-RPC bridge): bridge が turn/completed 受信後に
-      //     awaiting_approval に更新するため、ここでは何もしない
-      const isArchived = row.archived === 1
-      const isComplete = isArchived && executor !== 'codex'
-
-      if (isComplete) {
+      if (codexState === 'awaiting_approval') {
         const completedIdx = steps.findIndex(s => s.key === 'completed')
-        const completedStep = makeStep('completed', '完了候補（アーカイブ済・確認待ち）')
+        const completedStep = makeStep('completed', `確認待ち（${reviewReason}）`)
         if (completedIdx >= 0) steps[completedIdx] = completedStep
         else steps.push(completedStep)
         updates.status = 'awaiting_approval'
         updates.result = {
           ...baseResult,
           steps,
-          message: `Codex.app セッションは完了候補です。内容を確認して完了にしてください。\n\n${liveLog}`,
-          session_health: 'stopped',
+          message: `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`,
+          session_health: reviewReason === 'approval_requested' ? 'waiting_on_approval' : 'stopped',
           awaiting_approval_at: new Date().toISOString(),
+        }
+      } else if (codexState === 'running' && task.status !== 'running') {
+        const runningIdx = steps.findIndex(s => s.key === 'turn_started')
+        const runningStep = makeStep('turn_started', 'Codex.app で実行中')
+        if (runningIdx >= 0) steps[runningIdx] = runningStep
+        else steps.push(runningStep)
+        updates.status = 'running'
+        updates.result = {
+          ...baseResult,
+          steps,
+          session_health: 'active',
         }
       }
       await supabase
@@ -1280,6 +1731,21 @@ async function syncCodexAppThreads(supabase: any): Promise<void> {
     } catch (e) {
       console.error(`[codex-app] state read failed for ${task.id}:`, e instanceof Error ? e.message : e)
     }
+  }
+
+  return stats
+}
+
+async function syncActiveCodexFollowUps(
+  supabase: SupabaseClient,
+  initialStats: CodexSyncStats,
+): Promise<void> {
+  let stats = initialStats
+  for (let i = 0; i < CODEX_ACTIVE_SYNC_EXTRA_PASSES && stats.fastFollow; i += 1) {
+    await sleep(CODEX_ACTIVE_SYNC_INTERVAL_MS)
+    await syncCodexLiveLogs(supabase)
+    stats = await syncCodexAppThreads(supabase)
+    await syncCompletedFocusmapNodesToCodexArchive(supabase)
   }
 }
 
@@ -1315,8 +1781,8 @@ async function syncCodexLiveLogs(supabase: any): Promise<void> {
       const content = fs.readFileSync(logPath, 'utf-8')
       // ANSI エスケープシーケンス除去
       const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      // 末尾 6000 字（UI で読みやすい範囲）
-      const tail = cleaned.slice(-6000)
+      // UI で会話として読める範囲を残す
+      const tail = cleaned.slice(-CODEX_LIVE_LOG_MAX_CHARS)
       // 既存 result (steps/codex_thread_id) を保持したまま live_log のみ差し替え
       const merged = { ...(task.result ?? {}), executor: 'codex', live_log: tail }
       await supabase
@@ -2228,6 +2694,24 @@ async function claimDueTasksWithRunner(supabase: any, runner: AiRunner, limit = 
   return tasks
 }
 
+function immediateTaskIdFromArgs(): string | null {
+  const envTaskId = process.env.FOCUSMAP_IMMEDIATE_TASK_ID?.trim()
+  if (envTaskId) return envTaskId
+  const idx = process.argv.indexOf('--task-id')
+  const argTaskId = idx >= 0 ? process.argv[idx + 1]?.trim() : ''
+  return argTaskId || null
+}
+
+function dueTaskSelectColumns(): string {
+  return [
+    'id, user_id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, result',
+    'source_note_id, source_ideal_goal_id, source_task_id, executor',
+    schemaCapabilities.hasSharedAiTaskColumns
+      ? `space_id, package_id, package_snapshot, claimed_runner_id, claim_expires_at, run_visibility${schemaCapabilities.hasAiPackageVersioning ? ', package_version_id' : ''}`
+      : '',
+  ].filter(Boolean).join(', ')
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // メイン処理
 // ─────────────────────────────────────────────────────────────────────────
@@ -2247,99 +2731,115 @@ async function main() {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
   schemaCapabilities = await detectSchemaCapabilities(supabase)
-
-  // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
-  await reconcileRemoteControlSessions(supabase)
-  await cleanupStaleCodexTasks(supabase)
-
-  // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
-  await syncCodexLiveLogs(supabase)
-
-  // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
-  await syncCodexAppThreads(supabase)
-
-  // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
-  await recoverStaleStaffStatusTasks(supabase)
-
-  // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
-  const hostname = os.hostname()
-  try {
-    const localRunnerUserId = readLocalRunnerUserId()
-    if (localRunnerUserId) {
-      await ensureDefaultScanSettings(supabase, localRunnerUserId, hostname)
-    }
-    // ai_tasks を持つユーザーで scan_settings 未作成の人にデフォルトを入れる
-    const { data: activeUsers } = await supabase
-      .from('ai_tasks')
-      .select('user_id')
-      .limit(50)
-    const seen = new Set<string>()
-    for (const row of (activeUsers ?? []) as Array<{ user_id: string }>) {
-      if (seen.has(row.user_id)) continue
-      seen.add(row.user_id)
-      await ensureDefaultScanSettings(supabase, row.user_id, hostname)
-    }
-    await scanAndSync(supabase, hostname)
-  } catch (e) {
-    console.error('[task-runner] repo scan error:', e instanceof Error ? e.message : e)
-  }
-
-  // ─── 1. runner heartbeat → due task を atomic claim ─────────────────
+  const immediateTaskId = immediateTaskIdFromArgs()
   let dueTasks: StaffStatusDueTask[] = []
-  const runner = schemaCapabilities.hasAiRunnerTables && schemaCapabilities.hasSharedAiTaskColumns
-    ? await heartbeatRunner(supabase, hostname)
-    : null
-  if (runner) {
-    await syncRunnerPackageVersions(supabase, runner)
-    dueTasks = await claimDueTasksWithRunner(supabase, runner, 5)
-  } else if (
-    schemaCapabilities.hasAiRunnerTables &&
-    schemaCapabilities.hasSharedAiTaskColumns &&
-    process.env.FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER !== 'true'
-  ) {
-    console.log('[task-runner] Runner is not configured; skipping AI execution claims')
-  } else {
-    // Legacy fallback while the shared runner migration has not been applied, or when explicitly allowed.
-    const selectColumns = [
-      'id, user_id, prompt, skill_id, approval_type, scheduled_at, recurrence_cron, cwd, completed_at, result',
-      'source_note_id, source_ideal_goal_id, executor',
-      schemaCapabilities.hasSharedAiTaskColumns
-        ? `space_id, package_id, package_snapshot, claimed_runner_id, claim_expires_at, run_visibility${schemaCapabilities.hasAiPackageVersioning ? ', package_version_id' : ''}`
-        : '',
-    ].filter(Boolean).join(', ')
-    const { data: rawDueTasks, error } = await supabase
+  let runner: AiRunner | null = null
+
+  if (immediateTaskId) {
+    const { data: immediateTask, error } = await supabase
       .from('ai_tasks')
-      .select(selectColumns)
+      .select(dueTaskSelectColumns())
+      .eq('id', immediateTaskId)
       .eq('status', 'pending')
       .not('scheduled_at', 'is', null)
-      .lte('scheduled_at', new Date().toISOString())
-      .order('scheduled_at', { ascending: true })
-      .limit(5)
+      .lte('scheduled_at', new Date(Date.now() + 5_000).toISOString())
+      .maybeSingle()
 
     if (error) {
-      console.error('[task-runner] DB error:', error.message)
-      if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
-        fs.writeFileSync(
-          PAUSE_FILE,
-          [
-            `Paused at ${new Date().toISOString()}`,
-            `Reason: ${error.message}`,
-            'Remove this file after the Supabase project restriction is lifted.',
-            '',
-          ].join('\n'),
-          'utf-8',
-        )
-        console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
-      }
+      console.error('[task-runner] immediate task lookup failed:', error.message)
       process.exit(1)
     }
 
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
-    dueTasks = ((rawDueTasks || []) as unknown as StaffStatusDueTask[]).filter(t => {
-      if (!t.recurrence_cron) return true
-      if (!t.completed_at) return true
-      return new Date(t.completed_at) < todayStart
-    })
+    dueTasks = immediateTask ? [immediateTask as StaffStatusDueTask] : []
+    console.log(`[task-runner] immediate dispatch requested: ${immediateTaskId}`)
+  } else {
+    // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
+    await reconcileRemoteControlSessions(supabase)
+    await cleanupStaleCodexTasks(supabase)
+
+    // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
+    await syncCodexLiveLogs(supabase)
+
+    // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
+    const codexSyncStats = await syncCodexAppThreads(supabase)
+    await syncCompletedFocusmapNodesToCodexArchive(supabase)
+    await syncActiveCodexFollowUps(supabase, codexSyncStats)
+
+    // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
+    await recoverStaleStaffStatusTasks(supabase)
+
+    // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
+    const hostname = os.hostname()
+    try {
+      const localRunnerUserId = readLocalRunnerUserId()
+      if (localRunnerUserId) {
+        await ensureDefaultScanSettings(supabase, localRunnerUserId, hostname)
+      }
+      // ai_tasks を持つユーザーで scan_settings 未作成の人にデフォルトを入れる
+      const { data: activeUsers } = await supabase
+        .from('ai_tasks')
+        .select('user_id')
+        .limit(50)
+      const seen = new Set<string>()
+      for (const row of (activeUsers ?? []) as Array<{ user_id: string }>) {
+        if (seen.has(row.user_id)) continue
+        seen.add(row.user_id)
+        await ensureDefaultScanSettings(supabase, row.user_id, hostname)
+      }
+      await scanAndSync(supabase, hostname)
+    } catch (e) {
+      console.error('[task-runner] repo scan error:', e instanceof Error ? e.message : e)
+    }
+
+    // ─── 1. runner heartbeat → due task を atomic claim ─────────────────
+    runner = schemaCapabilities.hasAiRunnerTables && schemaCapabilities.hasSharedAiTaskColumns
+      ? await heartbeatRunner(supabase, hostname)
+      : null
+    if (runner) {
+      await syncRunnerPackageVersions(supabase, runner)
+      dueTasks = await claimDueTasksWithRunner(supabase, runner, 5)
+    } else if (
+      schemaCapabilities.hasAiRunnerTables &&
+      schemaCapabilities.hasSharedAiTaskColumns &&
+      process.env.FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER !== 'true'
+    ) {
+      console.log('[task-runner] Runner is not configured; skipping AI execution claims')
+    } else {
+      // Legacy fallback while the shared runner migration has not been applied, or when explicitly allowed.
+      const { data: rawDueTasks, error } = await supabase
+        .from('ai_tasks')
+        .select(dueTaskSelectColumns())
+        .eq('status', 'pending')
+        .not('scheduled_at', 'is', null)
+        .lte('scheduled_at', new Date().toISOString())
+        .order('scheduled_at', { ascending: true })
+        .limit(5)
+
+      if (error) {
+        console.error('[task-runner] DB error:', error.message)
+        if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
+          fs.writeFileSync(
+            PAUSE_FILE,
+            [
+              `Paused at ${new Date().toISOString()}`,
+              `Reason: ${error.message}`,
+              'Remove this file after the Supabase project restriction is lifted.',
+              '',
+            ].join('\n'),
+            'utf-8',
+          )
+          console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
+        }
+        process.exit(1)
+      }
+
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+      dueTasks = ((rawDueTasks || []) as unknown as StaffStatusDueTask[]).filter(t => {
+        if (!t.recurrence_cron) return true
+        if (!t.completed_at) return true
+        return new Date(t.completed_at) < todayStart
+      })
+    }
   }
 
   if (!dueTasks || dueTasks.length === 0) {
@@ -2739,15 +3239,52 @@ async function main() {
       continue
     }
 
-    // ─── メモ/ノードから起動: executor 別に分岐 ───
-    //   codex/codex_app は source(note/ideal) が無くても（マインドマップのノード=task 由来でも）
-    //   cwd さえあれば codex 分岐に入れる。これが無いと codex タスクが claude にフォールスルーしていた。
-    if (task.cwd && (task.source_note_id || task.source_ideal_goal_id || task.executor === 'codex' || task.executor === 'codex_app')) {
-      // 元メモを取得（タイトル付与・チャット名生成用）
+    // ─── メモ / マインドマップノードから起動: executor 別に分岐 ───
+    //   codex/codex_app は source(note/ideal/task) が無くても cwd さえあれば codex 分岐に入れる。
+    if (task.source_note_id || task.source_ideal_goal_id || task.source_task_id || task.executor === 'codex' || task.executor === 'codex_app') {
+      const executor: 'claude' | 'codex' | 'codex_app' =
+        task.executor === 'codex_app' ? 'codex_app' :
+        task.executor === 'codex' ? 'codex' :
+        'claude'
+      const now = new Date().toISOString()
+      if (!task.cwd) {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            status: 'awaiting_approval',
+            error: 'Codex/Claude 実行にはプロジェクトのリポジトリパスが必要です',
+            result: {
+              ...asResultRecord(task.result),
+              executor,
+              ...(executor === 'codex_app' || executor === 'codex' ? {
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'monitoring_lost',
+              } : {}),
+            },
+          })
+          .eq('id', task.id)
+        console.error(`[task-runner] Source task has no cwd: ${task.id}`)
+        continue
+      }
+
+      // 元メモ/タスクを取得（タイトル付与・チャット名生成用）
       let memoTitle: string | undefined
       let memoDescription: string | undefined
       let displayTitle: string | undefined
-      if (task.source_ideal_goal_id) {
+      if (task.source_task_id) {
+        const { data: sourceTask } = await supabase
+          .from('tasks')
+          .select('title, memo')
+          .eq('id', task.source_task_id)
+          .maybeSingle()
+        if (sourceTask?.title) {
+          memoTitle = String(sourceTask.title).trim()
+          memoDescription = sourceTask.memo ? String(sourceTask.memo).trim() : undefined
+          const titlePart = memoTitle.slice(0, 30)
+          const descPart = memoDescription ? memoDescription.replace(/\s+/g, ' ').slice(0, 30) : ''
+          displayTitle = descPart ? `${titlePart} · ${descPart}` : titlePart
+        }
+      } else if (task.source_ideal_goal_id) {
         const { data: memo } = await supabase
           .from('ideal_goals')
           .select('title, description')
@@ -2772,49 +3309,90 @@ async function main() {
         }
       }
 
-      const executor: 'claude' | 'codex' | 'codex_app' =
-        task.executor === 'codex_app' ? 'codex_app' :
-        task.executor === 'codex' ? 'codex' :
-        'claude'
-      const now = new Date().toISOString()
       const memoPrompt = buildPromptWithMemo({
         memoTitle,
         memoDescription,
         prompt: task.prompt,
       })
 
-      // ─── Codex.app executor (Mac proxy: open codex://...) ───
+      // ─── Codex.app executor (app-server 経由で thread 作成 + 初回 turn/start) ───
       if (executor === 'codex_app') {
-        notify(`Codex.app 起動: ${shortPrompt}`, 'Focusmap AI')
-        const result = launchCodexApp({
+        notify(`Codex.app 起動中: ${shortPrompt}`, 'Focusmap AI')
+
+        await pushCodexStep(supabase, task.id,
+          makeStep('received', 'Mac の task-runner が受信'),
+          { executor: 'codex_app', metadata: { codex_run_state: 'running', codex_review_reason: 'started' } })
+
+        const health = checkCodexAppServerReady()
+        if (!health.ready) {
+          await pushCodexStep(supabase, task.id,
+            makeStep('daemon_ready', `Codex daemon 未起動: ${health.error}`, 'failed'),
+            { executor: 'codex_app' })
+          await supabase
+            .from('ai_tasks')
+            .update({
+              status: 'awaiting_approval',
+              error: `codex app-server (ws://127.0.0.1:7878) に接続できません: ${health.error}`,
+              result: {
+                ...asResultRecord(task.result),
+                executor: 'codex_app',
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'monitoring_lost',
+                live_log: 'Codex daemon に接続できません。launchctl で com.focusmap.codex-app-server を確認してください。',
+              },
+            })
+            .eq('id', task.id)
+          notify(`Codex daemon 停止: ${shortPrompt}`, 'Focusmap AI')
+          console.error(`[task-runner] codex_app daemon unreachable: ${health.error}`)
+          continue
+        }
+        await pushCodexStep(supabase, task.id,
+          makeStep('daemon_ready', 'Codex daemon (ws://127.0.0.1:7878) 接続OK'),
+          { executor: 'codex_app' })
+
+        const result = await launchCodexRemote({
           taskId: task.id,
           prompt: memoPrompt,
           cwd: task.cwd,
+          executor: 'codex_app',
+          displayTitle,
           memoTitle,
           memoDescription,
         })
         if (!result.success) {
+          await pushCodexStep(supabase, task.id,
+            makeStep('spawn', `bridge 起動失敗: ${result.error}`, 'failed'),
+            { executor: 'codex_app' })
           await supabase
             .from('ai_tasks')
-            .update({ status: 'failed', error: result.error.slice(0, 1000), completed_at: now })
+            .update({
+              status: 'awaiting_approval',
+              error: result.error.slice(0, 1000),
+              result: {
+                ...asResultRecord(task.result),
+                executor: 'codex_app',
+                codex_run_state: 'awaiting_approval',
+                codex_review_reason: 'monitoring_lost',
+              },
+            })
             .eq('id', task.id)
           console.error(`[task-runner] Codex.app launch failed: ${task.id}: ${result.error}`)
           continue
         }
 
-        await supabase
-          .from('ai_tasks')
-          .update({
-            result: {
-              message: 'Codex.app を起動しました。Mac の Codex アプリで内容を確認、ペアリング済ならスマホ ChatGPT app でも見られます',
-              executor: 'codex_app',
-              opened_at: result.openedAt,
+        await pushCodexStep(supabase, task.id,
+          makeStep('spawn', 'Codex app-server bridge プロセス起動'),
+          {
+            executor: 'codex_app',
+            metadata: {
+              codex_run_state: 'running',
+              codex_review_reason: 'started',
+              session_health: 'active',
             },
           })
-          .eq('id', task.id)
 
-        notify(`Codex.app 起動完了: ${shortPrompt}`, 'Focusmap AI')
-        console.log(`[task-runner] Codex.app launched: ${task.id} at ${result.openedAt}`)
+        notify(`Codex.app 実行開始: ${shortPrompt}`, 'Focusmap AI')
+        console.log(`[task-runner] Codex.app bridge spawned: ${task.id}`)
         continue
       }
 

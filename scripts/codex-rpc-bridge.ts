@@ -10,7 +10,7 @@
  * thread だけ作られて止まる問題があったため、JSON-RPC 直接通信に切替。
  *
  * 起動:
- *   npx ts-node --esm scripts/codex-rpc-bridge.ts <taskId> <cwd> <promptFile>
+ *   npx ts-node --esm scripts/codex-rpc-bridge.ts <taskId> <cwd> <promptFile> [resumeThreadId] [codex|codex_app]
  *
  * task-runner.ts から detached child process として spawn される。
  * 1 タスクで 1 プロセス。完了/失敗で exit する。
@@ -21,6 +21,7 @@ import WebSocket from 'ws'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
+import { spawn } from 'child_process'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -46,6 +47,22 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const WS_URL = 'ws://127.0.0.1:7878'
 const OVERALL_TIMEOUT_MS = 15 * 60 * 1000 // 15分
 const CONNECT_TIMEOUT_MS = 10_000
+const POST_COMPLETION_GRACE_MS = 5_000
+const LIVE_LOG_MAX_CHARS = 80_000
+type CodexThreadOpenMode = 'manual' | 'completed' | 'created'
+
+function resolveCodexThreadOpenMode(value: string | undefined): CodexThreadOpenMode {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized || ['0', 'false', 'off', 'manual'].includes(normalized)) return 'manual'
+  if (['created', 'immediate', 'start'].includes(normalized)) return 'created'
+  if (['1', 'true', 'on', 'completed', 'complete', 'after-completion'].includes(normalized)) return 'completed'
+  return 'manual'
+}
+
+const CODEX_THREAD_OPEN_MODE = resolveCodexThreadOpenMode(
+  process.env.FOCUSMAP_CODEX_OPEN_THREAD_MODE ?? process.env.FOCUSMAP_CODEX_OPEN_THREAD,
+)
+const OPEN_CODEX_THREAD = CODEX_THREAD_OPEN_MODE !== 'manual'
 const LOG_FILE_TEMPLATE = (taskId: string) => `/tmp/codex-bridge-${taskId}.log`
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -59,6 +76,9 @@ interface CodexStep {
   at: string
 }
 type AiTaskTerminalStatus = 'awaiting_approval' | 'failed'
+let ACTIVE_EXECUTOR: 'codex' | 'codex_app' = 'codex'
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 function makeStep(key: string, label: string, status: CodexStepStatus = 'done'): CodexStep {
   return { key, label, status, at: new Date().toISOString() }
@@ -206,12 +226,28 @@ async function pushStep(
   if (idx >= 0) steps[idx] = step
   else steps.push(step)
 
-  const merged: Record<string, unknown> = { ...current, executor: 'codex', steps }
+  const merged: Record<string, unknown> = { ...current, executor: ACTIVE_EXECUTOR, steps }
   if (extra?.liveLog !== undefined) merged.live_log = extra.liveLog
   if (extra?.threadId) merged.codex_thread_id = extra.threadId
   if (extra?.message) merged.message = extra.message
   if (extra?.metadata) Object.assign(merged, extra.metadata)
   await supabase.from('ai_tasks').update({ result: merged }).eq('id', taskId)
+}
+
+function openCodexThreadInApp(threadId: string, reason: 'created' | 'completed'): void {
+  if (!OPEN_CODEX_THREAD || process.platform !== 'darwin') return
+  if (CODEX_THREAD_OPEN_MODE === 'completed' && reason !== 'completed') return
+  const url = `codex://threads/${threadId}`
+  try {
+    const child = spawn('/usr/bin/open', ['-g', url], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+    console.error(`[bridge] opened Codex deeplink reason=${reason} url=${url}`)
+  } catch (err) {
+    console.error(`[bridge] Codex deeplink open failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -276,6 +312,14 @@ class RpcClient {
     })
   }
 
+  notify(method: string, params?: unknown): void {
+    const payload = params === undefined
+      ? { jsonrpc: '2.0', method }
+      : { jsonrpc: '2.0', method, params }
+    this.appendLog(`→ ${JSON.stringify(payload)}\n`)
+    this.ws.send(JSON.stringify(payload))
+  }
+
   onNotification(handler: (msg: RpcEnvelope) => void): () => void {
     this.notificationHandlers.add(handler)
     return () => { this.notificationHandlers.delete(handler) }
@@ -286,12 +330,13 @@ class RpcClient {
 // メイン: 引数から taskId / cwd / promptFile を受け取り 1 タスク実行
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
-  const [, , taskId, cwd, promptFile, resumeThreadIdArg] = process.argv
+  const [, , taskId, cwd, promptFile, resumeThreadIdArg, executorArg] = process.argv
   const resumeThreadId = (resumeThreadIdArg ?? '').trim() || null
   if (!taskId || !cwd || !promptFile) {
-    console.error('Usage: codex-rpc-bridge.ts <taskId> <cwd> <promptFile>')
+    console.error('Usage: codex-rpc-bridge.ts <taskId> <cwd> <promptFile> [resumeThreadId] [codex|codex_app]')
     process.exit(2)
   }
+  ACTIVE_EXECUTOR = executorArg === 'codex_app' ? 'codex_app' : 'codex'
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     console.error('NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 未設定')
     process.exit(2)
@@ -308,6 +353,7 @@ async function main() {
   const rawPrompt = fs.readFileSync(promptFile, 'utf-8')
   const prompt = dedupeRepeatedPromptBlocks(rawPrompt)
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+  let waitingOnApproval = false
   const logFile = LOG_FILE_TEMPLATE(taskId)
   try { fs.unlinkSync(logFile) } catch { /* ignore */ }
   fs.writeFileSync(logFile, '', 'utf-8')
@@ -328,6 +374,14 @@ async function main() {
   await updateNodeCodex('running')
 
   const overallTimer = setTimeout(async () => {
+    if (waitingOnApproval) {
+      await supabase.from('ai_tasks').update({
+        status: 'awaiting_approval',
+        error: null,
+        completed_at: null,
+      }).eq('id', taskId)
+      process.exit(0)
+    }
     await pushStep(supabase, taskId, makeStep('completed', `タイムアウト (${OVERALL_TIMEOUT_MS / 60_000}分)`, 'failed'))
     await updateNodeCodex('failed')
     await supabase.from('ai_tasks').update({
@@ -379,8 +433,10 @@ async function main() {
       // method 一覧は /tmp/codex-bridge-28cd0e3e-*.log の error response で確証済
       const initResp = await callOk(rpc, 'initialize', {
         clientInfo: { name: 'focusmap', version: '0.1.0' },
+        capabilities: { experimentalApi: true },
       })
       if (!initResp) throw new Error('initialize 失敗')
+      rpc.notify('initialized')
       await pushStep(supabase, taskId, makeStep('connected', 'app-server に接続 (initialize OK)'))
 
       // ─── thread/start（新規）or thread/resume（往復継続）───
@@ -395,10 +451,33 @@ async function main() {
         if (!resumeResp) throw new Error('thread/resume 失敗')
         threadId = resumeThreadId
       } else {
-        const threadResp = await callOk(rpc, 'thread/start', { cwd })
+        const THREAD_START_SHAPES: Array<{ name: string; payload: Record<string, unknown> }> = [
+          {
+            name: 'focusmap-user-thread',
+            payload: {
+              cwd,
+              approvalPolicy: 'never',
+              experimentalRawEvents: true,
+              persistExtendedHistory: true,
+              threadSource: 'user',
+            },
+          },
+          { name: 'approval-never', payload: { cwd, approvalPolicy: 'never', threadSource: 'user' } },
+          { name: 'minimal', payload: { cwd } },
+        ]
+        let threadResp: RpcEnvelope | null = null
+        for (const shape of THREAD_START_SHAPES) {
+          threadResp = await callOk(rpc, 'thread/start', shape.payload)
+          if (threadResp) {
+            const result = threadResp.result as { approvalPolicy?: string } | undefined
+            console.error(`[bridge] thread/start OK shape=${shape.name} approvalPolicy=${result?.approvalPolicy ?? 'unknown'}`)
+            break
+          }
+        }
         if (!threadResp) throw new Error('thread/start 失敗')
         const threadResult = threadResp.result as { thread?: { id?: string }; threadId?: string }
         threadId = threadResult.thread?.id ?? threadResult.threadId
+        if (threadId) openCodexThreadInApp(threadId, 'created')
       }
       if (!threadId) throw new Error('thread id を取得できない')
 
@@ -406,7 +485,15 @@ async function main() {
         resumeThreadId
           ? `Thread 継続 (resume, id ${threadId.slice(0, 8)})`
           : `Thread 作成 (mobile/Codex.app に表示, id ${threadId.slice(0, 8)})`),
-        { threadId })
+        {
+          threadId,
+          metadata: {
+            codex_thread_url: `codex://threads/${threadId}`,
+            codex_thread_source: 'user',
+            codex_open_thread_enabled: OPEN_CODEX_THREAD,
+            codex_open_thread_mode: CODEX_THREAD_OPEN_MODE,
+          },
+        })
       await supabase.from('ai_tasks').update({ codex_thread_id: threadId }).eq('id', taskId)
       await updateNodeCodex('running', threadId)
 
@@ -429,7 +516,7 @@ async function main() {
       const trimEntries = () => {
         if (logEntries.length > 200) logEntries.splice(0, logEntries.length - 200)
       }
-      const buildLiveLog = (maxChars = 6000) => {
+      const buildLiveLog = (maxChars = LIVE_LOG_MAX_CHARS) => {
         const active = [...activeAgentMessages.values()]
           .filter(Boolean)
           .map(text => `[assistant:streaming] ${text}`)
@@ -453,6 +540,42 @@ async function main() {
         logEntries.push(entry.trim())
         trimEntries()
         scheduleFlushLog()
+      }
+      const markAwaitingApproval = async (command: string) => {
+        waitingOnApproval = true
+        const now = new Date().toISOString()
+        const liveLog = buildLiveLog()
+        await pushStep(supabase, taskId, makeStep('approval_requested', `承認待ち: ${command.slice(0, 120)}`), {
+          liveLog,
+          message: liveLog || '(本文なし)',
+          metadata: {
+            session_health: 'waiting_on_approval',
+            codex_run_state: 'awaiting_approval',
+            codex_review_reason: 'approval_requested',
+            last_activity_at: now,
+            awaiting_approval_at: now,
+          },
+        })
+        await supabase.from('ai_tasks').update({
+          status: 'awaiting_approval',
+          error: null,
+        }).eq('id', taskId)
+      }
+      const markApprovalResolved = async () => {
+        waitingOnApproval = false
+        await pushStep(supabase, taskId, makeStep('turn_started', 'Codex.app で実行中'), {
+          liveLog: buildLiveLog(),
+          metadata: {
+            session_health: 'active',
+            codex_run_state: 'running',
+            codex_review_reason: 'started',
+            last_activity_at: new Date().toISOString(),
+          },
+        })
+        await supabase.from('ai_tasks').update({
+          status: 'running',
+          error: null,
+        }).eq('id', taskId)
       }
 
       let completed = false
@@ -507,8 +630,10 @@ async function main() {
         if (method === 'item/commandExecution/requestApproval') {
           const command = typeof params.command === 'string' ? params.command : '(command)'
           appendLogEntry(`[approval-requested] ${command}`)
+          void markAwaitingApproval(command).catch(() => { /* ignore */ })
         } else if (method === 'serverRequest/resolved') {
           appendLogEntry('[approval-resolved] Codex app-server request resolved')
+          void markApprovalResolved().catch(() => { /* ignore */ })
         }
 
         // 完了系: turn/* で complet|finish|end|done をマッチ
@@ -526,13 +651,12 @@ async function main() {
       })
 
       // ─── turn/start ───
-      // Phase A で確定: input-no-policy が正解
-      //   { threadId, input: [{ type: 'text', text }] }
-      //   sandboxPolicy/approvalPolicy は thread/start の defaults を継承（"never" 文字列は型エラー）
-      // 念のためフォールバック shape も残す（codex バージョン違い対策）
+      // Phase A で確定: input 配列が正解。
+      // thread 側の approvalPolicy=never を継承させつつ、turn 側でも指定できる版を最初に試す。
+      // 念のためフォールバック shape も残す（codex バージョン違い対策）。
       const TURN_SHAPES: Array<{ name: string; payload: Record<string, unknown> }> = [
+        { name: 'input-approval-never', payload: { threadId, input: [{ type: 'text', text: prompt }], approvalPolicy: 'never' } },
         { name: 'input-no-policy', payload: { threadId, input: [{ type: 'text', text: prompt }] } },
-        { name: 'input-approval-only', payload: { threadId, input: [{ type: 'text', text: prompt }], approvalPolicy: 'never' } },
         { name: 'items-array', payload: { threadId, items: [{ type: 'text', text: prompt }] } },
         { name: 'text-flat', payload: { threadId, text: prompt } },
       ]
@@ -546,7 +670,13 @@ async function main() {
       }
       if (!turnOk) throw new Error('turn/start 全 shape で失敗')
 
-      await pushStep(supabase, taskId, makeStep('turn_started', 'プロンプト送信完了 (turn/start)'))
+      await pushStep(supabase, taskId, makeStep('turn_started', 'プロンプト送信完了 (turn/start)'), {
+        metadata: {
+          codex_run_state: 'running',
+          codex_review_reason: 'started',
+          last_activity_at: new Date().toISOString(),
+        },
+      })
 
       // ─── 完了待ち ───
       while (!completed) {
@@ -558,7 +688,7 @@ async function main() {
         flushTimer = null
       }
 
-      const finalLog = buildLiveLog(6000)
+      const finalLog = buildLiveLog()
       const hasAssistantOutput = finalLog.includes('[assistant')
       const outcome = resolveTurnOutcome({
         status: completedStatus,
@@ -580,6 +710,8 @@ async function main() {
             metadata: {
               ...resultMetadata,
               session_health: 'stopped',
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'completed',
               awaiting_approval_at: new Date().toISOString(),
             },
           })
@@ -591,7 +723,15 @@ async function main() {
       } else {
         const errorText = `${outcome.error ?? `Codex turn ${completedStatus}`}: ${finalLog.slice(0, 500)}`
         await pushStep(supabase, taskId, makeStep('completed', outcome.label, 'failed'),
-          { liveLog: finalLog, message: finalLog || '(本文なし)', metadata: resultMetadata })
+          {
+            liveLog: finalLog,
+            message: finalLog || '(本文なし)',
+            metadata: {
+              ...resultMetadata,
+              codex_run_state: 'awaiting_approval',
+              codex_review_reason: 'aborted',
+            },
+          })
         await supabase.from('ai_tasks').update({
           status: outcome.status,
           error: errorText.slice(0, 1000),
@@ -600,6 +740,9 @@ async function main() {
         await updateNodeCodex('failed', threadId)
       }
 
+      openCodexThreadInApp(threadId, 'completed')
+      console.error(`[bridge] keeping websocket open ${POST_COMPLETION_GRACE_MS}ms after completion`)
+      await sleep(POST_COMPLETION_GRACE_MS)
       ws.close()
       clearTimeout(overallTimer)
       process.exit(0)

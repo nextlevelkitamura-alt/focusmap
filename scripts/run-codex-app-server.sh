@@ -6,6 +6,13 @@
 
 export PATH="$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CODEX_BIN="${FOCUSMAP_CODEX_BIN:-}"
+if [ -z "$CODEX_BIN" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex" ]; then
+  CODEX_BIN="/Applications/Codex.app/Contents/Resources/codex"
+fi
+if [ -z "$CODEX_BIN" ]; then
+  CODEX_BIN="codex"
+fi
 
 # ANTHROPIC 系の env が混ざらないように
 unset ANTHROPIC_API_KEY
@@ -16,5 +23,5 @@ unset CLAUDECODE
 #   Codex Desktop アプリのホストと同じ state_5.sqlite を合算するため、
 #   スマホの「すべて」表示で全スレッドが2回ずつ重複する（2026-05-30 修正）。
 #   relay の注入 (initialize/thread/start/turn/start) はこのフラグ無しで動作する。
-exec codex app-server \
+exec "$CODEX_BIN" app-server \
   --listen "ws://127.0.0.1:7878"

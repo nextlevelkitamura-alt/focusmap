@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server"
+import { resolveProjectRepoPath } from "@/lib/project-repo-path"
 import { NextResponse } from "next/server"
 
 export async function PATCH(
@@ -15,10 +16,19 @@ export async function PATCH(
 
         const { id } = await params
         const body = await request.json()
+        const updates = { ...body }
+
+        if (Object.prototype.hasOwnProperty.call(updates, "repo_path")) {
+            const resolvedRepo = await resolveProjectRepoPath(supabase, user.id, updates.repo_path)
+            if (resolvedRepo.error) {
+                return NextResponse.json({ error: resolvedRepo.error }, { status: 400 })
+            }
+            updates.repo_path = resolvedRepo.repoPath
+        }
 
         const { data, error } = await supabase
             .from("projects")
-            .update(body)
+            .update(updates)
             .eq("id", id)
             .eq("user_id", user.id)
             .select()

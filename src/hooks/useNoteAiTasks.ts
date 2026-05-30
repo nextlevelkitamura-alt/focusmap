@@ -5,6 +5,20 @@ import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
+const IDLE_REFRESH_INTERVAL_MS = 30_000
+
+function hasActiveCodexTask(tasks: Map<string, AiTask>) {
+  for (const task of tasks.values()) {
+    if (
+      (task.executor === 'codex' || task.executor === 'codex_app') &&
+      ACTIVE_STATUSES.includes(task.status)
+    ) {
+      return true
+    }
+  }
+  return false
+}
 
 /**
  * メモ行から起動された ai_tasks を取得する。
@@ -44,6 +58,15 @@ export function useNoteAiTasks() {
   useEffect(() => {
     fetchInitial()
   }, [fetchInitial])
+
+  const refreshIntervalMs = hasActiveCodexTask(byNoteId)
+    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+    : IDLE_REFRESH_INTERVAL_MS
+
+  useEffect(() => {
+    const intervalId = window.setInterval(fetchInitial, refreshIntervalMs)
+    return () => window.clearInterval(intervalId)
+  }, [fetchInitial, refreshIntervalMs])
 
   // Realtime — INSERT / UPDATE / DELETE を反映
   useEffect(() => {
