@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Bot, Loader2, Send } from "lucide-react"
+import { Bot, ExternalLink, Loader2, RefreshCw, Send } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -217,6 +217,9 @@ export function MindmapLinkedMemosDialog({
   const codexUiState = getCodexTaskUiState(codexTask)
   const codexResult = asRecord(codexTask?.result)
   const codexSnapshot = asRecord(codexResult.codex_thread_snapshot)
+  const codexThreadId = stringValue(codexResult.codex_thread_id)
+  const codexThreadUrlFromResult = stringValue(codexResult.codex_thread_url)
+  const codexThreadUrl = codexThreadId ? `codex://threads/${codexThreadId}` : codexThreadUrlFromResult
   const codexMessage = stringValue(codexResult.message)
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
@@ -224,15 +227,26 @@ export function MindmapLinkedMemosDialog({
   const sentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexConversation = getCodexConversation(codexDisplayLog, sentPrompt)
   const codexChatEntries = codexConversation.entries
+  const codexAssistantEntries = codexChatEntries.filter(entry => entry.kind === "request")
+  const codexUserEntries = codexChatEntries.filter(entry => entry.kind === "user")
+  const codexEventEntries = codexChatEntries.filter(entry => entry.kind === "event")
   const codexProcessLogs = codexConversation.processLogs
   const hasCodexRun = (!!codexTask && isCodexTask) || !!justSentPrompt
   const codexCompleted = isCodexTask && codexTask?.status === "completed"
-  const codexStatusLabel = codexCompleted ? "完了" : (codexUiState?.label ?? "実行中")
+  const codexStatusLabel = codexCompleted
+    ? "Codex完了"
+    : codexTask?.status === "failed"
+      ? "失敗"
+      : codexUiState?.state === "running"
+        ? "Codex実行中"
+        : "Codexで確認"
   const codexStatusClass = codexCompleted
     ? "rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
-    : codexUiState?.state === "running"
-      ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
-      : "rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+    : codexTask?.status === "failed"
+      ? "rounded-md bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
+      : codexUiState?.state === "running"
+        ? "rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+        : "rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
 
   const repoOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -351,6 +365,7 @@ export function MindmapLinkedMemosDialog({
       }
       setJustSentPrompt(prompt)
       await refreshAiTasks()
+      onOpenChange(false)
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
@@ -361,9 +376,14 @@ export function MindmapLinkedMemosDialog({
     }
   }
 
+  function handleOpenCodexThread() {
+    if (!codexThreadUrl) return
+    window.location.href = codexThreadUrl
+  }
+
   const title = task?.title || draftTitle || "ノード詳細"
   const description = hasCodexRun
-    ? (codexCompleted ? "Codex完了" : "Codexと同期中")
+    ? (codexCompleted ? "Codex完了" : "Codexで続行中")
     : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
 
@@ -388,75 +408,164 @@ export function MindmapLinkedMemosDialog({
               {error}
             </div>
           ) : hasCodexRun ? (
-            <section className="flex min-h-[520px] flex-col overflow-hidden rounded-lg border bg-card">
-              <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Bot className="h-4 w-4 text-emerald-500" />
-                  <span className={codexStatusClass}>
-                    {codexStatusLabel}
-                  </span>
-                  <span className="text-xs text-muted-foreground">送信済み</span>
+            <section className="space-y-4">
+              {error && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
                 </div>
-              </div>
+              )}
 
-              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
-                {sentPrompt && (
-                  <div className="flex justify-end">
-                    <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
-                      <div className="mb-1 text-xs font-medium text-muted-foreground">送信済み</div>
-                      <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words">{sentPrompt}</div>
-                    </div>
-                  </div>
-                )}
-
-                <details className="mx-auto w-full max-w-[82%] rounded-lg border bg-muted/10 text-xs">
-                  <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
-                    ログ
-                  </summary>
-                  <div className="space-y-2 border-t px-3 py-3">
-                    {codexProcessLogs.length > 0 ? (
-                      codexProcessLogs.map((log, index) => (
-                        <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
-                          {log}
-                        </div>
-                      ))
+              <div className="rounded-lg border bg-card">
+                <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Bot className="h-4 w-4 text-emerald-500" />
+                    <span className={codexStatusClass}>{codexStatusLabel}</span>
+                    <span className="text-xs text-muted-foreground">送信済み</span>
+                    {codexThreadId ? (
+                      <span className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={codexThreadId}>
+                        {codexThreadId}
+                      </span>
                     ) : (
-                      <div className="rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
-                        同期ログはまだありません
-                      </div>
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                        thread作成中
+                      </span>
                     )}
                   </div>
-                </details>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void refreshAiTasks()}
+                      className="h-8 gap-1.5"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      ログ更新
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleOpenCodexThread}
+                      disabled={!codexThreadUrl}
+                      className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Codexで開く
+                    </Button>
+                  </div>
+                </div>
 
-                {codexChatEntries.length > 0 ? (
-                  codexChatEntries.map((entry, index) => (
-                    entry.kind === "event" ? (
-                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-center">
-                        <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-                          {entry.text}
+                <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                  <div className="min-w-0 space-y-3">
+                    <div className="rounded-md border bg-background px-3 py-3 text-sm leading-7">
+                      <div className="mb-1 text-xs font-medium text-muted-foreground">Codexで返信・確認</div>
+                      <div className="text-muted-foreground">
+                        このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。
+                      </div>
+                    </div>
+
+                    {sentPrompt && (
+                      <details className="rounded-lg border bg-muted/10 text-xs">
+                        <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
+                          送信内容
+                        </summary>
+                        <div className="border-t px-3 py-3">
+                          <div className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background px-3 py-2 leading-5 text-foreground">
+                            {sentPrompt}
+                          </div>
+                        </div>
+                      </details>
+                    )}
+
+                    <details className="rounded-lg border bg-muted/10 text-xs">
+                      <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
+                        同期ログ {codexProcessLogs.length}
+                      </summary>
+                      <div className="space-y-2 border-t px-3 py-3">
+                        {codexProcessLogs.length > 0 ? (
+                          codexProcessLogs.map((log, index) => (
+                            <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
+                              {log}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
+                            まだログは同期されていません
+                          </div>
+                        )}
+                      </div>
+                    </details>
+
+                    <details className="rounded-lg border bg-muted/10 text-xs">
+                      <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
+                        Codex出力の同期 {codexAssistantEntries.length}
+                      </summary>
+                      <div className="space-y-2 border-t px-3 py-3">
+                        {codexAssistantEntries.length > 0 ? (
+                          codexAssistantEntries.map((entry, index) => (
+                            <div key={`${index}-${entry.text.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-6 text-foreground">
+                              {entry.text}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-md bg-background px-3 py-2 leading-5 text-muted-foreground">
+                            Codex.app側の出力は未同期です
+                          </div>
+                        )}
+                      </div>
+                    </details>
+
+                    {codexUserEntries.length > 0 && (
+                      <details className="rounded-lg border bg-muted/10 text-xs">
+                        <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground">
+                          Codex側の追加入力 {codexUserEntries.length}
+                        </summary>
+                        <div className="space-y-2 border-t px-3 py-3">
+                          {codexUserEntries.map((entry, index) => (
+                            <div key={`${index}-${entry.text.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md bg-background px-3 py-2 leading-5 text-foreground">
+                              {entry.text}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+
+                  <aside className="space-y-3 rounded-lg border bg-muted/10 px-3 py-3 text-xs">
+                    <div className="font-medium text-muted-foreground">同期状態</div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">スレッド</span>
+                        <span className="max-w-[11rem] truncate font-mono text-foreground" title={codexThreadId || undefined}>
+                          {codexThreadId || "作成中"}
                         </span>
                       </div>
-                    ) : entry.kind === "user" ? (
-                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-end">
-                        <div className="max-w-[76%] rounded-2xl bg-muted px-4 py-3 text-sm leading-7 text-foreground">
-                          <div className="mb-1 text-xs font-medium text-muted-foreground">Codex側で送信</div>
-                          <div className="whitespace-pre-wrap break-words">{entry.text}</div>
-                        </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">状態</span>
+                        <span className="text-foreground">{codexStatusLabel}</span>
                       </div>
-                    ) : (
-                      <div key={`${entry.kind}-${index}-${entry.text.slice(0, 20)}`} className="flex justify-start">
-                        <div className="max-w-[78%] rounded-2xl border border-amber-500/25 bg-background px-4 py-3 text-sm leading-7 shadow-sm">
-                          <div className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">Codex回答</div>
-                          <div className="whitespace-pre-wrap break-words">{entry.text}</div>
-                        </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">ログ</span>
+                        <span className="text-foreground">{codexProcessLogs.length}</span>
                       </div>
-                    )
-                  ))
-                ) : (
-                  <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
-                    Codexの回答を同期中...
-                  </div>
-                )}
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">出力</span>
+                        <span className="text-foreground">{codexAssistantEntries.length}</span>
+                      </div>
+                    </div>
+
+                    {codexEventEntries.length > 0 && (
+                      <div className="space-y-2 border-t pt-3">
+                        <div className="font-medium text-muted-foreground">イベント</div>
+                        {codexEventEntries.map((entry, index) => (
+                          <div key={`${index}-${entry.text.slice(0, 20)}`} className="rounded-md bg-background px-2 py-1.5 leading-5 text-muted-foreground">
+                            {entry.text}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </aside>
+                </div>
               </div>
             </section>
           ) : (
