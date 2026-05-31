@@ -24,10 +24,13 @@ interface SpaceProjectSwitcherProps {
   onProjectCreated?: (project: Project) => void
   /** 更新されたプロジェクトを親に反映するコールバック (任意) */
   onProjectSaved?: (project: Project) => void
+  /** 削除されたプロジェクトを親に反映するコールバック (任意) */
+  onProjectDeleted?: (projectId: string) => void | Promise<void>
   /** スペース作成・更新を親に反映するコールバック (任意) */
   onSpaceSaved?: (space: Space) => void
   showAllSpacesOption?: boolean
   showAllProjectsOption?: boolean
+  variant?: "default" | "memoHeaderCompact"
   className?: string
 }
 
@@ -50,9 +53,11 @@ export function SpaceProjectSwitcher({
   onSelectProject,
   onProjectCreated,
   onProjectSaved,
+  onProjectDeleted,
   onSpaceSaved,
   showAllSpacesOption = true,
   showAllProjectsOption = false,
+  variant = "default",
   className,
 }: SpaceProjectSwitcherProps) {
   const [spaceOpen, setSpaceOpen] = useState(false)
@@ -68,6 +73,8 @@ export function SpaceProjectSwitcher({
     projects.find((p) => p.id === selectedProjectId && (!selectedSpaceId || p.space_id === selectedSpaceId)) || null
   const currentSpace =
     selectedSpaceId ? spaces.find((s) => s.id === selectedSpaceId) || null : null
+  const compactMemoHeader = variant === "memoHeaderCompact"
+  const showSpaceColor = !compactMemoHeader
 
   // Project switcher に表示する候補: 現在の space に属するもの (未選択時は全体)
   const visibleProjects = selectedSpaceId
@@ -112,6 +119,18 @@ export function SpaceProjectSwitcher({
     setProjectFormOpen(false)
   }
 
+  const handleProjectDeleted = async (project: Project) => {
+    if (onProjectDeleted) {
+      await onProjectDeleted(project.id)
+    } else {
+      const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || "削除に失敗しました")
+    }
+    setProjectFormOpen(false)
+    setProjectOpen(false)
+  }
+
   const openCreateProject = () => {
     setProjectFormMode("create")
     setEditingProject(null)
@@ -149,22 +168,34 @@ export function SpaceProjectSwitcher({
   }
 
   return (
-    <div className={cn("flex shrink-0 items-center gap-1.5 px-2 py-1", className)}>
+    <div className={cn(
+      compactMemoHeader
+        ? "flex min-w-0 items-center gap-1 p-0"
+        : "flex shrink-0 items-center gap-1.5 px-2 py-1",
+      className,
+    )}>
       {/* Space switcher */}
       <Popover open={spaceOpen} onOpenChange={setSpaceOpen}>
         <PopoverTrigger asChild>
           <button
-            className="flex min-w-0 max-w-[180px] items-center gap-1.5 rounded-md border border-border/50 px-2 py-1 text-sm hover:bg-muted transition-colors"
+            className={cn(
+              "flex min-w-0 items-center rounded-md border border-border/50 transition-colors hover:bg-muted",
+              compactMemoHeader
+                ? "h-8 max-w-[62px] gap-1 px-2 text-xs"
+                : "max-w-[180px] gap-1.5 px-2 py-1 text-sm",
+            )}
             title="スペースを切替"
           >
-            <span
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: normalizeColor(currentSpace?.color, DEFAULT_SPACE_COLOR) }}
-            />
+            {showSpaceColor && (
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: normalizeColor(currentSpace?.color, DEFAULT_SPACE_COLOR) }}
+              />
+            )}
             <span className="min-w-0 truncate text-muted-foreground">
               {currentSpace?.title ?? "全体"}
             </span>
-            <ChevronDown className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/60" />
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-60 p-1" align="start" sideOffset={4}>
@@ -183,10 +214,12 @@ export function SpaceProjectSwitcher({
                     : "hover:bg-muted/60",
                 )}
               >
-                <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: DEFAULT_SPACE_COLOR }}
-                />
+                {showSpaceColor && (
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: DEFAULT_SPACE_COLOR }}
+                  />
+                )}
                 <span className="truncate flex-1">全体</span>
                 {selectedSpaceId === null && <Check className="w-3.5 h-3.5 shrink-0" />}
               </button>
@@ -214,10 +247,12 @@ export function SpaceProjectSwitcher({
                       active ? "text-primary font-medium" : "",
                     )}
                   >
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
-                    />
+                    {showSpaceColor && (
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
+                      />
+                    )}
                     <span className="truncate flex-1">{space.title}</span>
                     {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
@@ -249,17 +284,22 @@ export function SpaceProjectSwitcher({
         </PopoverContent>
       </Popover>
 
-      <span className="text-muted-foreground/40 text-xs select-none">/</span>
+      {!compactMemoHeader && <span className="text-muted-foreground/40 text-xs select-none">/</span>}
 
       {/* Project switcher */}
       <Popover open={projectOpen} onOpenChange={setProjectOpen}>
         <PopoverTrigger asChild>
           <button
-            className="flex min-w-0 max-w-[220px] items-center gap-1.5 rounded-md border border-border/50 px-2 py-1 text-sm hover:bg-muted transition-colors"
+            className={cn(
+              "flex min-w-0 items-center rounded-md border border-border/50 transition-colors hover:bg-muted",
+              compactMemoHeader
+                ? "h-8 max-w-[112px] gap-1 px-2 text-xs"
+                : "max-w-[220px] gap-1.5 px-2 py-1 text-sm",
+            )}
             title="プロジェクトを切替"
           >
             <span
-              className="w-2 h-2 rounded-full shrink-0"
+              className="h-2 w-2 shrink-0 rounded-full"
               style={{
                 backgroundColor: normalizeColor(currentProject?.color_theme, DEFAULT_PROJECT_COLOR),
               }}
@@ -267,7 +307,7 @@ export function SpaceProjectSwitcher({
             <span className="min-w-0 font-medium truncate">
               {currentProject?.title ?? (showAllProjectsOption ? "全プロジェクト" : "プロジェクトを選択")}
             </span>
-            <ChevronDown className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/60" />
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-64 p-1" align="start" sideOffset={4}>
@@ -363,6 +403,7 @@ export function SpaceProjectSwitcher({
         defaultSpaceId={selectedSpaceId ?? currentSpace?.id ?? null}
         onClose={() => setProjectFormOpen(false)}
         onSaved={projectFormMode === "create" ? handleProjectCreated : handleProjectSaved}
+        onDeleted={handleProjectDeleted}
       />
 
       <SpaceFormDialog

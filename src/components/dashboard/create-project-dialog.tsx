@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { FolderKanban, FolderPlus, Loader2 } from "lucide-react"
+import { FolderKanban, FolderPlus, Loader2, Trash2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,7 @@ interface ProjectFormDialogProps {
   project?: Project | null
   onClose: () => void
   onSaved: (project: Project) => void
+  onDeleted?: (project: Project) => void | Promise<void>
 }
 
 const PROJECT_COLOR_PRESETS = [
@@ -48,11 +49,13 @@ export function ProjectFormDialog({
   project,
   onClose,
   onSaved,
+  onDeleted,
 }: ProjectFormDialogProps) {
   const [title, setTitle] = useState("")
   const [spaceId, setSpaceId] = useState<string>(defaultSpaceId || spaces[0]?.id || "")
   const [colorTheme, setColorTheme] = useState<string>(PROJECT_COLOR_PRESETS[0])
   const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -68,9 +71,11 @@ export function ProjectFormDialog({
     }
     setError(null)
     setSubmitting(false)
+    setDeleting(false)
   }, [open, mode, project, defaultSpaceId, spaces])
 
-  const canSubmit = title.trim().length > 0 && Boolean(spaceId) && !submitting
+  const busy = submitting || deleting
+  const canSubmit = title.trim().length > 0 && Boolean(spaceId) && !busy
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -110,10 +115,35 @@ export function ProjectFormDialog({
     }
   }
 
+  const handleDelete = async () => {
+    if (mode !== "edit" || !project || deleting || submitting) return
+    const confirmed = window.confirm(
+      `プロジェクト「${project.title}」を削除しますか？\nグループとタスクも全て削除されます。`,
+    )
+    if (!confirmed) return
+
+    setDeleting(true)
+    setError(null)
+    try {
+      if (onDeleted) {
+        await onDeleted(project)
+      } else {
+        const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data?.error || "削除に失敗しました")
+      }
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "削除に失敗しました")
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const Icon = mode === "edit" ? FolderKanban : FolderPlus
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && !submitting && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && !busy && onClose()}>
       <DialogContent className="w-[calc(100vw-1rem)] max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
@@ -126,7 +156,7 @@ export function ProjectFormDialog({
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">プロジェクト名</label>
             <input
-              autoFocus
+              autoFocus={mode === "edit"}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => {
@@ -185,15 +215,33 @@ export function ProjectFormDialog({
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            キャンセル
-          </Button>
-          <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            {mode === "edit" ? "保存" : "作成"}
-          </Button>
-        </DialogFooter>
+        {mode === "edit" ? (
+          <DialogFooter className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:justify-stretch">
+            <Button
+              variant="outline"
+              onClick={handleDelete}
+              disabled={busy}
+              className="justify-center border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              {deleting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+              削除
+            </Button>
+            <Button onClick={handleSubmit} disabled={!canSubmit}>
+              {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              保存
+            </Button>
+          </DialogFooter>
+        ) : (
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              キャンセル
+            </Button>
+            <Button onClick={handleSubmit} disabled={!canSubmit}>
+              {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              作成
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )

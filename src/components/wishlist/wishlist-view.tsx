@@ -29,7 +29,7 @@ import {
   CALENDAR_EVENT_TIME_UPDATE_EVENT,
   invalidateCalendarCache,
 } from "@/hooks/useCalendarEvents"
-import { IdealGoalWithItems, Project } from "@/types/database"
+import { IdealGoalWithItems, Project, Space } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
 import { getTagColor } from "@/lib/color-utils"
@@ -38,6 +38,7 @@ import { WishlistCardDetail } from "./wishlist-card-detail"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
+import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 
 type MemoStatus = "unsorted" | "organized" | "time_candidates" | "scheduled" | "completed"
 type ColumnKey = "unsorted" | "mapped" | "today" | "scheduled" | "completed"
@@ -441,18 +442,30 @@ export function WishlistView({
   onOpenTodayMemoSchedule,
   isCalendarSplitVisible = false,
   onToggleCalendarSplit,
+  onSelectSpace,
+  onSelectProject,
+  onProjectCreated,
+  onProjectSaved,
+  onProjectDeleted,
+  onSpaceSaved,
   compactComposer = false,
   mindmapMemoFocus = null,
   onLinkedTaskStatusChange,
   onMindmapUpdated,
 }: {
   projects?: Project[]
-  spaces?: Array<{ id: string; title: string }>
+  spaces?: Space[]
   selectedProjectId?: string | null
   selectedSpaceId?: string | null
   onOpenTodayMemoSchedule?: (payload: { memoId: string; date: Date }) => void
   isCalendarSplitVisible?: boolean
   onToggleCalendarSplit?: () => void
+  onSelectSpace?: (id: string | null) => void
+  onSelectProject?: (id: string | null) => void
+  onProjectCreated?: (project: Project) => void
+  onProjectSaved?: (project: Project) => void
+  onProjectDeleted?: (projectId: string) => void | Promise<void>
+  onSpaceSaved?: (space: Space) => void
   compactComposer?: boolean
   mindmapMemoFocus?: { taskId: string; requestKey: number } | null
   onLinkedTaskStatusChange?: (taskId: string, status: string) => Promise<void> | void
@@ -1792,6 +1805,162 @@ export function WishlistView({
               <Network className="h-4 w-4" />
             </Button>
           </div>
+        ) : isMobileMemoLayout && !linkedMemoFocus ? (
+        <>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <h1 className="shrink-0 text-lg font-semibold leading-none tracking-normal">メモ</h1>
+              {onSelectSpace && onSelectProject && (
+                <SpaceProjectSwitcher
+                  spaces={spaces}
+                  projects={projects}
+                  selectedSpaceId={selectedSpaceId}
+                  selectedProjectId={selectedProjectId}
+                  onSelectSpace={onSelectSpace}
+                  onSelectProject={onSelectProject}
+                  onProjectCreated={onProjectCreated}
+                  onProjectSaved={onProjectSaved}
+                  onProjectDeleted={onProjectDeleted}
+                  onSpaceSaved={onSpaceSaved}
+                  showAllProjectsOption
+                  variant="memoHeaderCompact"
+                  className="ml-4"
+                />
+              )}
+            </div>
+            <Button
+              type="button"
+              variant={filterOpen ? "default" : "outline"}
+              size="icon"
+              onClick={() => setFilterOpen(open => !open)}
+              aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
+              className="relative h-9 w-9 shrink-0 rounded-md"
+              title={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
+            >
+              <Filter className="h-4 w-4" />
+              {activeFilterCount > 0 && (
+                <span className="absolute -right-1 -top-1 rounded-full bg-background px-1.5 text-[10px] leading-4 text-foreground ring-1 ring-border">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
+
+          <div className="flex gap-2">
+            <textarea
+              value={intakeText}
+              onChange={e => setIntakeText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) void handleQuickAdd()
+              }}
+              placeholder="音声またはテキストで入力"
+              rows={1}
+              className="min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <Button
+              type="button"
+              onClick={handleQuickAdd}
+              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
+              size="icon"
+              className="h-11 w-11 shrink-0 rounded-md"
+              aria-label="メモを追加"
+              title="メモを追加"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              onClick={handleVoiceToggle}
+              disabled={isTranscribing}
+              variant={isRecording ? "destructive" : "outline"}
+              size="icon"
+              className="h-11 w-11 shrink-0 rounded-md"
+              aria-label={isRecording ? "録音を停止" : "音声入力"}
+              title={isRecording ? "録音を停止" : "音声入力"}
+            >
+              {isTranscribing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isRecording ? (
+                <Square className="h-4 w-4" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          {isAnalyzing && (
+          <div className="flex min-h-10 flex-wrap items-center gap-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="font-medium text-foreground">
+              {ANALYZE_STATUS_MESSAGES[Math.min(Math.floor(analyzeElapsedSeconds / 4), ANALYZE_STATUS_MESSAGES.length - 1)]}
+            </span>
+            <span>{analyzeElapsedSeconds}秒経過</span>
+          </div>
+          )}
+          {intakeError && !isAnalyzing && (
+          <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <span>{intakeError}</span>
+            <button
+              type="button"
+              onClick={() => setIntakeError(null)}
+              className="shrink-0 rounded px-2 py-1 hover:bg-destructive/10"
+            >
+              閉じる
+            </button>
+          </div>
+          )}
+          {(isRecording || isTranscribing || voiceError) && (
+          <div className="flex min-h-8 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
+            {isRecording && (
+              <>
+                <span className="font-medium text-destructive">録音中</span>
+                <VoiceWaveform analyserRef={analyserRef} height={20} barCount={20} />
+              </>
+            )}
+            {isTranscribing && (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>文字起こし中...</span>
+              </>
+            )}
+            {voiceError && <span className="min-w-0 flex-1 text-destructive">{voiceError}</span>}
+            {permissionState === "prompt" && !voiceError && (
+              <span>許可ダイアログが出たらマイクを許可してください</span>
+            )}
+            {permissionState === "denied" && (
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpenMicrophoneSettings}
+                  className="h-8 gap-1 text-xs"
+                >
+                  <Settings className="h-3.5 w-3.5" /> 設定を開く
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.location.reload()}
+                  className="h-8 gap-1 text-xs"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> 再読み込み
+                </Button>
+              </div>
+            )}
+          </div>
+          )}
+          <div className={cn(!filterOpen && "hidden")}>
+          <FilterBar
+            statusFilter={statusFilter}
+            tagFilter={tagFilter}
+            tags={allTags}
+            tagColors={tagColors}
+            onStatusChange={setStatusFilter}
+            onTagChange={setTagFilter}
+          />
+          </div>
+        </>
         ) : (
         <>
           <div className="flex items-center gap-2">

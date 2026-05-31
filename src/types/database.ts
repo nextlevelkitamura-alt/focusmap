@@ -151,6 +151,50 @@ export interface Database {
                     created_at?: string
                 }
             }
+            project_contexts: {
+                Row: {
+                    id: string
+                    user_id: string
+                    project_id: string
+                    heading: string
+                    details: string
+                    progress: string
+                    progress_status: 'not_started' | 'in_progress' | 'blocked' | 'done' | 'archived'
+                    progress_updated_at: string | null
+                    last_saved_at: string
+                    created_at: string
+                    updated_at: string
+                    metadata: Json
+                }
+                Insert: {
+                    id?: string
+                    user_id?: string
+                    project_id: string
+                    heading?: string
+                    details?: string
+                    progress?: string
+                    progress_status?: 'not_started' | 'in_progress' | 'blocked' | 'done' | 'archived'
+                    progress_updated_at?: string | null
+                    last_saved_at?: string
+                    created_at?: string
+                    updated_at?: string
+                    metadata?: Json
+                }
+                Update: {
+                    id?: string
+                    user_id?: string
+                    project_id?: string
+                    heading?: string
+                    details?: string
+                    progress?: string
+                    progress_status?: 'not_started' | 'in_progress' | 'blocked' | 'done' | 'archived'
+                    progress_updated_at?: string | null
+                    last_saved_at?: string
+                    created_at?: string
+                    updated_at?: string
+                    metadata?: Json
+                }
+            }
             memo_tags: {
                 Row: {
                     id: string

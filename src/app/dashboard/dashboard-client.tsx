@@ -28,6 +28,7 @@ import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { MindmapLinkedMemosDialog } from "@/components/mindmap/mindmap-linked-memos-dialog"
+import { ProjectContextDialog } from "@/components/projects/project-context-dialog"
 
 function DashboardPaneFallback() {
     return (
@@ -44,10 +45,6 @@ function DashboardPaneFallback() {
 const CenterPane = dynamic(
     () => import("@/components/dashboard/center-pane").then(mod => ({ default: mod.CenterPane })),
     { loading: DashboardPaneFallback, ssr: false },
-)
-const SpaceProjectSwitcher = dynamic(
-    () => import("@/components/dashboard/space-project-switcher").then(mod => ({ default: mod.SpaceProjectSwitcher })),
-    { loading: () => <div className="h-11 shrink-0 border-b bg-muted/20" />, ssr: false },
 )
 const TodayView = dynamic(
     () => import("@/components/today/today-view").then(mod => ({ default: mod.TodayView })),
@@ -122,6 +119,7 @@ export function DashboardClient({
     // State
     const [spaces, setSpaces] = useState<Space[]>(initialSpaces)
     const [projects, setProjects] = useState<Project[]>(initialProjects)
+    const [contextDialogProject, setContextDialogProject] = useState<Project | null>(null)
 
     // Selection State — null means "全体" (all spaces)
     // Use consistent defaults for SSR/client to avoid hydration mismatch (#418)
@@ -405,6 +403,7 @@ export function DashboardClient({
         const newProject: Project = await res.json()
         setProjects(prev => [newProject, ...prev])
         setSelectedProjectId(newProject.id)
+        setContextDialogProject(newProject)
         return newProject
     }, [selectedSpaceId, spaces])
 
@@ -419,13 +418,20 @@ export function DashboardClient({
     }, [])
 
     const handleDeleteProject = useCallback(async (projectId: string) => {
-        // Optimistic update
+        const previousProjects = projects
+        const previousSelectedProjectId = selectedProjectId
         setProjects(prev => prev.filter(p => p.id !== projectId))
         if (selectedProjectId === projectId) {
             const remaining = projects.filter(p => p.id !== projectId)
             setSelectedProjectId(remaining.length > 0 ? remaining[0].id : null)
         }
-        await fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
+        const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            setProjects(previousProjects)
+            setSelectedProjectId(previousSelectedProjectId)
+            throw new Error(data?.error || 'プロジェクトの削除に失敗しました')
+        }
     }, [selectedProjectId, projects])
 
     const handleProjectSavedFromSwitcher = useCallback((project: Project) => {
@@ -435,6 +441,13 @@ export function DashboardClient({
                 : [project, ...prev]
         ))
     }, [])
+
+    const handleProjectCreatedFromSwitcher = useCallback((project: Project) => {
+        handleProjectSavedFromSwitcher(project)
+        setSelectedSpaceId(project.space_id)
+        setSelectedProjectId(project.id)
+        setContextDialogProject(project)
+    }, [handleProjectSavedFromSwitcher])
 
     // --- Space CRUD ---
     const handleCreateSpace = useCallback(async (title: string, color?: string) => {
@@ -1119,8 +1132,9 @@ export function DashboardClient({
                     selectedProjectId={selectedProjectId}
                     onSelectSpace={setSelectedSpaceId}
                     onSelectProject={setSelectedProjectId}
-                    onProjectCreated={handleProjectSavedFromSwitcher}
+                    onProjectCreated={handleProjectCreatedFromSwitcher}
                     onProjectSaved={handleProjectSavedFromSwitcher}
+                    onProjectDeleted={handleDeleteProject}
                     onSpaceSaved={handleSpaceSavedFromSwitcher}
                     showCalendarSplitToggle={activeView === 'map'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
@@ -1134,6 +1148,12 @@ export function DashboardClient({
 
                 {/* Google カレンダー連携完了の一時通知（?calendar_connected=true を検知して3秒表示） */}
                 <CalendarConnectedToast />
+
+                <ProjectContextDialog
+                    open={Boolean(contextDialogProject)}
+                    project={contextDialogProject}
+                    onClose={() => setContextDialogProject(null)}
+                />
 
                 {/* Undo/Redo Toast */}
                 {undoToast && (
@@ -1238,24 +1258,17 @@ export function DashboardClient({
 
                 {isViewReady && activeView === 'long-term' && (
                     <div className={cn("flex-1 flex flex-col overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
-                        <SpaceProjectSwitcher
-                            spaces={spaces}
-                            projects={projects}
-                            selectedSpaceId={selectedSpaceId}
-                            selectedProjectId={selectedProjectId}
-                            onSelectSpace={setSelectedSpaceId}
-                            onSelectProject={setSelectedProjectId}
-                            onProjectCreated={handleProjectSavedFromSwitcher}
-                            onProjectSaved={handleProjectSavedFromSwitcher}
-                            onSpaceSaved={handleSpaceSavedFromSwitcher}
-                            showAllProjectsOption
-                            className={forceDesktopDashboard ? "hidden" : "md:hidden"}
-                        />
                         <WishlistView
                             projects={projects}
                             spaces={spaces}
                             selectedProjectId={selectedProjectId}
                             selectedSpaceId={selectedSpaceId}
+                            onSelectSpace={setSelectedSpaceId}
+                            onSelectProject={setSelectedProjectId}
+                            onProjectCreated={handleProjectCreatedFromSwitcher}
+                            onProjectSaved={handleProjectSavedFromSwitcher}
+                            onProjectDeleted={handleDeleteProject}
+                            onSpaceSaved={handleSpaceSavedFromSwitcher}
                             onOpenTodayMemoSchedule={openTodayMemoSchedule}
                             isCalendarSplitVisible={false}
                             onToggleCalendarSplit={toggleCalendarSplit}

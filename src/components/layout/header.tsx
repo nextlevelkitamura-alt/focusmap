@@ -32,6 +32,7 @@ interface HeaderProps {
     onSelectProject?: (id: string | null) => void
     onProjectCreated?: (project: Project) => void
     onProjectSaved?: (project: Project) => void
+    onProjectDeleted?: (projectId: string) => void | Promise<void>
     onSpaceSaved?: (space: Space) => void
     showTaskListToggle?: boolean
     isTaskListVisible?: boolean
@@ -55,6 +56,7 @@ export function Header({
     onSelectProject,
     onProjectCreated,
     onProjectSaved,
+    onProjectDeleted,
     onSpaceSaved,
     showCalendarSplitToggle = false,
     isCalendarSplitVisible = false,
@@ -183,6 +185,7 @@ export function Header({
                             onSelectProject={onSelectProject}
                             onProjectCreated={onProjectCreated}
                             onProjectSaved={onProjectSaved}
+                            onProjectDeleted={onProjectDeleted}
                             onSpaceSaved={onSpaceSaved}
                             showAllProjectsOption={activeView === 'today' || activeView === 'long-term'}
                             className="max-w-[280px] border-b-0 bg-transparent px-0 py-0"
