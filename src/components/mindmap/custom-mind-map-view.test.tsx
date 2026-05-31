@@ -820,6 +820,59 @@ describe("CustomMindMapView keyboard operations", () => {
     })
   })
 
+  test("inserts a new mobile root sibling directly below the selected root", async () => {
+    installOpenKeyboardViewport()
+    const rootTask = makeTask({ id: "root-1", title: "Root task", order_index: 0 })
+    const existingNext = makeTask({ id: "root-2", title: "Existing next", order_index: 1 })
+    const newSibling = makeTask({ id: "root-new", title: "", order_index: 2 })
+    const onCreateGroup = vi.fn().mockResolvedValue(newSibling)
+    const onReorderTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask, existingNext]}
+        tasks={[]}
+        focusEditNodeId="root-1"
+        onCreateGroup={onCreateGroup}
+        onReorderTask={onReorderTask}
+      />
+    )
+
+    await screen.findByDisplayValue("Root task")
+    fireEvent.click(await screen.findByRole("button", { name: "親ノード追加" }))
+
+    await waitFor(() => expect(onCreateGroup).toHaveBeenCalledWith(""))
+    await waitFor(() => expect(onReorderTask).toHaveBeenCalledWith("root-new", "root-1", "below"))
+  })
+
+  test("inserts a new mobile child sibling directly below the selected child", async () => {
+    installOpenKeyboardViewport()
+    const rootTask = makeTask({ id: "root-1", title: "Root task" })
+    const childTask = makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1", order_index: 0 })
+    const existingNext = makeTask({ id: "child-2", title: "Existing next", parent_task_id: "root-1", order_index: 1 })
+    const newSibling = makeTask({ id: "child-new", title: "", parent_task_id: "root-1", order_index: 2 })
+    const onCreateTask = vi.fn().mockResolvedValue(newSibling)
+    const onReorderTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask]}
+        tasks={[childTask, existingNext]}
+        focusEditNodeId="child-1"
+        onCreateTask={onCreateTask}
+        onReorderTask={onReorderTask}
+      />
+    )
+
+    await screen.findByDisplayValue("Child task")
+    fireEvent.click(await screen.findByRole("button", { name: "親ノード追加" }))
+
+    await waitFor(() => expect(onCreateTask).toHaveBeenCalledWith("root-1", "", "root-1"))
+    await waitFor(() => expect(onReorderTask).toHaveBeenCalledWith("child-new", "child-1", "below"))
+  })
+
   test("focuses a newly created parent-level node after creating a child first", async () => {
     installOpenKeyboardViewport()
     const onAddChildNode = vi.fn()

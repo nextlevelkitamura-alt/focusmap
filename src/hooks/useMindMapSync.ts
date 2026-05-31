@@ -1082,6 +1082,23 @@ export function useMindMapSync({
 
     // --- Reorder Operations --- (APIルート経由)
     const reorderTask = useCallback(async (taskId: string, referenceTaskId: string, position: 'above' | 'below') => {
+        const taskPendingInsert = pendingInserts.current.get(taskId)
+        if (taskPendingInsert) {
+            try {
+                await taskPendingInsert
+            } catch (e) {
+                console.error('[Sync] reorderTask: pending task insert failed, skipping reorder', e)
+            }
+        }
+        const referencePendingInsert = pendingInserts.current.get(referenceTaskId)
+        if (referencePendingInsert) {
+            try {
+                await referencePendingInsert
+            } catch (e) {
+                console.error('[Sync] reorderTask: pending reference insert failed, skipping reorder', e)
+            }
+        }
+
         const currentAll = allTasksRef.current;
         const task = currentAll.find(t => t.id === taskId)
         const referenceTask = currentAll.find(t => t.id === referenceTaskId)

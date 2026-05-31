@@ -9,6 +9,14 @@ import type { Project, Task } from "@/types/database"
 
 type MobileCustomDropPosition = "above" | "below" | "as-child"
 
+const waitForTaskStateFlush = () => new Promise<void>(resolve => {
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+        resolve()
+        return
+    }
+    window.requestAnimationFrame(() => resolve())
+})
+
 interface MobileMindMapProps {
     project: Project
     projects?: Project[]
@@ -240,16 +248,24 @@ export function MobileMindMap({
         if (!task) return
 
         if (!task.parent_task_id) {
-            await handleAddRootNode()
+            if (!onCreateGroup) return
+            const newTask = await onCreateGroup("")
+            if (!newTask?.id) return
+            await waitForTaskStateFlush()
+            await onReorderTask?.(newTask.id, taskId, "below")
+            setPendingEditNodeId(newTask.id)
+            selectSingleTask(newTask.id)
             return
         }
 
         if (!onCreateTask) return
         const newTask = await onCreateTask(findRootTaskId(task.parent_task_id), "", task.parent_task_id)
         if (!newTask?.id) return
+        await waitForTaskStateFlush()
+        await onReorderTask?.(newTask.id, taskId, "below")
         setPendingEditNodeId(newTask.id)
         selectSingleTask(newTask.id)
-    }, [findRootTaskId, handleAddRootNode, onCreateTask, selectSingleTask, taskMap])
+    }, [findRootTaskId, onCreateGroup, onCreateTask, onReorderTask, selectSingleTask, taskMap])
 
     const handlePromoteNode = useCallback(async (taskId: string) => {
         if (!onUpdateTask) return

@@ -35,6 +35,14 @@ import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
 
+const waitForTaskStateFlush = () => new Promise<void>(resolve => {
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        resolve();
+        return;
+    }
+    window.requestAnimationFrame(() => resolve());
+});
+
 type ProjectNodeData = {
     label?: string;
     isDropTarget?: boolean;
@@ -1830,7 +1838,19 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         // ルートタスクの場合 → 新しいルートタスクを作成
         const isRootTask = groups.some(g => g.id === taskId);
         if (isRootTask) {
-            await createRootTaskAndFocus("");
+            if (!onCreateGroup) return;
+            const newTask = await onCreateGroup("");
+            if (newTask?.id) {
+                await waitForTaskStateFlush();
+                if (onReorderGroup) {
+                    await onReorderGroup(newTask.id, taskId, 'below');
+                } else {
+                    await onReorderTask?.(newTask.id, taskId, 'below');
+                }
+                setPendingEditNodeId(newTask.id);
+                applySelection(new Set([newTask.id]), newTask.id, 'user');
+                focusNodeWithPollingV2(newTask.id);
+            }
             return;
         }
 
@@ -1847,11 +1867,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
         const newTask = await onCreateTask(task.parent_task_id, "", task.parent_task_id);
         if (newTask) {
+            await waitForTaskStateFlush();
+            await onReorderTask?.(newTask.id, taskId, 'below');
             setPendingEditNodeId(newTask.id);
             applySelection(new Set([newTask.id]), newTask.id, 'user');
             focusNodeWithPollingV2(newTask.id);
         }
-    }, [groups, getTaskById, onCreateTask, createRootTaskAndFocus, focusNodeWithPollingV2, applySelection]);
+    }, [groups, getTaskById, onCreateGroup, onCreateTask, onReorderGroup, onReorderTask, focusNodeWithPollingV2, applySelection]);
 
     // Promote task (Shift+Tab: 子タスクを親の兄弟に昇格、ルート直下ならルートに昇格)
     const promoteTask = useCallback(async (taskId: string) => {
