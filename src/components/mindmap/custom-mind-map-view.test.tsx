@@ -911,7 +911,7 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => expect(onDeleteNode).toHaveBeenCalledWith("child-1"))
   })
 
-  test("leaves mobile edit mode after deleting from the keyboard accessory", async () => {
+  test("keeps mobile edit controls on the parent after deleting from the keyboard accessory", async () => {
     installOpenKeyboardViewport()
     const onDeleteNode = vi.fn()
     const rootTask = makeTask({ id: "root-1", title: "Root task" })
@@ -940,22 +940,27 @@ describe("CustomMindMapView keyboard operations", () => {
     await screen.findByDisplayValue("Child task")
     fireEvent.click(await screen.findByRole("button", { name: "ノード削除" }))
     await waitFor(() => expect(onDeleteNode).toHaveBeenCalledWith("child-1"))
-    expect(screen.getByTestId("mobile-keyboard-anchor")).not.toHaveFocus()
-    expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
+    await waitFor(() => {
+      const input = screen.getByLabelText("ノード名")
+      expect(input).toHaveValue("Root task")
+      expect(input).toHaveFocus()
+      expect(screen.getByRole("button", { name: "ノード削除" })).toBeInTheDocument()
+    })
 
     view.rerender(
       <CustomMindMapView
         {...commonProps}
         tasks={[]}
-        pendingEditNodeId={null}
+        pendingEditNodeId="root-1"
         selectedNodeId="root-1"
         selectedNodeIds={new Set(["root-1"])}
       />
     )
 
     await waitFor(() => {
-      expect(screen.getByText("Root task")).toBeInTheDocument()
-      expect(screen.queryByLabelText("ノード名")).not.toBeInTheDocument()
+      const input = screen.getByLabelText("ノード名")
+      expect(input).toHaveValue("Root task")
+      expect(input).toHaveFocus()
     })
   })
 
@@ -981,7 +986,7 @@ describe("CustomMindMapView keyboard operations", () => {
 
     await waitFor(() => expect(onDeleteGroup).toHaveBeenCalledWith("root-1"))
     expect(confirmSpy).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.queryByLabelText("プロジェクト名")).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText("プロジェクト名")).toHaveFocus())
   })
 
   test("edits the project title on mobile and adds a root node from the keyboard accessory", async () => {

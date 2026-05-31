@@ -263,7 +263,7 @@ export function MobileMindMap({
             await onDeleteTask?.(taskId)
         }
 
-        setPendingEditNodeId(null)
+        setPendingEditNodeId(fallbackFocusId)
         if (fallbackFocusId === "project-root") {
             setSelectedNodeId("project-root")
             setSelectedNodeIds(new Set())

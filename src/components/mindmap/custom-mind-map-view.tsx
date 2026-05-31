@@ -2578,16 +2578,19 @@ export function CustomMindMapView({
         await runKeyboardAction(async () => {
             const node = activeAccessoryNode;
             if (!node || node.kind !== "task") return;
+            const fallbackNodeId = node.parentId ?? "project-root";
+            const fallbackNode = nodeById.get(fallbackNodeId);
             ignoreNextFloatingBlurRef.current = true;
             try {
-                resolveFloatingComposition();
-                if (keyboardAnchorRef.current) keyboardAnchorRef.current.value = "";
-                if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
-                    document.activeElement.blur();
+                await finishFloatingComposition();
+                if (fallbackNode) {
+                    const fallbackValue = fallbackNode.kind === "project"
+                        ? fallbackNode.title
+                        : rawTaskTitleById.get(fallbackNode.id) ?? fallbackNode.title;
+                    startFloatingEdit(fallbackNode.id, fallbackValue, { selectAll: false });
+                } else {
+                    prepareMobileTextFocus();
                 }
-                setFloatingEditNodeId(prev => prev === node.id ? null : prev);
-                setActiveEditingNodeId(prev => prev === node.id ? null : prev);
-                setMobileKeyboardAccessoryPinned(false);
                 await onDeleteNode?.(node.id);
             } finally {
                 requestAnimationFrame(() => {
@@ -2595,7 +2598,7 @@ export function CustomMindMapView({
                 });
             }
         });
-    }, [activeAccessoryNode, onDeleteNode, resolveFloatingComposition, runKeyboardAction]);
+    }, [activeAccessoryNode, finishFloatingComposition, nodeById, onDeleteNode, prepareMobileTextFocus, rawTaskTitleById, runKeyboardAction, startFloatingEdit]);
 
     const handleAccessoryDismiss = useCallback(() => {
         if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {

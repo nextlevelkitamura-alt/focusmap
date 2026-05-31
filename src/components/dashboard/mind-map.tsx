@@ -1896,6 +1896,9 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onDeleteTask(taskId);
         applySelection(nextFocusId ? new Set([nextFocusId]) : new Set(), nextFocusId, 'user');
         if (nextFocusId) {
+            if (isNarrow) {
+                setPendingEditNodeId(nextFocusId);
+            }
             focusNodeWithPollingV2(nextFocusId, 300, false);
         }
     }, [hasChildren, getTaskById, isNarrow, calculateNextFocus, onDeleteTask, applySelection, focusNodeWithPollingV2]);
