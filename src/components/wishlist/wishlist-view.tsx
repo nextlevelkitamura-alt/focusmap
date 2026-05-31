@@ -1824,7 +1824,7 @@ export function WishlistView({
                   onSpaceSaved={onSpaceSaved}
                   showAllProjectsOption
                   variant="memoHeaderCompact"
-                  className="ml-4"
+                  className="ml-6"
                 />
               )}
             </div>
