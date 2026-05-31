@@ -1,5 +1,5 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { renderHook, act, cleanup } from '@testing-library/react'
 import { useMindMapSync } from './useMindMapSync'
 import type { Task } from '@/types/database'
 
@@ -7,6 +7,8 @@ import type { Task } from '@/types/database'
 type MockFn = ReturnType<typeof vi.fn>
 type MockSupabaseChain = Record<string, unknown> & {
   from: MockFn
+  channel: MockFn
+  removeChannel: MockFn
   select: MockFn
   insert: MockFn
   update: MockFn
@@ -16,9 +18,20 @@ type MockSupabaseChain = Record<string, unknown> & {
   single: MockFn
 }
 
+let latestRealtimeHandler: ((payload: unknown) => void) | null = null
+
 const mockSupabaseChain = () => {
   const chain = {} as MockSupabaseChain
+  const channel = {
+    on: vi.fn((_event: string, _filter: unknown, handler: (payload: unknown) => void) => {
+      latestRealtimeHandler = handler
+      return channel
+    }),
+    subscribe: vi.fn().mockReturnThis(),
+  }
   chain.from = vi.fn().mockReturnValue(chain)
+  chain.channel = vi.fn().mockReturnValue(channel)
+  chain.removeChannel = vi.fn().mockResolvedValue(undefined)
   chain.select = vi.fn().mockReturnValue(chain)
   chain.insert = vi.fn().mockResolvedValue({ data: null, error: null })
   chain.update = vi.fn().mockReturnValue(chain)
@@ -142,12 +155,17 @@ const EMPTY_TASKS: Task[] = []
 beforeEach(() => {
   vi.clearAllMocks()
   uuidCounter = 0
+  latestRealtimeHandler = null
   mockChain = mockSupabaseChain()
   mockFetch.mockResolvedValue({
     ok: true,
     json: () => Promise.resolve({ success: true }),
     text: () => Promise.resolve(''),
   })
+})
+
+afterEach(() => {
+  cleanup()
 })
 
 describe('useMindMapSync', () => {
@@ -201,6 +219,119 @@ describe('useMindMapSync', () => {
 
       expect(result.current.groups[0].title).toBe('First')
       expect(result.current.groups[1].title).toBe('Second')
+    })
+  })
+
+  describe('realtime sync', () => {
+    test('realtime INSERT を即座にstateへ反映する', () => {
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: EMPTY_ROOT_TASKS,
+          initialTasks: EMPTY_TASKS,
+        })
+      )
+
+      const remoteTask = createMockRootTask({ id: 'remote-1', title: 'Remote Root', project_id: 'project-1' })
+
+      act(() => {
+        latestRealtimeHandler?.({
+          eventType: 'INSERT',
+          new: remoteTask,
+          old: {},
+        })
+      })
+
+      expect(result.current.groups.map(task => task.id)).toContain('remote-1')
+      expect(result.current.groups.find(task => task.id === 'remote-1')?.title).toBe('Remote Root')
+    })
+
+    test('realtime UPDATE を既存ノードへ反映する', () => {
+      const group = createMockRootTask({ id: 'g1', title: 'Old Title' })
+      const initialRootTasks = [group]
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks,
+          initialTasks: EMPTY_TASKS,
+        })
+      )
+
+      act(() => {
+        latestRealtimeHandler?.({
+          eventType: 'UPDATE',
+          new: { ...group, title: 'Remote Title' },
+          old: group,
+        })
+      })
+
+      expect(result.current.groups.find(task => task.id === 'g1')?.title).toBe('Remote Title')
+    })
+
+    test('realtime DELETE を即座にstateへ反映する', () => {
+      const group = createMockRootTask({ id: 'g1', title: 'Delete Me' })
+      const initialRootTasks = [group]
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks,
+          initialTasks: EMPTY_TASKS,
+        })
+      )
+
+      act(() => {
+        latestRealtimeHandler?.({
+          eventType: 'DELETE',
+          new: {},
+          old: { id: 'g1' },
+        })
+      })
+
+      expect(result.current.groups).toHaveLength(0)
+    })
+
+    test('作成直後の保存中ノードはrealtime INSERTで入力中タイトルを上書きしない', async () => {
+      let resolveCreate!: (value: Response) => void
+      mockFetch.mockReturnValueOnce(new Promise<Response>(resolve => {
+        resolveCreate = resolve
+      }))
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: EMPTY_ROOT_TASKS,
+          initialTasks: EMPTY_TASKS,
+        })
+      )
+
+      await act(async () => {
+        await result.current.createGroup('')
+      })
+
+      expect(result.current.groups[0].title).toBe('')
+
+      act(() => {
+        latestRealtimeHandler?.({
+          eventType: 'INSERT',
+          new: createMockRootTask({ id: 'test-uuid-1', title: 'New Task', project_id: 'project-1' }),
+          old: {},
+        })
+      })
+
+      expect(result.current.groups.find(task => task.id === 'test-uuid-1')?.title).toBe('')
+
+      await act(async () => {
+        resolveCreate({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        } as Response)
+        await Promise.resolve()
+      })
     })
   })
 
@@ -901,6 +1032,41 @@ describe('useMindMapSync', () => {
       })
 
       expect(mockChain.from).toHaveBeenCalledWith('projects')
+    })
+  })
+
+  // ===========================
+  // refreshFromServer
+  // ===========================
+  describe('refreshFromServer', () => {
+    test('プロジェクト切替直後はstaleMs指定でもDBから再取得する', async () => {
+      const serverTask = createMockRootTask({
+        id: 'server-root',
+        project_id: 'project-1',
+        title: 'DB Root',
+      })
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, tasks: [serverTask] }),
+        text: () => Promise.resolve(''),
+      })
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: EMPTY_ROOT_TASKS,
+          initialTasks: EMPTY_TASKS,
+        })
+      )
+
+      await act(async () => {
+        await result.current.refreshFromServer({ staleMs: 30_000 })
+      })
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/tasks?project_id=project-1')
+      expect(result.current.groups).toHaveLength(1)
+      expect(result.current.groups[0].title).toBe('DB Root')
     })
   })
 

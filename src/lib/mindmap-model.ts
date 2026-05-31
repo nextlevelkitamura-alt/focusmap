@@ -270,6 +270,16 @@ export function buildMindMapModel({
         node.y = Math.round(positioned.y - node.height / 2);
     }
 
+    const leftByDepth = new Map<number, number>();
+    for (const node of nodes) {
+        const current = leftByDepth.get(node.depth);
+        leftByDepth.set(node.depth, current == null ? node.x : Math.min(current, node.x));
+    }
+    for (const node of nodes) {
+        const alignedX = leftByDepth.get(node.depth);
+        if (alignedX != null) node.x = alignedX;
+    }
+
     return {
         nodes,
         edges,

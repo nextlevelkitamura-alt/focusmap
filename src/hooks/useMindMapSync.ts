@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
+import { flushSync } from 'react-dom'
 import { createClient } from '@/utils/supabase/client'
 import { Task } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
@@ -49,6 +50,16 @@ function dispatchLinkedTaskStatus(taskId: string, status: string) {
     }))
 }
 
+type TaskRealtimePayload = {
+    eventType: 'INSERT' | 'UPDATE' | 'DELETE'
+    new: Partial<Task>
+    old: Partial<Task>
+}
+
+function withoutGoogleEventId(task: Task) {
+    return { ...task, google_event_id: null }
+}
+
 export function useMindMapSync({
     projectId,
     userId,
@@ -83,6 +94,93 @@ export function useMindMapSync({
     // 最新の allTasks を参照するための ref（callback の依存配列から除外するため）
     const allTasksRef = useRef(allTasks)
     allTasksRef.current = allTasks
+    const projectIdRef = useRef(projectId)
+    projectIdRef.current = projectId
+
+    const addOptimisticTaskToState = useCallback((task: Task) => {
+        allTasksRef.current = allTasksRef.current.some(t => t.id === task.id)
+            ? allTasksRef.current
+            : [...allTasksRef.current, task]
+
+        const commit = () => {
+            setAllTasks(prev => prev.some(t => t.id === task.id) ? prev : [...prev, task])
+        }
+
+        if (typeof window !== 'undefined') {
+            flushSync(commit)
+        } else {
+            commit()
+        }
+    }, [])
+
+    const applyTaskUpdatesToState = useCallback((updates: Array<{ id: string } & Partial<Task>>) => {
+        if (updates.length === 0) return
+        const updatesById = new Map(updates.map(update => [update.id, update]))
+        const applyUpdates = (tasks: Task[]) => tasks.map(task => {
+            const update = updatesById.get(task.id)
+            return update ? { ...task, ...update } : task
+        })
+        allTasksRef.current = applyUpdates(allTasksRef.current)
+        setAllTasks(prev => applyUpdates(prev))
+    }, [])
+
+    const applyRealtimeTask = useCallback((serverTask: Task) => {
+        if (!serverTask.id || serverTask.project_id !== projectId) return
+
+        const hasLocalSaveInFlight =
+            pendingInserts.current.has(serverTask.id) ||
+            taskSaveQueues.current.has(serverTask.id) ||
+            pendingOptimisticTasks.current.has(serverTask.id)
+
+        if (!hasLocalSaveInFlight) {
+            pendingOptimisticTasks.current.delete(serverTask.id)
+        }
+
+        const mergeTask = (existing: Task | undefined): Task => {
+            if (!existing) return serverTask
+            if (!hasLocalSaveInFlight) return { ...existing, ...serverTask }
+
+            return {
+                ...serverTask,
+                ...existing,
+                user_id: serverTask.user_id ?? existing.user_id,
+                project_id: serverTask.project_id ?? existing.project_id,
+                created_at: serverTask.created_at ?? existing.created_at,
+                updated_at: existing.updated_at ?? serverTask.updated_at,
+            }
+        }
+
+        const applyServerTask = (tasks: Task[]) => {
+            const existing = tasks.find(task => task.id === serverTask.id)
+            if (!existing) return [...tasks, serverTask]
+            return tasks.map(task => task.id === serverTask.id ? mergeTask(task) : task)
+        }
+
+        allTasksRef.current = applyServerTask(allTasksRef.current)
+        setAllTasks(prev => applyServerTask(prev))
+    }, [projectId])
+
+    const removeRealtimeTask = useCallback((taskId: string) => {
+        if (!taskId) return
+        pendingOptimisticTasks.current.delete(taskId)
+        pendingInserts.current.delete(taskId)
+        taskSaveQueues.current.delete(taskId)
+        taskUpdateVersions.current.delete(taskId)
+        allTasksRef.current = allTasksRef.current.filter(task => task.id !== taskId)
+        setAllTasks(prev => prev.filter(task => task.id !== taskId))
+    }, [])
+
+    const handleRealtimeTaskEvent = useCallback((payload: TaskRealtimePayload) => {
+        if (payload.eventType === 'DELETE') {
+            const taskId = payload.old?.id
+            if (typeof taskId === 'string') removeRealtimeTask(taskId)
+            return
+        }
+
+        const serverTask = payload.new
+        if (!serverTask?.id) return
+        applyRealtimeTask(serverTask as Task)
+    }, [applyRealtimeTask, removeRealtimeTask])
 
     // 計算プロパティ: ルートタスクと子タスクを分離
     const groups = useMemo(() => {
@@ -135,7 +233,7 @@ export function useMindMapSync({
                 return [...prev, ...toAdd]
             })
         }
-    }, [allTasks])
+    }, [allTasks, projectId])
 
     // プロジェクト切替時にundo/redoスタックと楽観的タスクをクリア
     useEffect(() => {
@@ -144,9 +242,36 @@ export function useMindMapSync({
         pendingInserts.current.clear()
         taskSaveQueues.current.clear()
         taskUpdateVersions.current.clear()
-        lastServerRefreshAt.current = Date.now()
+        lastServerRefreshAt.current = 0
         refreshInFlight.current = null
     }, [projectId, clear])
+
+    useEffect(() => {
+        if (!projectId) return
+
+        const channel = supabase
+            .channel(`mindmap-tasks:${projectId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'tasks',
+                    filter: `project_id=eq.${projectId}`,
+                },
+                payload => handleRealtimeTaskEvent(payload as TaskRealtimePayload)
+            )
+            .subscribe(status => {
+                if (status === 'CHANNEL_ERROR') {
+                    console.warn('[Sync] realtime channel error:', projectId)
+                    onSyncError?.('リアルタイム同期に接続できませんでした。更新時に再取得します')
+                }
+            })
+
+        return () => {
+            void supabase.removeChannel(channel)
+        }
+    }, [handleRealtimeTaskEvent, onSyncError, projectId, supabase])
 
     const enqueueTaskSave = useCallback((taskId: string, operation: () => Promise<void>) => {
         const previous = taskSaveQueues.current.get(taskId) ?? Promise.resolve()
@@ -206,7 +331,7 @@ export function useMindMapSync({
         }
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask)
-        setAllTasks(prev => [...prev, optimisticTask])
+        addOptimisticTaskToState(optimisticTask)
 
         pushAction({
             description: `「${title}」を作成`,
@@ -255,7 +380,7 @@ export function useMindMapSync({
                     project_id: projectId,
                     is_group: true,
                     parent_task_id: null,
-                    title,
+                    title: title || 'New Task',
                     status: 'todo',
                     order_index: maxOrder,
                     actual_time_minutes: 0,
@@ -285,7 +410,7 @@ export function useMindMapSync({
         });
 
         return optimisticTask
-    }, [projectId, userId, supabase, pushAction])
+    }, [projectId, userId, supabase, pushAction, addOptimisticTaskToState, onSyncError])
 
     // updateGroupTitle → APIルート経由で更新
     const updateGroupTitle = useCallback(async (groupId: string, title: string) => {
@@ -473,8 +598,7 @@ export function useMindMapSync({
                     const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
                     setAllTasks(prev => [...prev, ...restored])
                     for (const task of allCaptured) {
-                        const { google_event_id, ...rest } = task
-                        await supabase.from('tasks').upsert({ ...rest, google_event_id: null })
+                        await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                     }
                 },
                 redo: async () => {
@@ -535,7 +659,7 @@ export function useMindMapSync({
         };
 
         pendingOptimisticTasks.current.set(optimisticId, optimisticTask);
-        setAllTasks(prev => [...prev, optimisticTask]);
+        addOptimisticTaskToState(optimisticTask);
 
         pushAction({
             description: `タスクを作成`,
@@ -595,7 +719,7 @@ export function useMindMapSync({
                     project_id: projectId,
                     parent_task_id: effectiveParentId,
                     is_group: false,
-                    title: title || '',
+                    title: title || 'New Task',
                     status: 'todo',
                     order_index: maxOrder,
                     actual_time_minutes: 0,
@@ -631,7 +755,7 @@ export function useMindMapSync({
         });
 
         return optimisticTask;
-    }, [userId, projectId, supabase, pushAction]);
+    }, [userId, projectId, supabase, pushAction, addOptimisticTaskToState, onSyncError]);
 
     const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
         const currentAll = allTasksRef.current;
@@ -938,8 +1062,7 @@ export function useMindMapSync({
                     const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
                     setAllTasks(prev => [...prev, ...restored])
                     for (const task of allCaptured) {
-                        const { google_event_id, ...rest } = task
-                        await supabase.from('tasks').upsert({ ...rest, google_event_id: null })
+                        await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                     }
                 },
                 redo: async () => {
@@ -1037,8 +1160,7 @@ export function useMindMapSync({
                 const restored = capturedTasks.map(t => ({ ...t, google_event_id: null }))
                 setAllTasks(prev => [...prev, ...restored])
                 for (const task of capturedTasks) {
-                    const { google_event_id, ...rest } = task
-                    await supabase.from('tasks').upsert({ ...rest, google_event_id: null })
+                    await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                 }
             },
             redo: async () => {
@@ -1082,23 +1204,6 @@ export function useMindMapSync({
 
     // --- Reorder Operations --- (APIルート経由)
     const reorderTask = useCallback(async (taskId: string, referenceTaskId: string, position: 'above' | 'below') => {
-        const taskPendingInsert = pendingInserts.current.get(taskId)
-        if (taskPendingInsert) {
-            try {
-                await taskPendingInsert
-            } catch (e) {
-                console.error('[Sync] reorderTask: pending task insert failed, skipping reorder', e)
-            }
-        }
-        const referencePendingInsert = pendingInserts.current.get(referenceTaskId)
-        if (referencePendingInsert) {
-            try {
-                await referencePendingInsert
-            } catch (e) {
-                console.error('[Sync] reorderTask: pending reference insert failed, skipping reorder', e)
-            }
-        }
-
         const currentAll = allTasksRef.current;
         const task = currentAll.find(t => t.id === taskId)
         const referenceTask = currentAll.find(t => t.id === referenceTaskId)
@@ -1137,13 +1242,7 @@ export function useMindMapSync({
             }
         })
 
-        setAllTasks(prev => {
-            let updated = [...prev]
-            for (const u of updates) {
-                updated = updated.map(t => t.id === u.id ? { ...t, ...u } : t)
-            }
-            return updated
-        })
+        applyTaskUpdatesToState(updates)
 
         pushAction({
             description: `「${task.title}」を並び替え`,
@@ -1198,6 +1297,23 @@ export function useMindMapSync({
             },
         })
 
+        const taskPendingInsert = pendingInserts.current.get(taskId)
+        if (taskPendingInsert) {
+            try {
+                await taskPendingInsert
+            } catch (e) {
+                console.error('[Sync] reorderTask: pending task insert failed, skipping reorder', e)
+            }
+        }
+        const referencePendingInsert = pendingInserts.current.get(referenceTaskId)
+        if (referencePendingInsert) {
+            try {
+                await referencePendingInsert
+            } catch (e) {
+                console.error('[Sync] reorderTask: pending reference insert failed, skipping reorder', e)
+            }
+        }
+
         let reorderFailed = false
         for (const u of updates) {
             const { id, ...rest } = u
@@ -1229,7 +1345,7 @@ export function useMindMapSync({
                 return original ? { ...t, order_index: original.order_index } : t
             }))
         }
-    }, [pushAction, onSyncError])
+    }, [pushAction, onSyncError, applyTaskUpdatesToState])
 
     // reorderGroup → reorderTask にデリゲート（ルートタスクの並び替え）
     const reorderGroup = useCallback(async (groupId: string, referenceGroupId: string, position: 'above' | 'below') => {
@@ -1326,24 +1442,44 @@ export function useMindMapSync({
         }
         if (refreshInFlight.current) return refreshInFlight.current
 
+        const refreshProjectId = projectId
         const refresh = (async () => {
             setIsLoading(true)
-            const { data, error } = await supabase
-                .from('tasks')
-                .select('*')
-                .eq('project_id', projectId)
-                .is('deleted_at', null)
-                .order('order_index', { ascending: true })
-            if (error) throw error
-            if (data) {
-                setAllTasks(prev => {
-                    const serverIds = new Set(data.map(t => t.id))
-                    const optimistic = prev.filter(t =>
-                        !serverIds.has(t.id) && pendingOptimisticTasks.current.has(t.id)
-                    )
-                    return [...data, ...optimistic]
-                })
+            let data: Task[] = []
+            try {
+                const response = await fetch(`/api/tasks?project_id=${encodeURIComponent(refreshProjectId)}`)
+                if (!response.ok) {
+                    const message = await response.text().catch(() => response.statusText)
+                    throw new Error(message || response.statusText)
+                }
+                const payload = await response.json()
+                if (!payload?.success || !Array.isArray(payload.tasks)) {
+                    throw new Error('Invalid task refresh response')
+                }
+                data = payload.tasks as Task[]
+            } catch (apiError) {
+                console.warn('[Sync] refreshFromServer API failed, falling back to Supabase client:', apiError)
+                const { data: fallbackData, error } = await supabase
+                    .from('tasks')
+                    .select('*')
+                    .eq('project_id', refreshProjectId)
+                    .is('deleted_at', null)
+                    .order('order_index', { ascending: true })
+                if (error) throw error
+                data = fallbackData ?? []
             }
+
+            if (projectIdRef.current !== refreshProjectId) return
+
+            setAllTasks(prev => {
+                const serverIds = new Set(data.map(t => t.id))
+                const optimistic = prev.filter(t =>
+                    !serverIds.has(t.id) && pendingOptimisticTasks.current.has(t.id)
+                )
+                const nextTasks = [...data, ...optimistic]
+                allTasksRef.current = nextTasks
+                return nextTasks
+            })
             lastServerRefreshAt.current = Date.now()
         })()
 

@@ -9,14 +9,6 @@ import type { Project, Task } from "@/types/database"
 
 type MobileCustomDropPosition = "above" | "below" | "as-child"
 
-const waitForTaskStateFlush = () => new Promise<void>(resolve => {
-    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-        resolve()
-        return
-    }
-    window.requestAnimationFrame(() => resolve())
-})
-
 interface MobileMindMapProps {
     project: Project
     projects?: Project[]
@@ -251,20 +243,26 @@ export function MobileMindMap({
             if (!onCreateGroup) return
             const newTask = await onCreateGroup("")
             if (!newTask?.id) return
-            await waitForTaskStateFlush()
-            await onReorderTask?.(newTask.id, taskId, "below")
             setPendingEditNodeId(newTask.id)
             selectSingleTask(newTask.id)
+            void (async () => {
+                await onReorderTask?.(newTask.id, taskId, "below")
+            })().catch(error => {
+                console.error("[MobileMindMap] Failed to reorder root sibling after create:", error)
+            })
             return
         }
 
         if (!onCreateTask) return
         const newTask = await onCreateTask(findRootTaskId(task.parent_task_id), "", task.parent_task_id)
         if (!newTask?.id) return
-        await waitForTaskStateFlush()
-        await onReorderTask?.(newTask.id, taskId, "below")
         setPendingEditNodeId(newTask.id)
         selectSingleTask(newTask.id)
+        void (async () => {
+            await onReorderTask?.(newTask.id, taskId, "below")
+        })().catch(error => {
+            console.error("[MobileMindMap] Failed to reorder sibling after create:", error)
+        })
     }, [findRootTaskId, onCreateGroup, onCreateTask, onReorderTask, selectSingleTask, taskMap])
 
     const handlePromoteNode = useCallback(async (taskId: string) => {
@@ -288,12 +286,6 @@ export function MobileMindMap({
         if (!task) return
 
         const fallbackFocusId = calculateDeleteFocus(taskId)
-        if (!task.parent_task_id) {
-            await onDeleteGroup?.(taskId)
-        } else {
-            await onDeleteTask?.(taskId)
-        }
-
         setPendingEditNodeId(fallbackFocusId)
         if (fallbackFocusId === "project-root") {
             setSelectedNodeId("project-root")
@@ -301,6 +293,16 @@ export function MobileMindMap({
         } else {
             selectSingleTask(fallbackFocusId)
         }
+
+        void (async () => {
+            if (!task.parent_task_id) {
+                await onDeleteGroup?.(taskId)
+            } else {
+                await onDeleteTask?.(taskId)
+            }
+        })().catch(error => {
+            console.error("[MobileMindMap] Failed to delete node:", error)
+        })
     }, [calculateDeleteFocus, onDeleteGroup, onDeleteTask, selectSingleTask, taskMap])
 
     const handleSaveTitle = useCallback(async (taskId: string, title: string) => {

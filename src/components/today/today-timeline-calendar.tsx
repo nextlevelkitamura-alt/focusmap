@@ -21,7 +21,8 @@ import {
 // --- Constants ---
 const HOUR_HEIGHT = 56 // px per hour (slightly compact for mobile)
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
-const DEFAULT_SCROLL_HOUR = 7 // scroll to 7am by default
+const DEFAULT_SCROLL_HOUR = 10 // scroll to 10am by default
+const SCROLL_LABEL_OFFSET = 12
 const TOTAL_HEIGHT = HOUR_HEIGHT * 24
 const GUTTER_WIDTH = 40 // px: 右端の余白エリア（予定が重なっていてもドラッグ追加可能）
 const QUICK_CREATE_MINUTES = 15
@@ -546,9 +547,9 @@ export function TodayTimelineCalendar({
 
     // Scroll to saved position (or default hour) on mount
     useEffect(() => {
-        const scrollTo = getInitialScrollTop?.() ?? DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+        const scrollTo = getInitialScrollTop?.() ?? DEFAULT_SCROLL_HOUR * HOUR_HEIGHT - SCROLL_LABEL_OFFSET
         if (gridRef.current) {
-            gridRef.current.scrollTop = scrollTo
+            gridRef.current.scrollTop = Math.max(0, scrollTo)
         }
     }, [getInitialScrollTop])
 
@@ -556,7 +557,7 @@ export function TodayTimelineCalendar({
     const scrollToHourRequestKey = scrollToHourRequest?.requestKey
     useEffect(() => {
         if (scrollToHour == null || scrollToHourRequestKey == null || !gridRef.current) return
-        gridRef.current.scrollTop = clamp(scrollToHour, 0, 23) * HOUR_HEIGHT
+        gridRef.current.scrollTop = Math.max(0, clamp(scrollToHour, 0, 23) * HOUR_HEIGHT - SCROLL_LABEL_OFFSET)
     }, [scrollToHourRequestKey, scrollToHour])
 
     // Prevent scroll chaining to the page on iOS/Android when reaching timeline edges.

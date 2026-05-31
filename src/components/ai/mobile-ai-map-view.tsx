@@ -38,6 +38,34 @@ interface MobileAiMapViewProps {
   onCalendarEventCreated?: (eventData?: { id: string; title: string; scheduled_at: string; estimated_time: number; calendar_id?: string | null }) => void
 }
 
+export function getSelectableMindmapNotes({
+  notes,
+  projects,
+  selectedProjectId,
+  selectedSpaceId,
+  limit = 50,
+}: {
+  notes: Note[]
+  projects: Array<Pick<Project, "id" | "space_id">>
+  selectedProjectId: string | null
+  selectedSpaceId: string | null
+  limit?: number
+}) {
+  const scopedProjectIds = selectedSpaceId
+    ? new Set(projects.filter(project => project.space_id === selectedSpaceId).map(project => project.id))
+    : null
+
+  return notes
+    .filter(note => note.status === "pending")
+    .filter(note => !note.task_id)
+    .filter(note => {
+      if (selectedProjectId) return note.project_id === selectedProjectId
+      if (scopedProjectIds) return !!note.project_id && scopedProjectIds.has(note.project_id)
+      return true
+    })
+    .slice(0, limit)
+}
+
 export function MobileAiMapView({
   projects,
   spaces,
@@ -70,7 +98,9 @@ export function MobileAiMapView({
   const loadNotes = useCallback(async () => {
     setIsLoadingNotes(true)
     try {
-      const res = await fetch("/api/notes")
+      const params = new URLSearchParams({ status: "pending", limit: "100" })
+      if (selectedProjectId) params.set("project_id", selectedProjectId)
+      const res = await fetch(`/api/notes?${params.toString()}`)
       if (!res.ok) throw new Error("Failed to load notes")
       const data = await res.json()
       setNotes(Array.isArray(data.notes) ? data.notes : [])
@@ -80,20 +110,43 @@ export function MobileAiMapView({
     } finally {
       setIsLoadingNotes(false)
     }
-  }, [])
+  }, [selectedProjectId])
 
   useEffect(() => {
     if (isMemoPickerOpen) void loadNotes()
   }, [isMemoPickerOpen, loadNotes])
 
   const selectableNotes = useMemo(() => {
-    return notes
-      .filter(note => note.status !== "archived")
-      .filter(note => !selectedProjectId || !note.project_id || note.project_id === selectedProjectId)
-      .slice(0, 50)
-  }, [notes, selectedProjectId])
+    return getSelectableMindmapNotes({
+      notes,
+      projects,
+      selectedProjectId,
+      selectedSpaceId,
+    })
+  }, [notes, projects, selectedProjectId, selectedSpaceId])
+
+  useEffect(() => {
+    const visibleIds = new Set(selectableNotes.map(note => note.id))
+    setSelectedNoteIds(prev => {
+      const next = new Set([...prev].filter(id => visibleIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [selectableNotes])
 
   const defaultProjectId = selectedProject?.id ?? null
+  const selectedSpaceTitle = useMemo(
+    () => spaces.find(space => space.id === selectedSpaceId)?.title ?? null,
+    [spaces, selectedSpaceId],
+  )
+  const scopeLabel = selectedProject?.title
+    ? `${selectedProject.title} の未整理メモ`
+    : selectedSpaceTitle
+      ? `${selectedSpaceTitle} の未整理メモ`
+      : "未整理メモ"
+  const projectTitleById = useMemo(
+    () => new Map(projects.map(project => [project.id, project.title])),
+    [projects],
+  )
 
   const toggleNote = useCallback((noteId: string) => {
     setSelectedNoteIds(prev => {
@@ -155,13 +208,36 @@ export function MobileAiMapView({
               <option key={project.id} value={project.id}>{project.title}</option>
             ))}
           </select>
-          <Button type="button" size="icon" variant="outline" className="h-10 w-10 shrink-0" onClick={handleCreateRoot}>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-10 w-10 shrink-0"
+            onClick={handleCreateRoot}
+            aria-label="ルートノードを追加"
+            title="ルートノードを追加"
+          >
             <Plus className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" variant="outline" className="h-10 w-10 shrink-0" onClick={() => setIsMemoPickerOpen(true)}>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-10 w-10 shrink-0"
+            onClick={() => setIsMemoPickerOpen(true)}
+            aria-label="メモからマップ整理"
+            title="メモからマップ整理"
+          >
             <Network className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" className="h-10 w-10 shrink-0" onClick={() => setIsChatOpen(true)}>
+          <Button
+            type="button"
+            size="icon"
+            className="h-10 w-10 shrink-0"
+            onClick={() => setIsChatOpen(true)}
+            aria-label="AIアシスタントを開く"
+            title="AIアシスタントを開く"
+          >
             <MessageCircle className="h-4 w-4" />
           </Button>
         </div>
@@ -198,6 +274,7 @@ export function MobileAiMapView({
               <Sparkles className="h-4 w-4 text-primary" />
               メモからマップ整理
             </DialogTitle>
+            <div className="text-xs text-muted-foreground">{scopeLabel}</div>
           </DialogHeader>
           <div className="max-h-[58dvh] overflow-y-auto px-3 py-2">
             {isLoadingNotes ? (
@@ -209,24 +286,29 @@ export function MobileAiMapView({
                 {selectableNotes.map(note => {
                   const checked = selectedNoteIds.has(note.id)
                   const preview = note.content.trim().replace(/\s+/g, " ")
+                  const projectTitle = note.project_id ? projectTitleById.get(note.project_id) : null
                   return (
-                    <button
+                    <label
                       key={note.id}
-                      type="button"
-                      onClick={() => toggleNote(note.id)}
                       className={cn(
-                        "flex w-full gap-2 rounded-md border p-3 text-left transition-colors",
+                        "flex w-full cursor-pointer gap-2 rounded-md border p-3 text-left transition-colors",
                         checked ? "border-primary bg-primary/10" : "border-border bg-background active:bg-muted",
                       )}
                     >
-                      <span className={cn("mt-0.5 h-4 w-4 rounded border", checked ? "border-primary bg-primary" : "border-muted-foreground/40")} />
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleNote(note.id)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-muted-foreground/40 accent-primary"
+                        aria-label={`${preview || "無題メモ"}を選択`}
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{preview || "無題メモ"}</span>
                         <span className="mt-1 block text-[11px] text-muted-foreground">
-                          {note.status === "processed" ? "処理済み" : "未整理"}
+                          {projectTitle ? `未整理・${projectTitle}` : "未整理"}
                         </span>
                       </span>
-                    </button>
+                    </label>
                   )
                 })}
               </div>

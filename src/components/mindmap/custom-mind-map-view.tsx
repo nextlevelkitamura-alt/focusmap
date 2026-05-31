@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, Maximize2, MoreVertical, Minus, Plus, RefreshCw, RotateCcw, StickyNote } from "lucide-react";
+import { flushSync } from "react-dom";
+import { Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, MoreVertical, RotateCcw, StickyNote } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -73,8 +74,6 @@ const PADDING = 72;
 const DRAG_START_THRESHOLD = 6;
 const TOUCH_DRAG_LONG_PRESS_DELAY_MS = 500;
 const DROP_TARGET_MAX_DISTANCE = 190;
-const ZOOM_BUTTON_STEP = 0.05;
-const ZOOM_SLIDER_STEP_PERCENT = 1;
 const WHEEL_PAN_SENSITIVITY = 1;
 const WHEEL_ZOOM_SENSITIVITY = 0.0035;
 const TOUCH_PINCH_SENSITIVITY = 1;
@@ -83,6 +82,7 @@ const DONE_NODE_HIDE_DELAY_MS = 300;
 const DONE_UNDO_WINDOW_MS = 5000;
 const MOBILE_KEYBOARD_NODE_MARGIN = 12;
 const MOBILE_KEYBOARD_ACCESSORY_CLEARANCE = 68;
+const MOBILE_NODE_FOCUS_DURATION_MS = 120;
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
@@ -178,6 +178,26 @@ const getTouchMidpoint = (touches: TouchList, viewport: HTMLDivElement): Point =
         x: (first.clientX + second.clientX) / 2 - rect.left,
         y: (first.clientY + second.clientY) / 2 - rect.top,
     };
+};
+
+const easeOutCubic = (progress: number) => 1 - Math.pow(1 - progress, 3);
+
+const prefersReducedMotion = () =>
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const isInteractiveMapTarget = (target: EventTarget | null) =>
+    target instanceof HTMLElement && Boolean(target.closest("button,input,textarea,select,a,[contenteditable='true']"));
+
+const isMindMapNodeTarget = (target: EventTarget | null) =>
+    target instanceof HTMLElement && Boolean(target.closest("[data-id]"));
+
+const trackDetachedSave = (saveAction: void | Promise<void> | undefined, label: string) => {
+    if (!saveAction) return;
+    void Promise.resolve(saveAction).catch(error => {
+        console.error(label, error);
+    });
 };
 
 const formatDateShort = (value: string | null) => {
@@ -350,45 +370,67 @@ function CustomTaskNode({
         input.style.height = `${input.scrollHeight}px`;
     }, [editValue, isEditing]);
 
-    const saveValue = useCallback(async () => {
+    const commitCurrentTitle = useCallback((options: { sync?: boolean; closeEditor?: boolean } = {}) => {
         const nextTitle = editValue.trim() || "Task";
-        if (nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current) {
-            await onSaveTitle?.(node.id, nextTitle);
+        const shouldSave = nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current;
+        const commitState = () => {
+            lastCommittedTitleRef.current = nextTitle;
+            setEditValue(nextTitle);
+            if (options.closeEditor) setIsEditing(false);
+        };
+
+        if (options.sync) flushSync(commitState);
+        else commitState();
+
+        return { nextTitle, shouldSave };
+    }, [editValue, node.title]);
+
+    const saveCommittedTitle = useCallback((nextTitle: string, shouldSave: boolean) => {
+        if (!shouldSave) return undefined;
+        return onSaveTitle?.(node.id, nextTitle);
+    }, [node.id, onSaveTitle]);
+
+    const saveValueDetached = useCallback((options: { closeEditor?: boolean } = {}) => {
+        const { nextTitle, shouldSave } = commitCurrentTitle({ sync: true, closeEditor: options.closeEditor });
+        try {
+            trackDetachedSave(
+                saveCommittedTitle(nextTitle, shouldSave),
+                "[CustomMindMap] Failed to save task title:",
+            );
+        } catch (error) {
+            console.error("[CustomMindMap] Failed to save task title:", error);
         }
-        lastCommittedTitleRef.current = nextTitle;
-        setEditValue(nextTitle);
         return nextTitle;
-    }, [editValue, node.id, node.title, onSaveTitle]);
+    }, [commitCurrentTitle, saveCommittedTitle]);
 
     const finishEditing = useCallback(async (options: { refocus?: boolean } = {}) => {
         if (isFinishingEditRef.current) return;
         isFinishingEditRef.current = true;
         try {
-            await saveValue();
-            setIsEditing(false);
+            saveValueDetached({ closeEditor: true });
             if (options.refocus !== false) {
-                requestAnimationFrame(() => wrapperRef.current?.focus());
+                wrapperRef.current?.focus({ preventScroll: true });
+                requestAnimationFrame(() => wrapperRef.current?.focus({ preventScroll: true }));
             }
         } finally {
             setTimeout(() => {
                 isFinishingEditRef.current = false;
             }, 0);
         }
-    }, [saveValue]);
+    }, [saveValueDetached]);
 
     const handoffEditing = useCallback(async (focusTextInput: () => void) => {
         if (isFinishingEditRef.current) return;
         isFinishingEditRef.current = true;
         focusTextInput();
         try {
-            await saveValue();
-            setIsEditing(false);
+            saveValueDetached({ closeEditor: true });
         } finally {
             setTimeout(() => {
                 isFinishingEditRef.current = false;
             }, 0);
         }
-    }, [saveValue]);
+    }, [saveValueDetached]);
 
     const cancelEditing = useCallback(() => {
         isFinishingEditRef.current = true;
@@ -448,6 +490,7 @@ function CustomTaskNode({
             if (event.shiftKey) {
                 await onPromote?.(node.id);
             } else {
+                wrapperRef.current?.blur();
                 await onAddChild?.(node.id);
             }
             return;
@@ -456,6 +499,7 @@ function CustomTaskNode({
         if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
             event.stopPropagation();
+            wrapperRef.current?.blur();
             await onAddSibling?.(node.id);
             return;
         }
@@ -503,6 +547,7 @@ function CustomTaskNode({
             if (event.shiftKey) {
                 await onPromote?.(node.id);
             } else {
+                inputRef.current?.blur();
                 await onAddChild?.(node.id);
             }
             return;
@@ -666,9 +711,10 @@ function CustomTaskNode({
                         value={editValue}
                         className={cn(
                             "min-w-0 flex-1 resize-none overflow-hidden bg-transparent px-0.5 font-bold leading-tight outline-none",
-                            "whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
+                            "whitespace-pre",
                             node.isDone && "line-through text-muted-foreground"
                         )}
+                        wrap="off"
                         onChange={(event) => {
                             setEditValue(event.currentTarget.value);
                             event.currentTarget.style.height = "auto";
@@ -680,7 +726,7 @@ function CustomTaskNode({
                     />
                 ) : (
                     <div className={cn(
-                        "min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-0.5 font-bold leading-tight",
+                        "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-pre px-0.5 font-bold leading-tight",
                         node.isDone && "line-through text-muted-foreground",
                         floatingEditing && "opacity-0"
                     )}>
@@ -711,7 +757,7 @@ function CustomTaskNode({
                     />
                 )}
 
-                <div className="flex shrink-0 flex-col items-center leading-none">
+                <div className="flex shrink-0 items-center gap-0.5 leading-none">
                     {node.hasChildren && (
                         <button
                             type="button"
@@ -983,45 +1029,67 @@ function CustomProjectNode({
         input.style.height = `${input.scrollHeight}px`;
     }, [editValue, isEditing]);
 
-    const saveValue = useCallback(async () => {
+    const commitCurrentTitle = useCallback((options: { sync?: boolean; closeEditor?: boolean } = {}) => {
         const nextTitle = editValue.trim() || "Project";
-        if (nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current) {
-            await onSaveTitle?.(nextTitle);
+        const shouldSave = nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current;
+        const commitState = () => {
+            lastCommittedTitleRef.current = nextTitle;
+            setEditValue(nextTitle);
+            if (options.closeEditor) setIsEditing(false);
+        };
+
+        if (options.sync) flushSync(commitState);
+        else commitState();
+
+        return { nextTitle, shouldSave };
+    }, [editValue, node.title]);
+
+    const saveCommittedTitle = useCallback((nextTitle: string, shouldSave: boolean) => {
+        if (!shouldSave) return undefined;
+        return onSaveTitle?.(nextTitle);
+    }, [onSaveTitle]);
+
+    const saveValueDetached = useCallback((options: { closeEditor?: boolean } = {}) => {
+        const { nextTitle, shouldSave } = commitCurrentTitle({ sync: true, closeEditor: options.closeEditor });
+        try {
+            trackDetachedSave(
+                saveCommittedTitle(nextTitle, shouldSave),
+                "[CustomMindMap] Failed to save project title:",
+            );
+        } catch (error) {
+            console.error("[CustomMindMap] Failed to save project title:", error);
         }
-        lastCommittedTitleRef.current = nextTitle;
-        setEditValue(nextTitle);
         return nextTitle;
-    }, [editValue, node.title, onSaveTitle]);
+    }, [commitCurrentTitle, saveCommittedTitle]);
 
     const finishEditing = useCallback(async (options: { refocus?: boolean } = {}) => {
         if (isFinishingEditRef.current) return;
         isFinishingEditRef.current = true;
         try {
-            await saveValue();
-            setIsEditing(false);
+            saveValueDetached({ closeEditor: true });
             if (options.refocus !== false) {
-                requestAnimationFrame(() => wrapperRef.current?.focus());
+                wrapperRef.current?.focus({ preventScroll: true });
+                requestAnimationFrame(() => wrapperRef.current?.focus({ preventScroll: true }));
             }
         } finally {
             setTimeout(() => {
                 isFinishingEditRef.current = false;
             }, 0);
         }
-    }, [saveValue]);
+    }, [saveValueDetached]);
 
     const handoffEditing = useCallback(async (focusTextInput: () => void) => {
         if (isFinishingEditRef.current) return;
         isFinishingEditRef.current = true;
         focusTextInput();
         try {
-            await saveValue();
-            setIsEditing(false);
+            saveValueDetached({ closeEditor: true });
         } finally {
             setTimeout(() => {
                 isFinishingEditRef.current = false;
             }, 0);
         }
-    }, [saveValue]);
+    }, [saveValueDetached]);
 
     const cancelEditing = useCallback(() => {
         isFinishingEditRef.current = true;
@@ -1065,6 +1133,7 @@ function CustomProjectNode({
         if ((event.key === "Tab" && !event.shiftKey) || event.key === "Enter") {
             event.preventDefault();
             event.stopPropagation();
+            wrapperRef.current?.blur();
             await onAddChild?.();
             return;
         }
@@ -1095,6 +1164,7 @@ function CustomProjectNode({
         if (event.key === "Tab") {
             event.preventDefault();
             await finishEditing({ refocus: false });
+            inputRef.current?.blur();
             if (!event.shiftKey) await onAddChild?.();
             return;
         }
@@ -1189,8 +1259,6 @@ export function CustomMindMapView({
     onUpdateSchedule,
     onResizeNode,
     onRunCodex,
-    onRefreshCodex,
-    isRefreshingCodex = false,
     codexRunByNodeId = {},
     onMoveTask,
     onMoveTasks,
@@ -1227,6 +1295,7 @@ export function CustomMindMapView({
     const editControllersRef = useRef(new Map<string, CustomTaskEditController>());
     const pendingViewportTransformRef = useRef<{ zoom: number; pan: Point } | null>(null);
     const viewportRafRef = useRef<number | null>(null);
+    const viewportAnimationFrameRef = useRef<number | null>(null);
     const pinchGestureRef = useRef<PinchGestureState | null>(null);
     const panMovedRef = useRef(false);
     const pendingResizeSavesRef = useRef(new Map<string, number>());
@@ -1291,7 +1360,6 @@ export function CustomMindMapView({
     const stageWidth = Math.max(isMobile ? 760 : 960, model.bounds.width + PADDING * 2);
     const stageHeight = Math.max(isMobile ? 720 : 640, model.bounds.height + PADDING * 2);
     const zoomBounds = useMemo(() => getMindMapViewportBounds(), []);
-    const zoomPercent = Math.round(zoom * 100);
     const positionedNodes = useMemo(
         () => model.nodes.map(node => ({ ...node, x: node.x + offsetX, y: node.y + offsetY })),
         [model.nodes, offsetX, offsetY]
@@ -1412,7 +1480,14 @@ export function CustomMindMapView({
         stage.style.transform = `translate3d(${nextPan.x}px, ${nextPan.y}px, 0) scale(${nextZoom})`;
     }, []);
 
+    const cancelViewportAnimation = useCallback(() => {
+        if (viewportAnimationFrameRef.current === null) return;
+        window.cancelAnimationFrame(viewportAnimationFrameRef.current);
+        viewportAnimationFrameRef.current = null;
+    }, []);
+
     const commitViewportTransform = useCallback(() => {
+        cancelViewportAnimation();
         if (viewportRafRef.current !== null) {
             window.cancelAnimationFrame(viewportRafRef.current);
             viewportRafRef.current = null;
@@ -1423,9 +1498,10 @@ export function CustomMindMapView({
         const nextPan = pending?.pan ?? panOffsetRef.current;
         setZoom(nextZoom);
         setPanOffset(nextPan);
-    }, []);
+    }, [cancelViewportAnimation]);
 
     const applyViewportTransform = useCallback((nextZoom: number, nextPan: Point, options: { deferCommit?: boolean } = {}) => {
+        cancelViewportAnimation();
         zoomRef.current = nextZoom;
         panOffsetRef.current = nextPan;
         pendingViewportTransformRef.current = { zoom: nextZoom, pan: nextPan };
@@ -1440,7 +1516,62 @@ export function CustomMindMapView({
             setZoom(pending.zoom);
             setPanOffset(pending.pan);
         });
-    }, [writeStageTransform]);
+    }, [cancelViewportAnimation, writeStageTransform]);
+
+    const animateViewportTransform = useCallback((nextZoom: number, nextPan: Point, durationMs: number) => {
+        if (viewportRafRef.current !== null) {
+            window.cancelAnimationFrame(viewportRafRef.current);
+            viewportRafRef.current = null;
+        }
+        pendingViewportTransformRef.current = null;
+
+        const startZoom = zoomRef.current;
+        const startPan = panOffsetRef.current;
+        const deltaX = nextPan.x - startPan.x;
+        const deltaY = nextPan.y - startPan.y;
+        const deltaZoom = nextZoom - startZoom;
+
+        if (
+            durationMs <= 0 ||
+            prefersReducedMotion() ||
+            (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1 && Math.abs(deltaZoom) < 0.001)
+        ) {
+            applyViewportTransform(nextZoom, nextPan);
+            return;
+        }
+
+        cancelViewportAnimation();
+        let startTime: number | null = null;
+
+        const step = (now: number) => {
+            startTime ??= now;
+            const progress = Math.min(1, Math.max(0, (now - startTime) / durationMs));
+            const eased = easeOutCubic(progress);
+            const currentZoom = startZoom + deltaZoom * eased;
+            const currentPan = {
+                x: startPan.x + deltaX * eased,
+                y: startPan.y + deltaY * eased,
+            };
+
+            zoomRef.current = currentZoom;
+            panOffsetRef.current = currentPan;
+            writeStageTransform(currentZoom, currentPan);
+
+            if (progress < 1) {
+                viewportAnimationFrameRef.current = window.requestAnimationFrame(step);
+                return;
+            }
+
+            viewportAnimationFrameRef.current = null;
+            zoomRef.current = nextZoom;
+            panOffsetRef.current = nextPan;
+            writeStageTransform(nextZoom, nextPan);
+            setZoom(nextZoom);
+            setPanOffset(nextPan);
+        };
+
+        viewportAnimationFrameRef.current = window.requestAnimationFrame(step);
+    }, [applyViewportTransform, cancelViewportAnimation, writeStageTransform]);
 
     const setZoomAtViewportPoint = useCallback((nextZoomRaw: number, origin: Point | null = null) => {
         const rect = viewportRef.current?.getBoundingClientRect();
@@ -1458,34 +1589,6 @@ export function CustomMindMapView({
         if (next.zoom === zoomRef.current && next.pan.x === panOffsetRef.current.x && next.pan.y === panOffsetRef.current.y) return;
         applyViewportTransform(next.zoom, next.pan);
     }, [applyViewportTransform, zoomBounds]);
-
-    const handleZoomSliderChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-        const nextZoom = Number(event.currentTarget.value) / 100;
-        if (!Number.isFinite(nextZoom)) return;
-        setZoomAtViewportPoint(nextZoom);
-    }, [setZoomAtViewportPoint]);
-
-    const fitView = useCallback(() => {
-        const rect = viewportRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const padding = isMobile ? 44 : 80;
-        const fittedZoom = Math.min(
-            Math.min(isMobile ? 0.95 : 1.1, zoomBounds.maxZoom),
-            Math.max(
-                zoomBounds.minZoom,
-                Math.min(
-                    (rect.width - padding) / Math.max(stageWidth, 1),
-                    (rect.height - padding) / Math.max(stageHeight, 1)
-                )
-            )
-        );
-        const nextZoom = fittedZoom;
-        const nextPan = {
-            x: (rect.width - stageWidth * nextZoom) / 2,
-            y: (rect.height - stageHeight * nextZoom) / 2,
-        };
-        applyViewportTransform(nextZoom, nextPan);
-    }, [applyViewportTransform, isMobile, stageHeight, stageWidth, zoomBounds]);
 
     const isDescendantNode = useCallback((candidateId: string, ancestorId: string) => {
         let current = nodeById.get(candidateId);
@@ -1618,7 +1721,7 @@ export function CustomMindMapView({
         return true;
     }, [floatingEditNodeId, focusFloatingTextarea, isMobile, nodeById, rawTaskTitleById]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!isMobile) return;
         if (!pendingEditNodeId) {
             handledPendingEditNodeIdRef.current = null;
@@ -1632,16 +1735,9 @@ export function CustomMindMapView({
         const node = nodeById.get(pendingEditNodeId);
         if (!node) return;
         const initialValue = node.kind === "project" ? node.title : rawTaskTitleById.get(node.id) ?? "";
-        let cancelled = false;
-        void Promise.resolve().then(() => {
-            if (cancelled) return;
-            if (startFloatingEdit(node.id, initialValue)) {
-                handledPendingEditNodeIdRef.current = node.id;
-            }
-        });
-        return () => {
-            cancelled = true;
-        };
+        if (startFloatingEdit(node.id, initialValue)) {
+            handledPendingEditNodeIdRef.current = node.id;
+        }
     }, [floatingEditNodeId, isMobile, nodeById, pendingEditNodeId, rawTaskTitleById, startFloatingEdit]);
 
     useLayoutEffect(() => {
@@ -1792,7 +1888,20 @@ export function CustomMindMapView({
         setActiveEditingNodeId(null);
     }, [commitFloatingEdit, floatingEditNodeId]);
 
-    const keepNodeAboveKeyboard = useCallback((node: MindMapModelNode) => {
+    const finishActiveInlineEdit = useCallback(() => {
+        if (!activeEditingNodeId) return false;
+        const controller = editControllersRef.current.get(activeEditingNodeId);
+        if (!controller) {
+            setActiveEditingNodeId(null);
+            return false;
+        }
+        void controller.finishEditing({ refocus: false }).catch(error => {
+            console.error("[CustomMindMap] Failed to finish active edit:", error);
+        });
+        return true;
+    }, [activeEditingNodeId]);
+
+    const keepNodeAboveKeyboard = useCallback((node: MindMapModelNode, options: { animate?: boolean } = {}) => {
         const viewport = viewportRef.current;
         if (!viewport) return;
         const rect = viewport.getBoundingClientRect();
@@ -1826,11 +1935,16 @@ export function CustomMindMapView({
         if (nodeTop + deltaY < visibleTop) deltaY = visibleTop - nodeTop;
 
         if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
-        applyViewportTransform(currentZoom, {
+        const nextPan = {
             x: currentPan.x + deltaX,
             y: currentPan.y + deltaY,
-        });
-    }, [applyViewportTransform, isKeyboardOpen, mobileKeyboardAccessoryPinned, viewportBottom]);
+        };
+        if (options.animate) {
+            animateViewportTransform(currentZoom, nextPan, MOBILE_NODE_FOCUS_DURATION_MS);
+        } else {
+            applyViewportTransform(currentZoom, nextPan);
+        }
+    }, [animateViewportTransform, applyViewportTransform, isKeyboardOpen, mobileKeyboardAccessoryPinned, viewportBottom]);
 
     useEffect(() => {
         if (!isMobile || (!isKeyboardOpen && !mobileKeyboardAccessoryPinned)) return;
@@ -1840,7 +1954,7 @@ export function CustomMindMapView({
         const timeoutIds: number[] = [];
         const trackNode = () => {
             const node = nodeById.get(nodeId);
-            if (node) keepNodeAboveKeyboard(node);
+            if (node) keepNodeAboveKeyboard(node, { animate: pendingEditNodeId === nodeId });
         };
         const trackOnFrame = () => {
             frameIds.push(requestAnimationFrame(trackNode));
@@ -1854,7 +1968,7 @@ export function CustomMindMapView({
             frameIds.forEach(frameId => cancelAnimationFrame(frameId));
             timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
         };
-    }, [floatingEditNodeId, isKeyboardOpen, isMobile, keepNodeAboveKeyboard, mobileKeyboardAccessoryPinned, nodeById, selectedNodeId, viewportBottom, zoom]);
+    }, [floatingEditNodeId, isKeyboardOpen, isMobile, keepNodeAboveKeyboard, mobileKeyboardAccessoryPinned, nodeById, pendingEditNodeId, selectedNodeId, viewportBottom, zoom]);
 
     const clearPendingLongPressDrag = useCallback(() => {
         const pending = pendingLongPressDragRef.current;
@@ -1930,19 +2044,23 @@ export function CustomMindMapView({
 
         event.preventDefault();
         event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         beginDragFromClientPoint(node, event.clientX, event.clientY);
     }, [beginDragFromClientPoint, clearPendingLongPressDrag, isMobile]);
 
-    const handlePanePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const startRangeSelection = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (event.button !== 0) return;
         if (isMobile && event.pointerType === "touch") return;
         if (spacePressed) return;
-        const target = event.target;
-        if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return;
+        const isNodeTarget = isMindMapNodeTarget(event.target);
+        if (isInteractiveMapTarget(event.target) || isNodeTarget) return;
+        if (floatingEditNodeId) dismissFloatingEdit();
+        finishActiveInlineEdit();
         const point = getStagePoint(event.clientX, event.clientY);
         if (!point) return;
-        event.currentTarget.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         setSelectionBox({
             startX: point.x,
             startY: point.y,
@@ -1950,24 +2068,27 @@ export function CustomMindMapView({
             currentY: point.y,
             additive: event.shiftKey || event.metaKey || event.ctrlKey,
         });
-    }, [getStagePoint, isMobile, spacePressed]);
+    }, [dismissFloatingEdit, finishActiveInlineEdit, floatingEditNodeId, getStagePoint, isMobile, spacePressed]);
 
-    const handlePanPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const handleViewportPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (pinchGestureRef.current) return;
         const isTouchPan = isMobile && event.pointerType === "touch";
         const isPanButton = event.button === 1 || event.button === 2 || (event.button === 0 && spacePressed) || isTouchPan;
-        if (!isPanButton) return;
-        const target = event.target;
-        if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return;
-        const isNodeTarget = target instanceof HTMLElement && Boolean(target.closest("[data-id]"));
+        if (!isPanButton) {
+            startRangeSelection(event);
+            return;
+        }
+        if (isInteractiveMapTarget(event.target)) return;
+        const isNodeTarget = isMindMapNodeTarget(event.target);
         if (isNodeTarget && floatingEditNodeId) return;
         if (floatingEditNodeId) {
             dismissFloatingEdit();
             onSelectNode(null);
         }
+        if (!isNodeTarget) finishActiveInlineEdit();
         event.preventDefault();
         event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         setSelectionBox(null);
         setDragState(null);
         setPanState({
@@ -1977,7 +2098,7 @@ export function CustomMindMapView({
             startPanY: panOffsetRef.current.y,
         });
         panMovedRef.current = false;
-    }, [dismissFloatingEdit, floatingEditNodeId, isMobile, onSelectNode, spacePressed]);
+    }, [dismissFloatingEdit, finishActiveInlineEdit, floatingEditNodeId, isMobile, onSelectNode, spacePressed, startRangeSelection]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
         event.preventDefault();
@@ -2155,6 +2276,10 @@ export function CustomMindMapView({
         return () => {
             if (viewportRafRef.current !== null) {
                 window.cancelAnimationFrame(viewportRafRef.current);
+            }
+            if (viewportAnimationFrameRef.current !== null) {
+                window.cancelAnimationFrame(viewportAnimationFrameRef.current);
+                viewportAnimationFrameRef.current = null;
             }
             for (const { timerId } of doneHideTimers.values()) {
                 window.clearTimeout(timerId);
@@ -2598,7 +2723,9 @@ export function CustomMindMapView({
                 } else {
                     prepareMobileTextFocus();
                 }
-                await onDeleteNode?.(node.id);
+                void Promise.resolve(onDeleteNode?.(node.id)).catch(error => {
+                    console.error("[CustomMindMap] Failed to delete node:", error);
+                });
             } finally {
                 requestAnimationFrame(() => {
                     ignoreNextFloatingBlurRef.current = false;
@@ -2665,63 +2792,6 @@ export function CustomMindMapView({
                     )}
                 </div>
             )}
-            <div className={cn(
-                "absolute z-20 flex flex-col gap-1 rounded-lg border bg-card/90 p-1 shadow-sm backdrop-blur",
-                isMobile ? "right-2 top-2" : "right-3 top-14"
-            )}>
-                <div className="flex items-center gap-1">
-                    <button
-                        type="button"
-                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                        onClick={() => setZoomAtViewportPoint(zoom - ZOOM_BUTTON_STEP)}
-                        title="縮小"
-                    >
-                        <Minus className="h-3.5 w-3.5" />
-                    </button>
-                    <div className="min-w-10 text-center text-[11px] text-muted-foreground">{zoomPercent}%</div>
-                    <button
-                        type="button"
-                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                        onClick={() => setZoomAtViewportPoint(zoom + ZOOM_BUTTON_STEP)}
-                        title="拡大"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                        type="button"
-                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                        onClick={fitView}
-                        title="全体を表示"
-                    >
-                        <Maximize2 className="h-3.5 w-3.5" />
-                    </button>
-                    {onRefreshCodex && (
-                        <button
-                            type="button"
-                            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60"
-                            onClick={() => { void onRefreshCodex(); }}
-                            disabled={isRefreshingCodex}
-                            title="Codex状態を更新"
-                            aria-label="Codex状態を更新"
-                        >
-                            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshingCodex && "animate-spin")} />
-                        </button>
-                    )}
-                </div>
-                <input
-                    aria-label="ズーム"
-                    type="range"
-                    min={Math.round(zoomBounds.minZoom * 100)}
-                    max={Math.round(zoomBounds.maxZoom * 100)}
-                    step={ZOOM_SLIDER_STEP_PERCENT}
-                    value={zoomPercent}
-                    onChange={handleZoomSliderChange}
-                    className={cn("h-5 accent-primary", isMobile ? "w-36" : "w-44")}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => event.stopPropagation()}
-                />
-            </div>
-
             <div
                 ref={viewportRef}
                 data-testid="custom-mind-map-viewport"
@@ -2730,7 +2800,7 @@ export function CustomMindMapView({
                     panState ? "cursor-grabbing select-none" : spacePressed ? "cursor-grab" : "cursor-default"
                 )}
                 style={{ touchAction: "none", overscrollBehavior: "contain" }}
-                onPointerDown={handlePanPointerDown}
+                onPointerDown={handleViewportPointerDown}
                 onContextMenu={(event) => event.preventDefault()}
                 onClick={() => {
                     if (Date.now() < suppressPaneClickUntilRef.current) return;
@@ -2742,7 +2812,6 @@ export function CustomMindMapView({
                     className="absolute left-0 top-0 origin-top-left"
                     ref={stageRef}
                     data-testid="custom-mind-map-stage"
-                    onPointerDown={handlePanePointerDown}
                     style={{
                         width: stageWidth,
                         height: stageHeight,
@@ -2861,10 +2930,10 @@ export function CustomMindMapView({
                                 aria-label={floatingEditKind === "project" ? "プロジェクト名" : "ノード名"}
                                 value={floatingEditValue}
                                 className={cn(
-                                    "min-w-0 flex-1 resize-none overflow-hidden bg-transparent font-bold leading-tight outline-none",
+                                    "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 font-bold outline-none",
                                     floatingEditKind === "project"
-                                        ? "text-center text-sm text-primary-foreground placeholder:text-primary-foreground/60"
-                                        : "px-0.5 text-[13px] text-foreground placeholder:text-muted-foreground"
+                                        ? "h-5 min-h-5 text-center text-sm leading-5 text-primary-foreground placeholder:text-primary-foreground/60"
+                                        : "h-[18px] min-h-[18px] px-0.5 text-[13px] leading-[18px] text-foreground placeholder:text-muted-foreground"
                                 )}
                                 onChange={handleFloatingEditValueChange}
                                 onBlur={handleFloatingEditBlur}

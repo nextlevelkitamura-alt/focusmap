@@ -18,9 +18,6 @@ const NODE_VERTICAL_PADDING = 12;
 const NODE_INFO_ROW_HEIGHT = 16;
 const NODE_TEXT_RESERVED_WIDTH = 60;
 const NODE_TEXT_RESERVED_WIDTH_MOBILE = 56;
-const NODE_HEIGHT_RESERVED_WIDTH = 88;
-const NODE_HEIGHT_RESERVED_WIDTH_MOBILE = 82;
-
 const estimateTextWidthPx = (text: string): number => {
     let width = 0;
     for (const ch of text) {
@@ -68,19 +65,13 @@ export const estimateTaskNodeHeight = (
     nodeWidth: number = NODE_WIDTH,
     isMobile = false,
 ) => {
-    const reserved = isMobile ? NODE_HEIGHT_RESERVED_WIDTH_MOBILE : NODE_HEIGHT_RESERVED_WIDTH;
-    const availableTextWidthPx = Math.max(64, nodeWidth - reserved);
+    void nodeWidth;
+    void isMobile;
     const text = (title || '').trim();
 
-    const lines = Math.max(
-        1,
-        text
-            .split('\n')
-            .reduce((acc, line) => {
-                const linePx = estimateTextWidthPx(line);
-                return acc + Math.max(1, Math.ceil(linePx / availableTextWidthPx));
-            }, 0)
-    );
+    // 高さはユーザーが入れた明示的な改行だけで決める。
+    // 長い1行を自動折り返しで2行扱いにすると、デスクトップの連続入力時にノード高さが不規則になる。
+    const lines = Math.max(1, text.split('\n').length);
 
     const textHeight = lines * NODE_TEXT_LINE_HEIGHT;
     const infoRowHeight = hasInfoRow ? NODE_INFO_ROW_HEIGHT : 0;

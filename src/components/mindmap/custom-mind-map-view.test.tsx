@@ -220,6 +220,33 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.getByText("確認待ち1")).toBeInTheDocument()
   })
 
+  test("does not render the zoom controls", () => {
+    renderMap()
+
+    expect(screen.queryByRole("slider", { name: "ズーム" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "縮小" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "拡大" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "全体を表示" })).not.toBeInTheDocument()
+  })
+
+  test("can start range selection from empty viewport space outside the stage", async () => {
+    mockViewportRect({ width: 1600, height: 900, right: 1600, bottom: 900 })
+    const onSelectNodes = vi.fn()
+    renderMap({ onSelectNodes })
+
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, pointerType: "mouse", clientX: 1400, clientY: 820 })
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0 })
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse" })
+
+    await waitFor(() => {
+      expect(onSelectNodes).toHaveBeenCalled()
+    })
+    const [selectedIds, primaryId] = onSelectNodes.mock.calls.at(-1) ?? []
+    expect(selectedIds).toEqual(expect.arrayContaining(["root-1", "child-1"]))
+    expect(primaryId).toBe("root-1")
+  })
+
   test("adds a child with Tab and a sibling with Enter", async () => {
     const onAddChildNode = vi.fn()
     const onAddSiblingNode = vi.fn()
@@ -237,6 +264,58 @@ describe("CustomMindMapView keyboard operations", () => {
 
     fireEvent.keyDown(node, { key: "Enter" })
     await waitFor(() => expect(onAddSiblingNode).toHaveBeenCalledWith("root-1"))
+  })
+
+  test("blurs the source node before desktop add shortcuts create the next editable node", async () => {
+    const onAddChildNode = vi.fn()
+    const onAddSiblingNode = vi.fn()
+
+    renderMap({
+      onAddChildNode,
+      onAddSiblingNode,
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+    })
+
+    const node = getNode("Root task", "root-1")
+
+    node.focus()
+    expect(document.activeElement).toBe(node)
+    fireEvent.keyDown(node, { key: "Tab" })
+    await waitFor(() => expect(onAddChildNode).toHaveBeenCalledWith("root-1"))
+    expect(document.activeElement).not.toBe(node)
+
+    node.focus()
+    expect(document.activeElement).toBe(node)
+    fireEvent.keyDown(node, { key: "Enter" })
+    await waitFor(() => expect(onAddSiblingNode).toHaveBeenCalledWith("root-1"))
+    expect(document.activeElement).not.toBe(node)
+  })
+
+  test("returns desktop edit focus immediately so rapid Enter creates the next node", async () => {
+    const onSaveTitle = vi.fn(() => new Promise<void>(() => {}))
+    const onAddSiblingNode = vi.fn()
+
+    renderMap({
+      onSaveTitle,
+      onAddSiblingNode,
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+    })
+
+    const node = getNode("Root task", "root-1")
+    fireEvent.doubleClick(node)
+    const input = screen.getByDisplayValue("Root task")
+    fireEvent.change(input, { target: { value: "Renamed root" } })
+
+    fireEvent.keyDown(input, { key: "Enter" })
+
+    expect(onSaveTitle).toHaveBeenCalledWith("root-1", "Renamed root")
+    expect(document.activeElement).toBe(node)
+
+    fireEvent.keyDown(node, { key: "Enter" })
+
+    expect(onAddSiblingNode).toHaveBeenCalledWith("root-1")
   })
 
   test("limits the node menu to memo edit and schedule actions", async () => {
@@ -325,6 +404,31 @@ describe("CustomMindMapView keyboard operations", () => {
 
     const input = await screen.findByDisplayValue("")
     expect(input).toHaveFocus()
+  })
+
+  test("saves an active desktop node edit when the map background is pressed", async () => {
+    const onSaveTitle = vi.fn()
+    const blankRoot = makeTask({ id: "root-1", title: "" })
+
+    renderMap({
+      groups: [blankRoot],
+      tasks: [],
+      pendingEditNodeId: "root-1",
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+      onSaveTitle,
+    })
+
+    const input = await screen.findByDisplayValue("")
+    fireEvent.change(input, { target: { value: "背景タップで確定" } })
+
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, pointerType: "mouse", clientX: 240, clientY: 240 })
+
+    await waitFor(() => {
+      expect(onSaveTitle).toHaveBeenCalledWith("root-1", "背景タップで確定")
+      expect(screen.queryByDisplayValue("背景タップで確定")).not.toBeInTheDocument()
+    })
   })
 
   test("starts task title editing with a single tap on mobile", async () => {
@@ -1076,6 +1180,33 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => expect(onDeleteGroup).toHaveBeenCalledWith("root-1"))
     expect(confirmSpy).not.toHaveBeenCalled()
     await waitFor(() => {
+      const input = screen.getByLabelText("ノード名")
+      expect(input).toHaveValue("Next root")
+      expect(input).toHaveFocus()
+    })
+  })
+
+  test("moves mobile delete focus before the delete request finishes", async () => {
+    installOpenKeyboardViewport()
+    const onDeleteGroup = vi.fn(() => new Promise<void>(() => {}))
+    const rootTask = makeTask({ id: "root-1", title: "Root task", order_index: 0 })
+    const nextRootTask = makeTask({ id: "root-2", title: "Next root", order_index: 1 })
+
+    render(
+      <MobileMindMap
+        project={project}
+        groups={[rootTask, nextRootTask]}
+        tasks={[]}
+        focusEditNodeId="root-1"
+        onDeleteGroup={onDeleteGroup}
+      />
+    )
+
+    await screen.findByDisplayValue("Root task")
+    fireEvent.click(await screen.findByRole("button", { name: "ノード削除" }))
+
+    await waitFor(() => {
+      expect(onDeleteGroup).toHaveBeenCalledWith("root-1")
       const input = screen.getByLabelText("ノード名")
       expect(input).toHaveValue("Next root")
       expect(input).toHaveFocus()

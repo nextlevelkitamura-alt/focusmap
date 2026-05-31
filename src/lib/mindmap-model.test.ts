@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Project, Task } from "@/types/database";
 import { buildMindMapModel } from "./mindmap-model";
-import { estimateProjectNodeWidth, estimateTaskNodeWidth } from "./mindmap-geometry";
+import { estimateProjectNodeWidth, estimateTaskNodeHeight, estimateTaskNodeWidth } from "./mindmap-geometry";
 
 const project = {
     id: "project-1",
@@ -64,5 +64,39 @@ describe("buildMindMapModel", () => {
         const projectNode = model.nodes.find(node => node.kind === "project");
         expect(projectNode?.width).toBe(estimateProjectNodeWidth("仕事", true));
         expect(projectNode?.width).toBeLessThan(140);
+    });
+
+    test("keeps same-depth node left edges aligned even when text widths differ", () => {
+        const short = makeTask({
+            id: "short",
+            title: "る",
+            order_index: 0,
+        });
+        const long = makeTask({
+            id: "long",
+            title: "誰でもコードが書ける時代",
+            order_index: 1,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [short, long],
+            tasks: [],
+            isMobile: false,
+        });
+
+        expect(model.taskById.get("short")?.width).toBeLessThan(model.taskById.get("long")?.width ?? 0);
+        expect(model.taskById.get("short")?.x).toBe(model.taskById.get("long")?.x);
+    });
+});
+
+describe("mindmap geometry", () => {
+    test("does not increase node height for a long single line", () => {
+        const oneLine = estimateTaskNodeHeight("誰でもコードが書ける時代", false, 160, false);
+        const shortLine = estimateTaskNodeHeight("る", false, 160, false);
+        const explicitTwoLines = estimateTaskNodeHeight("誰でもコードが\n書ける時代", false, 160, false);
+
+        expect(oneLine).toBe(shortLine);
+        expect(explicitTwoLines).toBeGreaterThan(oneLine);
     });
 });

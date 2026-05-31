@@ -32,11 +32,12 @@ const baseProps = {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  mockFetch.mockReset()
   vi.useFakeTimers()
 })
 
 afterEach(() => {
+  vi.clearAllTimers()
   vi.useRealTimers()
 })
 
@@ -217,10 +218,10 @@ describe('useTaskCalendarSync', () => {
   })
 
   // ===========================
-  // カレンダー変更 (DELETE → POST)
+  // カレンダー変更 (PATCH move)
   // ===========================
   describe('カレンダー変更', () => {
-    test('calendar_id 変更 → DELETE → POST の2段階処理', async () => {
+    test('calendar_id 変更 → PATCH で移動元カレンダーを送信する', async () => {
       const initialProps = {
         ...baseProps,
         scheduled_at: '2026-02-18T10:00:00Z',
@@ -234,9 +235,7 @@ describe('useTaskCalendarSync', () => {
         { initialProps }
       )
 
-      // DELETE成功 → POST成功
-      mockFetchSuccess() // DELETE
-      mockFetchSuccess({ googleEventId: 'evt-456' }) // POST
+      mockFetchSuccess({ googleEventId: 'evt-456' })
 
       await act(async () => {
         rerender({
@@ -246,17 +245,18 @@ describe('useTaskCalendarSync', () => {
         await vi.runAllTimersAsync()
       })
 
-      // DELETE が呼ばれたことを確認
       expect(mockFetch).toHaveBeenCalledWith('/api/calendar/sync-task', expect.objectContaining({
-        method: 'DELETE',
+        method: 'PATCH',
+        body: JSON.stringify({
+          taskId: 'task-1',
+          scheduled_at: '2026-02-18T10:00:00Z',
+          estimated_time: 30,
+          calendar_id: 'cal-2',
+          source_calendar_id: 'cal-1',
+        }),
       }))
 
-      // POST が呼ばれたことを確認
-      expect(mockFetch).toHaveBeenCalledWith('/api/calendar/sync-task', expect.objectContaining({
-        method: 'POST',
-      }))
-
-      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -303,15 +303,8 @@ describe('useTaskCalendarSync', () => {
 
       const { result } = renderHook(() => useTaskCalendarSync(props))
 
-      // 初回の fetch（失敗）
       await act(async () => {
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-
-      // リトライタイマー（1秒後）を発火
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1000)
+        await vi.runAllTimersAsync()
       })
 
       expect(mockFetch).toHaveBeenCalledTimes(2)
@@ -332,8 +325,7 @@ describe('useTaskCalendarSync', () => {
       const { result } = renderHook(() => useTaskCalendarSync(props))
 
       await act(async () => {
-        await Promise.resolve()
-        await Promise.resolve()
+        await vi.runAllTimersAsync()
       })
 
       // 404は1回のみ、リトライなし
@@ -366,25 +358,8 @@ describe('useTaskCalendarSync', () => {
 
       const { result } = renderHook(() => useTaskCalendarSync(props))
 
-      // 初回失敗
       await act(async () => {
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-
-      // リトライ1 (1秒後)
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1000)
-      })
-
-      // リトライ2 (2秒後)
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2000)
-      })
-
-      // リトライ3 (4秒後)
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(4000)
+        await vi.runAllTimersAsync()
       })
 
       expect(mockFetch).toHaveBeenCalledTimes(4)

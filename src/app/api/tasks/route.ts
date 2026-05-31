@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/server';
  *
  * クエリパラメータ:
  *   limit: 取得件数（オプション）
+ *   project_id: プロジェクトIDフィルタ（オプション）
  *   scheduled_date: 日付フィルタ YYYY-MM-DD（オプション）
  *   status: ステータスフィルタ（オプション）
  */
@@ -24,6 +25,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const limit = searchParams.get('limit');
+    const projectId = searchParams.get('project_id');
     const scheduledDate = searchParams.get('scheduled_date');
     const status = searchParams.get('status');
 
@@ -31,7 +33,12 @@ export async function GET(request: NextRequest) {
       .from('tasks')
       .select('*')
       .eq('user_id', user.id)
+      .is('deleted_at', null)
       .order('order_index', { ascending: true });
+
+    if (projectId) {
+      query = query.eq('project_id', projectId);
+    }
 
     if (scheduledDate) {
       query = query
@@ -57,9 +64,10 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true, tasks });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to fetch tasks';
     return NextResponse.json(
-      { success: false, error: { code: 'API_ERROR', message: error.message } },
+      { success: false, error: { code: 'API_ERROR', message } },
       { status: 500 }
     );
   }
@@ -114,16 +122,18 @@ export async function POST(request: NextRequest) {
       google_event_id,
       source,
     } = body;
+    const hasTitle = Object.prototype.hasOwnProperty.call(body, 'title');
     const titleValue = (typeof title === 'string' && title.trim()) || 'New Task';
 
     // title バリデーション
-    if (!title || (typeof title === 'string' && !title.trim())) {
+    // マインドマップでは「空ノードを作成 → 直後に入力」が通常操作なので、空文字は保存用プレースホルダーに寄せる。
+    if (!hasTitle || (title != null && typeof title !== 'string')) {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'title is required'
+            message: 'title must be a string'
           }
         },
         { status: 400 }
@@ -215,14 +225,15 @@ export async function POST(request: NextRequest) {
       task,
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[tasks/create] Error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to create task';
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'API_ERROR',
-          message: error.message || 'Failed to create task'
+          message
         }
       },
       { status: 500 }

@@ -1,21 +1,24 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { Task, Project } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, Loader2
+    List, Flame, Play, Pause, RefreshCw, Check, Loader2
 } from "lucide-react"
-import { format } from "date-fns"
+import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
+import { Today3DaysCalendar } from "./today-3days-calendar"
+import { TodayMonthCalendar } from "./today-month-calendar"
 import { MobileEventEditModal } from "./mobile-event-edit-modal"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
 import { formatTime } from "@/contexts/TimerContext"
+import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
 
 // --- Types ---
 
@@ -33,7 +36,7 @@ interface TodayViewProps {
 
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
-    const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | 'week' | 'month'>('day')
+    const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | '3days' | 'month'>('day')
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -43,114 +46,191 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onDeleteTask,
     })
     const { scrollPositionRef } = logic
+    const setSelectedDate = logic.setSelectedDate
     const getTimelineInitialScrollTop = useCallback(() => scrollPositionRef.current, [scrollPositionRef])
     const handleTimelineScrollPositionChange = useCallback((pos: number) => {
         scrollPositionRef.current = pos
     }, [scrollPositionRef])
+    const handleCalendarRangeModeChange = useCallback((mode: 'day' | '3days' | 'month') => {
+        setCalendarRangeMode(mode)
+    }, [])
+    const handleRangeDateSelect = useCallback((date: Date) => {
+        const normalized = new Date(date)
+        normalized.setHours(0, 0, 0, 0)
+        setSelectedDate(normalized)
+        handleCalendarRangeModeChange('day')
+    }, [handleCalendarRangeModeChange, setSelectedDate])
+    const moveSelectedDateByDays = useCallback((amount: number) => {
+        setSelectedDate(prev => {
+            const next = addDays(prev, amount)
+            next.setHours(0, 0, 0, 0)
+            return next
+        })
+    }, [setSelectedDate])
+    const moveSelectedDateByMonths = useCallback((amount: number) => {
+        setSelectedDate(prev => {
+            const next = addMonths(prev, amount)
+            next.setHours(0, 0, 0, 0)
+            return next
+        })
+    }, [setSelectedDate])
+    const handleRangeSwipeLeft = useCallback(() => {
+        if (calendarRangeMode === 'month') {
+            moveSelectedDateByMonths(1)
+            return
+        }
+        if (calendarRangeMode === '3days') {
+            moveSelectedDateByDays(3)
+            return
+        }
+        logic.goToNextDay()
+    }, [calendarRangeMode, logic, moveSelectedDateByDays, moveSelectedDateByMonths])
+    const handleRangeSwipeRight = useCallback(() => {
+        if (calendarRangeMode === 'month') {
+            moveSelectedDateByMonths(-1)
+            return
+        }
+        if (calendarRangeMode === '3days') {
+            moveSelectedDateByDays(-3)
+            return
+        }
+        logic.goToPrevDay()
+    }, [calendarRangeMode, logic, moveSelectedDateByDays, moveSelectedDateByMonths])
+    const rangeHeader = useMemo(() => {
+        if (calendarRangeMode === '3days') {
+            const rangeEnd = addDays(logic.selectedDate, 2)
+            const count = countScheduleItemsForDateRange({
+                startDate: logic.selectedDate,
+                dayCount: 3,
+                events: logic.allFetchedEvents,
+                tasks: logic.visibleTasks,
+                calendarColorMap: logic.stableCalendarColorMap,
+            })
+            return {
+                title: `${format(logic.selectedDate, 'M/d(E)', { locale: ja })} - ${format(rangeEnd, 'M/d(E)', { locale: ja })}`,
+                subtitle: `${count}件のスケジュール`,
+            }
+        }
+
+        if (calendarRangeMode === 'month') {
+            const count = countScheduleItemsForMonth({
+                date: logic.selectedDate,
+                events: logic.allFetchedEvents,
+                tasks: logic.visibleTasks,
+                calendarColorMap: logic.stableCalendarColorMap,
+            })
+            return {
+                title: format(logic.selectedDate, 'yyyy年M月', { locale: ja }),
+                subtitle: `${count}件のスケジュール`,
+            }
+        }
+
+        return {
+            title: logic.dateFmt,
+            subtitle: `${logic.displayItems.length}件のスケジュール${logic.dateHabits.length > 0 ? ` · ${logic.doneHabitCount}/${logic.dateHabits.length} 習慣完了` : ''}`,
+        }
+    }, [
+        calendarRangeMode,
+        logic.allFetchedEvents,
+        logic.dateFmt,
+        logic.dateHabits.length,
+        logic.displayItems.length,
+        logic.doneHabitCount,
+        logic.selectedDate,
+        logic.stableCalendarColorMap,
+        logic.visibleTasks,
+    ])
 
     // Swipe left/right to change date
     useSwipeNavigation({
         containerRef: timelineContainerRef,
-        onSwipeLeft: logic.goToNextDay,
-        onSwipeRight: logic.goToPrevDay,
+        onSwipeLeft: handleRangeSwipeLeft,
+        onSwipeRight: handleRangeSwipeRight,
     })
 
     const defaultQuickCreateCalendarId =
         logic.calendars.find(c =>
             c.selected && (c.access_level === 'owner' || c.access_level === 'writer')
         )?.google_calendar_id
+        ?? logic.writableCalendars[0]?.id
+        ?? null
 
     // タイムライングリッドのクリック/ドラッグ → FABシート連携
     const [fabRangeSelect, setFabRangeSelect] = useState<{
         scheduledAt: Date
         estimatedTime: number
     } | null>(null)
-        ?? logic.writableCalendars[0]?.id
-        ?? null
 
     return (
         <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
             {/* Date Header + Mode Toggle */}
-            <div className="flex-shrink-0 px-4 py-2 border-b" style={{ touchAction: 'none' }}>
-                <div className="flex items-center justify-between gap-2 min-h-[56px]">
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                                {logic.isToday && (
-                                    <span className="inline-flex items-center rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary leading-none flex-shrink-0">
-                                        今日
-                                    </span>
-                                )}
-                                <h1 className="text-lg font-bold leading-tight truncate whitespace-nowrap">{logic.dateFmt}</h1>
-                            </div>
-                            <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate whitespace-nowrap min-h-[16px]">
-                                {logic.eventsLoading ? (
-                                    <><Loader2 className="w-3 h-3 animate-spin" /><span>取得中...</span></>
-                                ) : (
-                                    <>
-                                        {logic.displayItems.length}件のスケジュール
-                                        {logic.dateHabits.length > 0 && ` · ${logic.doneHabitCount}/${logic.dateHabits.length} 習慣完了`}
-                                    </>
-                                )}
-                            </p>
+            <div className="flex-shrink-0 border-b px-4 py-1.5" style={{ touchAction: 'none' }}>
+                <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            <h1 className="min-w-0 truncate whitespace-nowrap text-left text-lg font-bold leading-tight">
+                                {rangeHeader.title}
+                            </h1>
                         </div>
+                        <p className="mt-0.5 flex min-h-[16px] min-w-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                            {calendarRangeMode === 'day' && logic.isToday && (
+                                <span className="inline-flex flex-shrink-0 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary">
+                                    今日
+                                </span>
+                            )}
+                            {logic.eventsLoading ? (
+                                <><Loader2 className="h-3 w-3 animate-spin" /><span>取得中...</span></>
+                            ) : (
+                                <span className="min-w-0 truncate">{rangeHeader.subtitle}</span>
+                            )}
+                        </p>
                     </div>
-                    {/* Sync indicator + Timeline mode toggle */}
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <div className="w-4 h-4 flex items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
+                    {/* Range + Day-only timeline mode toggle */}
+                    <div className="flex flex-shrink-0 items-start gap-1">
+                        <div className="mt-1 flex h-4 w-4 items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
                             {logic.syncState === 'syncing' ? (
-                                <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin text-primary" />
                             ) : logic.syncState === 'done' ? (
-                                <Check className="w-3.5 h-3.5 text-green-500" />
+                                <Check className="h-3.5 w-3.5 text-green-500" />
                             ) : (
                                 <span className="opacity-0">•</span>
                             )}
                         </div>
-                        <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+                        {calendarRangeMode === 'day' && (
                             <button
-                                onClick={() => logic.setTimelineMode('calendar')}
+                                type="button"
+                                onClick={() => logic.setTimelineMode(logic.timelineMode === 'cards' ? 'calendar' : 'cards')}
                                 className={cn(
-                                    "p-1.5 rounded-md transition-colors",
-                                    logic.timelineMode === 'calendar'
-                                        ? "bg-background shadow-sm text-foreground"
-                                        : "text-muted-foreground"
-                                )}
-                            >
-                                <LayoutGrid className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => logic.setTimelineMode('cards')}
-                                className={cn(
-                                    "p-1.5 rounded-md transition-colors",
+                                    "grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
                                     logic.timelineMode === 'cards'
-                                        ? "bg-background shadow-sm text-foreground"
-                                        : "text-muted-foreground"
+                                        ? "bg-muted text-foreground"
+                                        : "text-muted-foreground active:bg-muted/70"
                                 )}
+                                aria-label={logic.timelineMode === 'cards' ? "通常表示に戻す" : "タイムライン表示"}
+                                aria-pressed={logic.timelineMode === 'cards'}
                             >
-                                <List className="w-4 h-4" />
+                                <List className="h-3.5 w-3.5" />
                             </button>
+                        )}
+                        <div className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5 gap-0.5">
+                            {(['day', '3days', 'month'] as const).map(mode => (
+                                <button
+                                    key={mode}
+                                    onClick={() => handleCalendarRangeModeChange(mode)}
+                                    aria-pressed={calendarRangeMode === mode}
+                                    className={cn(
+                                        "min-w-[54px] rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
+                                        calendarRangeMode === mode
+                                            ? "bg-background text-foreground shadow-sm"
+                                            : "text-muted-foreground"
+                                    )}
+                                >
+                                    {mode === 'day' && 'Day'}
+                                    {mode === '3days' && '3days'}
+                                    {mode === 'month' && 'Month'}
+                                </button>
+                            ))}
                         </div>
-                    </div>
-                </div>
-                <div className="mt-2">
-                    <div className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5 gap-0.5">
-                        {(['day', 'week', 'month'] as const).map(mode => (
-                            <button
-                                key={mode}
-                                onClick={() => setCalendarRangeMode(mode)}
-                                aria-pressed={calendarRangeMode === mode}
-                                className={cn(
-                                    "min-w-[76px] px-2.5 py-1 text-xs font-semibold rounded-md transition-colors",
-                                    calendarRangeMode === mode
-                                        ? "bg-background text-foreground shadow-sm"
-                                        : "text-muted-foreground"
-                                )}
-                            >
-                                {mode === 'day' && 'Day'}
-                                {mode === 'week' && 'Week'}
-                                {mode === 'month' && 'Month'}
-                            </button>
-                        ))}
                     </div>
                 </div>
             </div>
@@ -420,7 +500,28 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     )}
 
-                    {logic.timelineMode === 'calendar' ? (
+                    {calendarRangeMode === '3days' ? (
+                        <Today3DaysCalendar
+                            selectedDate={logic.selectedDate}
+                            events={logic.allFetchedEvents}
+                            tasks={logic.visibleTasks}
+                            calendarColorMap={logic.stableCalendarColorMap}
+                            eventsLoading={logic.eventsLoading}
+                            getInitialScrollTop={getTimelineInitialScrollTop}
+                            onScrollPositionChange={handleTimelineScrollPositionChange}
+                            onDateSelect={handleRangeDateSelect}
+                            onItemTap={logic.handleItemTap}
+                        />
+                    ) : calendarRangeMode === 'month' ? (
+                        <TodayMonthCalendar
+                            selectedDate={logic.selectedDate}
+                            events={logic.allFetchedEvents}
+                            tasks={logic.visibleTasks}
+                            calendarColorMap={logic.stableCalendarColorMap}
+                            eventsLoading={logic.eventsLoading}
+                            onDateSelect={handleRangeDateSelect}
+                        />
+                    ) : logic.timelineMode === 'calendar' ? (
                         <TodayTimelineCalendar
                             timelineItems={logic.displayItems}
                             allDayEvents={logic.displayAllDayEvents}
@@ -490,7 +591,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             />
 
             {/* Quick Task FAB */}
-            {onCreateQuickTask && !logic.isEditModalOpen && (
+            {calendarRangeMode === 'day' && onCreateQuickTask && !logic.isEditModalOpen && (
                 <QuickTaskFab
                     projects={projects}
                     calendars={logic.writableCalendars}

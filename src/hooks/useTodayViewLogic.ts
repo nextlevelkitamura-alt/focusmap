@@ -1883,6 +1883,7 @@ export function useTodayViewLogic({
         overflowTasks,
         unscheduledTasks,
         childTasksByParentId,
+        visibleTasks,
 
         // Calendar
         calendars,

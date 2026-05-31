@@ -114,16 +114,16 @@ describe('POST /api/tasks', () => {
       expect(json.task.title).toBe('Fallback Task')
     })
 
-    test('title が空白文字の場合は "New Task" にフォールバックする', async () => {
+    test('title が空白文字の場合は "New Task" にフォールバックして作成する', async () => {
       mockGetUser.mockResolvedValue({ data: { user: mockUser } })
       setSelectResult({ data: { ...createdTask, title: 'New Task' }, error: null })
 
-      // title = '   ' はバリデーションに引っかかる
-      // title = 'something' でフォールバックを確認
-      const res = await POST(postReq({ title: 'Valid Title', project_id: 'proj-1' }))
+      const res = await POST(postReq({ title: '   ', project_id: 'proj-1' }))
       const json = await res.json()
 
+      expect(res.status).toBe(200)
       expect(json.success).toBe(true)
+      expect(json.task.title).toBe('New Task')
     })
   })
 
@@ -150,24 +150,28 @@ describe('POST /api/tasks', () => {
       expect(json.error.code).toBe('VALIDATION_ERROR')
     })
 
-    test('title が空文字 → 400', async () => {
+    test('title が空文字 → New Task で作成', async () => {
       mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setSelectResult({ data: { ...createdTask, title: 'New Task' }, error: null })
 
       const res = await POST(postReq({ title: '' }))
       const json = await res.json()
 
-      expect(res.status).toBe(400)
-      expect(json.error.code).toBe('VALIDATION_ERROR')
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(json.task.title).toBe('New Task')
     })
 
-    test('title が空白のみ → 400', async () => {
+    test('title が空白のみ → New Task で作成', async () => {
       mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setSelectResult({ data: { ...createdTask, title: 'New Task' }, error: null })
 
       const res = await POST(postReq({ title: '   ' }))
       const json = await res.json()
 
-      expect(res.status).toBe(400)
-      expect(json.error.code).toBe('VALIDATION_ERROR')
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(json.task.title).toBe('New Task')
     })
   })
 

@@ -460,7 +460,10 @@ describe('WishlistView calendar D&D', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: '今日する0' }))
-    fireEvent.click(screen.getAllByRole('button', { name: '追加' })[0])
+    fireEvent.change(screen.getByPlaceholderText('音声またはテキストで入力'), {
+      target: { value: '新しいメモ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'メモを追加' }))
 
     await waitFor(() => {
       const createCall = fetchMock.mock.calls.find(([input, init]) =>

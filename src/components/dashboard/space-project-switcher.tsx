@@ -9,7 +9,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { DEFAULT_PROJECT_COLOR, DEFAULT_SPACE_COLOR, normalizeColor } from "@/lib/color-utils"
+import { DEFAULT_PROJECT_COLOR, normalizeColor } from "@/lib/color-utils"
 import { ProjectFormDialog, type ProjectFormMode } from "./create-project-dialog"
 import { SpaceFormDialog, type SpaceFormMode } from "./space-form-dialog"
 
@@ -74,7 +74,6 @@ export function SpaceProjectSwitcher({
   const currentSpace =
     selectedSpaceId ? spaces.find((s) => s.id === selectedSpaceId) || null : null
   const compactMemoHeader = variant === "memoHeaderCompact"
-  const showSpaceColor = !compactMemoHeader
 
   // Project switcher に表示する候補: 現在の space に属するもの (未選択時は全体)
   const visibleProjects = selectedSpaceId
@@ -186,12 +185,6 @@ export function SpaceProjectSwitcher({
             )}
             title="スペースを切替"
           >
-            {showSpaceColor && (
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: normalizeColor(currentSpace?.color, DEFAULT_SPACE_COLOR) }}
-              />
-            )}
             <span className="min-w-0 truncate text-muted-foreground">
               {currentSpace?.title ?? "全体"}
             </span>
@@ -210,16 +203,10 @@ export function SpaceProjectSwitcher({
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
                   selectedSpaceId === null
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-muted/70 text-foreground font-medium"
                     : "hover:bg-muted/60",
                 )}
               >
-                {showSpaceColor && (
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: DEFAULT_SPACE_COLOR }}
-                  />
-                )}
                 <span className="truncate flex-1">全体</span>
                 {selectedSpaceId === null && <Check className="w-3.5 h-3.5 shrink-0" />}
               </button>
@@ -236,7 +223,7 @@ export function SpaceProjectSwitcher({
                   key={space.id}
                   className={cn(
                     "group relative flex w-full items-center rounded transition-colors",
-                    active ? "bg-primary/10" : "hover:bg-muted/60",
+                    active ? "bg-muted/70" : "hover:bg-muted/60",
                   )}
                 >
                   <button
@@ -244,15 +231,9 @@ export function SpaceProjectSwitcher({
                     onClick={() => handlePickSpace(space.id)}
                     className={cn(
                       "flex min-h-9 w-full items-center gap-2 rounded px-2 py-1.5 pr-16 text-left text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                      active ? "text-primary font-medium" : "",
+                      active ? "text-foreground font-medium" : "",
                     )}
                   >
-                    {showSpaceColor && (
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: normalizeColor(space.color, DEFAULT_SPACE_COLOR) }}
-                      />
-                    )}
                     <span className="truncate flex-1">{space.title}</span>
                     {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>

@@ -124,9 +124,19 @@ export function DashboardClient({
     // Selection State — null means "全体" (all spaces)
     // Use consistent defaults for SSR/client to avoid hydration mismatch (#418)
     const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null)
-    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-        initialProjects.length > 0 ? initialProjects[0].id : null
-    )
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
+        if (typeof window !== "undefined") {
+            try {
+                const savedProject = window.localStorage.getItem('focusmap:lastProjectId')
+                if (savedProject && initialProjects.some(p => p.id === savedProject)) {
+                    return savedProject
+                }
+            } catch {
+                // localStorage が使えない環境では通常の初期値へフォールバック
+            }
+        }
+        return initialProjects.length > 0 ? initialProjects[0].id : null
+    })
 
     // Restore from localStorage after mount (client-only)
     const selectionRestoredRef = useRef(false)
@@ -357,7 +367,13 @@ export function DashboardClient({
     })
     const { pushAction } = useUndoRedo()
 
-    // ビュー切り替え時にマインドマップのタスクを再取得
+    // プロジェクト復元・切替直後は、表示中ビューに関係なくDBから最新のマップを読む。
+    useEffect(() => {
+        if (!selectedProjectId) return
+        refreshFromServer({ force: true })
+    }, [refreshFromServer, selectedProjectId])
+
+    // ビュー切り替え時にも、外部追加分を軽く再確認する。
     useEffect(() => {
         if (activeView === 'map' || activeView === 'ai') {
             refreshFromServer({ staleMs: 30_000 })
