@@ -4,11 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
-import { Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
+import { ExternalLink, Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -16,6 +15,7 @@ type NodeInfo = {
   memo: string
   cwd: string | null
   status: string | null
+  codexThreadUrl?: string | null
   scheduledLabel?: string | null
   priority?: number | null
   estimatedLabel?: string | null
@@ -38,12 +38,42 @@ type CodexNodePanelProps = {
 }
 
 type SaveStatus = "saved" | "saving" | "error"
+type CodexSendStatus = "idle" | "sending" | "sent"
 
-export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
+function normalizePromptText(value: string) {
+  return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
+}
+
+function buildCodexPrompt(heading: string, detail: string) {
+  const normalizedHeading = normalizePromptText(heading)
+  const normalizedDetail = normalizePromptText(detail)
+  return `メモの見出し:\n${normalizedHeading}\n\nメモの詳細:\n${normalizedDetail}`.trim()
+}
+
+function isMobileCodexTarget() {
+  if (typeof navigator === "undefined") return false
+  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent)
+}
+
+async function openCodexAppForRepo(repoPath: string) {
+  const res = await fetch("/api/codex/open-repo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo_path: repoPath }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
+  }
+}
+
+export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [heading, setHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
   const [error, setError] = useState<string | null>(null)
+  const [codexFeedback, setCodexFeedback] = useState<string | null>(null)
+  const [codexSendStatus, setCodexSendStatus] = useState<CodexSendStatus>("idle")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const saveVersionRef = useRef(0)
@@ -53,6 +83,8 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft
     setHeading(node.title)
     setDetail(node.memo)
     setError(null)
+    setCodexFeedback(null)
+    setCodexSendStatus("idle")
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
   }, [open, node.taskId, node.title, node.memo])
@@ -175,6 +207,76 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft
     }
   }, [detail, handleHeadingChange, heading])
 
+  const sendToCodex = useCallback(async () => {
+    const promptHeading = heading || node.title
+    if (!normalizePromptText(promptHeading) && !normalizePromptText(detail)) {
+      setError("Codexに渡す内容を入力してください")
+      return
+    }
+
+    const prompt = buildCodexPrompt(promptHeading, detail)
+    const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
+    const threadUrl = node.codexThreadUrl?.trim() || null
+    setError(null)
+    setCodexFeedback(null)
+    setCodexSendStatus("sending")
+
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("ブラウザがクリップボードコピーに対応していません。手動コピーが必要です")
+      }
+      await navigator.clipboard.writeText(prompt)
+      await saveDraft(heading, detail)
+
+      const scheduleRes = await fetch("/api/ai-tasks/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          cwd: repoPath || null,
+          approval_type: "auto",
+          source_task_id: node.taskId,
+          scheduled_at: new Date().toISOString(),
+          executor: "codex_app",
+          dispatch_mode: "manual",
+        }),
+      })
+      let handoffWarning: string | null = null
+      if (!scheduleRes.ok && scheduleRes.status !== 409) {
+        const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
+        handoffWarning = data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`
+      }
+
+      let openWarning: string | null = null
+      if (isMobileCodexTarget()) {
+        window.location.href = threadUrl || "codex://"
+      } else if (threadUrl) {
+        window.location.href = threadUrl
+      } else if (repoPath) {
+        try {
+          await openCodexAppForRepo(repoPath)
+        } catch (openErr) {
+          window.location.href = "codex://"
+          openWarning = openErr instanceof Error ? openErr.message : "Codex.app を開けませんでした"
+        }
+      } else {
+        window.location.href = "codex://"
+      }
+
+      setCodexSendStatus("sent")
+      if (handoffWarning) {
+        setError(`プロンプトはコピー済みです。Codex側で貼り付けてください。${handoffWarning}`)
+      } else if (openWarning) {
+        setCodexFeedback(`プロンプトはコピー済みです。Codex.app を手動で開いて貼り付けてください。${openWarning}`)
+      } else {
+        setCodexFeedback("Codexに渡す内容をクリップボードへコピーしました")
+      }
+    } catch (err) {
+      setCodexSendStatus("idle")
+      setError(err instanceof Error ? err.message : "Codexに送れませんでした")
+    }
+  }, [candidates, detail, heading, node.codexThreadUrl, node.cwd, node.taskId, node.title, saveDraft])
+
   return (
     <Dialog
       open={open}
@@ -194,55 +296,44 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft
         }}
         className="flex max-h-[92dvh] w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden border-border/70 p-0 xl:!max-w-[1200px]"
       >
-        <DialogHeader className="border-b border-border/70 px-6 py-5 text-left">
-          <DialogTitle className="max-h-24 overflow-y-auto pr-8 text-xl font-semibold leading-tight">
-            {heading.trim() || node.title}
-          </DialogTitle>
-          <p className="mt-1 text-sm text-muted-foreground">
-            メモの編集
-          </p>
-        </DialogHeader>
+        <DialogTitle className="sr-only">メモ見出し</DialogTitle>
 
-        <div className="min-h-0 overflow-y-auto px-6 py-5">
-          <div className="space-y-2">
-            <label className="text-sm text-muted-foreground" htmlFor="codex-memo-heading">
-              メモ見出し
-            </label>
-            <div className="relative">
-              <textarea
-                id="codex-memo-heading"
-                value={heading}
-                rows={2}
-                onChange={(event) => handleHeadingChange(event.target.value)}
-                className="max-h-28 min-h-12 w-full resize-none overflow-y-auto rounded-lg border border-border/70 bg-background px-3 py-3 text-base leading-relaxed outline-none focus:border-primary"
-                placeholder="メモ見出し"
-              />
-            </div>
+        <div className="shrink-0 border-b border-border/70 px-4 py-4 pr-12 sm:px-6">
+          <label className="text-sm text-muted-foreground" htmlFor="codex-memo-heading">
+            メモ見出し
+          </label>
+          <div className="mt-2">
+            <textarea
+              id="codex-memo-heading"
+              value={heading}
+              rows={2}
+              onChange={(event) => handleHeadingChange(event.target.value)}
+              className="max-h-28 min-h-12 w-full resize-none overflow-y-auto rounded-lg border border-border/70 bg-background px-3 py-3 text-base leading-relaxed outline-none focus:border-primary"
+              placeholder="メモ見出し"
+            />
           </div>
+        </div>
 
-          <div className="mt-8 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-muted-foreground">メモ詳細</span>
-              <div className="flex shrink-0 items-center gap-2">
+        <div className="min-h-0 overflow-y-auto px-4 py-5 sm:px-6">
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="flex items-center justify-between gap-3 sm:justify-start">
+                <span className="text-sm text-muted-foreground">メモ詳細</span>
                 <span className="text-xs font-medium text-muted-foreground" aria-live="polite">
                   {saveStatus === "saving" ? "保存中" : saveStatus === "error" ? "保存失敗" : "保存済み"}
                 </span>
+              </div>
+              <div className="flex shrink-0 items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={toggleVoiceInput}
-                  disabled={isTranscribing}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-border/70 bg-background px-3 text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
-                  aria-label={isRecording ? "録音を停止" : "音声入力"}
-                  title={isRecording ? "録音を停止" : "音声入力"}
+                  onClick={sendToCodex}
+                  disabled={codexSendStatus === "sending"}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
+                  aria-label="Codexに送る"
+                  title="Codexに送る"
                 >
-                  {isTranscribing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : isRecording ? (
-                    <Square className="h-4 w-4" />
-                  ) : (
-                    <Mic className="h-4 w-4" />
-                  )}
-                  {isTranscribing ? "文字起こし中" : isRecording ? "録音停止" : "音声入力"}
+                  {codexSendStatus === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                  Codexに送る
                 </button>
                 <button
                   type="button"
@@ -258,6 +349,22 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft
                     <Sparkles className="h-4 w-4" />
                   )}
                   見出し生成
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleVoiceInput}
+                  disabled={isTranscribing}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
+                  aria-label={isRecording ? "録音を停止" : "音声入力"}
+                  title={isRecording ? "録音を停止" : "音声入力"}
+                >
+                  {isTranscribing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : isRecording ? (
+                    <Square className="h-4 w-4" />
+                  ) : (
+                    <Mic className="h-4 w-4" />
+                  )}
                 </button>
               </div>
             </div>
@@ -280,6 +387,10 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft
             {saveStatus === "saving" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
             保存して閉じる
           </button>
+
+          {codexFeedback && (
+            <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-300">{codexFeedback}</p>
+          )}
 
           {(error || voiceError) && (
             <p className="mt-3 text-sm text-rose-500">{error || voiceError}</p>

@@ -276,12 +276,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // よく使う候補（履歴の codex_work_dir + プロジェクトの repo_path）
     const codexDirCandidates = useMemo(() => {
         const set = new Set<string>();
+        const repo = (project?.repo_path ?? '').trim();
+        if (repo) set.add(repo);
         for (const t of mindMapTaskNodes) {
             const d = (t.codex_work_dir ?? '').trim();
             if (d) set.add(d);
         }
-        const repo = (project?.repo_path ?? '').trim();
-        if (repo) set.add(repo);
         return Array.from(set);
     }, [mindMapTaskNodes, project?.repo_path]);
 
@@ -290,19 +290,29 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         if (!codexPanelTaskId) return null;
         const task = mindMapTaskNodes.find(t => t.id === codexPanelTaskId);
         if (!task) return null;
+        const aiTask = getAiTaskBySourceId(task.id);
+        const aiResult = aiTask?.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
+            ? aiTask.result as Record<string, unknown>
+            : {};
+        const threadId =
+            (typeof aiTask?.codex_thread_id === "string" && aiTask.codex_thread_id.trim()) ||
+            (typeof aiResult.codex_thread_id === "string" && aiResult.codex_thread_id.trim()) ||
+            "";
+        const threadUrlFromResult = typeof aiResult.codex_thread_url === "string" ? aiResult.codex_thread_url.trim() : "";
         return {
             taskId: task.id,
             title: task.title,
             memo: (task.memo ?? '').trim(),
             cwd: task.codex_work_dir ?? null,
             status: task.codex_status ?? null,
+            codexThreadUrl: threadId ? `codex://threads/${threadId}` : threadUrlFromResult || null,
             scheduledLabel: task.scheduled_at ? task.scheduled_at.slice(0, 10) : null,
             priority: task.priority ?? null,
             estimatedLabel: task.estimated_time ? `${task.estimated_time}分` : null,
             isDone: task.status === 'done',
             hasMemo: !!(task.memo && task.memo.trim()),
         };
-    }, [codexPanelTaskId, mindMapTaskNodes]);
+    }, [codexPanelTaskId, getAiTaskBySourceId, mindMapTaskNodes]);
 
     const applySelection = useCallback((ids: Set<string>, primaryId: string | null) => {
         setSelectedNodeIds(ids);

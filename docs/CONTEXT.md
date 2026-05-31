@@ -139,6 +139,7 @@ Goals → Projects → TaskGroups → Tasks
 
 - ノードからCodexへ渡す場合、Focusmapは作業本体を裏側で完結させるのではなく、Codex.app側を主軸にする。
 - Focusmap側は `ai_tasks` に待機レコードを作り、プロンプトをクリップボードへコピーし、Codex.appを開く補助をする。
+- マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。押下直後に `メモの見出し:` / `メモの詳細:` ラベル付きプロンプトをクリップボードへコピーし、既存threadがあれば `codex://threads/{threadId}`、なければ `codex://` でCodexアプリ側へ遷移する。デスクトップはプロジェクトの `repo_path` を優先してCodex.appを開く。
 - Codex.appの新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。Focusmapは「実行待ち」「実行中」「確認待ち」を表示して、状態確認とログ同期に徹する。
 - プロンプト本文は、メモ見出しなどのラベルを足さず、ノード本文/メモ本文を改行区切りでそのまま渡す。
 - ノードの状態表示は `src/lib/codex-run-state.ts` の `getCodexTaskUiState` を正とする。
@@ -174,6 +175,7 @@ Goals → Projects → TaskGroups → Tasks
 | Web側のai_tasks取得/更新間隔 | `src/hooks/useMemoAiTasks.ts` |
 | マインドマップ表示/状態バッジ/手動更新 | `src/components/mindmap/custom-mind-map-view.tsx` |
 | ダッシュボードからCodex状態を渡す層 | `src/components/dashboard/mind-map.tsx` |
+| メモ編集パネル/Codex手動ハンドオフ | `src/components/codex/codex-node-panel.tsx` |
 | Codex.app起動補助 | `src/app/api/codex/open-repo/route.ts` |
 | ノードに紐づくCodex thread取得 | `src/app/api/codex/node-thread/route.ts` |
 | Mac常駐runner/Codex同期 | `scripts/task-runner.ts` |
