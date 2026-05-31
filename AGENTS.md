@@ -58,6 +58,15 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 手動デプロイで先に出した変更は、必ず同じコミットを `main` に push する。push しないと次の main デプロイで機能が消える
 - 詳細は [docs/DEPLOY_CLOUDRUN.md](docs/DEPLOY_CLOUDRUN.md) を参照
 
+### ローカル・スマホ確認URL運用（重要）
+- Focusmap のローカル開発サーバーは **必ず `http://localhost:3001` 固定**で使う。別ポートへ逃がさない
+- `npm run dev` は `localhost:3001` を開く前提。既に3001が埋まっている場合は、別ポート起動ではなく、3001を使っている古いプロセスを確認・再起動する
+- スマホ確認用の Cloudflare tunnel も **必ず `http://localhost:3001` をプロキシ**する。`scripts/phone-preview.sh` は3001固定なので、`npm run dev:phone` / `npm run dev:phone:bg` を使う
+- スマホURLを確認するときは `npm run dev:phone:status` で現在の `https://*.trycloudflare.com/...` を確認し、同じURLが3001へ向いている前提で作業する
+- UI修正後は、ローカル `http://localhost:3001/dashboard` だけでなく、必要に応じて Cloudflare のスマホURLもリロードして確認する
+- 「ローカルには反映されているがCloudflareに出ない」場合は、まず Cloudflare tunnel が3001を見ているか、Next dev serverが3001で起動しているかを確認する。必要ならNext dev serverを3001で再起動し、スマホ側は `?v=数字` を付けてキャッシュを避ける
+- Cloudflare URLを本番反映と混同しない。Cloudflare はローカル3001のプレビュー、本番は `origin/main` / Cloud Run
+
 ## 実装の原則
 
 ### モバイルファースト

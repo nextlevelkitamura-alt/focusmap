@@ -8,7 +8,9 @@ export PATH="$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bi
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PORT="${FOCUSMAP_PHONE_PORT:-3001}"
+# Focusmap のローカル確認ポートは 3001 固定。
+# Cloudflare/ngrok のスマホ確認URLも必ずこのポートをプロキシする。
+PORT="3001"
 TUNNEL="${FOCUSMAP_PHONE_TUNNEL:-cloudflare}"
 DEV_PID=""
 
