@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { Calendar as CalendarIcon, ChevronDown, ChevronUp, Check } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -11,10 +12,23 @@ import { SimpleCalendar } from "@/components/ui/simple-calendar"
 
 interface DateTimePickerProps {
     date: Date | undefined
-    setDate: (date: Date | undefined) => void
+    setDate?: (date: Date | undefined) => void
     trigger?: React.ReactNode
     open?: boolean
     onOpenChange?: (open: boolean) => void
+    estimatedMinutes?: number | null
+    calendarId?: string | null
+    calendars?: DateTimePickerCalendar[]
+    onConfirmSchedule?: (params: { date: Date; estimatedMinutes: number; calendarId: string }) => void
+}
+
+interface DateTimePickerCalendar {
+    google_calendar_id: string
+    name: string
+    selected?: boolean
+    is_primary?: boolean
+    color?: string | null
+    background_color?: string | null
 }
 
 // ----------------------------------------------------------------------
@@ -216,7 +230,17 @@ function TimeWheel({
 // Main DateTimePicker Component
 // - Uses a bottom sheet overlay for reliable mobile touch/z-index
 // ----------------------------------------------------------------------
-export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: DateTimePickerProps) {
+export function DateTimePicker({
+    date,
+    setDate,
+    trigger,
+    open,
+    onOpenChange,
+    estimatedMinutes,
+    calendarId,
+    calendars = [],
+    onConfirmSchedule,
+}: DateTimePickerProps) {
     const [internalOpen, setInternalOpen] = React.useState(false)
     const isControlled = open !== undefined
     const isOpen = isControlled ? open : internalOpen
@@ -226,7 +250,20 @@ export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: D
     }, [isControlled, onOpenChange])
     const [currentMonth, setCurrentMonth] = React.useState<Date>(new Date())
     const [tempDate, setTempDate] = React.useState<Date | undefined>(date)
+    const [tempEstimatedMinutes, setTempEstimatedMinutes] = React.useState(estimatedMinutes && estimatedMinutes > 0 ? estimatedMinutes : 60)
+    const [tempCalendarId, setTempCalendarId] = React.useState(calendarId ?? "")
     const [isMounted, setIsMounted] = React.useState(false)
+    const availableCalendars = React.useMemo(() => {
+        const writable = calendars.filter(calendar => calendar.google_calendar_id)
+        const selected = writable.filter(calendar => calendar.selected)
+        return selected.length > 0 ? selected : writable
+    }, [calendars])
+    const fallbackCalendarId = React.useMemo(() => (
+        calendarId ||
+        availableCalendars.find(calendar => calendar.is_primary)?.google_calendar_id ||
+        availableCalendars[0]?.google_calendar_id ||
+        "primary"
+    ), [availableCalendars, calendarId])
 
     React.useEffect(() => {
         setIsMounted(true)
@@ -236,14 +273,24 @@ export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: D
         if (isOpen) {
             setTempDate(date || new Date())
             setCurrentMonth(date || new Date())
+            setTempEstimatedMinutes(estimatedMinutes && estimatedMinutes > 0 ? estimatedMinutes : 60)
+            setTempCalendarId(fallbackCalendarId)
         }
-    }, [isOpen, date])
+    }, [date, estimatedMinutes, fallbackCalendarId, isOpen])
 
     const handleOpen = () => setIsOpen(true)
 
     const handleConfirm = () => {
         if (tempDate) {
-            setDate(tempDate)
+            if (onConfirmSchedule) {
+                onConfirmSchedule({
+                    date: tempDate,
+                    estimatedMinutes: Math.max(5, tempEstimatedMinutes),
+                    calendarId: tempCalendarId || fallbackCalendarId,
+                })
+            } else {
+                setDate?.(tempDate)
+            }
         }
         setIsOpen(false)
     }
@@ -277,6 +324,113 @@ export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: D
         )
     }
 
+    const pickerOverlay = isOpen ? createPortal(
+        <>
+            {/* Backdrop */}
+            <div
+                className="fixed inset-0 z-[999] bg-black/55 animate-in fade-in duration-150"
+                onClick={handleCancel}
+            />
+
+            {/* Sheet */}
+            <div className="fixed inset-x-0 bottom-0 z-[1000] flex max-h-[min(88dvh,680px)] flex-col overflow-hidden rounded-t-2xl bg-background shadow-2xl animate-in slide-in-from-bottom duration-200">
+                {/* Drag handle */}
+                <div className="flex shrink-0 justify-center pt-3 pb-1">
+                    <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
+                </div>
+
+                {/* Calendar + Time Wheel */}
+                <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-3 pb-2">
+                    <SimpleCalendar
+                        selected={tempDate}
+                        onSelect={handleDateSelect}
+                        month={currentMonth}
+                        onMonthChange={setCurrentMonth}
+                        className="w-[240px] shrink-0"
+                    />
+                    <TimeWheel selectedDate={tempDate} onTimeChange={handleTimeChange} />
+                </div>
+
+                <div className="grid shrink-0 gap-2 border-t border-border/40 px-4 py-3">
+                    <label className="grid gap-1.5">
+                        <span className="text-[11px] font-medium text-muted-foreground">カレンダー</span>
+                        <select
+                            value={tempCalendarId || fallbackCalendarId}
+                            onChange={(event) => setTempCalendarId(event.currentTarget.value)}
+                            className="h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/35"
+                        >
+                            {availableCalendars.length > 0 ? (
+                                availableCalendars.map(calendar => (
+                                    <option key={calendar.google_calendar_id} value={calendar.google_calendar_id}>
+                                        {calendar.name || calendar.google_calendar_id}
+                                    </option>
+                                ))
+                            ) : (
+                                <option value="primary">デフォルトカレンダー</option>
+                            )}
+                        </select>
+                    </label>
+
+                    <div className="grid gap-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-medium text-muted-foreground">所要時間</span>
+                            <span className="text-xs text-muted-foreground">{tempEstimatedMinutes}分</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {[15, 30, 45, 60].map(minutes => (
+                                <button
+                                    key={minutes}
+                                    type="button"
+                                    onClick={() => setTempEstimatedMinutes(minutes)}
+                                    className={cn(
+                                        "h-8 rounded-lg border text-xs font-medium transition-colors",
+                                        tempEstimatedMinutes === minutes
+                                            ? "border-primary bg-primary text-primary-foreground"
+                                            : "border-border bg-background text-foreground active:bg-muted"
+                                    )}
+                                >
+                                    {minutes}分
+                                </button>
+                            ))}
+                        </div>
+                        <input
+                            type="range"
+                            min={5}
+                            max={180}
+                            step={5}
+                            value={tempEstimatedMinutes}
+                            onChange={(event) => setTempEstimatedMinutes(Number(event.currentTarget.value))}
+                            className="h-5 accent-primary"
+                            aria-label="所要時間"
+                        />
+                    </div>
+                </div>
+
+                {/* Footer: Preview + Done button */}
+                <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/40 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2">
+                    <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                        <CalendarIcon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">
+                            {tempDate
+                                ? format(tempDate, "M月d日 (E) HH:mm", { locale: ja })
+                                : "未選択"
+                            }
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleConfirm}
+                        className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground transition-colors active:bg-primary/90"
+                    >
+                        <Check className="w-4 h-4" />
+                        完了
+                    </button>
+                </div>
+            </div>
+        </>,
+        document.body
+    ) : null
+
     return (
         <>
             {/* Trigger */}
@@ -303,54 +457,7 @@ export function DateTimePicker({ date, setDate, trigger, open, onOpenChange }: D
             )}
 
             {/* Bottom Sheet Overlay */}
-            {isOpen && (
-                <>
-                    {/* Backdrop */}
-                    <div
-                        className="fixed inset-0 z-[200] bg-black/50 animate-in fade-in duration-150"
-                        onClick={handleCancel}
-                    />
-
-                    {/* Sheet */}
-                    <div className="fixed inset-x-0 bottom-0 z-[200] bg-background rounded-t-2xl shadow-2xl animate-in slide-in-from-bottom duration-200">
-                        {/* Drag handle */}
-                        <div className="flex justify-center pt-3 pb-1">
-                            <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
-                        </div>
-
-                        {/* Calendar + Time Wheel */}
-                        <div className="flex px-3 pb-2 justify-center">
-                            <SimpleCalendar
-                                selected={tempDate}
-                                onSelect={handleDateSelect}
-                                month={currentMonth}
-                                onMonthChange={setCurrentMonth}
-                                className="w-[240px]"
-                            />
-                            <TimeWheel selectedDate={tempDate} onTimeChange={handleTimeChange} />
-                        </div>
-
-                        {/* Footer: Preview + Done button */}
-                        <div className="flex items-center justify-between px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2 border-t border-border/40">
-                            <div className="text-sm text-muted-foreground flex items-center gap-2">
-                                <CalendarIcon className="h-3.5 w-3.5" />
-                                {tempDate
-                                    ? format(tempDate, "M月d日 (E) HH:mm", { locale: ja })
-                                    : "未選択"
-                                }
-                            </div>
-                            <button
-                                type="button"
-                                onClick={handleConfirm}
-                                className="flex items-center gap-1.5 px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-lg active:bg-primary/90 transition-colors"
-                            >
-                                <Check className="w-4 h-4" />
-                                完了
-                            </button>
-                        </div>
-                    </div>
-                </>
-            )}
+            {pickerOverlay}
         </>
     )
 }

@@ -24,11 +24,16 @@ export function useKeyboardHeight(): KeyboardState {
             if (typeof window === 'undefined' || !window.visualViewport) return
 
             const vv = window.visualViewport
-            // キーボードの高さ = ウィンドウ全体の高さ - visualViewport の高さ - offsetTop
-            const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-            const isOpen = height > 50
-            // 可視領域の下端 = offsetTop + height（CSS top 座標系で確実な位置）
+            const layoutHeight = Math.max(
+                window.innerHeight || 0,
+                document.documentElement?.clientHeight || 0
+            )
+            // キーボードやブラウザ独自バーで隠れている下側の領域。
+            // visualViewport の下端を基準にすると、Chrome のパスワードバー等で
+            // キーボード直上が変動してもアクセサリーバーを可視領域内に置ける。
             const bottom = Math.round(vv.offsetTop + vv.height)
+            const height = Math.max(0, layoutHeight - bottom)
+            const isOpen = height > 50
 
             setState({
                 keyboardHeight: isOpen ? Math.round(height) : 0,

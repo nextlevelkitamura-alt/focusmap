@@ -11,6 +11,7 @@ import {
     NODE_MIN_WIDTH,
     NODE_MIN_WIDTH_MOBILE,
     NODE_RESIZE_MAX_WIDTH,
+    estimateProjectNodeWidth,
     estimateTaskNodeWidth,
     estimateTaskNodeHeight,
 } from './mindmap-geometry';
@@ -26,6 +27,7 @@ export {
     NODE_MIN_WIDTH,
     NODE_MIN_WIDTH_MOBILE,
     NODE_RESIZE_MAX_WIDTH,
+    estimateProjectNodeWidth,
     estimateTaskNodeWidth,
     estimateTaskNodeHeight,
 };
@@ -53,8 +55,8 @@ export function getLayoutedElements(
     // nodesep は長文ノードの実描画高さとの差を吸収するため少し余白を持たせる。
     dagreGraph.setGraph({
         rankdir: 'LR',
-        nodesep: isMobile ? 8 : 12,
-        ranksep: isMobile ? 24 : 36,
+        nodesep: isMobile ? 22 : 12,
+        ranksep: isMobile ? 40 : 36,
         edgesep: 4,
         ranker: 'network-simplex',
         align: undefined
@@ -67,7 +69,8 @@ export function getLayoutedElements(
         let height = NODE_HEIGHT;
 
         if (node.type === 'projectNode') {
-            width = PROJECT_NODE_WIDTH;
+            const label = typeof node.data?.label === 'string' ? node.data.label : '';
+            width = (node.width as number | undefined) ?? estimateProjectNodeWidth(label, isMobile);
             height = PROJECT_NODE_HEIGHT;
         } else if (node.type === 'taskNode' && node.height) {
             width = (node.width as number) || defaultWidth;
@@ -89,7 +92,8 @@ export function getLayoutedElements(
         let height = NODE_HEIGHT;
 
         if (node.type === 'projectNode') {
-            width = PROJECT_NODE_WIDTH;
+            const label = typeof node.data?.label === 'string' ? node.data.label : '';
+            width = (node.width as number | undefined) ?? estimateProjectNodeWidth(label, isMobile);
             height = PROJECT_NODE_HEIGHT;
         } else if (node.type === 'taskNode' && node.height) {
             width = (node.width as number) || defaultWidth;

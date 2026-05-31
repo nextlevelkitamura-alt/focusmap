@@ -43,7 +43,6 @@ export function OutlineView({
     tasks,
     spaces,
     projects,
-    selectedProjectId,
     selectedSpaceId,
     onSelectProject,
     onSelectSpace,
@@ -55,7 +54,6 @@ export function OutlineView({
     onMoveTask,
     onReorderTask,
     onUpdateGroupTitle,
-    onUpdateGroup,
     onUpdateProject,
     onCreateProject,
     onOpenLinkedMemos,
@@ -75,7 +73,7 @@ export function OutlineView({
                     onSelectSpace={onSelectSpace}
                     onCreateProject={onCreateProject}
                     onCreateGroup={async () => {
-                        const g = await onCreateGroup('新しいグループ')
+                        await onCreateGroup('新しいグループ')
                         return undefined
                     }}
                 />
@@ -112,7 +110,6 @@ export function OutlineView({
             {/* コンテンツ */}
             {activeTab === 'outline' ? (
                 <OutlineContent
-                    project={project}
                     groups={groups}
                     tasks={tasks}
                     onCreateGroup={onCreateGroup}
@@ -153,7 +150,6 @@ export function OutlineView({
 
 // --- Outline Content (extracted from original OutlineView) ---
 function OutlineContent({
-    project,
     groups,
     tasks,
     onCreateGroup,
@@ -165,7 +161,6 @@ function OutlineContent({
     onReorderTask,
     onUpdateGroupTitle,
 }: {
-    project?: Project
     groups: Task[]
     tasks: Task[]
     onCreateGroup: (title: string) => Promise<Task | null>
@@ -181,7 +176,7 @@ function OutlineContent({
     const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
     const [newlyCreatedId, setNewlyCreatedId] = useState<string | null>(null)
 
-    const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight()
+    const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight()
     const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
 
     const {
@@ -341,6 +336,7 @@ function OutlineContent({
             {isKeyboardOpen && (
                 <KeyboardAccessoryBar
                     keyboardHeight={keyboardHeight}
+                    viewportBottom={viewportBottom}
                     canIndent={canIndent}
                     canOutdent={canOutdent}
                     onIndent={handleIndent}

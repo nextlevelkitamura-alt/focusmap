@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Project, Task } from "@/types/database";
 import { buildMindMapModel } from "./mindmap-model";
-import { estimateTaskNodeWidth } from "./mindmap-geometry";
+import { estimateProjectNodeWidth, estimateTaskNodeWidth } from "./mindmap-geometry";
 
 const project = {
     id: "project-1",
@@ -51,5 +51,18 @@ describe("buildMindMapModel", () => {
         expect(model.taskById.get("first")?.width).toBe(420);
         expect(model.taskById.get("second")?.width).toBe(estimateTaskNodeWidth("Normal sibling", false));
         expect(model.taskById.get("second")?.width).toBeLessThan(420);
+    });
+
+    test("sizes the project node to its title instead of using the wide fallback", () => {
+        const model = buildMindMapModel({
+            project: { ...project, title: "仕事" },
+            groups: [],
+            tasks: [],
+            isMobile: true,
+        });
+
+        const projectNode = model.nodes.find(node => node.kind === "project");
+        expect(projectNode?.width).toBe(estimateProjectNodeWidth("仕事", true));
+        expect(projectNode?.width).toBeLessThan(140);
     });
 });

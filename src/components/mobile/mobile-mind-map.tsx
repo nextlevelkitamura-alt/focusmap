@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
@@ -22,6 +22,7 @@ interface MobileMindMapProps {
     onDeleteTask?: (taskId: string) => Promise<void>
     onReorderTask?: (taskId: string, referenceTaskId: string, position: "above" | "below") => Promise<void>
     onOpenLinkedMemos?: (taskId: string) => void
+    focusEditNodeId?: string | null
 }
 
 export function MobileMindMap({
@@ -30,17 +31,20 @@ export function MobileMindMap({
     tasks,
     onCreateGroup,
     onDeleteGroup,
+    onUpdateProject,
     onCreateTask,
     onUpdateTask,
     onDeleteTask,
     onReorderTask,
     onOpenLinkedMemos,
+    focusEditNodeId,
 }: MobileMindMapProps) {
     const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(new Set())
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
+    const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const { getBySourceId } = useMemoAiTasks()
 
     const taskMap = useMemo(() => {
@@ -145,14 +149,41 @@ export function MobileMindMap({
 
     useEffect(() => {
         if (!pendingEditNodeId) return
-        const timer = window.setTimeout(() => setPendingEditNodeId(null), 800)
+        if (pendingEditNodeId !== "project-root" && !taskMap.has(pendingEditNodeId)) return
+        const timer = window.setTimeout(() => setPendingEditNodeId(null), 1800)
         return () => window.clearTimeout(timer)
-    }, [pendingEditNodeId])
+    }, [pendingEditNodeId, taskMap])
 
     const selectSingleTask = useCallback((taskId: string | null) => {
         setSelectedNodeId(taskId)
         setSelectedNodeIds(taskId && taskId !== "project-root" ? new Set([taskId]) : new Set())
     }, [])
+
+    useEffect(() => {
+        if (!focusEditNodeId) {
+            handledFocusEditNodeIdRef.current = null
+            return
+        }
+        if (handledFocusEditNodeIdRef.current === focusEditNodeId) return
+        if (focusEditNodeId !== "project-root" && !taskMap.has(focusEditNodeId)) return
+
+        let cancelled = false
+        const nodeId = focusEditNodeId
+        void Promise.resolve().then(() => {
+            if (cancelled) return
+            handledFocusEditNodeIdRef.current = nodeId
+            setPendingEditNodeId(nodeId)
+            if (nodeId === "project-root") {
+                setSelectedNodeId("project-root")
+                setSelectedNodeIds(new Set())
+            } else {
+                selectSingleTask(nodeId)
+            }
+        })
+        return () => {
+            cancelled = true
+        }
+    }, [focusEditNodeId, selectSingleTask, taskMap])
 
     const findRootTaskId = useCallback((taskId: string) => {
         let current = taskMap.get(taskId)
@@ -163,24 +194,6 @@ export function MobileMindMap({
         }
         return current?.id ?? taskId
     }, [taskMap])
-
-    const calculateNextFocus = useCallback((taskId: string): string | null => {
-        const task = taskMap.get(taskId)
-        if (!task) return null
-
-        if (!task.parent_task_id) {
-            const roots = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-            const index = roots.findIndex(root => root.id === taskId)
-            if (index === -1) return "project-root"
-            return roots[index + 1]?.id ?? roots[index - 1]?.id ?? "project-root"
-        }
-
-        const siblings = tasks
-            .filter(candidate => candidate.parent_task_id === task.parent_task_id)
-            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-        const index = siblings.findIndex(sibling => sibling.id === taskId)
-        return siblings[index + 1]?.id ?? siblings[index - 1]?.id ?? task.parent_task_id
-    }, [groups, taskMap, tasks])
 
     const handleAddRootNode = useCallback(async () => {
         if (!onCreateGroup) return
@@ -241,32 +254,35 @@ export function MobileMindMap({
         const task = taskMap.get(taskId)
         if (!task) return
 
-        const hasChildren = tasks.some(candidate => candidate.parent_task_id === taskId)
-        if (hasChildren && typeof window !== "undefined") {
-            const confirmed = window.confirm("子タスクを含むタスクを削除しますか？\nすべての子タスクも削除されます。")
-            if (!confirmed) return
-        }
-
-        const nextFocusId = calculateNextFocus(taskId)
+        const fallbackFocusId = task.parent_task_id && taskMap.has(task.parent_task_id)
+            ? task.parent_task_id
+            : "project-root"
         if (!task.parent_task_id) {
             await onDeleteGroup?.(taskId)
         } else {
             await onDeleteTask?.(taskId)
         }
 
-        if (nextFocusId === "project-root") {
+        setPendingEditNodeId(null)
+        if (fallbackFocusId === "project-root") {
             setSelectedNodeId("project-root")
             setSelectedNodeIds(new Set())
         } else {
-            selectSingleTask(nextFocusId)
+            selectSingleTask(fallbackFocusId)
         }
-    }, [calculateNextFocus, onDeleteGroup, onDeleteTask, selectSingleTask, taskMap, tasks])
+    }, [onDeleteGroup, onDeleteTask, selectSingleTask, taskMap])
 
     const handleSaveTitle = useCallback(async (taskId: string, title: string) => {
         const trimmed = title.trim()
         if (!trimmed || !onUpdateTask) return
         await onUpdateTask(taskId, { title: trimmed })
     }, [onUpdateTask])
+
+    const handleSaveProjectTitle = useCallback(async (title: string) => {
+        const trimmed = title.trim()
+        if (!trimmed || !onUpdateProject) return
+        await onUpdateProject(project.id, trimmed)
+    }, [onUpdateProject, project.id])
 
     const handleMoveTask = useCallback(async ({
         taskId,
@@ -346,9 +362,15 @@ export function MobileMindMap({
                 onPromoteNode={handlePromoteNode}
                 onDeleteNode={handleDeleteNode}
                 onSaveTitle={handleSaveTitle}
+                onSaveProjectTitle={handleSaveProjectTitle}
                 onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
+                onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
+                    scheduled_at: params.scheduledAt,
+                    estimated_time: params.estimatedMinutes,
+                    calendar_id: params.calendarId,
+                })}
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
-                onOpenLinkedMemos={onOpenLinkedMemos}
                 onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
                 codexRunByNodeId={codexRunByNodeId}
                 onMoveTask={handleMoveTask}

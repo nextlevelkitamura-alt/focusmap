@@ -65,6 +65,7 @@ export function MobileAiMapView({
   const [isLoadingNotes, setIsLoadingNotes] = useState(false)
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set())
   const [isMindmapDialogOpen, setIsMindmapDialogOpen] = useState(false)
+  const [focusEditNodeId, setFocusEditNodeId] = useState<string | null>(null)
 
   const loadNotes = useCallback(async () => {
     setIsLoadingNotes(true)
@@ -117,7 +118,15 @@ export function MobileAiMapView({
   }, [onSelectProject, refreshFromServer])
 
   const handleCreateRoot = useCallback(async () => {
-    await onCreateGroup?.("新しいノード")
+    if (typeof document !== "undefined") {
+      const keyboardAnchor = document.querySelector<HTMLInputElement>('[data-testid="mobile-keyboard-anchor"]')
+      if (keyboardAnchor) {
+        keyboardAnchor.value = ""
+        keyboardAnchor.focus({ preventScroll: true })
+      }
+    }
+    const newTask = await onCreateGroup?.("")
+    if (newTask?.id) setFocusEditNodeId(newTask.id)
     await refreshFromServer()
   }, [onCreateGroup, refreshFromServer])
 
@@ -173,6 +182,7 @@ export function MobileAiMapView({
             onReorderTask={onReorderTask}
             onOpenLinkedMemos={onOpenLinkedMemos}
             projects={projects}
+            focusEditNodeId={focusEditNodeId}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">

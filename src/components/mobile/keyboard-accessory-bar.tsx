@@ -1,13 +1,17 @@
 "use client"
 
+import type React from "react"
 import { IndentIncrease, IndentDecrease, Plus, Trash2, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface KeyboardAccessoryBarProps {
     keyboardHeight: number
+    viewportBottom?: number
     canIndent?: boolean
     canOutdent?: boolean
     showIndentControls?: boolean
+    addSiblingLabel?: string
+    addSiblingAriaLabel?: string
     onIndent?: () => void
     onOutdent?: () => void
     onAddChild?: () => void
@@ -18,9 +22,12 @@ interface KeyboardAccessoryBarProps {
 
 export function KeyboardAccessoryBar({
     keyboardHeight,
+    viewportBottom = 0,
     canIndent = false,
     canOutdent = false,
     showIndentControls = true,
+    addSiblingLabel = "兄弟",
+    addSiblingAriaLabel = "兄弟ノード追加",
     onIndent,
     onOutdent,
     onAddChild,
@@ -28,20 +35,39 @@ export function KeyboardAccessoryBar({
     onDelete,
     onDismiss,
 }: KeyboardAccessoryBarProps) {
+    const positionStyle = viewportBottom > 0
+        ? { top: `${viewportBottom}px`, bottom: "auto", transform: "translateY(-100%)" }
+        : { bottom: `${keyboardHeight}px` }
+    const preserveKeyboardFocus = (event: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault()
+    }
+
     return (
         <div
             className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
-            style={{ bottom: `${keyboardHeight}px` }}
+            style={positionStyle}
         >
             <div className="flex items-center justify-between px-2 py-1.5 safe-area-inset-bottom">
-                <div className="flex items-center gap-0.5">
+                {/* キーボード閉じる */}
+                <button
+                    type="button"
+                    onClick={onDismiss}
+                    className="flex min-h-11 items-center justify-center gap-1 rounded-md px-2.5 text-muted-foreground transition-colors active:bg-muted"
+                    aria-label="キーボードを閉じる"
+                >
+                    <ChevronDown className="h-4 w-4" />
+                    <span className="text-xs">閉じる</span>
+                </button>
+
+                <div className="ml-auto flex items-center justify-end gap-0.5">
                     {showIndentControls && (
                         <>
                             {/* インデント（子ノード化） */}
                             <button
                                 type="button"
                                 disabled={!canIndent || !onIndent}
-                                onPointerDown={(event) => event.preventDefault()}
+                                onPointerDown={preserveKeyboardFocus}
+                                onMouseDown={preserveKeyboardFocus}
                                 onClick={onIndent}
                                 className={cn(
                                     "flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors",
@@ -59,7 +85,8 @@ export function KeyboardAccessoryBar({
                             <button
                                 type="button"
                                 disabled={!canOutdent || !onOutdent}
-                                onPointerDown={(event) => event.preventDefault()}
+                                onPointerDown={preserveKeyboardFocus}
+                                onMouseDown={preserveKeyboardFocus}
                                 onClick={onOutdent}
                                 className={cn(
                                     "flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors",
@@ -82,7 +109,8 @@ export function KeyboardAccessoryBar({
                     {onAddChild && (
                         <button
                             type="button"
-                            onPointerDown={(event) => event.preventDefault()}
+                            onPointerDown={preserveKeyboardFocus}
+                            onMouseDown={preserveKeyboardFocus}
                             onClick={onAddChild}
                             className="flex min-h-11 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors active:bg-muted"
                             title="子タスク追加"
@@ -96,14 +124,15 @@ export function KeyboardAccessoryBar({
                     {onAddSibling && (
                         <button
                             type="button"
-                            onPointerDown={(event) => event.preventDefault()}
+                            onPointerDown={preserveKeyboardFocus}
+                            onMouseDown={preserveKeyboardFocus}
                             onClick={onAddSibling}
                             className="flex min-h-11 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors active:bg-muted"
-                            title="兄弟タスク追加"
-                            aria-label="兄弟ノード追加"
+                            title={addSiblingAriaLabel}
+                            aria-label={addSiblingAriaLabel}
                         >
                             <Plus className="h-4 w-4" />
-                            <span className="text-xs">兄弟</span>
+                            <span className="text-xs">{addSiblingLabel}</span>
                         </button>
                     )}
 
@@ -114,7 +143,8 @@ export function KeyboardAccessoryBar({
                     {onDelete && (
                         <button
                             type="button"
-                            onPointerDown={(event) => event.preventDefault()}
+                            onPointerDown={preserveKeyboardFocus}
+                            onMouseDown={preserveKeyboardFocus}
                             onClick={onDelete}
                             className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-destructive transition-colors active:bg-destructive/10"
                             title="削除"
@@ -124,17 +154,6 @@ export function KeyboardAccessoryBar({
                         </button>
                     )}
                 </div>
-
-                {/* キーボード閉じる */}
-                <button
-                    type="button"
-                    onClick={onDismiss}
-                    className="flex min-h-11 items-center justify-center gap-1 rounded-md px-2.5 text-muted-foreground transition-colors active:bg-muted"
-                    aria-label="キーボードを閉じる"
-                >
-                    <span className="text-xs">閉じる</span>
-                    <ChevronDown className="h-4 w-4" />
-                </button>
             </div>
         </div>
     )

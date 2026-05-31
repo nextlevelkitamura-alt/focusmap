@@ -5,6 +5,8 @@ export const NODE_WIDTH_MOBILE = 168;
 export const NODE_HEIGHT = 36;
 export const PROJECT_NODE_WIDTH = 220;
 export const PROJECT_NODE_HEIGHT = 52;
+export const PROJECT_NODE_MIN_WIDTH = 84;
+export const PROJECT_NODE_MAX_WIDTH = 220;
 export const NODE_MAX_WIDTH = 220;
 export const NODE_MAX_WIDTH_MOBILE = 204;
 export const NODE_MIN_WIDTH = 110;
@@ -46,6 +48,18 @@ export const estimateTaskNodeWidth = (title: string, isMobile = false) => {
         .reduce((max, line) => Math.max(max, estimateTextWidthPx(line)), 0);
     const estimated = reserved + longestLinePx + 16;
     return Math.min(maxW, Math.max(minW, estimated));
+};
+
+export const estimateProjectNodeWidth = (title: string, isMobile = false) => {
+    const minW = isMobile ? PROJECT_NODE_MIN_WIDTH : 96;
+    const text = (title || '').trim();
+    if (!text) return minW;
+
+    const longestLinePx = text
+        .split('\n')
+        .reduce((max, line) => Math.max(max, estimateTextWidthPx(line)), 0);
+    const estimated = longestLinePx + (isMobile ? 42 : 48);
+    return Math.min(PROJECT_NODE_MAX_WIDTH, Math.max(minW, estimated));
 };
 
 export const estimateTaskNodeHeight = (

@@ -2,7 +2,7 @@ import dagre from 'dagre';
 import type { Project, Task } from '@/types/database';
 import {
     PROJECT_NODE_HEIGHT,
-    PROJECT_NODE_WIDTH,
+    estimateProjectNodeWidth,
     estimateTaskNodeHeight,
     estimateTaskNodeWidth,
 } from './mindmap-geometry';
@@ -26,6 +26,8 @@ export type MindMapModelNode = {
     collapsed: boolean;
     priority: number | null;
     scheduledAt: string | null;
+    calendarId: string | null;
+    estimatedTime: number | null;
     estimatedDisplayMinutes: number;
     estimatedAutoMinutes: number;
     estimatedIsOverride: boolean;
@@ -107,8 +109,8 @@ export function buildMindMapModel({
     graph.setDefaultEdgeLabel(() => ({}));
     graph.setGraph({
         rankdir: 'LR',
-        nodesep: isMobile ? 8 : 12,
-        ranksep: isMobile ? 24 : 36,
+        nodesep: isMobile ? 22 : 12,
+        ranksep: isMobile ? 40 : 36,
         edgesep: 4,
         ranker: 'network-simplex',
     });
@@ -150,15 +152,16 @@ export function buildMindMapModel({
     const getTaskAutoMinutes = (taskId: string) =>
         getChildren(taskId).reduce((sum, child) => sum + getTaskEffectiveMinutes(child.id), 0);
 
+    const projectTitle = project?.title ?? 'Project';
     const projectNode: MindMapModelNode = {
         id: projectNodeId,
         kind: 'project',
-        title: project?.title ?? 'Project',
+        title: projectTitle,
         parentId: null,
         depth: -1,
         x: 0,
         y: 0,
-        width: PROJECT_NODE_WIDTH,
+        width: estimateProjectNodeWidth(projectTitle, isMobile),
         height: PROJECT_NODE_HEIGHT,
         status: 'active',
         isDone: false,
@@ -167,6 +170,8 @@ export function buildMindMapModel({
         collapsed: false,
         priority: null,
         scheduledAt: null,
+        calendarId: null,
+        estimatedTime: null,
         estimatedDisplayMinutes: 0,
         estimatedAutoMinutes: 0,
         estimatedIsOverride: false,
@@ -219,6 +224,8 @@ export function buildMindMapModel({
             collapsed: collapsedTaskIds.has(task.id),
             priority: task.priority ?? null,
             scheduledAt: task.scheduled_at ?? null,
+            calendarId: task.calendar_id ?? null,
+            estimatedTime: task.estimated_time ?? null,
             estimatedDisplayMinutes,
             estimatedAutoMinutes,
             estimatedIsOverride,
@@ -247,8 +254,8 @@ export function buildMindMapModel({
 
     for (const node of nodes) {
         graph.setNode(node.id, {
-            width: node.kind === 'project' ? PROJECT_NODE_WIDTH : node.width,
-            height: node.kind === 'project' ? PROJECT_NODE_HEIGHT : node.height,
+            width: node.width,
+            height: node.height,
         });
     }
     for (const edge of edges) {

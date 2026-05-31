@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Maximize2, MoreHorizontal, Minus, Plus, RefreshCw, RotateCcw, StickyNote, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, Maximize2, MoreVertical, Minus, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -18,7 +18,9 @@ import {
     getViewportTransformAtPoint,
 } from "@/lib/mindmap-viewport";
 import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import type { CodexRunState } from "@/lib/codex-run-state";
+import { useCalendars } from "@/hooks/useCalendars";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -39,9 +41,11 @@ type CustomMindMapViewProps = {
     onDeleteNode?: (taskId: string) => void | Promise<void>;
     onNavigateNode?: (taskId: string, direction: CustomNavigationDirection) => void;
     onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
+    onSaveProjectTitle?: (title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
+    onUpdateScheduledAt?: (taskId: string, scheduledAt: string | null) => void | Promise<void>;
+    onUpdateSchedule?: (taskId: string, params: { scheduledAt: string; estimatedMinutes: number; calendarId: string }) => void | Promise<void>;
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
-    onOpenLinkedMemos?: (taskId: string) => void;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     onRefreshCodex?: () => void | Promise<void>;
     isRefreshingCodex?: boolean;
@@ -77,6 +81,8 @@ const TOUCH_PINCH_SENSITIVITY = 1;
 const DESKTOP_GESTURE_SENSITIVITY = 1.35;
 const DONE_NODE_HIDE_DELAY_MS = 300;
 const DONE_UNDO_WINDOW_MS = 5000;
+const MOBILE_KEYBOARD_NODE_MARGIN = 12;
+const MOBILE_KEYBOARD_ACCESSORY_CLEARANCE = 68;
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
@@ -144,7 +150,12 @@ type UndoableDoneNode = {
 };
 
 type CustomTaskEditController = {
+    handoffEditing: (focusTextInput: () => void) => Promise<void>;
     finishEditing: (options?: { refocus?: boolean }) => Promise<void>;
+};
+
+type CustomEditRequestOptions = {
+    selectAll?: boolean;
 };
 
 type WebKitGestureEvent = Event & {
@@ -173,7 +184,7 @@ const formatDateShort = (value: string | null) => {
     if (!value) return null;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return null;
-    return `${date.getMonth() + 1}/${date.getDate()}`;
+    return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
 };
 
 function CustomBranchPath({
@@ -207,6 +218,7 @@ function CustomTaskNode({
     dropPosition,
     triggerEdit,
     initialEditValue,
+    floatingEditing,
     onSelectNode,
     onStartDrag,
     onToggleCollapse,
@@ -217,14 +229,17 @@ function CustomTaskNode({
     onNavigate,
     onSaveTitle,
     onUpdateStatus,
+    onUpdateScheduledAt,
+    onUpdateSchedule,
     onResize,
     resizeScale,
     isMobile,
-    onOpenLinkedMemos,
+    calendars,
     onRunCodex,
     codexState,
     onEditingChange,
     onRegisterEditController,
+    onRequestEdit,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -235,6 +250,7 @@ function CustomTaskNode({
     dropPosition?: CustomDropPosition | null;
     triggerEdit?: boolean;
     initialEditValue?: string;
+    floatingEditing?: boolean;
     onSelectNode: (nodeId: string, options?: { additive: boolean }) => void;
     onStartDrag: (node: MindMapModelNode, event: React.PointerEvent<HTMLDivElement>) => void;
     onToggleCollapse: (taskId: string) => void;
@@ -245,19 +261,24 @@ function CustomTaskNode({
     onNavigate?: (taskId: string, direction: CustomNavigationDirection) => void;
     onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
+    onUpdateScheduledAt?: (taskId: string, scheduledAt: string | null) => void | Promise<void>;
+    onUpdateSchedule?: (taskId: string, params: { scheduledAt: string; estimatedMinutes: number; calendarId: string }) => void | Promise<void>;
     onResize?: (taskId: string, width: number, commit: boolean) => void;
     resizeScale: number;
     isMobile: boolean;
-    onOpenLinkedMemos?: (taskId: string) => void;
+    calendars: Array<{ google_calendar_id: string; name: string; selected?: boolean; is_primary?: boolean; color?: string | null; background_color?: string | null }>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexState?: CodexNodeState | null;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
+    onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const isFinishingEditRef = useRef(false);
     const handledTriggerEditRef = useRef<string | null>(null);
+    const lastCommittedTitleRef = useRef(initialEditValue ?? node.title);
+    const selectAllOnFocusRef = useRef(true);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const [menuOpen, setMenuOpen] = useState(false);
@@ -268,6 +289,10 @@ function CustomTaskNode({
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
     }, [initialEditValue, isEditing, node.title]);
+
+    useEffect(() => {
+        lastCommittedTitleRef.current = initialEditValue ?? node.title;
+    }, [initialEditValue, node.title]);
 
     useEffect(() => {
         if (!menuOpen) return;
@@ -292,12 +317,15 @@ function CustomTaskNode({
         }
         if (handledTriggerEditRef.current === node.id) return;
         handledTriggerEditRef.current = node.id;
+        if (isMobile && onRequestEdit?.(node.id, initialEditValue ?? "")) return;
+        selectAllOnFocusRef.current = true;
         setIsEditing(true);
         setEditValue(initialEditValue ?? "");
-    }, [initialEditValue, node.id, triggerEdit]);
+    }, [initialEditValue, isMobile, node.id, onRequestEdit, triggerEdit]);
 
     useLayoutEffect(() => {
         if (!primarySelected || isEditing) return;
+        if (isFinishingEditRef.current) return;
         wrapperRef.current?.focus();
     }, [isEditing, primarySelected]);
 
@@ -305,9 +333,14 @@ function CustomTaskNode({
         if (!isEditing) return;
         const input = inputRef.current;
         if (!input) return;
-        input.focus();
+        input.focus({ preventScroll: true });
         const length = input.value.length;
-        input.setSelectionRange(length, length);
+        if (selectAllOnFocusRef.current) {
+            input.setSelectionRange(0, length);
+        } else {
+            input.setSelectionRange(length, length);
+        }
+        selectAllOnFocusRef.current = true;
     }, [isEditing]);
 
     useLayoutEffect(() => {
@@ -319,9 +352,10 @@ function CustomTaskNode({
 
     const saveValue = useCallback(async () => {
         const nextTitle = editValue.trim() || "Task";
-        if (nextTitle !== node.title) {
+        if (nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current) {
             await onSaveTitle?.(node.id, nextTitle);
         }
+        lastCommittedTitleRef.current = nextTitle;
         setEditValue(nextTitle);
         return nextTitle;
     }, [editValue, node.id, node.title, onSaveTitle]);
@@ -342,6 +376,20 @@ function CustomTaskNode({
         }
     }, [saveValue]);
 
+    const handoffEditing = useCallback(async (focusTextInput: () => void) => {
+        if (isFinishingEditRef.current) return;
+        isFinishingEditRef.current = true;
+        focusTextInput();
+        try {
+            await saveValue();
+            setIsEditing(false);
+        } finally {
+            setTimeout(() => {
+                isFinishingEditRef.current = false;
+            }, 0);
+        }
+    }, [saveValue]);
+
     const cancelEditing = useCallback(() => {
         isFinishingEditRef.current = true;
         setEditValue(initialEditValue ?? node.title);
@@ -353,9 +401,12 @@ function CustomTaskNode({
     }, [initialEditValue, node.title]);
 
     const beginEditing = useCallback((value?: string) => {
+        const shouldSelectAll = value == null;
+        if (isMobile && onRequestEdit?.(node.id, value ?? (initialEditValue ?? node.title), { selectAll: shouldSelectAll })) return;
+        selectAllOnFocusRef.current = shouldSelectAll;
         setEditValue(value ?? (initialEditValue ?? node.title));
         setIsEditing(true);
-    }, [initialEditValue, node.title]);
+    }, [initialEditValue, isMobile, node.id, node.title, onRequestEdit]);
 
     const handleMenuAction = useCallback((
         event: React.MouseEvent<HTMLButtonElement>,
@@ -383,9 +434,9 @@ function CustomTaskNode({
             return;
         }
 
-        onRegisterEditController?.(node.id, { finishEditing });
+        onRegisterEditController?.(node.id, { handoffEditing, finishEditing });
         return () => onRegisterEditController?.(node.id, null);
-    }, [finishEditing, isEditing, node.id, onRegisterEditController]);
+    }, [finishEditing, handoffEditing, isEditing, node.id, onRegisterEditController]);
 
     const handleNodeKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLDivElement>) => {
         if (isEditing) return;
@@ -469,6 +520,21 @@ function CustomTaskNode({
         void finishEditing();
     }, [finishEditing, isEditing]);
 
+    const handleScheduleConfirm = useCallback((params: { date: Date; estimatedMinutes: number; calendarId: string }) => {
+        const scheduledAt = params.date.toISOString();
+        const action = onUpdateSchedule
+            ? onUpdateSchedule(node.id, {
+                scheduledAt,
+                estimatedMinutes: params.estimatedMinutes,
+                calendarId: params.calendarId,
+            })
+            : onUpdateScheduledAt?.(node.id, scheduledAt);
+        void Promise.resolve(action).catch(error => {
+            console.error("[CustomMindMap] Failed to update schedule:", error);
+        });
+        setMenuOpen(false);
+    }, [node.id, onUpdateSchedule, onUpdateScheduledAt]);
+
     const handleResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (!onResize || isEditing || event.button !== 0) return;
         event.preventDefault();
@@ -511,6 +577,7 @@ function CustomTaskNode({
             className={cn(
                 "absolute rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
                 "group flex flex-col gap-0 outline-none",
+                floatingEditing && "opacity-0",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
@@ -531,6 +598,7 @@ function CustomTaskNode({
             onClick={(event) => {
                 event.stopPropagation();
                 onSelectNode(node.id, { additive: event.shiftKey || event.metaKey || event.ctrlKey });
+                if (isMobile && !isEditing) beginEditing();
             }}
             onDoubleClick={(event) => {
                 event.stopPropagation();
@@ -613,7 +681,8 @@ function CustomTaskNode({
                 ) : (
                     <div className={cn(
                         "min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-0.5 font-bold leading-tight",
-                        node.isDone && "line-through text-muted-foreground"
+                        node.isDone && "line-through text-muted-foreground",
+                        floatingEditing && "opacity-0"
                     )}>
                         {node.title}
                     </div>
@@ -670,8 +739,8 @@ function CustomTaskNode({
                             <button
                                 type="button"
                                 className={cn(
-                                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm transition-colors",
-                                    menuOpen ? "border-primary text-foreground" : "border-border active:bg-muted"
+                                    "flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors",
+                                    menuOpen ? "bg-muted/50 text-foreground" : "active:bg-muted/60 active:text-foreground"
                                 )}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
@@ -684,11 +753,11 @@ function CustomTaskNode({
                                 aria-label="ノードメニューを開く"
                                 aria-expanded={menuOpen}
                             >
-                                <MoreHorizontal className="h-4 w-4" />
+                                <MoreVertical className="h-3.5 w-3.5" />
                             </button>
                             {menuOpen && (
                                 <div
-                                    className="absolute right-0 top-9 z-50 w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
+                                    className="absolute right-0 top-7 z-50 w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onClick={(event) => event.stopPropagation()}
                                 >
@@ -709,58 +778,28 @@ function CustomTaskNode({
                                         className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        Codexで開始
+                                        <MoreVertical className="h-4 w-4" />
+                                        Codexに指示する
                                     </button>
-                                    <div className="my-1 border-t" />
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onOpenLinkedMemos?.(node.id))}
-                                    >
-                                        <StickyNote className="h-4 w-4" />
-                                        メモを開く
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => beginEditing())}
-                                    >
-                                        <Edit3 className="h-4 w-4" />
-                                        編集
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onAddChild?.(node.id))}
-                                    >
-                                        <Plus className="h-4 w-4" />
-                                        子を追加
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onAddSibling?.(node.id))}
-                                    >
-                                        <Plus className="h-4 w-4 rotate-90" />
-                                        兄弟を追加
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onUpdateStatus?.(node.id, node.isDone ? "todo" : "done"))}
-                                    >
-                                        <Check className="h-4 w-4" />
-                                        {node.isDone ? "未完了に戻す" : "完了にする"}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-destructive hover:bg-destructive/10"
-                                        onClick={(event) => handleMenuAction(event, () => onDelete?.(node.id))}
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                        削除
-                                    </button>
+                                    <DateTimePicker
+                                        date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
+                                        estimatedMinutes={node.estimatedTime && node.estimatedTime > 0 ? node.estimatedTime : node.estimatedDisplayMinutes}
+                                        calendarId={node.calendarId}
+                                        calendars={calendars}
+                                        onConfirmSchedule={handleScheduleConfirm}
+                                        trigger={
+                                            <button
+                                                type="button"
+                                                className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                            >
+                                                <CalendarIcon className="h-4 w-4" />
+                                                <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                                                    <span>日時を指定する</span>
+                                                    {scheduledLabel && <span className="shrink-0 text-xs text-muted-foreground">{scheduledLabel}</span>}
+                                                </span>
+                                            </button>
+                                        }
+                                    />
                                 </div>
                             )}
                         </div>
@@ -783,7 +822,7 @@ function CustomTaskNode({
                                 aria-label="ノードメニューを開く"
                                 aria-expanded={menuOpen}
                             >
-                                <MoreHorizontal className="h-3.5 w-3.5" />
+                                <MoreVertical className="h-3.5 w-3.5" />
                             </button>
                             {menuOpen && (
                                 <div
@@ -808,58 +847,28 @@ function CustomTaskNode({
                                         className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        Codexで開始
+                                        <MoreVertical className="h-4 w-4" />
+                                        Codexに指示する
                                     </button>
-                                    <div className="my-1 border-t" />
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onOpenLinkedMemos?.(node.id))}
-                                    >
-                                        <StickyNote className="h-4 w-4" />
-                                        メモを開く
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => beginEditing())}
-                                    >
-                                        <Edit3 className="h-4 w-4" />
-                                        編集
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onAddChild?.(node.id))}
-                                    >
-                                        <Plus className="h-4 w-4" />
-                                        子を追加
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onAddSibling?.(node.id))}
-                                    >
-                                        <Plus className="h-4 w-4 rotate-90" />
-                                        兄弟を追加
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                        onClick={(event) => handleMenuAction(event, () => onUpdateStatus?.(node.id, node.isDone ? "todo" : "done"))}
-                                    >
-                                        <Check className="h-4 w-4" />
-                                        {node.isDone ? "未完了に戻す" : "完了にする"}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-destructive hover:bg-destructive/10"
-                                        onClick={(event) => handleMenuAction(event, () => onDelete?.(node.id))}
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                        削除
-                                    </button>
+                                    <DateTimePicker
+                                        date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
+                                        estimatedMinutes={node.estimatedTime && node.estimatedTime > 0 ? node.estimatedTime : node.estimatedDisplayMinutes}
+                                        calendarId={node.calendarId}
+                                        calendars={calendars}
+                                        onConfirmSchedule={handleScheduleConfirm}
+                                        trigger={
+                                            <button
+                                                type="button"
+                                                className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                            >
+                                                <CalendarIcon className="h-4 w-4" />
+                                                <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                                                    <span>日時を指定する</span>
+                                                    {scheduledLabel && <span className="shrink-0 text-xs text-muted-foreground">{scheduledLabel}</span>}
+                                                </span>
+                                            </button>
+                                        }
+                                    />
                                 </div>
                             )}
                         </div>
@@ -893,47 +902,265 @@ function CustomProjectNode({
     selected,
     primarySelected,
     dropPosition,
+    triggerEdit,
+    floatingEditing,
+    isMobile,
     onSelectNode,
     onAddChild,
+    onSaveTitle,
+    onEditingChange,
+    onRegisterEditController,
+    onRequestEdit,
 }: {
     node: MindMapModelNode;
     selected: boolean;
     primarySelected: boolean;
     dropPosition?: CustomDropPosition | null;
+    triggerEdit?: boolean;
+    floatingEditing?: boolean;
+    isMobile: boolean;
     onSelectNode: (nodeId: string) => void;
     onAddChild?: () => void | Promise<void>;
+    onSaveTitle?: (title: string) => void | Promise<void>;
+    onEditingChange?: (nodeId: string, isEditing: boolean) => void;
+    onRegisterEditController?: (nodeId: string, controller: CustomTaskEditController | null) => void;
+    onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
 }) {
-    const ref = useRef<HTMLButtonElement>(null);
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const isFinishingEditRef = useRef(false);
+    const handledTriggerEditRef = useRef<string | null>(null);
+    const lastCommittedTitleRef = useRef(node.title);
+    const selectAllOnFocusRef = useRef(true);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editValue, setEditValue] = useState(node.title);
 
     useLayoutEffect(() => {
-        if (!primarySelected) return;
-        ref.current?.focus();
-    }, [primarySelected]);
+        if (!primarySelected || isEditing) return;
+        if (isFinishingEditRef.current) return;
+        wrapperRef.current?.focus();
+    }, [isEditing, primarySelected]);
+
+    useEffect(() => {
+        if (!isEditing) setEditValue(node.title);
+    }, [isEditing, node.title]);
+
+    useEffect(() => {
+        lastCommittedTitleRef.current = node.title;
+    }, [node.title]);
+
+    useEffect(() => {
+        if (!triggerEdit) {
+            if (handledTriggerEditRef.current === node.id) handledTriggerEditRef.current = null;
+            return;
+        }
+        if (handledTriggerEditRef.current === node.id) return;
+        handledTriggerEditRef.current = node.id;
+        if (isMobile && onRequestEdit?.(node.id, node.title)) return;
+        selectAllOnFocusRef.current = true;
+        setEditValue(node.title);
+        setIsEditing(true);
+    }, [isMobile, node.id, node.title, onRequestEdit, triggerEdit]);
+
+    useLayoutEffect(() => {
+        if (!isEditing) return;
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus({ preventScroll: true });
+        const length = input.value.length;
+        if (selectAllOnFocusRef.current) {
+            input.setSelectionRange(0, length);
+        } else {
+            input.setSelectionRange(length, length);
+        }
+        selectAllOnFocusRef.current = true;
+    }, [isEditing]);
+
+    useLayoutEffect(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        input.style.height = "auto";
+        input.style.height = `${input.scrollHeight}px`;
+    }, [editValue, isEditing]);
+
+    const saveValue = useCallback(async () => {
+        const nextTitle = editValue.trim() || "Project";
+        if (nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current) {
+            await onSaveTitle?.(nextTitle);
+        }
+        lastCommittedTitleRef.current = nextTitle;
+        setEditValue(nextTitle);
+        return nextTitle;
+    }, [editValue, node.title, onSaveTitle]);
+
+    const finishEditing = useCallback(async (options: { refocus?: boolean } = {}) => {
+        if (isFinishingEditRef.current) return;
+        isFinishingEditRef.current = true;
+        try {
+            await saveValue();
+            setIsEditing(false);
+            if (options.refocus !== false) {
+                requestAnimationFrame(() => wrapperRef.current?.focus());
+            }
+        } finally {
+            setTimeout(() => {
+                isFinishingEditRef.current = false;
+            }, 0);
+        }
+    }, [saveValue]);
+
+    const handoffEditing = useCallback(async (focusTextInput: () => void) => {
+        if (isFinishingEditRef.current) return;
+        isFinishingEditRef.current = true;
+        focusTextInput();
+        try {
+            await saveValue();
+            setIsEditing(false);
+        } finally {
+            setTimeout(() => {
+                isFinishingEditRef.current = false;
+            }, 0);
+        }
+    }, [saveValue]);
+
+    const cancelEditing = useCallback(() => {
+        isFinishingEditRef.current = true;
+        setEditValue(node.title);
+        setIsEditing(false);
+        requestAnimationFrame(() => wrapperRef.current?.focus());
+        setTimeout(() => {
+            isFinishingEditRef.current = false;
+        }, 0);
+    }, [node.title]);
+
+    const beginEditing = useCallback((value?: string) => {
+        const shouldSelectAll = value == null;
+        if (isMobile && onRequestEdit?.(node.id, value ?? node.title, { selectAll: shouldSelectAll })) return;
+        selectAllOnFocusRef.current = shouldSelectAll;
+        setEditValue(value ?? node.title);
+        setIsEditing(true);
+    }, [isMobile, node.id, node.title, onRequestEdit]);
+
+    useEffect(() => {
+        onEditingChange?.(node.id, isEditing);
+        return () => {
+            if (isEditing) onEditingChange?.(node.id, false);
+        };
+    }, [isEditing, node.id, onEditingChange]);
+
+    useEffect(() => {
+        if (!isEditing) {
+            onRegisterEditController?.(node.id, null);
+            return;
+        }
+
+        onRegisterEditController?.(node.id, { handoffEditing, finishEditing });
+        return () => onRegisterEditController?.(node.id, null);
+    }, [finishEditing, handoffEditing, isEditing, node.id, onRegisterEditController]);
+
+    const handleKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (isEditing) return;
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+        if ((event.key === "Tab" && !event.shiftKey) || event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            await onAddChild?.();
+            return;
+        }
+
+        if (event.key === "F2" || event.key === " " || event.key === "Backspace") {
+            event.preventDefault();
+            event.stopPropagation();
+            beginEditing();
+            return;
+        }
+
+        if (event.key.length === 1) {
+            event.preventDefault();
+            event.stopPropagation();
+            beginEditing(event.key);
+        }
+    }, [beginEditing, isEditing, onAddChild]);
+
+    const handleInputKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        event.stopPropagation();
+
+        if (event.key === "Enter" && !event.nativeEvent.isComposing && !event.shiftKey) {
+            event.preventDefault();
+            await finishEditing();
+            return;
+        }
+
+        if (event.key === "Tab") {
+            event.preventDefault();
+            await finishEditing({ refocus: false });
+            if (!event.shiftKey) await onAddChild?.();
+            return;
+        }
+
+        if (event.key === "Escape") {
+            event.preventDefault();
+            cancelEditing();
+        }
+    }, [cancelEditing, finishEditing, onAddChild]);
+
+    const handleInputBlur = useCallback(() => {
+        if (!isEditing) return;
+        if (isFinishingEditRef.current) return;
+        void finishEditing();
+    }, [finishEditing, isEditing]);
 
     return (
-        <button
-            ref={ref}
-            type="button"
+        <div
+            ref={wrapperRef}
             data-id={node.id}
+            role={isEditing ? undefined : "button"}
+            aria-label={isEditing ? undefined : node.title}
+            tabIndex={0}
             className={cn(
-                "absolute flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm",
+                "absolute flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm outline-none",
+                floatingEditing && "opacity-0",
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 dropPosition === "as-child" && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
             style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}
             onClick={(event) => {
+                const target = event.target;
+                if (target instanceof HTMLElement && target.closest("input,textarea,select,a")) return;
                 event.stopPropagation();
                 onSelectNode(node.id);
+                if (isMobile) beginEditing();
             }}
-            onKeyDown={async (event) => {
-                if (event.key !== "Tab" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
-                event.preventDefault();
+            onDoubleClick={(event) => {
                 event.stopPropagation();
-                await onAddChild?.();
+                beginEditing();
             }}
+            onKeyDown={handleKeyDown}
         >
-            <span className="truncate">{node.title}</span>
-        </button>
+            {dropPosition === "as-child" && (
+                <div className="pointer-events-none absolute inset-0 rounded-lg bg-sky-400/10" />
+            )}
+            {isEditing ? (
+                <textarea
+                    ref={inputRef}
+                    rows={1}
+                    value={editValue}
+                    aria-label="プロジェクト名"
+                    className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-center font-bold leading-tight text-primary-foreground outline-none placeholder:text-primary-foreground/60"
+                    onChange={(event) => {
+                        setEditValue(event.currentTarget.value);
+                        event.currentTarget.style.height = "auto";
+                        event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`;
+                    }}
+                    onBlur={handleInputBlur}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={handleInputKeyDown}
+                />
+            ) : (
+                <span className={cn("truncate", floatingEditing && "opacity-0")}>{node.title}</span>
+            )}
+        </div>
     );
 }
 
@@ -956,9 +1183,11 @@ export function CustomMindMapView({
     onDeleteNode,
     onNavigateNode,
     onSaveTitle,
+    onSaveProjectTitle,
     onUpdateStatus,
+    onUpdateScheduledAt,
+    onUpdateSchedule,
     onResizeNode,
-    onOpenLinkedMemos,
     onRunCodex,
     onRefreshCodex,
     isRefreshingCodex = false,
@@ -976,10 +1205,23 @@ export function CustomMindMapView({
     const [optimisticStatusByTaskId, setOptimisticStatusByTaskId] = useState<Record<string, string>>({});
     const [hiddenDoneTaskIds, setHiddenDoneTaskIds] = useState<Set<string>>(new Set());
     const [undoableDoneNodes, setUndoableDoneNodes] = useState<UndoableDoneNode[]>([]);
-    const [activeEditingTaskId, setActiveEditingTaskId] = useState<string | null>(null);
-    const { keyboardHeight, isKeyboardOpen } = useKeyboardHeight();
+    const [activeEditingNodeId, setActiveEditingNodeId] = useState<string | null>(null);
+    const [floatingEditNodeId, setFloatingEditNodeId] = useState<string | null>(null);
+    const [floatingEditValue, setFloatingEditValue] = useState("");
+    const [mobileKeyboardAccessoryPinned, setMobileKeyboardAccessoryPinned] = useState(false);
+    const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight();
+    const { calendars } = useCalendars();
     const viewportRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
+    const keyboardAnchorRef = useRef<HTMLInputElement>(null);
+    const floatingTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const floatingEditValueRef = useRef("");
+    const floatingSelectAllOnFocusRef = useRef(true);
+    const ignoreNextFloatingBlurRef = useRef(false);
+    const keyboardActionInFlightRef = useRef(false);
+    const handledPendingEditNodeIdRef = useRef<string | null>(null);
+    const floatingCompositionActiveRef = useRef(false);
+    const floatingCompositionResolversRef = useRef(new Set<() => void>());
     const zoomRef = useRef(zoom);
     const panOffsetRef = useRef(panOffset);
     const editControllersRef = useRef(new Map<string, CustomTaskEditController>());
@@ -1056,6 +1298,16 @@ export function CustomMindMapView({
     );
     const nodeById = useMemo(() => new Map(positionedNodes.map(node => [node.id, node])), [positionedNodes]);
     const rawTaskTitleById = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task.title ?? ""])), [groups, tasks]);
+    const floatingEditNode = floatingEditNodeId ? nodeById.get(floatingEditNodeId) ?? null : null;
+    const floatingEditKind = floatingEditNode?.kind ?? null;
+    const floatingEditStageStyle = floatingEditNode
+        ? {
+            left: floatingEditNode.x,
+            top: floatingEditNode.y,
+            width: floatingEditNode.width,
+            minHeight: floatingEditNode.height,
+        }
+        : undefined;
     const selectedTaskIds = useMemo(
         () => positionedNodes
             .filter(node => node.kind === "task" && selectedNodeIds.has(node.id))
@@ -1063,10 +1315,10 @@ export function CustomMindMapView({
         [positionedNodes, selectedNodeIds]
     );
     const activeAccessoryNode = useMemo(() => {
-        if (!activeEditingTaskId) return null;
-        const node = nodeById.get(activeEditingTaskId);
-        return node?.kind === "task" ? node : null;
-    }, [activeEditingTaskId, nodeById]);
+        const nodeId = floatingEditNodeId ?? activeEditingNodeId;
+        if (!nodeId) return null;
+        return nodeById.get(nodeId) ?? null;
+    }, [activeEditingNodeId, floatingEditNodeId, nodeById]);
     const codexSummary = useMemo(() => {
         const states = positionedNodes
             .filter(node => node.kind === "task")
@@ -1314,6 +1566,296 @@ export function CustomMindMapView({
         onSelectNodes(Array.from(next), next.size > 0 ? primaryNodeId : null);
     }, [onSelectNode, onSelectNodes, selectedNodeId, selectedNodeIds]);
 
+    const syncFloatingTextareaHeight = useCallback((input: HTMLTextAreaElement) => {
+        input.style.height = "auto";
+        input.style.height = `${input.scrollHeight}px`;
+    }, []);
+
+    const updateFloatingEditValue = useCallback((nextValue: string) => {
+        floatingEditValueRef.current = nextValue;
+        setFloatingEditValue(nextValue);
+        const input = floatingTextareaRef.current;
+        if (input) syncFloatingTextareaHeight(input);
+    }, [syncFloatingTextareaHeight]);
+
+    const resolveFloatingComposition = useCallback(() => {
+        floatingCompositionActiveRef.current = false;
+        const resolvers = Array.from(floatingCompositionResolversRef.current);
+        floatingCompositionResolversRef.current.clear();
+        resolvers.forEach(resolve => resolve());
+    }, []);
+
+    const focusFloatingTextarea = useCallback((selectAll: boolean) => {
+        const input = floatingTextareaRef.current;
+        if (!input) return false;
+        input.focus({ preventScroll: true });
+        const length = input.value.length;
+        if (selectAll) {
+            input.setSelectionRange(0, length);
+        } else {
+            input.setSelectionRange(length, length);
+        }
+        syncFloatingTextareaHeight(input);
+        return true;
+    }, [syncFloatingTextareaHeight]);
+
+    const startFloatingEdit = useCallback((nodeId: string, initialValue?: string, options: CustomEditRequestOptions = {}) => {
+        if (!isMobile) return false;
+        const node = nodeById.get(nodeId);
+        if (!node) return false;
+        const nextValue = initialValue ?? (node.kind === "project" ? node.title : rawTaskTitleById.get(node.id) ?? node.title);
+        floatingEditValueRef.current = nextValue;
+        setFloatingEditValue(nextValue);
+        floatingSelectAllOnFocusRef.current = options.selectAll ?? true;
+        if (keyboardAnchorRef.current) keyboardAnchorRef.current.value = "";
+        setMobileKeyboardAccessoryPinned(true);
+        setFloatingEditNodeId(node.id);
+        setActiveEditingNodeId(node.id);
+        if (floatingEditNodeId === node.id && floatingTextareaRef.current) {
+            floatingTextareaRef.current.value = nextValue;
+            focusFloatingTextarea(floatingSelectAllOnFocusRef.current);
+        }
+        return true;
+    }, [floatingEditNodeId, focusFloatingTextarea, isMobile, nodeById, rawTaskTitleById]);
+
+    useEffect(() => {
+        if (!isMobile) return;
+        if (!pendingEditNodeId) {
+            handledPendingEditNodeIdRef.current = null;
+            return;
+        }
+        if (floatingEditNodeId === pendingEditNodeId) {
+            handledPendingEditNodeIdRef.current = pendingEditNodeId;
+            return;
+        }
+        if (handledPendingEditNodeIdRef.current === pendingEditNodeId) return;
+        const node = nodeById.get(pendingEditNodeId);
+        if (!node) return;
+        const initialValue = node.kind === "project" ? node.title : rawTaskTitleById.get(node.id) ?? "";
+        let cancelled = false;
+        void Promise.resolve().then(() => {
+            if (cancelled) return;
+            if (startFloatingEdit(node.id, initialValue)) {
+                handledPendingEditNodeIdRef.current = node.id;
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [floatingEditNodeId, isMobile, nodeById, pendingEditNodeId, rawTaskTitleById, startFloatingEdit]);
+
+    useLayoutEffect(() => {
+        const input = floatingTextareaRef.current;
+        if (!input || !floatingEditNodeId) return;
+        input.value = floatingEditValueRef.current;
+        focusFloatingTextarea(floatingSelectAllOnFocusRef.current);
+    }, [floatingEditNodeId, focusFloatingTextarea]);
+
+    useLayoutEffect(() => {
+        const input = floatingTextareaRef.current;
+        if (!input || !floatingEditNodeId) return;
+        syncFloatingTextareaHeight(input);
+    }, [floatingEditNodeId, floatingEditValue, syncFloatingTextareaHeight]);
+
+    const commitFloatingEdit = useCallback(async (options: { close?: boolean; waitForSave?: boolean } = {}) => {
+        if (!floatingEditNodeId) return;
+        const node = nodeById.get(floatingEditNodeId);
+        if (!node) return;
+        const fallbackTitle = node.kind === "project" ? "Project" : "Task";
+        const currentValue = floatingTextareaRef.current?.value ?? floatingEditValueRef.current;
+        const nextTitle = currentValue.trim() || fallbackTitle;
+        let saveAction: void | Promise<void> | undefined = undefined;
+
+        if (node.kind === "project") {
+            if (nextTitle !== node.title) saveAction = onSaveProjectTitle?.(nextTitle);
+        } else if (nextTitle !== node.title) {
+            saveAction = onSaveTitle?.(node.id, nextTitle);
+        }
+
+        if (saveAction && options.waitForSave === false) {
+            void Promise.resolve(saveAction).catch(error => {
+                console.error("[CustomMindMap] Failed to save floating edit:", error);
+            });
+        } else if (saveAction) {
+            await saveAction;
+        }
+
+        floatingEditValueRef.current = nextTitle;
+        setFloatingEditValue(nextTitle);
+        if (floatingTextareaRef.current) {
+            floatingTextareaRef.current.value = nextTitle;
+        }
+        if (options.close) {
+            setFloatingEditNodeId(null);
+            setActiveEditingNodeId(prev => prev === node.id ? null : prev);
+            setMobileKeyboardAccessoryPinned(false);
+        }
+    }, [floatingEditNodeId, nodeById, onSaveProjectTitle, onSaveTitle]);
+
+    const handleFloatingEditBlur = useCallback((event: React.FocusEvent<HTMLTextAreaElement>) => {
+        if (ignoreNextFloatingBlurRef.current) return;
+        if (event.relatedTarget === keyboardAnchorRef.current) return;
+        void commitFloatingEdit({ close: true });
+    }, [commitFloatingEdit]);
+
+    const mirrorKeyboardAnchorValue = useCallback((input: HTMLInputElement) => {
+        if (!floatingEditNodeId) {
+            input.value = "";
+            return;
+        }
+        updateFloatingEditValue(input.value);
+    }, [floatingEditNodeId, updateFloatingEditValue]);
+
+    const handleKeyboardAnchorChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+        mirrorKeyboardAnchorValue(event.currentTarget);
+    }, [mirrorKeyboardAnchorValue]);
+
+    const handleKeyboardAnchorInput = useCallback((event: React.FormEvent<HTMLInputElement>) => {
+        mirrorKeyboardAnchorValue(event.currentTarget);
+    }, [mirrorKeyboardAnchorValue]);
+
+    const handleKeyboardAnchorCompositionEnd = useCallback((event: React.CompositionEvent<HTMLInputElement>) => {
+        mirrorKeyboardAnchorValue(event.currentTarget);
+    }, [mirrorKeyboardAnchorValue]);
+
+    const handleFloatingEditValueChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
+        updateFloatingEditValue(event.currentTarget.value);
+        event.currentTarget.style.height = "auto";
+        event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`;
+    }, [updateFloatingEditValue]);
+
+    const handleFloatingEditCompositionStart = useCallback(() => {
+        floatingCompositionActiveRef.current = true;
+    }, []);
+
+    const handleFloatingEditCompositionEnd = useCallback((event: React.CompositionEvent<HTMLTextAreaElement>) => {
+        updateFloatingEditValue(event.currentTarget.value);
+        resolveFloatingComposition();
+    }, [resolveFloatingComposition, updateFloatingEditValue]);
+
+    const finishFloatingComposition = useCallback(async () => {
+        const input = floatingTextareaRef.current;
+        if (!input || !floatingCompositionActiveRef.current) return;
+
+        ignoreNextFloatingBlurRef.current = true;
+        const waitForComposition = new Promise<void>(resolve => {
+            let settled = false;
+            const settle = () => {
+                if (settled) return;
+                settled = true;
+                input.removeEventListener("compositionend", settle);
+                input.removeEventListener("input", settle);
+                updateFloatingEditValue(input.value);
+                resolveFloatingComposition();
+                resolve();
+            };
+
+            floatingCompositionResolversRef.current.add(settle);
+            input.addEventListener("compositionend", settle, { once: true });
+            input.addEventListener("input", settle, { once: true });
+            window.setTimeout(settle, 160);
+        });
+
+        input.blur();
+        const anchor = keyboardAnchorRef.current;
+        if (anchor) {
+            anchor.value = "";
+            anchor.focus({ preventScroll: true });
+        }
+
+        await waitForComposition;
+        requestAnimationFrame(() => {
+            ignoreNextFloatingBlurRef.current = false;
+        });
+    }, [resolveFloatingComposition, updateFloatingEditValue]);
+
+    const handleKeyboardAnchorKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+        event.stopPropagation();
+        if (!floatingEditNodeId) return;
+        if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            void commitFloatingEdit({ close: true });
+        }
+        if (event.key === "Escape") {
+            event.preventDefault();
+            setFloatingEditNodeId(null);
+            setActiveEditingNodeId(null);
+            setMobileKeyboardAccessoryPinned(false);
+        }
+    }, [commitFloatingEdit, floatingEditNodeId]);
+
+    const dismissFloatingEdit = useCallback(() => {
+        if (floatingEditNodeId) {
+            void commitFloatingEdit({ close: true });
+            return;
+        }
+        setActiveEditingNodeId(null);
+    }, [commitFloatingEdit, floatingEditNodeId]);
+
+    const keepNodeAboveKeyboard = useCallback((node: MindMapModelNode) => {
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+        const rect = viewport.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+
+        const currentZoom = zoomRef.current;
+        const currentPan = panOffsetRef.current;
+        const keyboardTop = viewportBottom > 0 ? Math.min(rect.bottom, viewportBottom) : rect.bottom;
+        const visibleTop = MOBILE_KEYBOARD_NODE_MARGIN;
+        const keyboardLikelyOpen = isKeyboardOpen || mobileKeyboardAccessoryPinned;
+        const visibleBottom = Math.max(
+            visibleTop + node.height * currentZoom,
+            keyboardTop - rect.top - (keyboardLikelyOpen ? MOBILE_KEYBOARD_ACCESSORY_CLEARANCE : MOBILE_KEYBOARD_NODE_MARGIN)
+        );
+        const visibleLeft = MOBILE_KEYBOARD_NODE_MARGIN;
+        const visibleRight = Math.max(
+            visibleLeft + node.width * currentZoom,
+            rect.width - MOBILE_KEYBOARD_NODE_MARGIN
+        );
+
+        const nodeLeft = currentPan.x + node.x * currentZoom;
+        const nodeRight = nodeLeft + node.width * currentZoom;
+        const nodeTop = currentPan.y + node.y * currentZoom;
+        const nodeBottom = nodeTop + node.height * currentZoom;
+
+        let deltaX = 0;
+        let deltaY = 0;
+        if (nodeRight > visibleRight) deltaX = visibleRight - nodeRight;
+        if (nodeLeft + deltaX < visibleLeft) deltaX = visibleLeft - nodeLeft;
+        if (nodeBottom > visibleBottom) deltaY = visibleBottom - nodeBottom;
+        if (nodeTop + deltaY < visibleTop) deltaY = visibleTop - nodeTop;
+
+        if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+        applyViewportTransform(currentZoom, {
+            x: currentPan.x + deltaX,
+            y: currentPan.y + deltaY,
+        });
+    }, [applyViewportTransform, isKeyboardOpen, mobileKeyboardAccessoryPinned, viewportBottom]);
+
+    useEffect(() => {
+        if (!isMobile || (!isKeyboardOpen && !mobileKeyboardAccessoryPinned)) return;
+        const nodeId = floatingEditNodeId ?? selectedNodeId;
+        if (!nodeId) return;
+        const frameIds: number[] = [];
+        const timeoutIds: number[] = [];
+        const trackNode = () => {
+            const node = nodeById.get(nodeId);
+            if (node) keepNodeAboveKeyboard(node);
+        };
+        const trackOnFrame = () => {
+            frameIds.push(requestAnimationFrame(trackNode));
+        };
+
+        trackOnFrame();
+        timeoutIds.push(window.setTimeout(trackOnFrame, 80));
+        timeoutIds.push(window.setTimeout(trackOnFrame, 220));
+
+        return () => {
+            frameIds.forEach(frameId => cancelAnimationFrame(frameId));
+            timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
+        };
+    }, [floatingEditNodeId, isKeyboardOpen, isMobile, keepNodeAboveKeyboard, mobileKeyboardAccessoryPinned, nodeById, selectedNodeId, viewportBottom, zoom]);
+
     const clearPendingLongPressDrag = useCallback(() => {
         const pending = pendingLongPressDragRef.current;
         if (!pending) return;
@@ -1417,6 +1959,12 @@ export function CustomMindMapView({
         if (!isPanButton) return;
         const target = event.target;
         if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return;
+        const isNodeTarget = target instanceof HTMLElement && Boolean(target.closest("[data-id]"));
+        if (isNodeTarget && floatingEditNodeId) return;
+        if (floatingEditNodeId) {
+            dismissFloatingEdit();
+            onSelectNode(null);
+        }
         event.preventDefault();
         event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -1429,7 +1977,7 @@ export function CustomMindMapView({
             startPanY: panOffsetRef.current.y,
         });
         panMovedRef.current = false;
-    }, [isMobile, spacePressed]);
+    }, [dismissFloatingEdit, floatingEditNodeId, isMobile, onSelectNode, spacePressed]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
         event.preventDefault();
@@ -1892,7 +2440,7 @@ export function CustomMindMapView({
     }, [applyViewportTransform, clearPendingLongPressDrag, commitViewportTransform, panState]);
 
     const handleEditingChange = useCallback((taskId: string, editing: boolean) => {
-        setActiveEditingTaskId(prev => {
+        setActiveEditingNodeId(prev => {
             if (editing) return taskId;
             return prev === taskId ? null : prev;
         });
@@ -1906,36 +2454,156 @@ export function CustomMindMapView({
         editControllersRef.current.delete(taskId);
     }, []);
 
-    const finishActiveEdit = useCallback(async (taskId: string, options?: { refocus?: boolean }) => {
-        await editControllersRef.current.get(taskId)?.finishEditing(options);
+    const prepareMobileTextFocus = useCallback(() => {
+        if (!isMobile) return;
+        const anchor = keyboardAnchorRef.current;
+        if (!anchor) return;
+        anchor.value = "";
+        setMobileKeyboardAccessoryPinned(true);
+        anchor.focus({ preventScroll: true });
+    }, [isMobile]);
+
+    const preserveMobileKeyboardFocus = useCallback(() => {
+        if (!isMobile) return;
+        ignoreNextFloatingBlurRef.current = true;
+        setMobileKeyboardAccessoryPinned(true);
+        const input = floatingTextareaRef.current;
+        if (input) {
+            input.focus({ preventScroll: true });
+        } else {
+            prepareMobileTextFocus();
+        }
+        requestAnimationFrame(() => {
+            ignoreNextFloatingBlurRef.current = false;
+        });
+    }, [isMobile, prepareMobileTextFocus]);
+
+    const handoffActiveEdit = useCallback(async (taskId: string, options: { focusVisibleEditor?: boolean; waitForSave?: boolean } = {}) => {
+        if (floatingEditNodeId === taskId) {
+            if (options.focusVisibleEditor !== false) {
+                focusFloatingTextarea(false);
+            }
+            await commitFloatingEdit({ close: false, waitForSave: options.waitForSave });
+            return;
+        }
+        await editControllersRef.current.get(taskId)?.handoffEditing(prepareMobileTextFocus);
+    }, [commitFloatingEdit, floatingEditNodeId, focusFloatingTextarea, prepareMobileTextFocus]);
+
+    const runKeyboardAction = useCallback(async (action: () => Promise<void>) => {
+        if (keyboardActionInFlightRef.current) return;
+        keyboardActionInFlightRef.current = true;
+        try {
+            await action();
+        } finally {
+            requestAnimationFrame(() => {
+                keyboardActionInFlightRef.current = false;
+            });
+        }
     }, []);
 
-    const handleAccessoryAddChild = useCallback(async () => {
-        const taskId = activeEditingTaskId;
-        if (!taskId) return;
-        await finishActiveEdit(taskId, { refocus: false });
+    const handleCreateRootNode = useCallback(async (options: { preserveTextFocus?: boolean } = {}) => {
+        if (!options.preserveTextFocus) prepareMobileTextFocus();
+        await onAddRootNode?.();
+    }, [onAddRootNode, prepareMobileTextFocus]);
+
+    const handleCreateChildNode = useCallback(async (taskId: string, options: { preserveTextFocus?: boolean } = {}) => {
+        if (!options.preserveTextFocus) prepareMobileTextFocus();
         await onAddChildNode?.(taskId);
-    }, [activeEditingTaskId, finishActiveEdit, onAddChildNode]);
+    }, [onAddChildNode, prepareMobileTextFocus]);
+
+    const handleCreateSiblingNode = useCallback(async (taskId: string, options: { preserveTextFocus?: boolean } = {}) => {
+        if (!options.preserveTextFocus) prepareMobileTextFocus();
+        await onAddSiblingNode?.(taskId);
+    }, [onAddSiblingNode, prepareMobileTextFocus]);
+
+    const handleFloatingEditKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        event.stopPropagation();
+
+        if (event.key === "Enter" && !event.nativeEvent.isComposing && !event.shiftKey) {
+            event.preventDefault();
+            await commitFloatingEdit({ close: true });
+            return;
+        }
+
+        if (event.key === "Tab") {
+            const node = floatingEditNode;
+            if (!node) return;
+            event.preventDefault();
+            await finishFloatingComposition();
+            await commitFloatingEdit({ close: false });
+            if (node.kind === "project") {
+                if (!event.shiftKey) await handleCreateRootNode({ preserveTextFocus: true });
+            } else if (event.shiftKey) {
+                await onPromoteNode?.(node.id);
+            } else {
+                await handleCreateChildNode(node.id, { preserveTextFocus: true });
+            }
+        }
+
+        if (event.key === "Escape") {
+            event.preventDefault();
+            setFloatingEditNodeId(null);
+            setActiveEditingNodeId(null);
+            setMobileKeyboardAccessoryPinned(false);
+        }
+    }, [commitFloatingEdit, finishFloatingComposition, floatingEditNode, handleCreateChildNode, handleCreateRootNode, onPromoteNode]);
+
+    const handleAccessoryAddChild = useCallback(async () => {
+        await runKeyboardAction(async () => {
+            const node = activeAccessoryNode;
+            if (!node) return;
+            await finishFloatingComposition();
+            preserveMobileKeyboardFocus();
+            await handoffActiveEdit(node.id, { focusVisibleEditor: false, waitForSave: false });
+            if (node.kind === "project") {
+                await handleCreateRootNode({ preserveTextFocus: true });
+                return;
+            }
+            await handleCreateChildNode(node.id, { preserveTextFocus: true });
+        });
+    }, [activeAccessoryNode, finishFloatingComposition, handoffActiveEdit, handleCreateChildNode, handleCreateRootNode, preserveMobileKeyboardFocus, runKeyboardAction]);
 
     const handleAccessoryAddSibling = useCallback(async () => {
-        const taskId = activeEditingTaskId;
-        if (!taskId) return;
-        await finishActiveEdit(taskId, { refocus: false });
-        await onAddSiblingNode?.(taskId);
-    }, [activeEditingTaskId, finishActiveEdit, onAddSiblingNode]);
+        await runKeyboardAction(async () => {
+            const node = activeAccessoryNode;
+            if (!node || node.kind !== "task") return;
+            await finishFloatingComposition();
+            preserveMobileKeyboardFocus();
+            await handoffActiveEdit(node.id, { focusVisibleEditor: false, waitForSave: false });
+            await handleCreateSiblingNode(node.id, { preserveTextFocus: true });
+        });
+    }, [activeAccessoryNode, finishFloatingComposition, handoffActiveEdit, handleCreateSiblingNode, preserveMobileKeyboardFocus, runKeyboardAction]);
 
     const handleAccessoryDelete = useCallback(async () => {
-        const taskId = activeEditingTaskId;
-        if (!taskId) return;
-        setActiveEditingTaskId(null);
-        await onDeleteNode?.(taskId);
-    }, [activeEditingTaskId, onDeleteNode]);
+        await runKeyboardAction(async () => {
+            const node = activeAccessoryNode;
+            if (!node || node.kind !== "task") return;
+            ignoreNextFloatingBlurRef.current = true;
+            try {
+                resolveFloatingComposition();
+                if (keyboardAnchorRef.current) keyboardAnchorRef.current.value = "";
+                if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+                    document.activeElement.blur();
+                }
+                setFloatingEditNodeId(prev => prev === node.id ? null : prev);
+                setActiveEditingNodeId(prev => prev === node.id ? null : prev);
+                setMobileKeyboardAccessoryPinned(false);
+                await onDeleteNode?.(node.id);
+            } finally {
+                requestAnimationFrame(() => {
+                    ignoreNextFloatingBlurRef.current = false;
+                });
+            }
+        });
+    }, [activeAccessoryNode, onDeleteNode, resolveFloatingComposition, runKeyboardAction]);
 
     const handleAccessoryDismiss = useCallback(() => {
         if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
             document.activeElement.blur();
         }
-        setActiveEditingTaskId(null);
+        setActiveEditingNodeId(null);
+        setFloatingEditNodeId(null);
+        setMobileKeyboardAccessoryPinned(false);
     }, []);
 
     const selectionRect = selectionBox
@@ -1946,9 +2614,27 @@ export function CustomMindMapView({
             height: Math.abs(selectionBox.currentY - selectionBox.startY),
         }
         : null;
+    const shouldShowMobileAccessory = isMobile && !!activeAccessoryNode && (isKeyboardOpen || mobileKeyboardAccessoryPinned);
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-muted/5" style={{ overscrollBehavior: "contain" }}>
+            {isMobile && (
+                <input
+                    ref={keyboardAnchorRef}
+                    aria-label="新規ノード入力準備"
+                    data-testid="mobile-keyboard-anchor"
+                    tabIndex={-1}
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    inputMode="text"
+                    spellCheck={false}
+                    onChange={handleKeyboardAnchorChange}
+                    onInput={handleKeyboardAnchorInput}
+                    onCompositionEnd={handleKeyboardAnchorCompositionEnd}
+                    onKeyDown={handleKeyboardAnchorKeyDown}
+                    className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
+                />
+            )}
             {(codexSummary.running > 0 || codexSummary.waitingForExecution > 0 || codexSummary.awaitingApproval > 0) && (
                 <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
                     {codexSummary.running > 0 && (
@@ -2038,6 +2724,7 @@ export function CustomMindMapView({
                 onContextMenu={(event) => event.preventDefault()}
                 onClick={() => {
                     if (Date.now() < suppressPaneClickUntilRef.current) return;
+                    dismissFloatingEdit();
                     onSelectNode(null);
                 }}
             >
@@ -2095,8 +2782,15 @@ export function CustomMindMapView({
                                     selected={selectedNodeId === node.id}
                                     primarySelected={selectedNodeId === node.id}
                                     dropPosition={dropPosition}
+                                    triggerEdit={pendingEditNodeId === node.id}
+                                    floatingEditing={floatingEditNodeId === node.id}
+                                    isMobile={isMobile}
                                     onSelectNode={onSelectNode}
-                                    onAddChild={onAddRootNode}
+                                    onAddChild={handleCreateRootNode}
+                                    onSaveTitle={onSaveProjectTitle}
+                                    onEditingChange={handleEditingChange}
+                                    onRegisterEditController={handleRegisterEditController}
+                                    onRequestEdit={startFloatingEdit}
                                 />
                             );
                         }
@@ -2112,27 +2806,69 @@ export function CustomMindMapView({
                                 dropPosition={dropPosition}
                                 triggerEdit={pendingEditNodeId === node.id}
                                 initialEditValue={rawTaskTitleById.get(node.id)}
+                                floatingEditing={floatingEditNodeId === node.id}
                                 onSelectNode={handleSelectTaskNode}
                                 onStartDrag={handleStartDrag}
                                 onToggleCollapse={onToggleCollapse}
-                                onAddChild={onAddChildNode}
-                                onAddSibling={onAddSiblingNode}
+                                onAddChild={handleCreateChildNode}
+                                onAddSibling={handleCreateSiblingNode}
                                 onPromote={onPromoteNode}
                                 onDelete={onDeleteNode}
                                 onNavigate={onNavigateNode}
                                 onSaveTitle={onSaveTitle}
                                 onUpdateStatus={handleUpdateNodeStatus}
+                                onUpdateScheduledAt={onUpdateScheduledAt}
+                                onUpdateSchedule={onUpdateSchedule}
                                 onResize={onResizeNode ? handleResizeNode : undefined}
                                 resizeScale={zoom}
                                 isMobile={isMobile}
-                                onOpenLinkedMemos={onOpenLinkedMemos}
+                                calendars={calendars}
                                 onRunCodex={onRunCodex}
                                 codexState={codexRunByNodeId[node.id] ?? null}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
+                                onRequestEdit={startFloatingEdit}
                             />
                         );
                     })}
+                    {isMobile && floatingEditNode && floatingEditStageStyle && (
+                        <div
+                            className={cn(
+                                "absolute z-50 flex items-center justify-center rounded-lg shadow-lg ring-2 ring-white ring-offset-2 ring-offset-background",
+                                floatingEditKind === "project"
+                                    ? "bg-primary px-4 py-2 text-primary-foreground"
+                                    : "border border-border bg-background px-1.5 py-1"
+                            )}
+                            style={floatingEditStageStyle}
+                            data-testid="floating-mind-map-editor"
+                        >
+                            {floatingEditKind === "task" && (
+                                <span className="shrink-0 h-5 w-5 -m-1" aria-hidden="true" />
+                            )}
+                            <textarea
+                                ref={floatingTextareaRef}
+                                rows={1}
+                                aria-label={floatingEditKind === "project" ? "プロジェクト名" : "ノード名"}
+                                value={floatingEditValue}
+                                className={cn(
+                                    "min-w-0 flex-1 resize-none overflow-hidden bg-transparent font-bold leading-tight outline-none",
+                                    floatingEditKind === "project"
+                                        ? "text-center text-sm text-primary-foreground placeholder:text-primary-foreground/60"
+                                        : "px-0.5 text-[13px] text-foreground placeholder:text-muted-foreground"
+                                )}
+                                onChange={handleFloatingEditValueChange}
+                                onBlur={handleFloatingEditBlur}
+                                onClick={(event) => event.stopPropagation()}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onCompositionStart={handleFloatingEditCompositionStart}
+                                onCompositionEnd={handleFloatingEditCompositionEnd}
+                                onKeyDown={handleFloatingEditKeyDown}
+                            />
+                            {floatingEditKind === "task" && (
+                                <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+                            )}
+                        </div>
+                    )}
                     {selectionRect && (
                         <div
                             className="pointer-events-none absolute z-40 rounded border border-sky-400 bg-sky-400/15 shadow-[0_0_16px_rgba(56,189,248,0.35)]"
@@ -2141,13 +2877,16 @@ export function CustomMindMapView({
                     )}
                 </div>
             </div>
-            {isMobile && isKeyboardOpen && activeAccessoryNode && (
+            {shouldShowMobileAccessory && activeAccessoryNode && (
                 <KeyboardAccessoryBar
                     keyboardHeight={keyboardHeight}
+                    viewportBottom={viewportBottom}
                     showIndentControls={false}
-                    onAddChild={onAddChildNode ? handleAccessoryAddChild : undefined}
-                    onAddSibling={onAddSiblingNode ? handleAccessoryAddSibling : undefined}
-                    onDelete={onDeleteNode ? handleAccessoryDelete : undefined}
+                    addSiblingLabel="親追加"
+                    addSiblingAriaLabel="親ノード追加"
+                    onAddChild={(activeAccessoryNode.kind === "project" ? onAddRootNode : onAddChildNode) ? handleAccessoryAddChild : undefined}
+                    onAddSibling={activeAccessoryNode.kind === "task" && onAddSiblingNode ? handleAccessoryAddSibling : undefined}
+                    onDelete={activeAccessoryNode.kind === "task" && onDeleteNode ? handleAccessoryDelete : undefined}
                     onDismiss={handleAccessoryDismiss}
                 />
             )}

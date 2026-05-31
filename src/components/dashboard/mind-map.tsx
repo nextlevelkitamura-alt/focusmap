@@ -15,7 +15,7 @@ import {
 } from 'reactflow';
 import { Task, Project } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { Calendar as CalendarIcon, X, GripVertical, StickyNote, ImagePlus, Check, ChevronDown, ChevronRight } from "lucide-react";
+import { Calendar as CalendarIcon, X, GripVertical, StickyNote, ImagePlus, Check, ChevronDown, ChevronRight, MoreVertical } from "lucide-react";
 import { PriorityBadge, PriorityPopover, Priority } from "@/components/ui/priority-select";
 import { EstimatedTimeBadge, EstimatedTimePopover, formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
@@ -25,7 +25,7 @@ import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 import { format } from "date-fns";
 import {
     NODE_WIDTH, NODE_HEIGHT, PROJECT_NODE_WIDTH, PROJECT_NODE_HEIGHT,
-    estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements,
+    estimateProjectNodeWidth, estimateTaskNodeHeight, estimateTaskNodeWidth, getLayoutedElements,
     NODE_MIN_WIDTH, NODE_RESIZE_MAX_WIDTH,
 } from "@/lib/mindmap-layout";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
@@ -294,7 +294,7 @@ const ProjectNode = React.memo(({ data, selected }: NodeProps<ProjectNodeData>) 
     return (
         <div
             ref={wrapperRef}
-            style={{ width: PROJECT_NODE_WIDTH, minHeight: PROJECT_NODE_HEIGHT }}
+            style={{ width: estimateProjectNodeWidth(data?.label ?? ''), minHeight: PROJECT_NODE_HEIGHT }}
             className={cn(
                 "px-3 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-center shadow-lg transition-all outline-none flex items-center justify-center",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
@@ -861,7 +861,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                     </button>
                 )}
 
-                {/* Menu column: 子数トグル + ハンバーガーを縦積み */}
+                {/* Menu column: 子数トグル + メモ導線を縦積み */}
                 <div className="flex flex-col items-center shrink-0 ml-0.5 leading-none gap-0">
                     {settings.showCollapseButton && data?.onToggleCollapse && data?.hasChildren && (
                         <button
@@ -900,11 +900,7 @@ const TaskNode = React.memo(({ data, selected, dragging }: NodeProps<TaskNodeDat
                         title="関連メモ"
                         aria-label="関連メモを開く"
                     >
-                        <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
-                            <rect x="1" y="2" width="10" height="1.2" rx="0.6" />
-                            <rect x="1" y="5.4" width="10" height="1.2" rx="0.6" />
-                            <rect x="1" y="8.8" width="10" height="1.2" rx="0.6" />
-                        </svg>
+                        <MoreVertical className="w-3.5 h-3.5" />
                     </button>
                 </div>
             </div>
@@ -1892,14 +1888,17 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             if (!confirmed) return;
         }
 
-        const nextFocusId = calculateNextFocus(taskId);
+        const task = getTaskById(taskId);
+        const nextFocusId = isNarrow
+            ? (task?.parent_task_id && getTaskById(task.parent_task_id) ? task.parent_task_id : 'project-root')
+            : calculateNextFocus(taskId);
         // 削除をバックグラウンドで実行（await しない → フォーカス移動が即座に行われる）
         onDeleteTask(taskId);
         applySelection(nextFocusId ? new Set([nextFocusId]) : new Set(), nextFocusId, 'user');
         if (nextFocusId) {
             focusNodeWithPollingV2(nextFocusId, 300, false);
         }
-    }, [hasChildren, calculateNextFocus, onDeleteTask, applySelection, focusNodeWithPollingV2]);
+    }, [hasChildren, getTaskById, isNarrow, calculateNextFocus, onDeleteTask, applySelection, focusNodeWithPollingV2]);
 
     // Navigation helpers for arrow keys（ルートタスク対応）
     const navigateToSibling = useCallback((taskId: string, direction: 'up' | 'down'): string | null => {
@@ -2984,9 +2983,15 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
                 onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
                 onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
+                onSaveProjectTitle={(title) => project?.id ? callbacks.onUpdateProject?.(project.id, title) : undefined}
                 onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
+                onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
+                    scheduled_at: params.scheduledAt,
+                    estimated_time: params.estimatedMinutes,
+                    calendar_id: params.calendarId,
+                })}
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
-                onOpenLinkedMemos={onOpenLinkedMemos}
                 onRunCodex={handleRunCodex}
                 onRefreshCodex={handleRefreshCodexTasks}
                 isRefreshingCodex={isRefreshingCodexTasks}
