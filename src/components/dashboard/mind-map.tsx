@@ -3029,6 +3029,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onClose={() => setCodexPanelTaskId(null)}
                     onPersistDir={persistCodexDir}
                     onSaveHeading={(taskId, heading) => onUpdateTask?.(taskId, { title: heading })}
+                    onSaveDraft={(taskId, draft) => onUpdateTask?.(taskId, { title: draft.title, memo: draft.memo })}
                     onOpenMemo={onOpenLinkedMemos}
                     onToggleComplete={(taskId, done) => { void onUpdateTask?.(taskId, { status: done ? 'done' : 'todo' }); }}
                     onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}

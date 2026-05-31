@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, Maximize2, MoreVertical, Minus, Plus, RefreshCw, RotateCcw } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, Maximize2, MoreVertical, Minus, Plus, RefreshCw, RotateCcw, StickyNote } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -778,8 +778,8 @@ function CustomTaskNode({
                                         className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <MoreVertical className="h-4 w-4" />
-                                        Codexに指示する
+                                        <StickyNote className="h-4 w-4" />
+                                        メモの編集
                                     </button>
                                     <DateTimePicker
                                         date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
@@ -847,8 +847,8 @@ function CustomTaskNode({
                                         className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <MoreVertical className="h-4 w-4" />
-                                        Codexに指示する
+                                        <StickyNote className="h-4 w-4" />
+                                        メモの編集
                                     </button>
                                     <DateTimePicker
                                         date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}

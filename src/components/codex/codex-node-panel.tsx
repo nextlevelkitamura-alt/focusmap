@@ -8,9 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
-import { ExternalLink, Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
-
-const CHATGPT_CODEX_APP_URL = "https://chatgpt.com/app/codex"
+import { Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -36,30 +34,28 @@ type CodexNodePanelProps = {
   onAddChild?: (taskId: string) => void
   onDelete?: (taskId: string) => void
   onSaveHeading?: (taskId: string, heading: string) => Promise<void> | void
+  onSaveDraft?: (taskId: string, draft: { title: string; memo: string | null }) => Promise<void> | void
 }
 
-function buildCodexPrompt(heading: string, detail: string): string {
-  return [heading.trim(), detail.trim()].filter(Boolean).join("\n\n")
-}
+type SaveStatus = "saved" | "saving" | "error"
 
-export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNodePanelProps) {
+export function CodexNodePanel({ open, node, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [heading, setHeading] = useState(node.title)
-  const [savedHeading, setSavedHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
   const [error, setError] = useState<string | null>(null)
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
-  const [isSavingHeading, setIsSavingHeading] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
+  const saveVersionRef = useRef(0)
 
   useEffect(() => {
     if (!open) return
     setHeading(node.title)
-    setSavedHeading(node.title)
     setDetail(node.memo)
     setError(null)
     setIsGeneratingHeading(false)
-    setIsSavingHeading(false)
-  }, [open, node.title, node.memo])
+    setSaveStatus("saved")
+  }, [open, node.taskId, node.title, node.memo])
 
   const moveFocusToPanel = useCallback(() => {
     const active = document.activeElement
@@ -81,9 +77,61 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
     return () => window.cancelAnimationFrame(firstFrame)
   }, [moveFocusToPanel, open])
 
+  const saveDraft = useCallback(async (nextHeading: string, nextDetail: string) => {
+    const version = saveVersionRef.current + 1
+    saveVersionRef.current = version
+    setError(null)
+    setSaveStatus("saving")
+
+    try {
+      const title = nextHeading.trim() || node.title
+      const memo = nextDetail.trim() ? nextDetail : null
+
+      if (onSaveDraft) {
+        await onSaveDraft(node.taskId, { title, memo })
+      } else {
+        if (onSaveHeading) {
+          await onSaveHeading(node.taskId, title)
+        }
+        const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(onSaveHeading ? { memo } : { title, memo }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(typeof data?.error?.message === "string" ? data.error.message : "メモの保存に失敗しました")
+        }
+      }
+
+      if (saveVersionRef.current === version) {
+        setSaveStatus("saved")
+      }
+    } catch (err) {
+      if (saveVersionRef.current === version) {
+        setSaveStatus("error")
+        setError(err instanceof Error ? err.message : "メモの保存に失敗しました")
+      }
+    }
+  }, [node.taskId, node.title, onSaveDraft, onSaveHeading])
+
+  const handleHeadingChange = useCallback((nextHeading: string) => {
+    setHeading(nextHeading)
+    void saveDraft(nextHeading, detail)
+  }, [detail, saveDraft])
+
+  const handleDetailChange = useCallback((nextDetail: string) => {
+    setDetail(nextDetail)
+    void saveDraft(heading, nextDetail)
+  }, [heading, saveDraft])
+
   const handleTranscribed = useCallback((text: string) => {
-    setDetail(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
-  }, [])
+    setDetail(prev => {
+      const nextDetail = prev.trim() ? `${prev.trim()}\n${text}` : text
+      void saveDraft(heading, nextDetail)
+      return nextDetail
+    })
+  }, [heading, saveDraft])
 
   const {
     isRecording,
@@ -118,69 +166,25 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
         throw new Error(typeof data.error === "string" ? data.error : "見出し生成に失敗しました")
       }
       if (typeof data.heading === "string" && data.heading.trim()) {
-        setHeading(data.heading.trim())
+        handleHeadingChange(data.heading.trim())
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "見出し生成に失敗しました")
     } finally {
       setIsGeneratingHeading(false)
     }
-  }, [detail, heading])
-
-  const normalizedHeading = heading.trim()
-  const hasUnsavedHeading = normalizedHeading.length > 0 && normalizedHeading !== savedHeading.trim()
-
-  const saveHeading = useCallback(async () => {
-    const nextHeading = heading.trim()
-    if (!nextHeading || nextHeading === savedHeading.trim()) return
-
-    setError(null)
-    setIsSavingHeading(true)
-    try {
-      if (onSaveHeading) {
-        await onSaveHeading(node.taskId, nextHeading)
-      } else {
-        const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: nextHeading }),
-        })
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          throw new Error(typeof data?.error?.message === "string" ? data.error.message : "見出しの保存に失敗しました")
-        }
-      }
-      setSavedHeading(nextHeading)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "見出しの保存に失敗しました")
-    } finally {
-      setIsSavingHeading(false)
-    }
-  }, [heading, node.taskId, onSaveHeading, savedHeading])
-
-  const startCodex = useCallback(async () => {
-    const prompt = buildCodexPrompt(heading, detail)
-    if (!prompt) {
-      setError("Codexに渡す内容を入力してください")
-      return
-    }
-
-    setError(null)
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("clipboard unavailable")
-      }
-      await navigator.clipboard.writeText(prompt)
-    } catch {
-      setError("クリップボードへコピーできませんでした。内容をコピーしてからCodexを開いてください。")
-      return
-    }
-
-    window.location.href = CHATGPT_CODEX_APP_URL
-  }, [detail, heading])
+  }, [detail, handleHeadingChange, heading])
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          void saveDraft(heading, detail)
+          onClose()
+        }
+      }}
+    >
       <DialogContent
         ref={contentRef}
         tabIndex={-1}
@@ -191,11 +195,11 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
         className="flex max-h-[92dvh] w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden border-border/70 p-0 xl:!max-w-[1200px]"
       >
         <DialogHeader className="border-b border-border/70 px-6 py-5 text-left">
-          <DialogTitle className="text-xl font-semibold leading-tight">
-            {node.title}
+          <DialogTitle className="max-h-24 overflow-y-auto pr-8 text-xl font-semibold leading-tight">
+            {heading.trim() || node.title}
           </DialogTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            メモ見出しとメモ詳細を整えてからCodexで開始します
+            メモの編集
           </p>
         </DialogHeader>
 
@@ -205,30 +209,14 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
               メモ見出し
             </label>
             <div className="relative">
-              <input
+              <textarea
                 id="codex-memo-heading"
                 value={heading}
-                onChange={(event) => setHeading(event.target.value)}
-                className="h-12 w-full rounded-lg border border-border/70 bg-background px-3 pr-24 text-base outline-none focus:border-primary"
+                rows={2}
+                onChange={(event) => handleHeadingChange(event.target.value)}
+                className="max-h-28 min-h-12 w-full resize-none overflow-y-auto rounded-lg border border-border/70 bg-background px-3 py-3 text-base leading-relaxed outline-none focus:border-primary"
                 placeholder="メモ見出し"
               />
-              {hasUnsavedHeading ? (
-                <button
-                  type="button"
-                  onClick={saveHeading}
-                  disabled={isSavingHeading}
-                  className="absolute right-2 top-1/2 inline-flex h-8 -translate-y-1/2 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
-                  aria-label="メモ見出しを保存"
-                  title="メモ見出しを保存"
-                >
-                  {isSavingHeading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  保存
-                </button>
-              ) : null}
             </div>
           </div>
 
@@ -236,6 +224,9 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm text-muted-foreground">メモ詳細</span>
               <div className="flex shrink-0 items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground" aria-live="polite">
+                  {saveStatus === "saving" ? "保存中" : saveStatus === "error" ? "保存失敗" : "保存済み"}
+                </span>
                 <button
                   type="button"
                   onClick={toggleVoiceInput}
@@ -272,19 +263,22 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
             </div>
             <textarea
               value={detail}
-              onChange={(event) => setDetail(event.target.value)}
+              onChange={(event) => handleDetailChange(event.target.value)}
               className="min-h-[44dvh] w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary"
-              placeholder="Codexに渡したい背景、条件、成果物を書いてください"
+              placeholder="メモの詳細を書いてください"
             />
           </div>
 
           <button
             type="button"
-            onClick={startCodex}
+            onClick={() => {
+              void saveDraft(heading, detail)
+              onClose()
+            }}
             className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-base font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
           >
-            <ExternalLink className="h-5 w-5" />
-            Codexで開始
+            {saveStatus === "saving" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
+            保存して閉じる
           </button>
 
           {(error || voiceError) && (
