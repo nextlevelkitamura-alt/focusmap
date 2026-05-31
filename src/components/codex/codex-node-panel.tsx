@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -43,6 +43,7 @@ function buildCodexPrompt(heading: string, detail: string): string {
 }
 
 export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNodePanelProps) {
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const [heading, setHeading] = useState(node.title)
   const [savedHeading, setSavedHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
@@ -59,6 +60,26 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
     setIsGeneratingHeading(false)
     setIsSavingHeading(false)
   }, [open, node.title, node.memo])
+
+  const moveFocusToPanel = useCallback(() => {
+    const active = document.activeElement
+    if (
+      active instanceof HTMLElement &&
+      (active.matches("input, textarea, select") || active.isContentEditable)
+    ) {
+      active.blur()
+    }
+    contentRef.current?.focus({ preventScroll: true })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const firstFrame = window.requestAnimationFrame(() => {
+      moveFocusToPanel()
+      window.requestAnimationFrame(moveFocusToPanel)
+    })
+    return () => window.cancelAnimationFrame(firstFrame)
+  }, [moveFocusToPanel, open])
 
   const handleTranscribed = useCallback((text: string) => {
     setDetail(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
@@ -161,7 +182,12 @@ export function CodexNodePanel({ open, node, onClose, onSaveHeading }: CodexNode
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
       <DialogContent
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        ref={contentRef}
+        tabIndex={-1}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          window.requestAnimationFrame(moveFocusToPanel)
+        }}
         className="flex max-h-[92dvh] w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden border-border/70 p-0 xl:!max-w-[1200px]"
       >
         <DialogHeader className="border-b border-border/70 px-6 py-5 text-left">
