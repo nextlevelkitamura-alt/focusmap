@@ -2578,7 +2578,14 @@ export function CustomMindMapView({
         await runKeyboardAction(async () => {
             const node = activeAccessoryNode;
             if (!node || node.kind !== "task") return;
-            const fallbackNodeId = node.parentId ?? "project-root";
+            const siblingNodes = positionedNodes
+                .filter(candidate => candidate.kind === "task" && candidate.parentId === node.parentId)
+                .sort((a, b) => a.y - b.y || a.x - b.x);
+            const siblingIndex = siblingNodes.findIndex(candidate => candidate.id === node.id);
+            const fallbackNodeId = siblingNodes[siblingIndex + 1]?.id
+                ?? siblingNodes[siblingIndex - 1]?.id
+                ?? node.parentId
+                ?? "project-root";
             const fallbackNode = nodeById.get(fallbackNodeId);
             ignoreNextFloatingBlurRef.current = true;
             try {
@@ -2598,7 +2605,7 @@ export function CustomMindMapView({
                 });
             }
         });
-    }, [activeAccessoryNode, finishFloatingComposition, nodeById, onDeleteNode, prepareMobileTextFocus, rawTaskTitleById, runKeyboardAction, startFloatingEdit]);
+    }, [activeAccessoryNode, finishFloatingComposition, nodeById, onDeleteNode, positionedNodes, prepareMobileTextFocus, rawTaskTitleById, runKeyboardAction, startFloatingEdit]);
 
     const handleAccessoryDismiss = useCallback(() => {
         if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {

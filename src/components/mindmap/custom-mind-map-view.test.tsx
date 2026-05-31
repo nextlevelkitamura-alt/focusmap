@@ -964,17 +964,53 @@ describe("CustomMindMapView keyboard operations", () => {
     })
   })
 
+  test("keeps mobile edit controls on the adjacent root after deleting a root node", async () => {
+    installOpenKeyboardViewport()
+    const onDeleteNode = vi.fn()
+    const rootTask = makeTask({ id: "root-1", title: "Root task", order_index: 0 })
+    const nextRootTask = makeTask({ id: "root-2", title: "Next root", order_index: 1 })
+
+    render(
+      <CustomMindMapView
+        project={project}
+        groups={[rootTask, nextRootTask]}
+        tasks={[]}
+        isMobile
+        collapsedTaskIds={new Set<string>()}
+        pendingEditNodeId="root-1"
+        selectedNodeId="root-1"
+        selectedNodeIds={new Set(["root-1"])}
+        onSelectNode={vi.fn()}
+        onSelectNodes={vi.fn()}
+        onToggleCollapse={vi.fn()}
+        onDeleteNode={onDeleteNode}
+      />
+    )
+
+    await screen.findByDisplayValue("Root task")
+    fireEvent.click(await screen.findByRole("button", { name: "ノード削除" }))
+
+    await waitFor(() => expect(onDeleteNode).toHaveBeenCalledWith("root-1"))
+    await waitFor(() => {
+      const input = screen.getByLabelText("ノード名")
+      expect(input).toHaveValue("Next root")
+      expect(input).toHaveFocus()
+    })
+    expect(screen.queryByLabelText("プロジェクト名")).not.toBeInTheDocument()
+  })
+
   test("deletes a mobile node with children without a confirmation dialog", async () => {
     installOpenKeyboardViewport()
     const confirmSpy = vi.spyOn(window, "confirm")
     const onDeleteGroup = vi.fn()
-    const rootTask = makeTask({ id: "root-1", title: "Root task" })
+    const rootTask = makeTask({ id: "root-1", title: "Root task", order_index: 0 })
+    const nextRootTask = makeTask({ id: "root-2", title: "Next root", order_index: 1 })
     const childTask = makeTask({ id: "child-1", title: "Child task", parent_task_id: "root-1" })
 
     render(
       <MobileMindMap
         project={project}
-        groups={[rootTask]}
+        groups={[rootTask, nextRootTask]}
         tasks={[childTask]}
         focusEditNodeId="root-1"
         onDeleteGroup={onDeleteGroup}
@@ -986,7 +1022,11 @@ describe("CustomMindMapView keyboard operations", () => {
 
     await waitFor(() => expect(onDeleteGroup).toHaveBeenCalledWith("root-1"))
     expect(confirmSpy).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.getByLabelText("プロジェクト名")).toHaveFocus())
+    await waitFor(() => {
+      const input = screen.getByLabelText("ノード名")
+      expect(input).toHaveValue("Next root")
+      expect(input).toHaveFocus()
+    })
   })
 
   test("edits the project title on mobile and adds a root node from the keyboard accessory", async () => {

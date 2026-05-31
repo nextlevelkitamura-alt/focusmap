@@ -195,6 +195,23 @@ export function MobileMindMap({
         return current?.id ?? taskId
     }, [taskMap])
 
+    const calculateDeleteFocus = useCallback((taskId: string): string => {
+        const task = taskMap.get(taskId)
+        if (!task) return "project-root"
+
+        if (!task.parent_task_id) {
+            const roots = [...groups].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+            const index = roots.findIndex(root => root.id === taskId)
+            return roots[index + 1]?.id ?? roots[index - 1]?.id ?? "project-root"
+        }
+
+        const siblings = tasks
+            .filter(candidate => candidate.parent_task_id === task.parent_task_id)
+            .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+        const index = siblings.findIndex(sibling => sibling.id === taskId)
+        return siblings[index + 1]?.id ?? siblings[index - 1]?.id ?? task.parent_task_id
+    }, [groups, taskMap, tasks])
+
     const handleAddRootNode = useCallback(async () => {
         if (!onCreateGroup) return
         const newTask = await onCreateGroup("")
@@ -254,9 +271,7 @@ export function MobileMindMap({
         const task = taskMap.get(taskId)
         if (!task) return
 
-        const fallbackFocusId = task.parent_task_id && taskMap.has(task.parent_task_id)
-            ? task.parent_task_id
-            : "project-root"
+        const fallbackFocusId = calculateDeleteFocus(taskId)
         if (!task.parent_task_id) {
             await onDeleteGroup?.(taskId)
         } else {
@@ -270,7 +285,7 @@ export function MobileMindMap({
         } else {
             selectSingleTask(fallbackFocusId)
         }
-    }, [onDeleteGroup, onDeleteTask, selectSingleTask, taskMap])
+    }, [calculateDeleteFocus, onDeleteGroup, onDeleteTask, selectSingleTask, taskMap])
 
     const handleSaveTitle = useCallback(async (taskId: string, title: string) => {
         const trimmed = title.trim()

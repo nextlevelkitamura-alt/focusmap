@@ -1888,10 +1888,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             if (!confirmed) return;
         }
 
-        const task = getTaskById(taskId);
-        const nextFocusId = isNarrow
-            ? (task?.parent_task_id && getTaskById(task.parent_task_id) ? task.parent_task_id : 'project-root')
-            : calculateNextFocus(taskId);
+        const nextFocusId = calculateNextFocus(taskId);
         // 削除をバックグラウンドで実行（await しない → フォーカス移動が即座に行われる）
         onDeleteTask(taskId);
         applySelection(nextFocusId ? new Set([nextFocusId]) : new Set(), nextFocusId, 'user');
@@ -1901,7 +1898,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             }
             focusNodeWithPollingV2(nextFocusId, 300, false);
         }
-    }, [hasChildren, getTaskById, isNarrow, calculateNextFocus, onDeleteTask, applySelection, focusNodeWithPollingV2]);
+    }, [hasChildren, isNarrow, calculateNextFocus, onDeleteTask, applySelection, focusNodeWithPollingV2]);
 
     // Navigation helpers for arrow keys（ルートタスク対応）
     const navigateToSibling = useCallback((taskId: string, direction: 'up' | 'down'): string | null => {
