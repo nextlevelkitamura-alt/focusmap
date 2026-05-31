@@ -260,6 +260,7 @@ function CustomTaskNode({
     onEditingChange,
     onRegisterEditController,
     onRequestEdit,
+    onPreviewTitleChange,
 }: {
     node: MindMapModelNode;
     selected: boolean;
@@ -292,6 +293,7 @@ function CustomTaskNode({
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
+    onPreviewTitleChange?: (taskId: string, title: string | null) => void;
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -372,10 +374,11 @@ function CustomTaskNode({
 
     const commitCurrentTitle = useCallback((options: { sync?: boolean; closeEditor?: boolean } = {}) => {
         const nextTitle = editValue.trim() || "Task";
-        const shouldSave = nextTitle !== node.title && nextTitle !== lastCommittedTitleRef.current;
+        const shouldSave = nextTitle !== lastCommittedTitleRef.current;
         const commitState = () => {
             lastCommittedTitleRef.current = nextTitle;
             setEditValue(nextTitle);
+            onPreviewTitleChange?.(node.id, nextTitle);
             if (options.closeEditor) setIsEditing(false);
         };
 
@@ -383,7 +386,7 @@ function CustomTaskNode({
         else commitState();
 
         return { nextTitle, shouldSave };
-    }, [editValue, node.title]);
+    }, [editValue, node.id, onPreviewTitleChange]);
 
     const saveCommittedTitle = useCallback((nextTitle: string, shouldSave: boolean) => {
         if (!shouldSave) return undefined;
@@ -435,12 +438,13 @@ function CustomTaskNode({
     const cancelEditing = useCallback(() => {
         isFinishingEditRef.current = true;
         setEditValue(initialEditValue ?? node.title);
+        onPreviewTitleChange?.(node.id, null);
         setIsEditing(false);
         requestAnimationFrame(() => wrapperRef.current?.focus());
         setTimeout(() => {
             isFinishingEditRef.current = false;
         }, 0);
-    }, [initialEditValue, node.title]);
+    }, [initialEditValue, node.id, node.title, onPreviewTitleChange]);
 
     const beginEditing = useCallback((value?: string) => {
         const shouldSelectAll = value == null;
@@ -711,12 +715,13 @@ function CustomTaskNode({
                         value={editValue}
                         className={cn(
                             "min-w-0 flex-1 resize-none overflow-hidden bg-transparent px-0.5 font-bold leading-tight outline-none",
-                            "whitespace-pre",
+                            "whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
                             node.isDone && "line-through text-muted-foreground"
                         )}
-                        wrap="off"
                         onChange={(event) => {
-                            setEditValue(event.currentTarget.value);
+                            const nextValue = event.currentTarget.value;
+                            setEditValue(nextValue);
+                            onPreviewTitleChange?.(node.id, nextValue);
                             event.currentTarget.style.height = "auto";
                             event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`;
                         }}
@@ -726,7 +731,7 @@ function CustomTaskNode({
                     />
                 ) : (
                     <div className={cn(
-                        "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-pre px-0.5 font-bold leading-tight",
+                        "min-w-0 flex-1 whitespace-pre-wrap break-words px-0.5 font-bold leading-tight [overflow-wrap:anywhere]",
                         node.isDone && "line-through text-muted-foreground",
                         floatingEditing && "opacity-0"
                     )}>
@@ -1271,6 +1276,7 @@ export function CustomMindMapView({
     const [spacePressed, setSpacePressed] = useState(false);
     const [nodeWidthOverrides, setNodeWidthOverrides] = useState<Record<string, number>>({});
     const [optimisticStatusByTaskId, setOptimisticStatusByTaskId] = useState<Record<string, string>>({});
+    const [titlePreviewByTaskId, setTitlePreviewByTaskId] = useState<Record<string, string>>({});
     const [hiddenDoneTaskIds, setHiddenDoneTaskIds] = useState<Set<string>>(new Set());
     const [undoableDoneNodes, setUndoableDoneNodes] = useState<UndoableDoneNode[]>([]);
     const [activeEditingNodeId, setActiveEditingNodeId] = useState<string | null>(null);
@@ -1336,19 +1342,31 @@ export function CustomMindMapView({
         () => groups.map(task => {
             const width = nodeWidthOverrides[task.id];
             const status = optimisticStatusByTaskId[task.id];
-            if (width == null && status == null) return task;
-            return { ...task, node_width: width ?? task.node_width, status: status ?? task.status };
+            const previewTitle = titlePreviewByTaskId[task.id];
+            if (width == null && status == null && previewTitle == null) return task;
+            return {
+                ...task,
+                title: previewTitle ?? task.title,
+                node_width: width ?? task.node_width,
+                status: status ?? task.status,
+            };
         }).filter(task => !activeHiddenDoneTaskIds.has(task.id)),
-        [activeHiddenDoneTaskIds, groups, nodeWidthOverrides, optimisticStatusByTaskId]
+        [activeHiddenDoneTaskIds, groups, nodeWidthOverrides, optimisticStatusByTaskId, titlePreviewByTaskId]
     );
     const tasksForModel = useMemo(
         () => tasks.map(task => {
             const width = nodeWidthOverrides[task.id];
             const status = optimisticStatusByTaskId[task.id];
-            if (width == null && status == null) return task;
-            return { ...task, node_width: width ?? task.node_width, status: status ?? task.status };
+            const previewTitle = titlePreviewByTaskId[task.id];
+            if (width == null && status == null && previewTitle == null) return task;
+            return {
+                ...task,
+                title: previewTitle ?? task.title,
+                node_width: width ?? task.node_width,
+                status: status ?? task.status,
+            };
         }).filter(task => !activeHiddenDoneTaskIds.has(task.id)),
-        [activeHiddenDoneTaskIds, nodeWidthOverrides, optimisticStatusByTaskId, tasks]
+        [activeHiddenDoneTaskIds, nodeWidthOverrides, optimisticStatusByTaskId, tasks, titlePreviewByTaskId]
     );
     const model = useMemo(
         () => buildMindMapModel({ project, groups: groupsForModel, tasks: tasksForModel, collapsedTaskIds, isMobile }),
@@ -1366,6 +1384,33 @@ export function CustomMindMapView({
     );
     const nodeById = useMemo(() => new Map(positionedNodes.map(node => [node.id, node])), [positionedNodes]);
     const rawTaskTitleById = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task.title ?? ""])), [groups, tasks]);
+
+    const handlePreviewTitleChange = useCallback((taskId: string, title: string | null) => {
+        setTitlePreviewByTaskId(prev => {
+            if (title == null) {
+                if (!(taskId in prev)) return prev;
+                const next = { ...prev };
+                delete next[taskId];
+                return next;
+            }
+            return prev[taskId] === title ? prev : { ...prev, [taskId]: title };
+        });
+    }, []);
+
+    useEffect(() => {
+        setTitlePreviewByTaskId(prev => {
+            let changed = false;
+            const next = { ...prev };
+            for (const [taskId, previewTitle] of Object.entries(prev)) {
+                if (!allTaskTitleById.has(taskId) || allTaskTitleById.get(taskId) === previewTitle) {
+                    delete next[taskId];
+                    changed = true;
+                }
+            }
+            return changed ? next : prev;
+        });
+    }, [allTaskTitleById]);
+
     const floatingEditNode = floatingEditNodeId ? nodeById.get(floatingEditNodeId) ?? null : null;
     const floatingEditKind = floatingEditNode?.kind ?? null;
     const floatingEditStageStyle = floatingEditNode
@@ -1677,9 +1722,11 @@ export function CustomMindMapView({
     const updateFloatingEditValue = useCallback((nextValue: string) => {
         floatingEditValueRef.current = nextValue;
         setFloatingEditValue(nextValue);
+        const node = floatingEditNodeId ? nodeById.get(floatingEditNodeId) : null;
+        if (node?.kind === "task") handlePreviewTitleChange(node.id, nextValue);
         const input = floatingTextareaRef.current;
         if (input) syncFloatingTextareaHeight(input);
-    }, [syncFloatingTextareaHeight]);
+    }, [floatingEditNodeId, handlePreviewTitleChange, nodeById, syncFloatingTextareaHeight]);
 
     const resolveFloatingComposition = useCallback(() => {
         floatingCompositionActiveRef.current = false;
@@ -1709,6 +1756,7 @@ export function CustomMindMapView({
         const nextValue = initialValue ?? (node.kind === "project" ? node.title : rawTaskTitleById.get(node.id) ?? node.title);
         floatingEditValueRef.current = nextValue;
         setFloatingEditValue(nextValue);
+        if (node.kind === "task") handlePreviewTitleChange(node.id, nextValue);
         floatingSelectAllOnFocusRef.current = options.selectAll ?? true;
         if (keyboardAnchorRef.current) keyboardAnchorRef.current.value = "";
         setMobileKeyboardAccessoryPinned(true);
@@ -1719,7 +1767,7 @@ export function CustomMindMapView({
             focusFloatingTextarea(floatingSelectAllOnFocusRef.current);
         }
         return true;
-    }, [floatingEditNodeId, focusFloatingTextarea, isMobile, nodeById, rawTaskTitleById]);
+    }, [floatingEditNodeId, focusFloatingTextarea, handlePreviewTitleChange, isMobile, nodeById, rawTaskTitleById]);
 
     useLayoutEffect(() => {
         if (!isMobile) return;
@@ -1764,8 +1812,10 @@ export function CustomMindMapView({
 
         if (node.kind === "project") {
             if (nextTitle !== node.title) saveAction = onSaveProjectTitle?.(nextTitle);
-        } else if (nextTitle !== node.title) {
-            saveAction = onSaveTitle?.(node.id, nextTitle);
+        } else {
+            handlePreviewTitleChange(node.id, nextTitle);
+            const savedTitle = rawTaskTitleById.get(node.id) ?? node.title;
+            if (nextTitle !== savedTitle) saveAction = onSaveTitle?.(node.id, nextTitle);
         }
 
         if (saveAction && options.waitForSave === false) {
@@ -1786,7 +1836,12 @@ export function CustomMindMapView({
             setActiveEditingNodeId(prev => prev === node.id ? null : prev);
             setMobileKeyboardAccessoryPinned(false);
         }
-    }, [floatingEditNodeId, nodeById, onSaveProjectTitle, onSaveTitle]);
+    }, [floatingEditNodeId, handlePreviewTitleChange, nodeById, onSaveProjectTitle, onSaveTitle, rawTaskTitleById]);
+
+    const clearFloatingTaskPreview = useCallback(() => {
+        const node = floatingEditNodeId ? nodeById.get(floatingEditNodeId) : null;
+        if (node?.kind === "task") handlePreviewTitleChange(node.id, null);
+    }, [floatingEditNodeId, handlePreviewTitleChange, nodeById]);
 
     const handleFloatingEditBlur = useCallback((event: React.FocusEvent<HTMLTextAreaElement>) => {
         if (ignoreNextFloatingBlurRef.current) return;
@@ -1874,11 +1929,12 @@ export function CustomMindMapView({
         }
         if (event.key === "Escape") {
             event.preventDefault();
+            clearFloatingTaskPreview();
             setFloatingEditNodeId(null);
             setActiveEditingNodeId(null);
             setMobileKeyboardAccessoryPinned(false);
         }
-    }, [commitFloatingEdit, floatingEditNodeId]);
+    }, [clearFloatingTaskPreview, commitFloatingEdit, floatingEditNodeId]);
 
     const dismissFloatingEdit = useCallback(() => {
         if (floatingEditNodeId) {
@@ -2667,11 +2723,12 @@ export function CustomMindMapView({
 
         if (event.key === "Escape") {
             event.preventDefault();
+            clearFloatingTaskPreview();
             setFloatingEditNodeId(null);
             setActiveEditingNodeId(null);
             setMobileKeyboardAccessoryPinned(false);
         }
-    }, [commitFloatingEdit, finishFloatingComposition, floatingEditNode, handleCreateChildNode, handleCreateRootNode, onPromoteNode]);
+    }, [clearFloatingTaskPreview, commitFloatingEdit, finishFloatingComposition, floatingEditNode, handleCreateChildNode, handleCreateRootNode, onPromoteNode]);
 
     const handleAccessoryAddChild = useCallback(async () => {
         await runKeyboardAction(async () => {
@@ -2738,10 +2795,11 @@ export function CustomMindMapView({
         if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
             document.activeElement.blur();
         }
+        clearFloatingTaskPreview();
         setActiveEditingNodeId(null);
         setFloatingEditNodeId(null);
         setMobileKeyboardAccessoryPinned(false);
-    }, []);
+    }, [clearFloatingTaskPreview]);
 
     const selectionRect = selectionBox
         ? {
@@ -2907,6 +2965,7 @@ export function CustomMindMapView({
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
                                 onRequestEdit={startFloatingEdit}
+                                onPreviewTitleChange={handlePreviewTitleChange}
                             />
                         );
                     })}
@@ -2930,7 +2989,7 @@ export function CustomMindMapView({
                                 aria-label={floatingEditKind === "project" ? "プロジェクト名" : "ノード名"}
                                 value={floatingEditValue}
                                 className={cn(
-                                    "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 font-bold outline-none",
+                                    "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 font-bold outline-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
                                     floatingEditKind === "project"
                                         ? "h-5 min-h-5 text-center text-sm leading-5 text-primary-foreground placeholder:text-primary-foreground/60"
                                         : "h-[18px] min-h-[18px] px-0.5 text-[13px] leading-[18px] text-foreground placeholder:text-muted-foreground"

@@ -91,12 +91,12 @@ describe("buildMindMapModel", () => {
 });
 
 describe("mindmap geometry", () => {
-    test("does not increase node height for a long single line", () => {
-        const oneLine = estimateTaskNodeHeight("誰でもコードが書ける時代", false, 160, false);
+    test("increases node height when a long single line wraps", () => {
+        const oneLine = estimateTaskNodeHeight("されているのはないかなどうするのがいいのかな", false, 160, false);
         const shortLine = estimateTaskNodeHeight("る", false, 160, false);
         const explicitTwoLines = estimateTaskNodeHeight("誰でもコードが\n書ける時代", false, 160, false);
 
-        expect(oneLine).toBe(shortLine);
-        expect(explicitTwoLines).toBeGreaterThan(oneLine);
+        expect(oneLine).toBeGreaterThan(shortLine);
+        expect(explicitTwoLines).toBeGreaterThan(shortLine);
     });
 });

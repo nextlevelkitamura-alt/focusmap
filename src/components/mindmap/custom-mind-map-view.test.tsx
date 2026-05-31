@@ -431,6 +431,31 @@ describe("CustomMindMapView keyboard operations", () => {
     })
   })
 
+  test("previews wrapped node height while typing a long desktop title", async () => {
+    const blankRoot = makeTask({ id: "root-1", title: "" })
+
+    renderMap({
+      groups: [blankRoot],
+      tasks: [],
+      pendingEditNodeId: "root-1",
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+    })
+
+    const input = await screen.findByDisplayValue("")
+    const node = document.querySelector('[data-id="root-1"]')
+    if (!(node instanceof HTMLElement)) throw new Error("root node not rendered")
+    const initialHeight = parseFloat(node.style.minHeight)
+
+    fireEvent.change(input, {
+      target: { value: "されているのはないかなどうするのがいいのかな" },
+    })
+
+    await waitFor(() => {
+      expect(parseFloat(node.style.minHeight)).toBeGreaterThan(initialHeight)
+    })
+  })
+
   test("starts task title editing with a single tap on mobile", async () => {
     renderMap({ isMobile: true })
 

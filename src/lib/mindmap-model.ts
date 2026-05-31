@@ -204,7 +204,7 @@ export function buildMindMapModel({
             task.source === 'memo' ||
             task.source === 'wishlist';
         const nodeWidth = task.node_width ?? estimateTaskNodeWidth(task.title || '', isMobile);
-        const nodeHeight = estimateTaskNodeHeight(task.title || '', hasInfoRow, nodeWidth, isMobile);
+        const nodeHeight = estimateTaskNodeHeight(task.title || '', hasInfoRow, nodeWidth, isMobile, taskHasChildren);
         const parentTask = task.parent_task_id ? rawTaskById.get(task.parent_task_id) : null;
 
         const node: MindMapModelNode = {
