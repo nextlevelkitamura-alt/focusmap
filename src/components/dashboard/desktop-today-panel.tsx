@@ -165,7 +165,7 @@ export function DesktopTodayPanel({
             return
         }
         if (calendarRangeMode === '3days') {
-            moveSelectedDateByDays(3)
+            moveSelectedDateByDays(1)
             return
         }
         goToNextDay()
@@ -176,7 +176,7 @@ export function DesktopTodayPanel({
             return
         }
         if (calendarRangeMode === '3days') {
-            moveSelectedDateByDays(-3)
+            moveSelectedDateByDays(-1)
             return
         }
         goToPrevDay()

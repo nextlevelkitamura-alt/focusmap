@@ -43,6 +43,9 @@ export interface UseTodayViewLogicOptions {
 
 // --- Helper ---
 
+const REMINDER_PREFETCH_DELAY_MS = 250
+const REMINDER_PREFETCH_MAX_EVENTS = 12
+
 export function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
     const completedDates = new Set(completions.map(c => c.completed_date))
     const dots: boolean[] = []
@@ -90,7 +93,12 @@ export function useTodayViewLogic({
     const stableCalendarColorMapRef = useRef<Map<string, string>>(new Map())
     const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null)
     const [prefetchedEventReminders, setPrefetchedEventReminders] = useState<Record<string, number[]>>({})
+    const prefetchedEventRemindersRef = useRef(prefetchedEventReminders)
     const reminderPrefetchInFlightRef = useRef<Set<string>>(new Set())
+
+    useEffect(() => {
+        prefetchedEventRemindersRef.current = prefetchedEventReminders
+    }, [prefetchedEventReminders])
 
     // Sync local tasks with prop changes (allTasks のみに依存)
     useEffect(() => {
@@ -848,63 +856,83 @@ export function useTodayViewLogic({
         setIsEditModalOpen(true)
     }, [prefetchedEventReminders, eventByGoogleKey])
 
-    // Background prefetch reminders for Google events
+    // Background prefetch only the nearby events. Fetching details for every
+    // event in the month window can saturate the browser during fast navigation.
     useEffect(() => {
-        const now = new Date()
-        now.setHours(0, 0, 0, 0)
-        const priorityMin = new Date(now)
+        const priorityMin = new Date(selectedDate)
+        priorityMin.setHours(0, 0, 0, 0)
         priorityMin.setDate(priorityMin.getDate() - 1)
-        const priorityMax = new Date(now)
-        priorityMax.setDate(priorityMax.getDate() + 2)
+        const priorityMax = new Date(selectedDate)
+        priorityMax.setHours(0, 0, 0, 0)
+        priorityMax.setDate(priorityMax.getDate() + 4)
 
-        const candidates = allFetchedEvents.filter(event => event.google_event_id && event.calendar_id)
+        const candidates = allFetchedEvents.filter(event => {
+            if (!event.google_event_id || !event.calendar_id) return false
+            const start = new Date(event.start_time)
+            return start >= priorityMin && start < priorityMax
+        })
         if (candidates.length === 0) return
 
-        const sortedCandidates = [...candidates].sort((a, b) => {
-            const aStart = new Date(a.start_time)
-            const bStart = new Date(b.start_time)
-            const aPriority = aStart >= priorityMin && aStart < priorityMax ? 0 : 1
-            const bPriority = bStart >= priorityMin && bStart < priorityMax ? 0 : 1
-            if (aPriority !== bPriority) return aPriority - bPriority
-            return aStart.getTime() - bStart.getTime()
-        })
+        const sortedCandidates = [...candidates]
+            .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+            .slice(0, REMINDER_PREFETCH_MAX_EVENTS)
 
-        sortedCandidates.forEach((event) => {
-            const key = reminderKeyForEvent(event)
-            if (event.reminders !== undefined || prefetchedEventReminders[key]) return
-            if (reminderPrefetchInFlightRef.current.has(key)) return
+        const controller = new AbortController()
+        const timeout = setTimeout(() => {
+            void (async () => {
+                for (const event of sortedCandidates) {
+                    if (controller.signal.aborted) break
+                    const key = reminderKeyForEvent(event)
+                    if (event.reminders !== undefined || prefetchedEventRemindersRef.current[key]) continue
+                    if (reminderPrefetchInFlightRef.current.has(key)) continue
 
-            reminderPrefetchInFlightRef.current.add(key)
-            fetch(`/api/calendar/events/${event.id}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`)
-                .then(async (res) => {
-                    if (!res.ok) return null
-                    const data = await res.json()
-                    return Array.isArray(data.reminders) ? data.reminders as number[] : null
-                })
-                .then((reminders) => {
-                    if (!reminders) return
-                    setPrefetchedEventReminders(prev => {
-                        if (prev[key]) return prev
-                        return { ...prev, [key]: reminders }
-                    })
-                    setLocalCalendarEvents(prev => prev.map(e =>
-                        e.google_event_id === event.google_event_id && e.calendar_id === event.calendar_id
-                            ? { ...e, reminders }
-                            : e
-                    ))
-                })
-                .catch((err) => {
-                    console.warn('[useTodayViewLogic] Failed to prefetch reminders:', err)
-                    setPrefetchedEventReminders(prev => {
-                        if (prev[key] !== undefined) return prev
-                        return { ...prev, [key]: [] }
-                    })
-                })
-                .finally(() => {
-                    reminderPrefetchInFlightRef.current.delete(key)
-                })
-        })
-    }, [allFetchedEvents, prefetchedEventReminders, reminderKeyForEvent])
+                    reminderPrefetchInFlightRef.current.add(key)
+                    try {
+                        const res = await fetch(
+                            `/api/calendar/events/${event.id}?googleEventId=${encodeURIComponent(event.google_event_id)}&calendarId=${encodeURIComponent(event.calendar_id)}`,
+                            { signal: controller.signal },
+                        )
+                        if (!res.ok) continue
+                        const data = await res.json()
+                        const reminders = Array.isArray(data.reminders) ? data.reminders as number[] : null
+                        if (!reminders) continue
+
+                        prefetchedEventRemindersRef.current = {
+                            ...prefetchedEventRemindersRef.current,
+                            [key]: reminders,
+                        }
+                        setPrefetchedEventReminders(prev => {
+                            if (prev[key]) return prev
+                            return { ...prev, [key]: reminders }
+                        })
+                        setLocalCalendarEvents(prev => prev.map(e =>
+                            e.google_event_id === event.google_event_id && e.calendar_id === event.calendar_id
+                                ? { ...e, reminders }
+                                : e
+                        ))
+                    } catch (err) {
+                        if ((err as Error).name === 'AbortError') return
+                        console.warn('[useTodayViewLogic] Failed to prefetch reminders:', err)
+                        prefetchedEventRemindersRef.current = {
+                            ...prefetchedEventRemindersRef.current,
+                            [key]: [],
+                        }
+                        setPrefetchedEventReminders(prev => {
+                            if (prev[key] !== undefined) return prev
+                            return { ...prev, [key]: [] }
+                        })
+                    } finally {
+                        reminderPrefetchInFlightRef.current.delete(key)
+                    }
+                }
+            })()
+        }, REMINDER_PREFETCH_DELAY_MS)
+
+        return () => {
+            clearTimeout(timeout)
+            controller.abort()
+        }
+    }, [allFetchedEvents, reminderKeyForEvent, selectedDate])
 
     const handleCloseEditModal = useCallback(() => {
         setIsEditModalOpen(false)

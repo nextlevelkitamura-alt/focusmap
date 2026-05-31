@@ -80,7 +80,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             return
         }
         if (calendarRangeMode === '3days') {
-            moveSelectedDateByDays(3)
+            moveSelectedDateByDays(1)
             return
         }
         logic.goToNextDay()
@@ -91,7 +91,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             return
         }
         if (calendarRangeMode === '3days') {
-            moveSelectedDateByDays(-3)
+            moveSelectedDateByDays(-1)
             return
         }
         logic.goToPrevDay()

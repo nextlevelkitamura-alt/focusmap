@@ -12,10 +12,13 @@ interface UseTrackpadNavigationOptions {
     enabled?: boolean
 }
 
+const TAIL_LOCK_DELTA_RATIO = 0.34
+const TINY_TAIL_TRACK_MS = 160
+
 /**
  * Detects 2-finger horizontal trackpad swipes for date navigation.
  * - Horizontal swipe (deltaX dominant): triggers date navigation
- * - One continuous horizontal wheel gesture triggers at most once
+ * - One scroll burst advances one day/period, then accepts the next burst quickly
  * - Vertical scroll (deltaY dominant): ignored (allows timeline scrolling)
  * - Ctrl+scroll (pinch zoom): ignored
  */
@@ -23,13 +26,15 @@ export function useTrackpadNavigation({
     containerRef,
     onNavigateLeft,
     onNavigateRight,
-    threshold = 80,
-    debounceMs = 160,
-    gestureIdleMs = 160,
+    threshold = 48,
+    debounceMs = 70,
+    gestureIdleMs = 70,
     enabled = true,
 }: UseTrackpadNavigationOptions) {
     const accumulatedDeltaX = useRef(0)
+    const activeDirection = useRef<1 | -1 | 0>(0)
     const lastTriggerTime = useRef(Number.NEGATIVE_INFINITY)
+    const lastWheelTime = useRef(Number.NEGATIVE_INFINITY)
     const hasTriggeredInGesture = useRef(false)
     const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -47,25 +52,66 @@ export function useTrackpadNavigation({
             const absY = Math.abs(e.deltaY)
             if (absX <= absY) return // vertical scroll dominant — let it scroll the timeline
 
-            // Skip tiny movements
-            if (absX < 3) return
+            const now = Date.now()
+            const direction: 1 | -1 = e.deltaX > 0 ? 1 : -1
+            const gapSinceWheel = now - lastWheelTime.current
+            const isDirectionChange = activeDirection.current !== 0 && activeDirection.current !== direction
+            const isNewGestureAfterIdle = gapSinceWheel >= gestureIdleMs || isDirectionChange
+            const cooldownElapsed = now - lastTriggerTime.current >= debounceMs
+            const tailLockDelta = Math.max(16, threshold * TAIL_LOCK_DELTA_RATIO)
 
-            // Reset only after horizontal momentum has fully stopped. While a
-            // gesture is active, never allow a second date navigation.
-            if (resetTimer.current) clearTimeout(resetTimer.current)
-            resetTimer.current = setTimeout(() => {
+            const rememberWheelActivity = () => {
+                lastWheelTime.current = now
+                if (resetTimer.current) clearTimeout(resetTimer.current)
+                resetTimer.current = setTimeout(() => {
+                    accumulatedDeltaX.current = 0
+                    hasTriggeredInGesture.current = false
+                    activeDirection.current = 0
+                }, gestureIdleMs)
+            }
+
+            // Tiny horizontal tail still belongs to the same physical scroll.
+            // Track it while locked so one long scroll cannot split into days.
+            if (absX < 5) {
+                if (hasTriggeredInGesture.current) {
+                    e.preventDefault()
+                    if (now - lastTriggerTime.current <= TINY_TAIL_TRACK_MS) {
+                        rememberWheelActivity()
+                    }
+                }
+                return
+            }
+
+            e.preventDefault()
+
+            if (isNewGestureAfterIdle) {
                 accumulatedDeltaX.current = 0
                 hasTriggeredInGesture.current = false
-            }, gestureIdleMs)
+                activeDirection.current = direction
+            }
 
-            if (hasTriggeredInGesture.current) return
+            if (hasTriggeredInGesture.current) {
+                const shouldExtendLock =
+                    absX >= tailLockDelta ||
+                    now - lastTriggerTime.current <= TINY_TAIL_TRACK_MS
+                if (shouldExtendLock) rememberWheelActivity()
+                return
+            }
 
-            // Check debounce
-            const now = Date.now()
-            if (now - lastTriggerTime.current < debounceMs) return
+            rememberWheelActivity()
+
+            if (!cooldownElapsed) return
+
+            if (
+                accumulatedDeltaX.current !== 0 &&
+                Math.sign(accumulatedDeltaX.current) !== Math.sign(e.deltaX)
+            ) {
+                accumulatedDeltaX.current = 0
+            }
 
             // Accumulate horizontal delta
             accumulatedDeltaX.current += e.deltaX
+            activeDirection.current = direction
 
             // Check if accumulated delta exceeds threshold
             if (Math.abs(accumulatedDeltaX.current) >= threshold) {
@@ -80,7 +126,7 @@ export function useTrackpadNavigation({
             }
         }
 
-        container.addEventListener('wheel', handleWheel, { passive: true })
+        container.addEventListener('wheel', handleWheel, { passive: false })
 
         return () => {
             container.removeEventListener('wheel', handleWheel)
