@@ -35,6 +35,7 @@ describe('calculateTodayTimelineLayout', () => {
     expect(result.find(entry => entry.id === 'morning')?.column).toBe(1)
     expect(result.find(entry => entry.id === 'afternoon')?.column).toBe(1)
     expect(result.find(entry => entry.id === 'late')?.column).toBe(1)
+    expect(result.map(entry => entry.columnSpan)).toEqual([1, 1, 1, 1])
   })
 
   test('assigns separate columns to events starting at the same time', () => {
@@ -46,6 +47,7 @@ describe('calculateTodayTimelineLayout', () => {
 
     expect(result.map(entry => entry.totalColumns)).toEqual([3, 3, 3])
     expect(new Set(result.map(entry => entry.column))).toEqual(new Set([0, 1, 2]))
+    expect(result.map(entry => entry.columnSpan)).toEqual([1, 1, 1])
   })
 
   test('uses the same width for transitively overlapping chains', () => {
@@ -59,6 +61,7 @@ describe('calculateTodayTimelineLayout', () => {
     expect(result.find(entry => entry.id === 'a')?.column).toBe(0)
     expect(result.find(entry => entry.id === 'b')?.column).toBe(1)
     expect(result.find(entry => entry.id === 'c')?.column).toBe(0)
+    expect(result.map(entry => entry.columnSpan)).toEqual([1, 1, 1])
   })
 
   test('does not group events that only touch at their boundary', () => {
@@ -69,5 +72,21 @@ describe('calculateTodayTimelineLayout', () => {
 
     expect(result.map(entry => entry.totalColumns)).toEqual([1, 1])
     expect(result.map(entry => entry.column)).toEqual([0, 0])
+    expect(result.map(entry => entry.columnSpan)).toEqual([1, 1])
+  })
+
+  test('expands later events into columns freed by earlier overlaps', () => {
+    const result = layout([
+      item('long', '11:00', '17:00'),
+      item('early-a', '11:00', '12:00'),
+      item('early-b', '11:00', '12:00'),
+      item('early-c', '11:00', '12:00'),
+      item('afternoon', '13:00', '14:00'),
+    ])
+
+    const afternoon = result.find(entry => entry.id === 'afternoon')
+    expect(result.map(entry => entry.totalColumns)).toEqual([4, 4, 4, 4, 4])
+    expect(afternoon?.column).toBe(1)
+    expect(afternoon?.columnSpan).toBe(3)
   })
 })

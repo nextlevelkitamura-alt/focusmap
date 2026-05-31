@@ -29,6 +29,7 @@ const QUICK_CREATE_DEFAULT_MINUTES = 30
 const TOUCH_LONG_PRESS_MS = 260
 const TOUCH_MOVE_CANCEL_PX = 10
 const DENSE_CLUSTER_COLUMNS = 3
+const SHOW_TIMELINE_CARD_ACTIONS = false
 
 type ScheduledMemoIndexEntry = {
     memoId: string
@@ -1125,8 +1126,10 @@ export function TodayTimelineCalendar({
                             const isEvent = !!item.originalEvent
                             const id = item.id
 
+                            const columnSpan = item.columnSpan ?? 1
                             const leftPercent = (item.column / item.totalColumns) * 100
-                            const widthPercent = (1 / item.totalColumns) * 100
+                            const widthPercent = (columnSpan / item.totalColumns) * 100
+                            const effectiveColumns = item.totalColumns / columnSpan
 
                             // Build drag item for touch handlers
                             const durationMinutes = Math.round(
@@ -1192,7 +1195,7 @@ export function TodayTimelineCalendar({
                                             event={item.originalEvent!}
                                             currentTime={currentTime}
                                             height={item.height}
-                                            isDense={item.totalColumns >= DENSE_CLUSTER_COLUMNS}
+                                            isDense={widthPercent <= 38}
                                             isCompleted={item.isCompleted}
                                             onToggle={onToggleEvent && item.originalEvent?.sync_status !== "pending" ? () => onToggleEvent(item.id) : undefined}
                                             onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && item.originalEvent?.sync_status !== "pending" && onItemTap ? () => onItemTap(item) : undefined}
@@ -1226,7 +1229,7 @@ export function TodayTimelineCalendar({
                                                 startTime={item.startTime}
                                                 endTime={item.endTime}
                                                 height={item.height}
-                                                totalColumns={item.totalColumns}
+                                                totalColumns={effectiveColumns}
                                                 timer={timer}
                                                 onToggle={onToggleTask}
                                                 onTap={!dragState.isDragging && !suppressItemTapUntil && !quickDraft && onItemTap ? () => onItemTap(item) : undefined}
@@ -1352,10 +1355,12 @@ function EventBlock({
     const endTime = new Date(event.end_time)
     const isNow = currentTime >= startTime && currentTime < endTime
     const isCompact = height < 40
-    const eventTitleLines = height >= 150 ? 5 : height >= 110 ? 4 : height >= 80 ? 3 : height >= 60 ? 2 : 1
+    const eventTitleLines = height >= 58 ? 3 : height >= 42 ? 2 : 1
     const compactTitleLines = height >= 34 ? 2 : 1
     const isDone = !!isCompleted
-    const showInlineActions = !isDense
+    const showToggle = !!onToggle
+    const showInlineActions = SHOW_TIMELINE_CARD_ACTIONS && !isDense
+    const showMemoDragHandle = SHOW_TIMELINE_CARD_ACTIONS
 
     const isPendingSync = event.sync_status === "pending"
     const eventHex = isPendingSync ? "#F59E0B" : getEventColor(event)
@@ -1363,7 +1368,7 @@ function EventBlock({
     const bgRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${isPendingSync ? 0.12 : 0.25})` : undefined
     const bgNowRgba = rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${isPendingSync ? 0.18 : 0.35})` : undefined
     const memoDragSource = scheduledMemoDrag ?? calendarMemoDrag
-    const memoDragHandle = memoDragSource ? (
+    const memoDragHandle = showMemoDragHandle && memoDragSource ? (
         <button
             type="button"
             draggable
@@ -1385,12 +1390,32 @@ function EventBlock({
             {scheduledMemoDrag ? <GripVertical className="h-3.5 w-3.5" /> : <StickyNote className="h-3.5 w-3.5" />}
         </button>
     ) : null
+    const titleTextClass = isDense ? "text-[10px] leading-[14px]" : "text-[11px] leading-4"
+    const checkboxSizeClass = isDense ? "h-3.5 w-3.5" : "h-4 w-4"
+    const toggleButton = showToggle ? (
+        <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggle?.() }}
+            aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
+            className={cn(
+                "no-tap-highlight inline-flex flex-shrink-0 items-center justify-center rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/80",
+                checkboxSizeClass
+            )}
+        >
+            {isDone ? (
+                <CheckSquare className={cn(checkboxSizeClass, "text-primary")} />
+            ) : (
+                <Square className={checkboxSizeClass} style={{ color: eventHex }} />
+            )}
+        </button>
+    ) : null
 
     return (
         <div
             onClick={onTap}
             className={cn(
-                "h-full min-w-0 rounded-md border-l-3 px-2 py-1 overflow-hidden transition-colors",
+                "h-full min-w-0 rounded-md border-l-3 py-1 overflow-hidden transition-colors",
+                isDense ? "px-1.5" : "px-2",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isNow && "ring-1",
                 isDone && "opacity-50",
@@ -1405,21 +1430,10 @@ function EventBlock({
         >
             {isCompact ? (
                 <div className="flex items-start gap-1.5 h-full min-w-0">
-                    {onToggle && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onToggle() }}
-                            aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
-                            className="no-tap-highlight mt-0.5 flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
-                        >
-                            {isDone ? (
-                                <CheckSquare className="w-4 h-4 text-primary" />
-                            ) : (
-                                <Square className="w-4 h-4" style={{ color: eventHex }} />
-                            )}
-                        </button>
-                    )}
+                    {toggleButton}
                     <span className={cn(
-                        "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
+                        "font-medium break-words flex-1 min-w-0 max-w-full",
+                        titleTextClass,
                         compactTitleLines === 1
                             ? "truncate"
                             : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
@@ -1427,6 +1441,7 @@ function EventBlock({
                     )}
                         style={{
                             overflowWrap: "anywhere",
+                            wordBreak: "break-word",
                             ...(compactTitleLines > 1 ? { WebkitLineClamp: compactTitleLines } : {}),
                         }}
                     >
@@ -1466,41 +1481,33 @@ function EventBlock({
                 </div>
             ) : (
                 <>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                        {onToggle && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onToggle() }}
-                                aria-label={isDone ? `${event.title}を未完了に戻す` : `${event.title}を完了にする`}
-                                className="no-tap-highlight flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
-                            >
-                                {isDone ? (
-                                    <CheckSquare className="w-4.5 h-4.5 text-primary" />
-                                ) : (
-                                    <Square className="w-4.5 h-4.5" style={{ color: eventHex }} />
+                    <div className="flex items-start gap-1.5 min-w-0">
+                        {toggleButton}
+                        <div className="min-w-0 flex-1">
+                            <span
+                                className={cn(
+                                    "font-medium break-words flex-1 min-w-0 max-w-full",
+                                    titleTextClass,
+                                    isDone ? "line-through text-muted-foreground" : "text-foreground",
+                                    eventTitleLines === 1
+                                        ? "truncate"
+                                        : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal"
                                 )}
-                            </button>
-                        )}
-                        <span
-                            className={cn(
-                                "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
-                                isDone ? "line-through text-muted-foreground" : "text-foreground",
-                                eventTitleLines === 1
-                                    ? "truncate"
-                                    : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal"
+                                style={{
+                                    overflowWrap: "anywhere",
+                                    wordBreak: "break-word",
+                                    ...(eventTitleLines > 1 ? { WebkitLineClamp: eventTitleLines } : {}),
+                                }}
+                            >
+                                {event.title}
+                            </span>
+                            {!isDense && event.location && height > 55 && (
+                                <div className="text-[9px] truncate mt-0.5 text-muted-foreground/70">
+                                    {event.location}
+                                </div>
                             )}
-                            style={{
-                                overflowWrap: "anywhere",
-                                ...(eventTitleLines > 1 ? { WebkitLineClamp: eventTitleLines } : {}),
-                            }}
-                        >
-                            {event.title}
-                        </span>
-                    </div>
-                    {!isDense && event.location && height > 55 && (
-                        <div className="text-[9px] truncate mt-0.5 text-muted-foreground/70">
-                            {event.location}
                         </div>
-                    )}
+                    </div>
                     {(memoDragHandle || (showInlineActions && (onCreateMemo || onStartTimer || onToggleExpand))) && (
                         <div className="mt-0.5 flex items-center justify-end gap-1">
                             {memoDragHandle}
@@ -1592,9 +1599,9 @@ function TaskBlock({
     const isDenseCard = totalColumns >= DENSE_CLUSTER_COLUMNS
     const isCompact = height < 36 || (totalColumns >= 2 && height < 52)
     const isTallCard = height >= 56
-    const titleLines = height >= 160 ? 6 : height >= 128 ? 5 : height >= 96 ? 4 : height >= 72 ? 3 : height >= 56 ? 2 : 1
+    const titleLines = height >= 58 ? 3 : height >= 42 ? 2 : 1
     const compactTitleLines = height >= 42 ? 2 : 1
-    const showInlineActions = !isDenseCard
+    const showInlineActions = SHOW_TIMELINE_CARD_ACTIONS && !isDenseCard
 
     // Google由来タスクはカレンダー色、通常タスクは既存オレンジ
     const TASK_HEX = accentColor || '#F97316'
@@ -1632,6 +1639,25 @@ function TaskBlock({
             <span>メモへ</span>
         </button>
     ) : null
+    const titleTextClass = isDenseCard ? "text-[10px] leading-[14px]" : "text-[11px] leading-4"
+    const checkboxSizeClass = isDenseCard ? "h-3.5 w-3.5" : "h-4 w-4"
+    const toggleButton = (
+        <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
+            aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
+            className={cn(
+                "no-tap-highlight inline-flex flex-shrink-0 items-center justify-center rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/80",
+                checkboxSizeClass
+            )}
+        >
+            {isDone ? (
+                <CheckSquare className={cn(checkboxSizeClass, "text-primary")} />
+            ) : (
+                <Square className={checkboxSizeClass} style={{ color: TASK_HEX }} />
+            )}
+        </button>
+    )
 
     return (
         <div
@@ -1639,7 +1665,8 @@ function TaskBlock({
             data-syncing={isSyncing || undefined}
             data-sync-failed={isSyncFailed || undefined}
             className={cn(
-                "h-full min-w-0 rounded-md border-l-3 px-2 py-1 overflow-hidden transition-all duration-300 ease-out",
+                "h-full min-w-0 rounded-md border-l-3 py-1 overflow-hidden transition-all duration-300 ease-out",
+                isDenseCard ? "px-1.5" : "px-2",
                 onTap ? "cursor-pointer active:opacity-70" : "cursor-default",
                 isRunning && "ring-1",
                 isDone && !isRunning && "opacity-40",
@@ -1650,19 +1677,10 @@ function TaskBlock({
         >
             {isCompact ? (
                 <div className="flex items-start gap-1.5 h-full min-w-0">
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
-                        aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
-                        className="no-tap-highlight mt-0.5 flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
-                    >
-                        {isDone ? (
-                            <CheckSquare className="w-4 h-4 text-primary" />
-                        ) : (
-                            <Square className="w-4 h-4" style={{ color: TASK_HEX }} />
-                        )}
-                    </button>
+                    {toggleButton}
                     <span className={cn(
-                        "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
+                        "font-medium break-words flex-1 min-w-0 max-w-full",
+                        titleTextClass,
                         compactTitleLines === 1
                             ? "truncate"
                             : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
@@ -1670,6 +1688,7 @@ function TaskBlock({
                     )}
                         style={{
                             overflowWrap: "anywhere",
+                            wordBreak: "break-word",
                             ...(compactTitleLines > 1 ? { WebkitLineClamp: compactTitleLines } : {}),
                         }}
                     >
@@ -1719,35 +1738,25 @@ function TaskBlock({
                 </div>
             ) : (
                 <>
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onToggle(task.id) }}
-                                aria-label={isDone ? `${task.title}を未完了に戻す` : `${task.title}を完了にする`}
-                                className="no-tap-highlight flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
-                            >
-                                {isDone ? (
-                                    <CheckSquare className="w-4.5 h-4.5 text-primary" />
-                                ) : (
-                                    <Square className="w-4.5 h-4.5" style={{ color: TASK_HEX }} />
-                                )}
-                            </button>
-                            <span
-                                className={cn(
-                                    "text-[11px] font-medium leading-tight break-words flex-1 min-w-0 max-w-full",
-                                    titleLines === 1
-                                        ? "truncate"
-                                        : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
-                                    isDone ? "line-through text-muted-foreground" : "text-foreground"
-                                )}
-                                style={{
-                                    overflowWrap: "anywhere",
-                                    ...(titleLines > 1 ? { WebkitLineClamp: titleLines } : {}),
-                                }}
-                            >
-                                {task.title}
-                            </span>
-                        </div>
+                    <div className="flex items-start gap-1.5 min-w-0">
+                        {toggleButton}
+                        <span
+                            className={cn(
+                                "font-medium break-words flex-1 min-w-0 max-w-full",
+                                titleTextClass,
+                                titleLines === 1
+                                    ? "truncate"
+                                    : "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden whitespace-normal",
+                                isDone ? "line-through text-muted-foreground" : "text-foreground"
+                            )}
+                            style={{
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
+                                ...(titleLines > 1 ? { WebkitLineClamp: titleLines } : {}),
+                            }}
+                        >
+                            {task.title}
+                        </span>
                     </div>
                     {showInlineActions && (
                         <div className={cn(

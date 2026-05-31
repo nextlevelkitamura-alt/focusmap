@@ -15,6 +15,7 @@ export interface TodayTimelineLayoutPosition {
   height: number
   column: number
   totalColumns: number
+  columnSpan: number
 }
 
 interface PositionedItem<T extends TodayTimelineLayoutInput> {
@@ -47,6 +48,23 @@ function firstAvailableColumn<T extends TodayTimelineLayoutInput>(
     }
   }
   return columns.length
+}
+
+function calculateColumnSpan<T extends TodayTimelineLayoutInput>(
+  item: PositionedItem<T>,
+  column: number,
+  columns: PositionedItem<T>[][]
+): number {
+  let span = 1
+
+  for (let nextColumn = column + 1; nextColumn < columns.length; nextColumn += 1) {
+    if (columns[nextColumn].some(existing => overlaps(item, existing))) {
+      break
+    }
+    span += 1
+  }
+
+  return span
 }
 
 export function calculateTodayTimelineLayout<T extends TodayTimelineLayoutInput>(
@@ -112,13 +130,17 @@ export function calculateTodayTimelineLayout<T extends TodayTimelineLayoutInput>
         height: item.height,
         column,
         totalColumns: 1,
+        columnSpan: 1,
       })
     }
 
     const totalColumns = columns.length
     for (const item of cluster) {
       const layout = layoutByIndex.get(item.index)
-      if (layout) layout.totalColumns = totalColumns
+      if (layout) {
+        layout.totalColumns = totalColumns
+        layout.columnSpan = calculateColumnSpan(item, layout.column, columns)
+      }
     }
   }
 
