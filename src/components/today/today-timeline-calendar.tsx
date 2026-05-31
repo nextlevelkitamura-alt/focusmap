@@ -63,7 +63,7 @@ interface TodayTimelineCalendarProps {
     onCreateMemoFromCalendarPayload?: (payload: CalendarEventMemoPayload) => void
     pendingExpandTaskId?: string | null
     projectNameMap?: Map<string, string>
-    initialScrollTop?: number
+    getInitialScrollTop?: () => number | undefined
     onScrollPositionChange?: (scrollTop: number) => void
     onQuickCreateTask?: (data: {
         title: string
@@ -146,7 +146,7 @@ export function TodayTimelineCalendar({
     onCreateSubTask,
     onDeleteSubTask,
     projectNameMap,
-    initialScrollTop,
+    getInitialScrollTop,
     onScrollPositionChange,
     onQuickCreateTask,
     defaultQuickCreateCalendarId = null,
@@ -546,11 +546,11 @@ export function TodayTimelineCalendar({
 
     // Scroll to saved position (or default hour) on mount
     useEffect(() => {
-        const scrollTo = initialScrollTop ?? DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
+        const scrollTo = getInitialScrollTop?.() ?? DEFAULT_SCROLL_HOUR * HOUR_HEIGHT
         if (gridRef.current) {
             gridRef.current.scrollTop = scrollTo
         }
-    }, [initialScrollTop])
+    }, [getInitialScrollTop])
 
     const scrollToHour = scrollToHourRequest?.hour
     const scrollToHourRequestKey = scrollToHourRequest?.requestKey

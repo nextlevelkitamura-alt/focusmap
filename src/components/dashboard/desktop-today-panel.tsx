@@ -124,6 +124,10 @@ export function DesktopTodayPanel({
         handleConvertCalendarPayloadToMemo,
         writableCalendars,
     } = logic
+    const getTimelineInitialScrollTop = useCallback(() => scrollPositionRef.current, [scrollPositionRef])
+    const handleTimelineScrollPositionChange = useCallback((pos: number) => {
+        scrollPositionRef.current = pos
+    }, [scrollPositionRef])
 
     // Close calendar on outside click
     useClickOutside(calendarAreaRef, useCallback(() => setCalendarOpen(false), [setCalendarOpen]), calendarOpen)
@@ -495,9 +499,8 @@ export function DesktopTodayPanel({
                         onCreateMemoFromEvent={handleConvertEventToMemo}
                         onCreateMemoFromCalendarPayload={handleConvertCalendarPayloadToMemo}
                         projectNameMap={projectNameMap}
-                        // eslint-disable-next-line react-hooks/refs
-                        initialScrollTop={scrollPositionRef.current}
-                        onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
+                        getInitialScrollTop={getTimelineInitialScrollTop}
+                        onScrollPositionChange={handleTimelineScrollPositionChange}
                         onQuickCreateTask={onCreateQuickTask}
                         defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                         draftPreview={draftPreview}

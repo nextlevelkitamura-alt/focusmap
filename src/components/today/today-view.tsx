@@ -1,10 +1,10 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { Task, Project } from "@/types/database"
 import {
-    Square, CheckSquare, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, CalendarDays, Loader2, Inbox, Trash2
+    Square, CheckSquare, Target, ChevronDown, ChevronUp,
+    LayoutGrid, List, Flame, Play, Pause, RefreshCw, Check, Loader2
 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils"
 import { TodayTimelineCards } from "./today-timeline-cards"
 import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { MobileEventEditModal } from "./mobile-event-edit-modal"
-import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
@@ -34,7 +33,7 @@ interface TodayViewProps {
 
 export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
-    const [activeTab, setActiveTab] = useState<'today' | 'inbox'>('today')
+    const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | 'week' | 'month'>('day')
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -44,6 +43,10 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
         onDeleteTask,
     })
     const { scrollPositionRef } = logic
+    const getTimelineInitialScrollTop = useCallback(() => scrollPositionRef.current, [scrollPositionRef])
+    const handleTimelineScrollPositionChange = useCallback((pos: number) => {
+        scrollPositionRef.current = pos
+    }, [scrollPositionRef])
 
     // Swipe left/right to change date
     useSwipeNavigation({
@@ -71,12 +74,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             <div className="flex-shrink-0 px-4 py-2 border-b" style={{ touchAction: 'none' }}>
                 <div className="flex items-center justify-between gap-2 min-h-[56px]">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <button
-                            onClick={logic.goToPrevDay}
-                            className="p-1 rounded-full active:bg-muted transition-colors text-muted-foreground flex-shrink-0"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                        </button>
                         <div className="min-w-0">
                             <div className="flex items-center gap-1.5 min-w-0">
                                 {logic.isToday && (
@@ -85,17 +82,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                     </span>
                                 )}
                                 <h1 className="text-lg font-bold leading-tight truncate whitespace-nowrap">{logic.dateFmt}</h1>
-                                <button
-                                    onClick={() => logic.setCalendarOpen(prev => !prev)}
-                                    className={cn(
-                                        "p-1 rounded-md transition-colors flex-shrink-0",
-                                        logic.calendarOpen
-                                            ? "bg-primary/10 text-primary"
-                                            : "text-muted-foreground hover:bg-muted/50"
-                                    )}
-                                >
-                                    <CalendarDays className="w-4 h-4" />
-                                </button>
                             </div>
                             <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate whitespace-nowrap min-h-[16px]">
                                 {logic.eventsLoading ? (
@@ -108,12 +94,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                 )}
                             </p>
                         </div>
-                        <button
-                            onClick={logic.goToNextDay}
-                            className="p-1 rounded-full active:bg-muted transition-colors text-muted-foreground flex-shrink-0"
-                        >
-                            <ChevronRight className="w-4 h-4" />
-                        </button>
                     </div>
                     {/* Sync indicator + Timeline mode toggle */}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -153,50 +133,30 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                     </div>
                 </div>
                 <div className="mt-2">
-                    <div className="inline-flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
-                        <button
-                            onClick={() => setActiveTab('today')}
-                            className={cn(
-                                "px-2.5 py-1 text-xs rounded-md transition-colors",
-                                activeTab === 'today'
-                                    ? "bg-background text-foreground shadow-sm"
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            Today
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('inbox')}
-                            className={cn(
-                                "px-2.5 py-1 text-xs rounded-md transition-colors flex items-center gap-1",
-                                activeTab === 'inbox'
-                                    ? "bg-background text-foreground shadow-sm"
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            <Inbox className="w-3.5 h-3.5" />
-                            Inbox
-                            <span className="text-[10px] tabular-nums">({logic.unscheduledTasks.length})</span>
-                        </button>
+                    <div className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5 gap-0.5">
+                        {(['day', 'week', 'month'] as const).map(mode => (
+                            <button
+                                key={mode}
+                                onClick={() => setCalendarRangeMode(mode)}
+                                aria-pressed={calendarRangeMode === mode}
+                                className={cn(
+                                    "min-w-[76px] px-2.5 py-1 text-xs font-semibold rounded-md transition-colors",
+                                    calendarRangeMode === mode
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground"
+                                )}
+                            >
+                                {mode === 'day' && 'Day'}
+                                {mode === 'week' && 'Week'}
+                                {mode === 'month' && 'Month'}
+                            </button>
+                        ))}
                     </div>
                 </div>
             </div>
 
-            {/* Collapsible Calendar Panel */}
-            {activeTab === 'today' && logic.calendarOpen && (
-                <div className="flex-shrink-0 border-b px-4 py-3 animate-in slide-in-from-top-2 duration-200">
-                    <SimpleCalendar
-                        selected={logic.selectedDate}
-                        onSelect={logic.handleDateSelect}
-                        month={logic.calendarMonth}
-                        onMonthChange={logic.setCalendarMonth}
-                        className="w-full"
-                    />
-                </div>
-            )}
-
             {/* Habit Bar (fixed) + Expandable Detail */}
-            {activeTab === 'today' && logic.habitsLoading ? (
+            {logic.habitsLoading ? (
                 <div className="flex-shrink-0 border-b px-4 py-2">
                     <div className="flex items-center gap-2 mb-1.5">
                         <Target className="w-3.5 h-3.5 text-primary/40 flex-shrink-0" />
@@ -212,7 +172,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         ))}
                     </div>
                 </div>
-            ) : activeTab === 'today' && logic.dateHabits.length > 0 ? (
+            ) : logic.dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
@@ -397,45 +357,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
-                {activeTab === 'inbox' ? (
-                    <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-3">
-                        {logic.unscheduledTasks.length === 0 ? (
-                            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                                Inbox は空です
-                            </div>
-                        ) : (
-                            <div className="space-y-1.5">
-                                {logic.unscheduledTasks.map(task => (
-                                    <div
-                                        key={task.id}
-                                        role="button"
-                                        tabIndex={0}
-                                        onClick={() => logic.openTaskEditModal(task.id)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault()
-                                                logic.openTaskEditModal(task.id)
-                                            }
-                                        }}
-                                        className="flex items-center justify-between gap-2 py-2 px-2 rounded-md border border-border/60 bg-background/60 active:bg-muted/50 transition-colors"
-                                    >
-                                        <span className="text-sm truncate flex-1">{task.title}</span>
-                                        <button
-                                            className="p-1 rounded-md text-muted-foreground/70 active:bg-red-500/10 active:text-red-500 transition-colors flex-shrink-0"
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                logic.handleDeleteTask(task.id)
-                                            }}
-                                            aria-label={`${task.title}を削除`}
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ) : (
                 <div
                     key={logic.selectedDate.getTime()}
                     className={cn(
@@ -513,8 +434,8 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             onCreateSubTask={logic.onCreateSubTask}
                             onDeleteSubTask={logic.handleDeleteTask}
                             projectNameMap={logic.projectNameMap}
-                            initialScrollTop={scrollPositionRef.current}
-                            onScrollPositionChange={(pos) => { scrollPositionRef.current = pos }}
+                            getInitialScrollTop={getTimelineInitialScrollTop}
+                            onScrollPositionChange={handleTimelineScrollPositionChange}
                             onQuickCreateTask={onCreateQuickTask}
                             defaultQuickCreateCalendarId={defaultQuickCreateCalendarId}
                             selectedDate={logic.selectedDate}
@@ -539,7 +460,6 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     )}
                 </div>
-                )}
             </div>
 
             {/* Edit Modal */}
