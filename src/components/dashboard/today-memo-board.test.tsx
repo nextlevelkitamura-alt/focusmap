@@ -28,8 +28,14 @@ vi.mock('@/hooks/useCalendarEvents', () => ({
 }))
 
 vi.mock('@/components/wishlist/wishlist-card', () => ({
-  WishlistCard: ({ item }: { item: IdealGoalWithItems }) => (
-    <article>{item.title}</article>
+  WishlistCard: ({ item, onClick }: { item: IdealGoalWithItems; onClick: () => void }) => (
+    <article role="button" onClick={onClick}>{item.title}</article>
+  ),
+}))
+
+vi.mock('@/components/wishlist/wishlist-card-detail', () => ({
+  WishlistCardDetail: ({ item, open }: { item: IdealGoalWithItems | null; open: boolean }) => (
+    open && item ? <aside>編集: {item.title}</aside> : null
   ),
 }))
 
@@ -178,5 +184,38 @@ describe('TodayMemoBoard project filtering', () => {
       is_today: true,
       duration_minutes: 30,
     })
+  })
+
+  test('左ペインのメモカードをクリックすると編集シートを開く', async () => {
+    const fetchMock = vi.fn<Window['fetch']>(async (input) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist?space_id=space-1&project_id=project-1') {
+        return new Response(JSON.stringify({ items: [createMemoItem()] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <TodayMemoBoard
+        projects={projects}
+        selectedSpaceId="space-1"
+        selectedProjectId="project-1"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Project memo')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project memo' }))
+
+    expect(screen.getByText('編集: Project memo')).toBeInTheDocument()
   })
 })

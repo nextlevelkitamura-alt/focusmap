@@ -11,6 +11,7 @@ import {
   WISHLIST_REFRESH_EVENT,
 } from "@/lib/calendar-constants"
 import { WishlistCard } from "@/components/wishlist/wishlist-card"
+import { WishlistCardDetail } from "@/components/wishlist/wishlist-card-detail"
 import {
   broadcastCalendarSync,
   broadcastEventCompletion,
@@ -295,6 +296,7 @@ export function TodayMemoBoard({
   const [createTitle, setCreateTitle] = useState("")
   const [createDescription, setCreateDescription] = useState("")
   const [isCreatingMemo, setIsCreatingMemo] = useState(false)
+  const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null)
 
   const projectById = useMemo(
     () => new Map(projects.map(p => [p.id, p])),
@@ -319,6 +321,18 @@ export function TodayMemoBoard({
     return writableCalendars.find(calendar => calendar.google_calendar_id === selectedCalendarId)
       ?? defaultTargetCalendar
   }, [defaultTargetCalendar, selectedCalendarId, writableCalendars])
+  const selectedItem = useMemo(
+    () => items.find(item => item.id === selectedMemoId) ?? null,
+    [items, selectedMemoId],
+  )
+  const tagOptions = useMemo(() => {
+    const tags = new Set<string>()
+    items.forEach(item => {
+      if (item.category) tags.add(item.category)
+      item.tags?.forEach(tag => tags.add(tag))
+    })
+    return Array.from(tags)
+  }, [items])
 
   useEffect(() => {
     if (!selectedCalendarId) return
@@ -720,6 +734,7 @@ export function TodayMemoBoard({
   const handleDelete = useCallback(async (id: string) => {
     const prev = items
     setItems(curr => curr.filter(it => it.id !== id))
+    if (selectedMemoId === id) setSelectedMemoId(null)
     try {
       const res = await fetch(`/api/wishlist/${id}`, { method: "DELETE" })
       if (!res.ok) throw new Error("削除失敗")
@@ -729,7 +744,75 @@ export function TodayMemoBoard({
       setItems(prev)
       setError(e instanceof Error ? e.message : "削除に失敗しました")
     }
-  }, [items])
+  }, [items, selectedMemoId])
+
+  const handleCalendarAdd = useCallback(async (item: MemoItem) => {
+    const optimisticEventId = `optimistic-today-memo-${item.id}`
+    const startTime = item.scheduled_at ? new Date(item.scheduled_at) : null
+    const durationMinutes = item.duration_minutes ?? 60
+    const calendarId = targetCalendar?.google_calendar_id ?? "primary"
+    const calendarColor = targetCalendar?.background_color ?? "#F59E0B"
+
+    if (startTime && !Number.isNaN(startTime.getTime())) {
+      if (item.google_event_id) {
+        broadcastCalendarOptimisticEventRemoval(item.google_event_id, item.google_event_id, calendarId)
+      }
+      const nowIso = new Date().toISOString()
+      broadcastCalendarOptimisticEvent({
+        id: optimisticEventId,
+        user_id: item.user_id,
+        google_event_id: "",
+        calendar_id: calendarId,
+        title: item.title,
+        description: item.description ?? "",
+        start_time: startTime.toISOString(),
+        end_time: new Date(startTime.getTime() + durationMinutes * 60_000).toISOString(),
+        is_all_day: false,
+        timezone: "Asia/Tokyo",
+        synced_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+        background_color: calendarColor,
+        sync_status: "pending",
+      })
+    }
+
+    try {
+      const res = await fetch(`/api/wishlist/${item.id}/calendar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduled_at: item.scheduled_at,
+          duration_minutes: item.duration_minutes,
+          title: item.title,
+          description: item.description ?? "",
+          calendar_id: calendarId,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "カレンダー追加に失敗しました")
+      }
+      invalidateWishlistItemsCache()
+      if (data.item) {
+        setItems(curr => curr.map(existing => existing.id === item.id ? (data.item as MemoItem) : existing))
+      } else {
+        await handleUpdate(item.id, {
+          google_event_id: data.google_event_id ?? item.google_event_id,
+          memo_status: "scheduled",
+          is_today: false,
+        } as Partial<MemoItem>)
+      }
+      invalidateCalendarCache()
+      broadcastCalendarSync()
+      dispatchWishlistRefresh()
+    } catch (e) {
+      broadcastCalendarOptimisticEventRemoval(optimisticEventId)
+      broadcastCalendarSync()
+      setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
+      throw e
+    }
+  }, [handleUpdate, targetCalendar])
 
   const handleUnscheduleMemo = useCallback(async (item: MemoItem, calendarIdOverride?: string) => {
     const prev = items
@@ -1097,7 +1180,7 @@ export function TodayMemoBoard({
                             item={item}
                             onUpdate={handleUpdate}
                             onDelete={handleDelete}
-                            onClick={() => { /* TODO: 詳細シートを Today タブにも統合する場合はここで開く */ }}
+                            onClick={() => setSelectedMemoId(item.id)}
                             project={item.project_id ? projectById.get(item.project_id) ?? null : null}
                             onToggleToday={handleToggleToday}
                             nativeMemoDrag={canNativeDragColumn(column)}
@@ -1169,6 +1252,27 @@ export function TodayMemoBoard({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <WishlistCardDetail
+        item={selectedItem}
+        open={!!selectedItem}
+        onOpenChange={open => {
+          if (!open) setSelectedMemoId(null)
+        }}
+        onUpdate={async (id, updates) => {
+          await handleUpdate(id, updates as Partial<MemoItem>)
+        }}
+        onCalendarAdd={async item => {
+          await handleCalendarAdd(item as MemoItem)
+        }}
+        onSaved={() => setSelectedMemoId(null)}
+        tagOptions={tagOptions}
+        projects={projects}
+        onMemoChanged={() => {
+          invalidateWishlistItemsCache()
+          void fetchItems()
+          dispatchWishlistRefresh()
+        }}
+      />
     </div>
   )
 }
