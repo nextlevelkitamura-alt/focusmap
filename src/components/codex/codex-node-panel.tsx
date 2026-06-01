@@ -7,6 +7,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import {
+  canUseLocalCodexOpenApi,
+  launchCodexFromBrowser,
+  launchCodexViaLocalApi,
+  launchFeedbackForMode,
+  normalizeCodexPrompt,
+  type CodexLaunchMode,
+} from "@/lib/codex-app-launch"
 import { ExternalLink, Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
 
 type NodeInfo = {
@@ -40,35 +48,10 @@ type CodexNodePanelProps = {
 type SaveStatus = "saved" | "saving" | "error"
 type CodexSendStatus = "idle" | "sending" | "sent"
 
-function normalizePromptText(value: string) {
-  return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
-}
-
 function buildCodexPrompt(heading: string, detail: string) {
-  const normalizedHeading = normalizePromptText(heading)
-  const normalizedDetail = normalizePromptText(detail)
+  const normalizedHeading = normalizeCodexPrompt(heading)
+  const normalizedDetail = normalizeCodexPrompt(detail)
   return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
-}
-
-async function openCodexChat(prompt: string, repoPath: string, threadUrl: string | null) {
-  if (threadUrl) {
-    window.location.href = threadUrl
-    return
-  }
-
-  const res = await fetch("/api/codex/open-repo", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      repo_path: repoPath,
-      prompt: normalizePromptText(prompt),
-      origin_url: window.location.href,
-    }),
-  })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({})) as { error?: string }
-    throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
-  }
 }
 
 export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
@@ -213,7 +196,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
   const sendToCodex = useCallback(async () => {
     const promptHeading = heading || node.title
-    if (!normalizePromptText(promptHeading) && !normalizePromptText(detail)) {
+    if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(detail)) {
       setError("Codexに渡す内容を入力してください")
       return
     }
@@ -221,15 +204,32 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     const prompt = buildCodexPrompt(promptHeading, detail)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
     const threadUrl = node.codexThreadUrl?.trim() || null
+    if (!repoPath && !threadUrl) {
+      setError("Codex.appで開くリポジトリを設定してください")
+      return
+    }
+
+    const useLocalApi = canUseLocalCodexOpenApi()
+    let launchMode: CodexLaunchMode | null = null
     setError(null)
     setCodexFeedback(null)
     setCodexSendStatus("sending")
 
     try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("ブラウザがクリップボードコピーに対応していません。手動コピーが必要です")
+      if (!useLocalApi) {
+        launchMode = launchCodexFromBrowser({ prompt, repoPath: repoPath || null, threadUrl }).mode
       }
-      await navigator.clipboard.writeText(prompt)
+
+      let clipboardWarning: string | null = null
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(prompt)
+        } catch {
+          clipboardWarning = "プロンプトのクリップボードコピーに失敗しました。"
+        }
+      } else {
+        clipboardWarning = "ブラウザがクリップボードコピーに対応していません。"
+      }
       await saveDraft(heading, detail)
 
       const scheduleRes = await fetch("/api/ai-tasks/schedule", {
@@ -251,19 +251,18 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         handoffWarning = data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`
       }
 
-      if (!repoPath && !threadUrl) {
-        throw new Error("Codex.appで開くリポジトリを設定してください")
+      if (useLocalApi) {
+        launchMode = (await launchCodexViaLocalApi({ prompt, repoPath, threadUrl })).mode
       }
-      await openCodexChat(prompt, repoPath, threadUrl)
 
       setCodexSendStatus("sent")
       if (handoffWarning) {
         setError(`プロンプトはコピー済みです。Codex側で貼り付けてください。${handoffWarning}`)
       } else {
-        setCodexFeedback("Codex.app のチャットを開いています")
+        setCodexFeedback(`${launchFeedbackForMode(launchMode ?? "browser-deep-link")}${clipboardWarning ? ` ${clipboardWarning}` : ""}`)
       }
     } catch (err) {
-      setCodexSendStatus("idle")
+      setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
   }, [candidates, detail, heading, node.codexThreadUrl, node.cwd, node.taskId, node.title, saveDraft])

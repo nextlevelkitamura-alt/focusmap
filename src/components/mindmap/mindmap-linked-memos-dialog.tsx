@@ -10,6 +10,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import {
+  canUseLocalCodexOpenApi,
+  launchCodexFromBrowser,
+  launchCodexViaLocalApi,
+  normalizeCodexPrompt,
+} from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import type { Project, Task } from "@/types/database"
@@ -53,7 +59,7 @@ function stringValue(value: unknown): string {
 }
 
 function normalizeText(value: string) {
-  return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
+  return normalizeCodexPrompt(value)
 }
 
 function buildCodexPrompt(title: string, memo: string) {
@@ -63,27 +69,6 @@ function buildCodexPrompt(title: string, memo: string) {
     normalizedTitle || null,
     normalizedMemo || null,
   ].filter(Boolean).join("\n\n")
-}
-
-async function openCodexChat(prompt: string, repoPath: string, threadUrl: string | null = null) {
-  if (threadUrl) {
-    window.location.href = threadUrl
-    return
-  }
-
-  const res = await fetch("/api/codex/open-repo", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      repo_path: repoPath,
-      prompt: normalizeText(prompt),
-      origin_url: window.location.href,
-    }),
-  })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({})) as { error?: string }
-    throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
-  }
 }
 
 function stripFocusmapSyncId(prompt: string) {
@@ -649,16 +634,22 @@ export function MindmapLinkedMemosDialog({
     setIsSending(true)
     setIsSaving(true)
     setError(null)
+    const useLocalApi = canUseLocalCodexOpenApi()
     try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("ブラウザがクリップボードコピーに対応していません。手動コピーが必要です")
+      if (!useLocalApi) {
+        launchCodexFromBrowser({ prompt, repoPath: selectedRepoPath })
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(prompt).catch(() => undefined)
       }
       await saveDraft()
-      await navigator.clipboard.writeText(prompt)
       await createCodexTask("manual", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
-      await openCodexChat(prompt, selectedRepoPath)
+      if (useLocalApi) {
+        await launchCodexViaLocalApi({ prompt, repoPath: selectedRepoPath })
+      }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
@@ -703,8 +694,18 @@ export function MindmapLinkedMemosDialog({
   }
 
   async function handleOpenCodexThread() {
+    const prompt = sentPrompt || buildCodexPrompt(draftTitle, draftMemo)
+    if (!codexRepoPath && !codexThreadUrl) {
+      setError("Codex.appで開くリポジトリを設定してください")
+      return
+    }
+
     try {
-      await openCodexChat(sentPrompt || buildCodexPrompt(draftTitle, draftMemo), codexRepoPath, codexThreadUrl || null)
+      if (canUseLocalCodexOpenApi()) {
+        await launchCodexViaLocalApi({ prompt, repoPath: codexRepoPath, threadUrl: codexThreadUrl || null })
+      } else {
+        launchCodexFromBrowser({ prompt, repoPath: codexRepoPath || null, threadUrl: codexThreadUrl || null })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
     }
