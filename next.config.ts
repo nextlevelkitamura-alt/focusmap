@@ -25,6 +25,13 @@ const nextConfig: NextConfig = {
   },
   // Cloud Run デプロイ用の設定
   output: 'standalone',
+  outputFileTracingExcludes: {
+    '/*': [
+      './mobile/**/*',
+      './.git/**/*',
+      './dist-desktop/**/*',
+    ],
+  },
   // HTTP 431 対策: リクエストヘッダーサイズ制限を緩和
   experimental: {
     serverActions: {
