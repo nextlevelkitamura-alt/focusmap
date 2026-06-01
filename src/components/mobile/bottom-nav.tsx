@@ -12,10 +12,10 @@ type BottomNavItem =
     | { type: "settings"; icon: typeof Settings; label: string }
 
 const mainNavItems: BottomNavItem[] = [
-    { type: "view", id: "today",      icon: CalendarDays, label: "Today" },
+    { type: "view", id: "today",      icon: CalendarDays, label: "Todo" },
     { type: "view", id: "long-term",  icon: StickyNote,   label: "メモ" },
-    { type: "view", id: "ai",         icon: MessageCircle, label: "チャット", primary: true },
     { type: "view", id: "map",        icon: Network,      label: "マップ" },
+    { type: "view", id: "ai",         icon: MessageCircle, label: "チャット", primary: true },
     { type: "settings",               icon: Settings,     label: "設定" },
 ]
 

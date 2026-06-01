@@ -106,10 +106,10 @@ export function Header({
     }
 
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
-        { id: 'today',     label: 'Today', icon: <CalendarDays className="h-3.5 w-3.5" /> },
+        { id: 'today',     label: 'Todo', icon: <CalendarDays className="h-3.5 w-3.5" /> },
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
-        { id: 'ai',        label: 'チャット', icon: <MessageCircle className="h-3.5 w-3.5" /> },
         { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
+        { id: 'ai',        label: 'チャット', icon: <MessageCircle className="h-3.5 w-3.5" /> },
     ]
 
     const handleOpenAiOrganize = async () => {
