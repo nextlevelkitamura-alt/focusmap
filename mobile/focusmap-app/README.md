@@ -26,6 +26,13 @@ cd mobile/focusmap-app
 ./scripts/install-ios-free.sh
 ```
 
+事前チェック:
+
+```bash
+cd mobile/focusmap-app
+npm run ios:doctor
+```
+
 うまく署名できない場合は、次を実行して生成されたXcodeプロジェクトを開き、Signing & Capabilitiesで自分のPersonal Teamを選びます。
 
 ```bash
@@ -45,6 +52,8 @@ EXPO_PUBLIC_FOCUSMAP_URL="https://example.trycloudflare.com/dashboard" npm run i
 
 ```bash
 npm run typecheck
+npm run ios:doctor
+npm run ios:install:free
 npm run ios:device
 npm run ios:device:release
 ```

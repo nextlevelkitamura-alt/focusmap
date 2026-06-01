@@ -3,6 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+XCODE_APP="${XCODE_APP:-/Applications/Xcode.app}"
+
+if [[ -d "$XCODE_APP" ]]; then
+  export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+fi
+
 if ! xcodebuild -version >/dev/null 2>&1; then
   cat <<'MESSAGE'
 Xcode本体が見つかりません。
@@ -19,8 +25,30 @@ MESSAGE
   exit 2
 fi
 
+if xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1; then
+  :
+else
+  cat <<'MESSAGE'
+Xcodeの初回セットアップが未完了です。
+
+一度だけ次を実行して、ライセンス承認と追加コンポーネントの準備を済ませてください。
+
+  sudo xcodebuild -license accept
+  sudo xcodebuild -runFirstLaunch
+
+終わったら、もう一度このスクリプトを実行してください。
+MESSAGE
+  exit 3
+fi
+
 echo "Focusmap iOS appを接続中のiPhoneへインストールします。"
 echo "XcodeにApple IDを入れていない場合は、Xcode > Settings > Accounts で無料Apple IDを追加してください。"
 echo
+echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
+echo "接続先: ${EXPO_PUBLIC_FOCUSMAP_URL:-https://focusmap-official.com/dashboard}"
+echo
+
+npm run typecheck
+npx expo-doctor
 
 npx expo run:ios --device --configuration Release
