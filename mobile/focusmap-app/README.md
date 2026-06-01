@@ -26,6 +26,13 @@ cd mobile/focusmap-app
 ./scripts/install-ios-free.sh
 ```
 
+Xcodeのダウンロード完了後、明朝にまとめて進める場合:
+
+```bash
+cd mobile/focusmap-app
+npm run ios:morning
+```
+
 事前チェック:
 
 ```bash
@@ -53,6 +60,7 @@ EXPO_PUBLIC_FOCUSMAP_URL="https://example.trycloudflare.com/dashboard" npm run i
 ```bash
 npm run typecheck
 npm run ios:doctor
+npm run ios:morning
 npm run ios:install:free
 npm run ios:device
 npm run ios:device:release

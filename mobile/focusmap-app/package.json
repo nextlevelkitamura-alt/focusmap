@@ -22,6 +22,7 @@
     "ios:device": "expo run:ios --device",
     "ios:device:release": "expo run:ios --device --configuration Release",
     "ios:install:free": "./scripts/install-ios-free.sh",
+    "ios:morning": "./scripts/morning-install-ios.sh",
     "ios:prebuild": "expo prebuild --platform ios",
     "ios:prebuild:no-install": "expo prebuild --platform ios --no-install",
     "typecheck": "tsc --noEmit",
