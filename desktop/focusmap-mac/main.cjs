@@ -68,7 +68,10 @@ const AGENT_CLI = app.isPackaged
 const CODEX_SERVER_SCRIPT = app.isPackaged
   ? path.join(RESOURCE_ROOT, 'run-codex-app-server.sh')
   : path.join(REPO_ROOT, 'scripts', 'run-codex-app-server.sh');
-const APP_ICON_PNG = path.join(__dirname, 'assets', 'icon.png');
+const APP_ICON_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, 'icon.icns')
+  : path.join(__dirname, 'assets', 'icon.png');
+const FALLBACK_APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 const LOG_LIMIT = 160;
 const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'oauth2.googleapis.com']);
 const CHILD_PATH = `${os.homedir()}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`;
@@ -88,6 +91,15 @@ function focusWindow(win) {
   if (win.isMinimized()) win.restore();
   win.focus();
   return true;
+}
+
+function appIconPath() {
+  if (fs.existsSync(APP_ICON_PATH)) return APP_ICON_PATH;
+  return FALLBACK_APP_ICON_PATH;
+}
+
+function setDockIcon() {
+  if (app.dock && fs.existsSync(appIconPath())) app.dock.setIcon(appIconPath());
 }
 
 function log(scope, message) {
@@ -461,7 +473,7 @@ async function createMainWindow() {
     minHeight: 680,
     show: true,
     title: 'Focusmap',
-    icon: APP_ICON_PNG,
+    icon: appIconPath(),
     backgroundColor: '#050505',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -510,7 +522,7 @@ function createStatusWindow() {
     height: 620,
     title: 'Focusmap 接続状態',
     resizable: true,
-    icon: APP_ICON_PNG,
+    icon: appIconPath(),
     backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -593,7 +605,7 @@ app.on('activate', () => {
 
 app.whenReady().then(async () => {
   if (app.dock) {
-    if (fs.existsSync(APP_ICON_PNG)) app.dock.setIcon(APP_ICON_PNG);
+    setDockIcon();
     app.dock.show();
   }
   buildMenu();
