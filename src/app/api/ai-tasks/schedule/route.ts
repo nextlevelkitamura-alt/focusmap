@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 
@@ -50,7 +51,7 @@ function requestImmediateCodexAppDispatch(taskId: string): void {
 
 function canUseLocalDispatch(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_DISPATCH === 'true') return true
-  return ['localhost', '127.0.0.1', '::1'].includes(req.nextUrl.hostname)
+  return isLocalCodexOpenHost(req.nextUrl.hostname)
 }
 
 // cronのバリデーション（5フィールド形式）

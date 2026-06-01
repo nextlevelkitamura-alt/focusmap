@@ -28,9 +28,10 @@ localhost開発中だけは、Next API `/api/codex/open-repo` が同じMac上で
 - 保存、`ai_tasks` 作成、ログ同期、クリップボードコピーはその後に非同期で進める。
 - 理由: `await saveDraft()` や `await fetch()` の後に外部アプリdeep linkを発火すると、ブラウザがユーザー操作由来ではない遷移として無視する場合がある。
 
-### 2. localhost
+### 2. localhost / Cloudflareスマホプレビュー
 
 - `localhost` / `127.0.0.1` / `::1` では `/api/codex/open-repo` を使う。
+- `*.trycloudflare.com` のスマホプレビューも同じNext dev serverへ到達するため、ローカルAPI経由でMacのCodex.app起動と即時runner dispatchを許可する。
 - このAPIは同じMac上のNext dev serverでだけ意味がある。本番Cloud Runでは使わない。
 - `CodexNodePanel` の「Codexに送る」は既存threadへの遷移を優先しない。ボタンは実体のある `codex://` リンクとして描画し、プロンプトをクリップボードへコピーする。リポジトリがあれば `dispatch_mode='auto'` で `ai_tasks` に登録し、Mac常駐runnerがCodex app-serverへ送る。すでに手動ハンドオフの `needs_input` レコードがある場合も、同じクリックでpendingの自動実行へ昇格する。
 - localhostではブラウザ側クリップボード権限に依存しないよう、API側でもMacの `pbcopy` に同じプロンプトを書き込む。

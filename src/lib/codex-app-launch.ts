@@ -14,6 +14,14 @@ export type CodexLaunchResult = {
 }
 
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
+const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".trycloudflare.com"]
+
+export function isLocalCodexOpenHost(hostname: string) {
+  const normalized = hostname.trim().toLowerCase()
+  if (!normalized) return false
+  if (LOCAL_CODEX_API_HOSTS.has(normalized)) return true
+  return LOCAL_CODEX_PREVIEW_HOST_SUFFIXES.some(suffix => normalized.endsWith(suffix))
+}
 
 export function normalizeCodexPrompt(value: string) {
   return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
@@ -21,7 +29,7 @@ export function normalizeCodexPrompt(value: string) {
 
 export function canUseLocalCodexOpenApi() {
   if (typeof window === "undefined") return false
-  return LOCAL_CODEX_API_HOSTS.has(window.location.hostname)
+  return isLocalCodexOpenHost(window.location.hostname)
 }
 
 export function buildCodexDeepLink({ prompt, repoPath, threadUrl, originUrl }: CodexLaunchPayload) {
