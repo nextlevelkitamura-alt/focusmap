@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type TouchEvent, type WheelEvent } from "react"
-import { CalendarDays, Loader2, Sparkles } from "lucide-react"
+import { CalendarDays, Loader2, Plus } from "lucide-react"
 import type { IdealGoalWithItems, Project } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import {
@@ -20,6 +20,16 @@ import {
 } from "@/hooks/useCalendarEvents"
 import { useCalendars } from "@/hooks/useCalendars"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { fetchWishlistItems, invalidateWishlistItemsCache } from "@/lib/wishlist-cache"
 import {
   broadcastCalendarEventToMemoConverted,
@@ -281,6 +291,10 @@ export function TodayMemoBoard({
   const [scheduledMemoDragOver, setScheduledMemoDragOver] = useState(false)
   const [calendarEventMemoDragOver, setCalendarEventMemoDragOver] = useState(false)
   const [pendingMemoIds, setPendingMemoIds] = useState<Set<string>>(() => new Set())
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createTitle, setCreateTitle] = useState("")
+  const [createDescription, setCreateDescription] = useState("")
+  const [isCreatingMemo, setIsCreatingMemo] = useState(false)
 
   const projectById = useMemo(
     () => new Map(projects.map(p => [p.id, p])),
@@ -586,20 +600,56 @@ export function TodayMemoBoard({
     }
   }, [columnSections, items, scheduleFocusMemoId])
 
-  const activeItems = visibleItemsByColumn[activeColumn]
-  const totalActiveCount = activeItems.length
-  const activeHelpText = activeColumn === "today"
-    ? "所要時間を選んで、右のカレンダーにドラッグできます。"
-    : activeColumn === "completed"
-      ? "完了済みのメモを確認できます。"
-      : "メモを右のカレンダーへドラッグして予定にできます。"
-
-  const focusedItem = useMemo(() => {
-    if (!scheduleFocusMemoId) return null
-    return items.find(item => item.id === scheduleFocusMemoId) ?? null
-  }, [items, scheduleFocusMemoId])
-
   const canNativeDragColumn = (column: ColumnKey) => column !== "completed"
+
+  const openCreateDialog = useCallback(() => {
+    setCreateTitle("")
+    setCreateDescription("")
+    setError(null)
+    setCreateDialogOpen(true)
+  }, [])
+
+  const handleCreateMemo = useCallback(async () => {
+    const title = createTitle.trim() || "新しいメモ"
+    const description = createDescription.trim()
+    setIsCreatingMemo(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          project_id: selectedProjectId,
+          description,
+          category: "アイデア",
+          tags: ["アイデア"],
+          memo_status: "unsorted",
+          is_today: true,
+          duration_minutes: 30,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "メモの作成に失敗しました")
+      }
+      if (!data.item) {
+        throw new Error("作成結果を取得できませんでした")
+      }
+      const item = data.item as MemoItem
+      invalidateWishlistItemsCache()
+      setItems(curr => curr.some(existing => existing.id === item.id) ? curr : [item, ...curr])
+      setCreateDialogOpen(false)
+      setCreateTitle("")
+      setCreateDescription("")
+      scrollToColumn("today")
+      dispatchWishlistRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "メモの作成に失敗しました")
+    } finally {
+      setIsCreatingMemo(false)
+    }
+  }, [createDescription, createTitle, scrollToColumn, selectedProjectId])
 
   // 楽観更新付き PATCH（wishlist-view と同等の最小版）
   const syncLinkedCalendarCompletion = useCallback(async (item: MemoItem, isCompleted: boolean) => {
@@ -924,10 +974,32 @@ export function TodayMemoBoard({
       onDragLeave={handleScheduledMemoDragLeave}
       onDrop={handleScheduledMemoDrop}
     >
-      <div className="shrink-0 border-b px-3 py-2">
-        <div className="mb-2 flex items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{COLUMN_LABEL[activeColumn]}</h2>
+      <div className="shrink-0 border-b px-3 py-1.5">
+        <div className="flex min-h-8 items-center gap-2">
+          <div className="-mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {COLUMN_ORDER.map(column => (
+              <button
+                key={column}
+                type="button"
+                onClick={() => scrollToColumn(column)}
+                className={cn(
+                  "min-h-7 shrink-0 rounded-md border px-2 text-[11px] transition-colors",
+                  activeColumn === column
+                    ? "border-primary/50 bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                )}
+                aria-pressed={activeColumn === column}
+              >
+                {COLUMN_LABEL[column]}
+                <span className={cn(
+                  "ml-1 rounded px-1 tabular-nums",
+                  activeColumn === column ? "bg-primary/15" : "bg-muted",
+                )}>
+                  {visibleItemsByColumn[column].length}
+                </span>
+              </button>
+            ))}
+          </div>
           {writableCalendars.length > 0 && (
             <label className="flex max-w-[180px] shrink-0 items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground">
               <CalendarDays className="h-3 w-3 shrink-0" />
@@ -945,39 +1017,18 @@ export function TodayMemoBoard({
               </select>
             </label>
           )}
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            {totalActiveCount}
-          </span>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            onClick={openCreateDialog}
+            className="h-8 w-8 shrink-0 rounded-md"
+            aria-label="今日するメモを追加"
+            title="今日するメモを追加"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
         </div>
-        <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {COLUMN_ORDER.map(column => (
-            <button
-              key={column}
-              type="button"
-              onClick={() => scrollToColumn(column)}
-              className={cn(
-                "min-h-7 shrink-0 rounded-md border px-2 text-[11px] transition-colors",
-                activeColumn === column
-                  ? "border-primary/50 bg-primary/10 text-primary"
-                  : "border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-              )}
-              aria-pressed={activeColumn === column}
-            >
-              {COLUMN_LABEL[column]}
-              <span className={cn(
-                "ml-1 rounded px-1 tabular-nums",
-                activeColumn === column ? "bg-primary/15" : "bg-muted",
-              )}>
-                {visibleItemsByColumn[column].length}
-              </span>
-            </button>
-          ))}
-        </div>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          {focusedItem && activeColumn === "today"
-            ? "強調中のメモを右のカレンダーへドラッグできます。"
-            : activeHelpText}
-        </p>
       </div>
 
       {error && (
@@ -1069,6 +1120,55 @@ export function TodayMemoBoard({
           })}
         </div>
       </div>
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>今日するメモを追加</DialogTitle>
+            <DialogDescription>
+              追加したメモは今日するカラムに入ります。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-1">
+            <Input
+              value={createTitle}
+              onChange={event => setCreateTitle(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  event.preventDefault()
+                  void handleCreateMemo()
+                }
+              }}
+              placeholder="メモのタイトル"
+              autoFocus
+            />
+            <textarea
+              value={createDescription}
+              onChange={event => setCreateDescription(event.target.value)}
+              placeholder="詳細メモ"
+              rows={4}
+              className="min-h-24 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateDialogOpen(false)}
+              disabled={isCreatingMemo}
+            >
+              キャンセル
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreateMemo}
+              disabled={isCreatingMemo}
+            >
+              {isCreatingMemo && <Loader2 className="h-4 w-4 animate-spin" />}
+              追加
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

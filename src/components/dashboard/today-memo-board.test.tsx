@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TodayMemoBoard } from './today-memo-board'
 import { invalidateWishlistItemsCache } from '@/lib/wishlist-cache'
@@ -114,5 +114,69 @@ describe('TodayMemoBoard project filtering', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith('/api/wishlist?space_id=space-1&project_id=project-1')
+  })
+
+  test('追加ボタンから今日するメモを作成できる', async () => {
+    const createdItem = createMemoItem({
+      id: 'memo-created',
+      title: '新しい今日メモ',
+      description: '今日やる内容',
+      is_today: true,
+    })
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url === '/api/wishlist?space_id=space-1&project_id=project-1') {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url === '/api/wishlist' && init?.method === 'POST') {
+        return new Response(JSON.stringify({ item: createdItem }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <TodayMemoBoard
+        projects={projects}
+        selectedSpaceId="space-1"
+        selectedProjectId="project-1"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('今日するメモはありません。')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '今日するメモを追加' }))
+    fireEvent.change(screen.getByPlaceholderText('メモのタイトル'), {
+      target: { value: '新しい今日メモ' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('詳細メモ'), {
+      target: { value: '今日やる内容' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '追加' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('新しい今日メモ')).toBeInTheDocument()
+    })
+
+    const postCall = fetchMock.mock.calls.find(([input, init]) => requestUrl(input) === '/api/wishlist' && init?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
+      title: '新しい今日メモ',
+      description: '今日やる内容',
+      project_id: 'project-1',
+      is_today: true,
+      duration_minutes: 30,
+    })
   })
 })
