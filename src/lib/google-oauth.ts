@@ -1,4 +1,21 @@
 const GOOGLE_CALLBACK_PATH = '/api/calendar/callback';
+const DESKTOP_OAUTH_TTL_MS = 10 * 60 * 1000;
+
+interface DesktopCalendarOAuthSession {
+  userId: string;
+  accessToken: string;
+  next: string;
+  expiresAt: number;
+}
+
+const globalForDesktopOAuth = globalThis as typeof globalThis & {
+  __focusmapDesktopCalendarOAuthSessions?: Map<string, DesktopCalendarOAuthSession>;
+};
+
+const desktopCalendarOAuthSessions =
+  globalForDesktopOAuth.__focusmapDesktopCalendarOAuthSessions ?? new Map<string, DesktopCalendarOAuthSession>();
+
+globalForDesktopOAuth.__focusmapDesktopCalendarOAuthSessions = desktopCalendarOAuthSessions;
 
 function isValidAbsoluteUrl(value: string | undefined | null): value is string {
   if (!value) return false;
@@ -89,10 +106,28 @@ export function resolveGoogleRedirectUriFromEnv(): string | undefined {
 interface CalendarOAuthState {
   userId: string;
   next: string;
+  desktop?: boolean;
+  nonce?: string;
 }
 
-export function encodeCalendarOAuthState(userId: string, next = '/dashboard'): string {
-  const payload: CalendarOAuthState = { userId, next };
+function cleanupDesktopOAuthSessions() {
+  const now = Date.now();
+  for (const [state, session] of desktopCalendarOAuthSessions.entries()) {
+    if (session.expiresAt <= now) desktopCalendarOAuthSessions.delete(state);
+  }
+}
+
+export function encodeCalendarOAuthState(
+  userId: string,
+  next = '/dashboard',
+  options: { desktop?: boolean } = {}
+): string {
+  const payload: CalendarOAuthState = {
+    userId,
+    next,
+    desktop: options.desktop || undefined,
+    nonce: options.desktop ? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` : undefined,
+  };
   return Buffer.from(JSON.stringify(payload)).toString('base64url');
 }
 
@@ -100,13 +135,38 @@ export function decodeCalendarOAuthState(state: string): CalendarOAuthState {
   try {
     const parsed = JSON.parse(Buffer.from(state, 'base64url').toString('utf8')) as Partial<CalendarOAuthState>;
     if (typeof parsed.userId === 'string' && typeof parsed.next === 'string') {
-      return { userId: parsed.userId, next: parsed.next };
+      return {
+        userId: parsed.userId,
+        next: parsed.next,
+        desktop: parsed.desktop === true,
+        nonce: typeof parsed.nonce === 'string' ? parsed.nonce : undefined,
+      };
     }
   } catch {
     // Legacy format fallback
   }
 
   return { userId: state, next: '/dashboard' };
+}
+
+export function registerDesktopCalendarOAuthSession(
+  state: string,
+  session: { userId: string; accessToken: string; next: string }
+) {
+  cleanupDesktopOAuthSessions();
+  desktopCalendarOAuthSessions.set(state, {
+    ...session,
+    expiresAt: Date.now() + DESKTOP_OAUTH_TTL_MS,
+  });
+}
+
+export function consumeDesktopCalendarOAuthSession(state: string): DesktopCalendarOAuthSession | null {
+  cleanupDesktopOAuthSessions();
+  const session = desktopCalendarOAuthSessions.get(state);
+  if (!session) return null;
+  desktopCalendarOAuthSessions.delete(state);
+  if (session.expiresAt <= Date.now()) return null;
+  return session;
 }
 
 /**

@@ -201,6 +201,7 @@
           card('Focusmap UI', status.nextReady, [
             status.nextReady ? '起動中' : '未起動（開くと起動）',
             status.nextManaged ? 'Macアプリ管理' : '外部/既存プロセス',
+            status.googleOAuthReady ? 'Google OAuth設定あり' : 'Google OAuth設定なし',
             `<code>${status.appOrigin}</code>`,
           ]),
           card('Agent', status.agentManaged || status.agentLaunchd, [

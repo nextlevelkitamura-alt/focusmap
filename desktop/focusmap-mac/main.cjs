@@ -8,7 +8,57 @@ const path = require('node:path');
 
 const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
 const APP_ORIGIN = process.env.FOCUSMAP_DESKTOP_URL || `http://127.0.0.1:${APP_PORT}`;
-const REPO_ROOT = process.env.FOCUSMAP_REPO_DIR || path.resolve(__dirname, '..', '..');
+function resolveRepoRoot() {
+  if (process.env.FOCUSMAP_REPO_DIR) return process.env.FOCUSMAP_REPO_DIR;
+  const candidates = [
+    process.cwd(),
+    path.resolve(__dirname, '..', '..'),
+    path.join(os.homedir(), 'Private', 'focusmap'),
+    path.join(os.homedir(), 'focusmap'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'package.json')) && fs.existsSync(path.join(candidate, 'src'))) {
+      return candidate;
+    }
+  }
+  return path.resolve(__dirname, '..', '..');
+}
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const env = {};
+  for (const rawLine of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    let value = rawValue.trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
+function loadDesktopEnv(repoRoot) {
+  return [
+    path.join(repoRoot, '.env'),
+    path.join(repoRoot, '.env.local'),
+    path.join(os.homedir(), '.focusmap', 'desktop.env'),
+  ].reduce((merged, filePath) => ({ ...merged, ...parseEnvFile(filePath) }), {});
+}
+
+const REPO_ROOT = resolveRepoRoot();
+const DESKTOP_ENV = loadDesktopEnv(REPO_ROOT);
+const WEB_AUTH_ORIGIN = (
+  process.env.FOCUSMAP_WEB_AUTH_ORIGIN ||
+  DESKTOP_ENV.FOCUSMAP_WEB_AUTH_ORIGIN ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  DESKTOP_ENV.NEXT_PUBLIC_APP_URL ||
+  'https://focusmap-official.com'
+).replace(/\/$/, '');
 const RESOURCE_ROOT = app.isPackaged ? process.resourcesPath : REPO_ROOT;
 const CONFIG_PATH = path.join(os.homedir(), '.focusmap', 'config.json');
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
@@ -20,6 +70,7 @@ const CODEX_SERVER_SCRIPT = app.isPackaged
   : path.join(REPO_ROOT, 'scripts', 'run-codex-app-server.sh');
 const APP_ICON_PNG = path.join(__dirname, 'assets', 'icon.png');
 const LOG_LIMIT = 160;
+const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'oauth2.googleapis.com']);
 
 let mainWindow = null;
 let statusWindow = null;
@@ -117,6 +168,78 @@ function isLocalAppOrigin() {
   return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(APP_ORIGIN);
 }
 
+function isSameOrigin(urlString, origin) {
+  try {
+    return new URL(urlString).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+function isGoogleAuthUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return GOOGLE_AUTH_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isCalendarConnectUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return isSameOrigin(urlString, APP_ORIGIN) && url.pathname === '/api/calendar/connect';
+  } catch {
+    return false;
+  }
+}
+
+function withDesktopOAuth(urlString) {
+  const url = new URL(urlString);
+  url.searchParams.set('desktop_oauth', '1');
+  return url.toString();
+}
+
+function hasGoogleOAuthConfig() {
+  return Boolean(
+    (process.env.GOOGLE_CLIENT_ID || DESKTOP_ENV.GOOGLE_CLIENT_ID) &&
+    (process.env.GOOGLE_CLIENT_SECRET || DESKTOP_ENV.GOOGLE_CLIENT_SECRET)
+  );
+}
+
+function toWebAuthCalendarConnectUrl(urlString) {
+  const sourceUrl = new URL(urlString);
+  const targetUrl = new URL('/api/calendar/connect', WEB_AUTH_ORIGIN);
+  for (const [key, value] of sourceUrl.searchParams.entries()) {
+    if (key !== 'desktop_oauth') targetUrl.searchParams.append(key, value);
+  }
+  if (!targetUrl.searchParams.has('next')) targetUrl.searchParams.set('next', '/dashboard');
+  return targetUrl.toString();
+}
+
+function handleMainNavigation(event, url) {
+  if (isCalendarConnectUrl(url)) {
+    const nextUrl = new URL(url);
+    if (nextUrl.searchParams.get('desktop_oauth') !== '1') {
+      event.preventDefault();
+      if (hasGoogleOAuthConfig()) {
+        mainWindow?.loadURL(withDesktopOAuth(url));
+      } else {
+        shell.openExternal(toWebAuthCalendarConnectUrl(url));
+      }
+      return true;
+    }
+  }
+
+  if (isGoogleAuthUrl(url)) {
+    event.preventDefault();
+    shell.openExternal(url);
+    return true;
+  }
+
+  return false;
+}
+
 function preferredAgentApiUrl() {
   if (process.env.FOCUSMAP_DESKTOP_AGENT_API_URL) {
     return process.env.FOCUSMAP_DESKTOP_AGENT_API_URL.replace(/\/$/, '');
@@ -172,9 +295,11 @@ function startNextServer() {
   const child = spawn(command, args, {
     cwd,
     env: {
+      ...DESKTOP_ENV,
       ...process.env,
       HOSTNAME: '127.0.0.1',
       PORT: String(APP_PORT),
+      NEXTAUTH_URL: process.env.NEXTAUTH_URL || DESKTOP_ENV.NEXTAUTH_URL || APP_ORIGIN,
       NODE_ENV: isPackagedStandalone ? 'production' : process.env.NODE_ENV || 'development',
       NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-http-header-size=65536',
     },
@@ -293,6 +418,7 @@ async function collectStatus() {
     repoRoot: REPO_ROOT,
     configPath: CONFIG_PATH,
     configReady,
+    googleOAuthReady: hasGoogleOAuthConfig(),
     nextReady: appReady,
     nextManaged: isChildRunning(managedProcesses.next),
     agentManaged: isChildRunning(managedProcesses.agent),
@@ -329,6 +455,14 @@ async function createMainWindow() {
     },
   });
   mainWindow.loadFile(path.join(__dirname, 'loading.html'));
+  mainWindow.webContents.on('will-navigate', handleMainNavigation);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isGoogleAuthUrl(url)) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });

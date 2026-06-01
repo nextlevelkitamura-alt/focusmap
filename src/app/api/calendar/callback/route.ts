@@ -1,7 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
+import { createClient as createSupabaseClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/utils/supabase/server';
-import { decodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest, resolveOriginFromRequest } from '@/lib/google-oauth';
+import {
+  consumeDesktopCalendarOAuthSession,
+  decodeCalendarOAuthState,
+  resolveGoogleRedirectUriFromRequest,
+  resolveOriginFromRequest,
+} from '@/lib/google-oauth';
+
+const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co';
+const FALLBACK_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA';
+
+function createUserAccessTokenClient(accessToken: string): SupabaseClient {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY,
+    {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
+}
+
+function desktopOAuthDonePage() {
+  return `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google連携完了</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #f4f4f5; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(460px, calc(100vw - 32px)); border: 1px solid #282828; border-radius: 12px; background: #0d0d0f; padding: 22px; }
+      h1 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 0; color: #a1a1aa; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Google Calendar を連携しました</h1>
+      <p>このブラウザタブは閉じて、Focusmapアプリに戻ってください。</p>
+    </main>
+    <script>
+      setTimeout(() => window.close(), 1200);
+    </script>
+  </body>
+</html>`;
+}
 
 /**
  * Google OAuth認証後のコールバック
@@ -22,18 +75,31 @@ export async function GET(request: NextRequest) {
 
   const supabase = await createClient();
 
-  const { userId: stateUserId, next: nextPath } = decodeCalendarOAuthState(state);
+  const { userId: stateUserId, next: nextPath, desktop } = decodeCalendarOAuthState(state);
 
   // ユーザーIDを検証
   const { data: { user }, error: authError } = await supabase.auth.getUser();
+  let activeUserId = user?.id || null;
+  let writeClient: SupabaseClient = supabase;
+  let desktopCallback = false;
 
   if (authError || !user || user.id !== stateUserId) {
+    const desktopSession = desktop ? consumeDesktopCalendarOAuthSession(state) : null;
+    if (desktopSession?.userId === stateUserId) {
+      activeUserId = desktopSession.userId;
+      writeClient = createUserAccessTokenClient(desktopSession.accessToken);
+      desktopCallback = true;
+    }
+  }
+
+  if (!activeUserId || activeUserId !== stateUserId) {
     console.error('[Calendar Callback] Auth failed:', {
       authError: authError?.message || null,
       hasUser: !!user,
       userId: user?.id || 'none',
       stateParam: stateUserId,
       match: user?.id === stateUserId,
+      desktop,
     });
     const reason = authError ? 'auth_error' : !user ? 'no_session' : 'user_mismatch';
     return NextResponse.redirect(
@@ -95,12 +161,12 @@ export async function GET(request: NextRequest) {
       : new Date(Date.now() + 3600 * 1000); // デフォルト1時間
 
     // Supabaseにトークンを保存
-    console.log('[Calendar Callback] Saving tokens to database for user:', user.id);
-    const { data: upsertData, error: upsertError } = await supabase
+    console.log('[Calendar Callback] Saving tokens to database for user:', activeUserId);
+    const { data: upsertData, error: upsertError } = await writeClient
       .from('user_calendar_settings')
       .upsert(
         {
-          user_id: user.id,
+          user_id: activeUserId,
           google_access_token: tokens.access_token,
           google_refresh_token: tokens.refresh_token,
           google_token_expires_at: expiresAt.toISOString(),
@@ -122,16 +188,16 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('[Calendar Callback] Tokens saved successfully:', {
-      userId: user.id,
+      userId: activeUserId,
       dataReturned: !!upsertData,
       recordCount: upsertData?.length || 0
     });
 
     // 保存されたデータを確認
-    const { data: verifyData, error: verifyError } = await supabase
+    const { data: verifyData, error: verifyError } = await writeClient
       .from('user_calendar_settings')
       .select('google_access_token, google_refresh_token, google_token_expires_at')
-      .eq('user_id', user.id)
+      .eq('user_id', activeUserId)
       .single();
 
     console.log('[Calendar Callback] Verification check:', {
@@ -144,6 +210,13 @@ export async function GET(request: NextRequest) {
     // ダッシュボードにリダイレクト（成功）
     const successUrl = new URL(nextPath || '/dashboard', origin);
     successUrl.searchParams.set('calendar_connected', 'true');
+    if (desktopCallback) {
+      return new NextResponse(desktopOAuthDonePage(), {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+        },
+      });
+    }
     return NextResponse.redirect(successUrl);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

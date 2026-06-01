@@ -1,7 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { createClient } from '@/utils/supabase/server';
-import { encodeCalendarOAuthState, resolveGoogleRedirectUriFromRequest, resolveOriginFromRequest } from '@/lib/google-oauth';
+import {
+  encodeCalendarOAuthState,
+  registerDesktopCalendarOAuthSession,
+  resolveGoogleRedirectUriFromRequest,
+  resolveOriginFromRequest,
+} from '@/lib/google-oauth';
+
+function htmlEscape(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function desktopOAuthLaunchPage(authUrl: string) {
+  const safeUrl = htmlEscape(authUrl);
+  const scriptUrl = JSON.stringify(authUrl);
+  return `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google認証を開いています</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #f4f4f5; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(460px, calc(100vw - 32px)); border: 1px solid #282828; border-radius: 12px; background: #0d0d0f; padding: 22px; }
+      h1 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 0 0 14px; color: #a1a1aa; }
+      a { color: #34d399; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Google認証をブラウザで開いています</h1>
+      <p>認証が終わったら、このFocusmapアプリに戻ってください。</p>
+      <a href="${safeUrl}" target="_blank" rel="noreferrer">ブラウザで開けない場合はこちら</a>
+    </main>
+    <script>
+      const authUrl = ${scriptUrl};
+      if (window.focusmapDesktop?.openExternal) {
+        window.focusmapDesktop.openExternal(authUrl);
+      } else {
+        window.location.href = authUrl;
+      }
+    </script>
+  </body>
+</html>`;
+}
 
 /**
  * Google OAuth認証URLにリダイレクト
@@ -11,6 +60,7 @@ export async function GET(request: NextRequest) {
   console.log('[Calendar Connect] Route hit. Starting OAuth flow...');
   const supabase = await createClient();
   const nextPath = request.nextUrl.searchParams.get('next') || '/dashboard';
+  const desktopOAuth = request.nextUrl.searchParams.get('desktop_oauth') === '1';
 
   // ログインユーザーを確認
   const { data: { user }, error } = await supabase.auth.getUser();
@@ -24,6 +74,16 @@ export async function GET(request: NextRequest) {
   }
 
   const redirectUri = resolveGoogleRedirectUriFromRequest(request);
+  const googleClientId = process.env.GOOGLE_CLIENT_ID;
+  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!googleClientId || !googleClientSecret) {
+    console.error('[Calendar Connect] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET');
+    const origin = resolveOriginFromRequest(request);
+    return NextResponse.redirect(
+      new URL('/dashboard?calendar_error=google_oauth_not_configured', origin)
+    );
+  }
 
   console.log('[Calendar Connect] Resolved redirect_uri:', redirectUri);
   console.log('[Calendar Connect] Environment check:', {
@@ -36,10 +96,27 @@ export async function GET(request: NextRequest) {
 
   // OAuth2クライアントを作成
   const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
+    googleClientId,
+    googleClientSecret,
     redirectUri
   );
+
+  const state = encodeCalendarOAuthState(user.id, nextPath, { desktop: desktopOAuth });
+
+  if (desktopOAuth) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      const origin = resolveOriginFromRequest(request);
+      return NextResponse.redirect(
+        new URL('/dashboard?calendar_error=desktop_session_missing', origin)
+      );
+    }
+    registerDesktopCalendarOAuthSession(state, {
+      userId: user.id,
+      accessToken: session.access_token,
+      next: nextPath,
+    });
+  }
 
   // 認証URLを生成
   // hl=en: OAuth同意画面を英語表示に強制する（OAuth verification審査要件）
@@ -58,11 +135,19 @@ export async function GET(request: NextRequest) {
       //     ここに追加せず、 外部 MCPサーバ (Composio / Zapier MCP 等) 経由で連携する方針。
       //     詳細: docs/plans/mcp-integration.md
     ],
-    state: encodeCalendarOAuthState(user.id, nextPath),
+    state,
     hl: 'en',
   });
 
   console.log('[Calendar Connect] Generated Auth URL:', authUrl);
+
+  if (desktopOAuth) {
+    return new NextResponse(desktopOAuthLaunchPage(authUrl), {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+      },
+    });
+  }
 
   // Google認証ページにリダイレクト
   return NextResponse.redirect(authUrl);
