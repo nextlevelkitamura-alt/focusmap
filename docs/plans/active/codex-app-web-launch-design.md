@@ -37,14 +37,18 @@ localhost開発中だけは、Next API `/api/codex/open-repo` が同じMac上で
 - localhostではブラウザ側クリップボード権限に依存しないよう、API側でもMacの `pbcopy` に同じプロンプトを書き込む。
 - スマホ/本番Webでは、ユーザー操作直後に `codex://` deep link を発火してCodexアプリへ飛ばす。クリップボードコピーも同じクリック処理内で開始し、ブラウザの外部アプリ起動制約を避ける。
 
-### 3. 本当に安定させる次段階
+### 3. Focusmap Lite セットアップ経由の安定導線
 
-SaaSとして「プロンプト長、ブラウザ差、確認ダイアログ、未インストール検知」まで安定させるなら、Focusmap LiteをユーザーPCに入れる。
+SaaSとして「プロンプト長、ブラウザ差、確認ダイアログ、未インストール検知」まで安定させる主経路は、Focusmap LiteをユーザーPCに入れる方式にする。
 
 - Webは `ai_tasks` に依頼を保存する。
-- Focusmap LiteがユーザーPCでタスクをpullする。
-- Focusmap LiteがCodex app-server (`ws://127.0.0.1:7878`) または `codex://` を使ってCodex.appを開く。
+- `CodexNodePanel` は `/api/ai-runners` を見て、2分以内にheartbeatした `codex_app` / `codex` runnerがある場合だけ `dispatch_mode='auto'` を使う。
+- runner未接続時は `dispatch_mode='manual'` に落とし、プロンプトのコピーと `codex://` 起動だけを試し、画面内にMacセットアップCTAを出す。
+- スマホ判定時は `codex://` ではなくOpenAI公式の `https://chatgpt.com/codex/mobile/` を開く。OpenAI公式情報上、Codex mobileはChatGPTアプリ内プレビューとして提供されているが、外部Webから任意のCodex画面へプロンプトを注入する公開deep linkは確認できないため、Focusmapは「コピー済み → ChatGPTアプリ/Codex入口を開く」までを保証範囲にする。
+- Focusmap LiteがユーザーPCで `codex_app` タスクをpullする。
+- Focusmap LiteがCodex app-server (`ws://127.0.0.1:7878`) に `initialize` → `thread/start|thread/resume` → `turn/start` を送り、Codex.appのスレッドを開く。
 - 成功/失敗/スレッドIDをFocusmapへ書き戻す。
+- `scripts/install.sh` はWeb同梱の `focusmap-agent.tar.gz` を優先導入し、Codex.app/Codex CLIが検出できるMacでは `com.focusmap-official.codex-app-server.plist` も作る。
 
 この方式ならWebブラウザの外部アプリ起動制約を避けられる。
 

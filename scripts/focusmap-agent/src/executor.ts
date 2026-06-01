@@ -7,6 +7,7 @@
 import type { AgentApiClient } from './api-client.js';
 import type { AgentCommand, AgentConfig, AiTask, TaskResultJson } from './types.js';
 import { runWebResearch } from './skills/web-research.js';
+import { runCodexAppTask } from './executors/codex-app.js';
 import { executeCommand } from './command-executor.js';
 import { error as logError, info } from './logger.js';
 
@@ -80,7 +81,22 @@ async function runUrlFetch(task: AiTask, config: AgentConfig): Promise<TaskResul
   }, config);
 }
 
-async function runTask(task: AiTask, config: AgentConfig): Promise<TaskResultJson> {
+function executorNameForTask(task: AiTask): TaskResultJson['executor'] {
+  if (task.executor === 'codex_app') return 'codex_app';
+  if (task.executor === 'terminal') return 'terminal';
+  if (task.executor === 'browser') return 'browser';
+  return 'playwright';
+}
+
+async function runTask(
+  task: AiTask,
+  config: AgentConfig,
+  api: AgentApiClient,
+  runnerId: string,
+): Promise<TaskResultJson> {
+  if (task.executor === 'codex_app') {
+    return runCodexAppTask(task, config, api, runnerId);
+  }
   if (task.executor === 'terminal' || task.skill_id === 'terminal-command') {
     return runTerminal(task, config);
   }
@@ -107,7 +123,7 @@ export async function executeTask(
 ): Promise<void> {
   await api.updateTaskState(runnerId, task.id, 'running', {
     result: {
-      executor: task.executor === 'terminal' ? 'terminal' : task.executor === 'browser' ? 'browser' : 'playwright',
+      executor: executorNameForTask(task),
       steps: [{ label: 'Focusmap Lite が受信', status: 'done', at: new Date().toISOString() }],
       output: '',
       meta: { prompt: task.prompt, skill_id: task.skill_id, executor: task.executor },
@@ -115,8 +131,9 @@ export async function executeTask(
   });
 
   try {
-    const result = await runTask(task, config);
-    await api.updateTaskState(runnerId, task.id, 'completed', { result });
+    const result = await runTask(task, config, api, runnerId);
+    const terminalStatus = result.executor === 'codex_app' ? 'awaiting_approval' : 'completed';
+    await api.updateTaskState(runnerId, task.id, terminalStatus, { result });
     info(`task ${task.id} completed (${task.skill_id ?? task.executor})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -124,7 +141,7 @@ export async function executeTask(
     await api.updateTaskState(runnerId, task.id, 'failed', {
       error: message,
       result: {
-        executor: task.executor === 'terminal' ? 'terminal' : task.executor === 'browser' ? 'browser' : 'playwright',
+        executor: executorNameForTask(task),
         steps: [{ label: '実行失敗', status: 'failed', at: new Date().toISOString(), detail: message }],
         output: '',
         error: message,

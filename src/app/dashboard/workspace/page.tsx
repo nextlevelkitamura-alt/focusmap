@@ -89,6 +89,8 @@ export default async function WorkspaceOverviewPage({ searchParams }: PageProps)
   const activeRunnerCount = (runners ?? []).filter((r) => {
     if (!r.last_heartbeat_at) return false;
     const lastSeen = new Date(r.last_heartbeat_at).getTime();
+    // Dynamic server page: this count is intentionally computed at request time.
+    // eslint-disable-next-line react-hooks/purity
     return Date.now() - lastSeen < 2 * 60 * 1000;
   }).length;
 
@@ -142,7 +144,7 @@ export default async function WorkspaceOverviewPage({ searchParams }: PageProps)
         <ShortcutCard
           icon={Server}
           title="エージェント"
-          description="Mac mini 接続 / install.sh"
+          description="Mac接続 / Codex連携"
           href={`/dashboard/workspace/agents${query}`}
         />
       </div>

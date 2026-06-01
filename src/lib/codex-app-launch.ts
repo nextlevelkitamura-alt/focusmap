@@ -1,4 +1,4 @@
-export type CodexLaunchMode = "thread" | "browser-deep-link" | "local-api"
+export type CodexLaunchMode = "thread" | "browser-deep-link" | "chatgpt-mobile" | "local-api"
 
 export type CodexLaunchPayload = {
   prompt: string
@@ -15,6 +15,7 @@ export type CodexLaunchResult = {
 
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".trycloudflare.com"]
+export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
 
 export function isLocalCodexOpenHost(hostname: string) {
   const normalized = hostname.trim().toLowerCase()
@@ -32,6 +33,14 @@ export function canUseLocalCodexOpenApi() {
   return isLocalCodexOpenHost(window.location.hostname)
 }
 
+export function isLikelyMobileDevice() {
+  if (typeof navigator === "undefined") return false
+  const ua = navigator.userAgent || ""
+  const mobileUa = /Android|iPhone|iPod|IEMobile|Mobile/i.test(ua)
+  const iPadDesktopUa = /Macintosh/i.test(ua) && navigator.maxTouchPoints > 1
+  return mobileUa || iPadDesktopUa
+}
+
 export function buildCodexDeepLink({ prompt, repoPath, threadUrl, originUrl }: CodexLaunchPayload) {
   if (threadUrl?.trim()) return threadUrl.trim()
 
@@ -41,6 +50,16 @@ export function buildCodexDeepLink({ prompt, repoPath, threadUrl, originUrl }: C
   if (repoPath?.trim()) url.searchParams.set("path", repoPath.trim())
   if (originUrl?.trim()) url.searchParams.set("originUrl", originUrl.trim())
   return url.toString()
+}
+
+export function buildCodexOpenTarget(payload: CodexLaunchPayload, options: { preferMobile?: boolean } = {}) {
+  if (options.preferMobile) {
+    return { mode: "chatgpt-mobile" as const, url: CHATGPT_CODEX_MOBILE_URL }
+  }
+  return {
+    mode: payload.threadUrl ? "thread" as const : "browser-deep-link" as const,
+    url: buildCodexDeepLink(payload),
+  }
 }
 
 export function launchCodexFromBrowser(payload: CodexLaunchPayload): CodexLaunchResult {
@@ -74,5 +93,6 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
 
 export function launchFeedbackForMode(mode: CodexLaunchMode) {
   if (mode === "local-api") return "Codex.app のチャットを開いています"
+  if (mode === "chatgpt-mobile") return "ChatGPTアプリのCodex画面を開くリクエストを出しました"
   return "Codex.app を開くリクエストを出しました。確認ダイアログが出たら Open Codex を選んでください"
 }

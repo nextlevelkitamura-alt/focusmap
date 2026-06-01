@@ -123,6 +123,7 @@ export function AgentStatusBadge() {
   const hasOnline = onlineCount > 0;
   const hasFocusmapLiteOnline = annotated.some((r) => r.isOnline && r.kind === 'focusmap-lite');
   const hasCodexBridgeOnline = annotated.some((r) => r.isOnline && r.kind === 'codex-bridge');
+  const hasCodexAppOnline = annotated.some((r) => r.isOnline && (r.executors ?? []).includes('codex_app'));
 
   if (loading) {
     return (
@@ -178,9 +179,11 @@ export function AgentStatusBadge() {
             </h3>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               {hasOnline
-                ? '自動化タスクを実行できます。Mac mini側 launchd で常駐中。'
+                ? hasCodexAppOnline
+                  ? '自動化タスクとCodex.app送信を実行できます。Mac側 launchd で常駐中。'
+                  : '自動化タスクを実行できます。Codex.app送信はCodex.app導入後にセットアップを再実行してください。'
                 : totalCount > 0
-                ? 'エージェントから heartbeat が届いていません。Mac mini が起動しているか、 launchctl 経由で動いているか確認してください。'
+                ? 'エージェントから heartbeat が届いていません。Mac が起動しているか、 launchctl 経由で動いているか確認してください。'
                 : 'まだエージェントが導入されていません。 セットアップ画面からダウンロード → ダブルクリックで起動できます。'}
             </p>
           </div>

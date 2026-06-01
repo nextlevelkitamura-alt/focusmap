@@ -33,7 +33,7 @@ interface SetupStepAgentProps {
 
 type GuideStep = 1 | 2 | 3 | 4;
 
-export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: SetupStepAgentProps) {
+export function SetupStepAgent({ spaceId, connected, onBack, onNext }: SetupStepAgentProps) {
   const [token, setToken] = useState<string | null>(null);
   const [installCmd, setInstallCmd] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -158,9 +158,9 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
   return (
     <div className="space-y-5">
       <div className="space-y-1">
-        <h2 className="text-lg font-semibold">Mac mini にエージェントを導入</h2>
+        <h2 className="text-lg font-semibold">MacにFocusmap Liteを導入</h2>
         <p className="text-sm text-muted-foreground">
-          初心者でも安心な4ステップ。所要 約30秒〜1分 (初回のみ +5-10分の自動インストール)。
+          Codex送信とローカル自動化を使うための4ステップ。初回だけ5〜10分ほど自動インストールします。
         </p>
       </div>
 
@@ -217,7 +217,7 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
                 <Download className="h-5 w-5" />
                 <span className="text-sm font-semibold">セットアップファイルをダウンロード</span>
                 <span className="text-[10px] opacity-90">
-                  ダブルクリックでターミナルが自動起動&セットアップ実行
+                  ダブルクリックでエージェントとCodex連携を自動設定
                 </span>
               </>
             )}
@@ -329,7 +329,7 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
               done={guideStep > 3}
               icon={Loader2}
               title="そのまま待つだけ (5-10分)"
-              desc="Node.js / Playwright を自動でインストールします。何もする必要はありません。"
+              desc="Node.js / Playwright / Codex app-server連携を自動で準備します。"
               onClick={() => guideStep >= 3 && setGuideStep(4)}
               actionLabel={guideStep === 3 ? '進行中→次へ' : undefined}
             />
@@ -341,7 +341,7 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
               title={connected ? 'セットアップ完了！' : 'エージェントの接続を待機中…'}
               desc={
                 connected
-                  ? 'Mac mini が Focusmap に接続されました。次のステップへ進めます。'
+                  ? 'MacがFocusmapに接続されました。Codex送信と自動化を使えます。'
                   : '接続検知次第、自動で「✓ 完了」表示に切り替わります (最大10分)。'
               }
               waiting={!connected && guideStep === 4}
@@ -385,7 +385,7 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
               title={connected ? 'セットアップ完了！' : 'エージェントの接続を待機中…'}
               desc={
                 connected
-                  ? 'Mac mini が Focusmap に接続されました。次のステップへ進めます。'
+                  ? 'MacがFocusmapに接続されました。Codex送信と自動化を使えます。'
                   : 'コマンド実行後、自動で「✓ 完了」表示に切り替わります (最大10分)。'
               }
               waiting={!connected && guideStep === 4}
@@ -432,7 +432,7 @@ export function SetupStepAgent({ spaceId, userId, connected, onBack, onNext }: S
           <li>10分経っても接続にならない → 「ファイル再ダウンロード」 ボタンで token 新発行</li>
           <li>「開発元未確認」 警告が消えない → control+クリック → 「開く」 を選択 (初回のみ)</li>
           <li>ターミナルでエラーが出た → エラーメッセージをコピーして サポートに連絡</li>
-          <li>Mac mini をお持ちでない → 常時起動できるMac環境推奨</li>
+          <li>常時実行したい → スリープしにくいMac環境推奨</li>
           <li>Windows 非対応 → 現状 macOS のみ対応</li>
         </ul>
       </details>

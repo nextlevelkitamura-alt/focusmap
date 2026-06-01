@@ -48,6 +48,10 @@ export interface AiTask {
   package_snapshot?: Record<string, unknown> | null;
   parent_task_id?: string | null;
   scheduled_at?: string | null;
+  cwd?: string | null;
+  source_task_id?: string | null;
+  codex_thread_id?: string | null;
+  codex_resume_thread_id?: string | null;
   result?: Record<string, unknown> | null;
 }
 
@@ -59,10 +63,18 @@ export interface StepLog {
 }
 
 export interface TaskResultJson {
-  executor: 'playwright' | 'simple' | 'browser' | 'terminal';
+  executor: 'playwright' | 'simple' | 'browser' | 'terminal' | 'codex_app';
   steps: StepLog[];
   output: string;
   error?: string;
+  live_log?: string;
+  message?: string;
+  codex_thread_id?: string;
+  codex_thread_url?: string;
+  codex_run_state?: 'running' | 'awaiting_approval';
+  codex_review_reason?: string;
+  last_activity_at?: string;
+  awaiting_approval_at?: string;
   usage?: {
     input_tokens: number;
     output_tokens: number;

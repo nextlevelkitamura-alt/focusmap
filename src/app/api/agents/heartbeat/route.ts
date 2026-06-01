@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAgent } from '@/lib/agent-auth'
 
-const VALID_EXECUTORS = new Set(['playwright', 'simple', 'browser', 'terminal'])
+const VALID_EXECUTORS = new Set(['playwright', 'simple', 'browser', 'terminal', 'codex_app'])
 
 function stringArray(value: unknown) {
   return Array.isArray(value)

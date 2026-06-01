@@ -145,8 +145,11 @@ Goals → Projects → TaskGroups → Tasks
 
 - ノードからCodexへ渡す場合、Focusmapは作業本体を裏側で完結させるのではなく、Codex.app側を主軸にする。
 - Focusmap側は `ai_tasks` に待機レコードを作り、プロンプトをクリップボードへコピーし、Codex.appのチャットを開く補助をする。
-- マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。押下直後にメモ見出し本文とメモ詳細本文だけを改行区切りでクリップボードへコピーし、既存threadへの遷移は狙わず、実体のある `codex://?prompt=...&path=...&originUrl=...` リンクとしてCodex.appを開く。スマホ/本番Webではユーザー操作直後にブラウザ deep link を発火してCodexアプリへ飛ばし、同時に `ai_tasks` へ `dispatch_mode='auto'` のCodex.app実行を登録する。ブラウザが外部アプリ起動を止めても、Mac常駐runnerがpendingタスクを拾い、Codex app-serverへ送る。localhost と `*.trycloudflare.com` のスマホプレビューではローカルAPI `/api/codex/open-repo` からMacの `pbcopy`、`open codex://...`、Codex.appのactivateを実行し、`/api/ai-tasks/schedule` も即時runner dispatchを許可する。リポジトリ未設定時だけ手動ハンドオフに落とす。
+- マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。押下直後にメモ見出し本文とメモ詳細本文だけを改行区切りでクリップボードへコピーし、既存threadへの遷移は狙わず、Mac/デスクトップでは実体のある `codex://?prompt=...&path=...&originUrl=...` リンクとしてCodex.appを開く。スマホではOpenAI公式の `https://chatgpt.com/codex/mobile/` を開き、ChatGPTアプリ側のCodex入口へ誘導する。どちらもコピーと外部アプリ起動をクリック直後に開始し、保存や `ai_tasks` 登録の完了を待たない。
+- オンラインのCodex対応runner（`executors` に `codex_app` または `codex` を含む2分以内heartbeat）がある場合だけ `ai_tasks` へ `dispatch_mode='auto'` のCodex.app実行を登録し、未接続なら手動ハンドオフとセットアップCTAに落とす。ブラウザが外部アプリ起動を止めても、Mac常駐runnerがpendingタスクを拾い、Codex app-serverへ送る。localhost と `*.trycloudflare.com` のスマホプレビューでは、デスクトップの場合だけローカルAPI `/api/codex/open-repo` からMacの `pbcopy`、`open codex://...`、Codex.appのactivateを実行し、スマホ判定時はChatGPT mobile入口を優先する。リポジトリ未設定時も手動ハンドオフに落とす。
 - Codex.appの新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。Focusmapは「実行待ち」「実行中」「確認待ち」を表示して、状態確認とログ同期に徹する。
+- Focusmap Lite `scripts/focusmap-agent` は、Codex.appまたはCodex CLIを検出したMacでは `codex_app` executorをheartbeatに含める。`codex_app` taskをclaimした場合は `ws://127.0.0.1:7878` のCodex app-serverへ `initialize` → `thread/start|thread/resume` → `turn/start` を送り、スレッドURL・ログ・確認待ち状態を `ai_tasks.result` に書き戻す。
+- `scripts/install.sh` はWeb同梱の `focusmap-agent.tar.gz` を優先導入し、Codex.app/Codex CLIがあるMacでは `~/.focusmap/bin/run-codex-app-server.sh` と `~/Library/LaunchAgents/com.focusmap-official.codex-app-server.plist` も作成する。Codex.app未導入の場合は警告だけ出し、Codex導入後に再実行すれば `codex_app` executorが有効になる。
 - プロンプト本文は、メモ見出しなどのラベルを足さず、ノード本文/メモ本文を改行区切りでそのまま渡す。
 - Web起動の詳細設計は `docs/plans/active/codex-app-web-launch-design.md` を参照する。
 - ノードの状態表示は `src/lib/codex-run-state.ts` の `getCodexTaskUiState` を正とする。
@@ -186,7 +189,8 @@ Goals → Projects → TaskGroups → Tasks
 | Codex.app deep link生成/起動分岐 | `src/lib/codex-app-launch.ts` |
 | Codex.app起動補助 | `src/app/api/codex/open-repo/route.ts` |
 | ノードに紐づくCodex thread取得 | `src/app/api/codex/node-thread/route.ts` |
-| Mac常駐runner/Codex同期 | `scripts/task-runner.ts` |
+| Mac常駐runner/Codex同期 | `scripts/task-runner.ts` / `scripts/focusmap-agent/src/executors/codex-app.ts` |
+| Focusmap Liteセットアップ | `scripts/install.sh` / `src/components/workspace/setup-step-agent.tsx` |
 
 ---
 

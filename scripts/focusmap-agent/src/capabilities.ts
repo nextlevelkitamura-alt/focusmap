@@ -4,6 +4,7 @@ import { homedir, platform, release } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import WebSocket from 'ws';
 import type { AgentConfig } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -24,6 +25,30 @@ async function hasPath(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function hasExecutablePath(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isCodexAppServerReady(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket('ws://127.0.0.1:7878');
+    const timer = setTimeout(() => finish(false), 800);
+    function finish(ready: boolean) {
+      clearTimeout(timer);
+      ws.removeAllListeners();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      resolve(ready);
+    }
+    ws.once('open', () => finish(true));
+    ws.once('error', () => finish(false));
+  });
 }
 
 async function pathAccessStatus(path: string): Promise<'ok' | 'denied' | 'missing'> {
@@ -113,6 +138,10 @@ export async function collectCapabilities(config: AgentConfig) {
     hasCommand('opencode'),
     hasCommand('aider'),
   ]);
+  const codexAppInstalled = await hasExecutablePath('/Applications/Codex.app/Contents/Resources/codex');
+  const codexAppServerReady = codex || codexAppInstalled ? await isCodexAppServerReady() : false;
+  const executors = ['playwright', 'simple', 'browser', 'terminal'];
+  if (codex || codexAppInstalled) executors.push('codex_app');
   const browserProfileReady = await hasPath(join(homedir(), '.focusmap', 'browser-profile'));
   const gwsAuthReady = await hasPath(join(homedir(), '.config', 'gws'));
   const authDirReady = await hasPath(join(homedir(), '.focusmap', 'auth'));
@@ -143,7 +172,7 @@ export async function collectCapabilities(config: AgentConfig) {
   ].filter(Boolean);
 
   return {
-    executors: ['playwright', 'simple', 'browser', 'terminal'],
+    executors,
     available_secret_names: availableSecretNames,
     metadata: {
       app: 'focusmap-lite',
@@ -156,6 +185,8 @@ export async function collectCapabilities(config: AgentConfig) {
       git_installed: git,
       claude_installed: claude,
       codex_installed: codex,
+      codex_app_installed: codexAppInstalled,
+      codex_app_server_ready: codexAppServerReady,
       opencode_installed: opencode,
       aider_installed: aider,
       gws_installed: gws,

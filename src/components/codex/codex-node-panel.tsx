@@ -8,14 +8,15 @@ import {
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import {
-  buildCodexDeepLink,
+  buildCodexOpenTarget,
   canUseLocalCodexOpenApi,
+  isLikelyMobileDevice,
   launchCodexViaLocalApi,
   launchFeedbackForMode,
   normalizeCodexPrompt,
   type CodexLaunchMode,
 } from "@/lib/codex-app-launch"
-import { ExternalLink, Loader2, Mic, Save, Sparkles, Square } from "lucide-react"
+import { ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -47,6 +48,28 @@ type CodexNodePanelProps = {
 
 type SaveStatus = "saved" | "saving" | "error"
 type CodexSendStatus = "idle" | "sending" | "sent"
+type CodexRunnerStatus = {
+  checked: boolean
+  ready: boolean
+}
+
+type AiRunner = {
+  executors?: string[]
+  last_heartbeat_at?: string | null
+}
+
+const RUNNER_ONLINE_WINDOW_MS = 2 * 60 * 1000
+const RUNNER_STATUS_POLL_MS = 10_000
+
+function hasOnlineCodexRunner(runners: AiRunner[]) {
+  const now = Date.now()
+  return runners.some((runner) => {
+    const executors = Array.isArray(runner.executors) ? runner.executors : []
+    if (!executors.includes("codex_app") && !executors.includes("codex")) return false
+    const lastHeartbeatAt = runner.last_heartbeat_at ? new Date(runner.last_heartbeat_at).getTime() : 0
+    return Number.isFinite(lastHeartbeatAt) && lastHeartbeatAt > 0 && now - lastHeartbeatAt < RUNNER_ONLINE_WINDOW_MS
+  })
+}
 
 function buildCodexPrompt(heading: string, detail: string) {
   const normalizedHeading = normalizeCodexPrompt(heading)
@@ -97,20 +120,50 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [error, setError] = useState<string | null>(null)
   const [codexFeedback, setCodexFeedback] = useState<string | null>(null)
   const [codexSendStatus, setCodexSendStatus] = useState<CodexSendStatus>("idle")
+  const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
+  const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const saveVersionRef = useRef(0)
 
   useEffect(() => {
     if (!open) return
+    setIsMobileOpenTarget(isLikelyMobileDevice())
     setHeading(node.title)
     setDetail(node.memo)
     setError(null)
     setCodexFeedback(null)
     setCodexSendStatus("idle")
+    setCodexRunnerStatus({ checked: false, ready: false })
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
   }, [open, node.taskId, node.title, node.memo])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+
+    const fetchRunnerStatus = async () => {
+      try {
+        const res = await fetch("/api/ai-runners", { cache: "no-store" })
+        const data = await res.json().catch(() => ({})) as { runners?: AiRunner[] }
+        if (cancelled) return
+        setCodexRunnerStatus({
+          checked: true,
+          ready: res.ok && hasOnlineCodexRunner(Array.isArray(data.runners) ? data.runners : []),
+        })
+      } catch {
+        if (!cancelled) setCodexRunnerStatus({ checked: true, ready: false })
+      }
+    }
+
+    void fetchRunnerStatus()
+    const interval = window.setInterval(() => void fetchRunnerStatus(), RUNNER_STATUS_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [open])
 
   const moveFocusToPanel = useCallback(() => {
     const active = document.activeElement
@@ -233,7 +286,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const promptHeadingForCodex = heading || node.title
   const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail)
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
-  const codexHref = buildCodexDeepLink({ prompt: codexPrompt, repoPath: codexRepoPath || null })
+  const codexOpenTarget = buildCodexOpenTarget(
+    { prompt: codexPrompt, repoPath: codexRepoPath || null },
+    { preferMobile: isMobileOpenTarget },
+  )
+  const codexHref = codexOpenTarget.url
 
   const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const promptHeading = heading || node.title
@@ -245,8 +302,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
     const prompt = buildCodexPrompt(promptHeading, detail)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
-    const useLocalApi = canUseLocalCodexOpenApi()
-    if (useLocalApi) event?.preventDefault()
+    const openTarget = buildCodexOpenTarget(
+      {
+        prompt,
+        repoPath: repoPath || null,
+        originUrl: typeof window !== "undefined" ? window.location.href : null,
+      },
+      { preferMobile: isMobileOpenTarget },
+    )
+    const useLocalApi = canUseLocalCodexOpenApi() && !isMobileOpenTarget
+    event?.preventDefault()
     let launchMode: CodexLaunchMode | null = null
     setError(null)
     setCodexFeedback(null)
@@ -254,21 +319,12 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
     try {
       const clipboardPromise = copyPromptToClipboard(prompt)
-      const launchPromise = useLocalApi
-        ? launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
-          .then(result => ({ result, error: null }))
-          .catch(error => ({ result: null, error }))
-        : null
-
-      if (!useLocalApi) launchMode = "browser-deep-link"
-
-      let copiedToClipboard = await clipboardPromise
-      await saveDraft(heading, detail)
-      const dispatchMode = repoPath ? "auto" : "manual"
-
-      const scheduleRes = await fetch("/api/ai-tasks/schedule", {
+      const dispatchMode = repoPath && (useLocalApi || codexRunnerStatus.ready) ? "auto" : "manual"
+      const savePromise = saveDraft(heading, detail)
+      const schedulePromise = fetch("/api/ai-tasks/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        keepalive: prompt.length < 50_000,
         body: JSON.stringify({
           prompt,
           cwd: repoPath || null,
@@ -279,18 +335,30 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           dispatch_mode: dispatchMode,
         }),
       })
+      const launchPromise = useLocalApi
+        ? launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
+          .then(result => ({ result, error: null }))
+          .catch(error => ({ result: null, error }))
+        : Promise.resolve({ result: { mode: openTarget.mode, url: openTarget.url, copiedToClipboard: false }, error: null })
+
+      if (!useLocalApi && typeof window !== "undefined") {
+        launchMode = openTarget.mode
+        window.location.href = openTarget.url
+      }
+
+      let copiedToClipboard = await clipboardPromise
+      await savePromise
+      const scheduleRes = await schedulePromise
       let handoffWarning: string | null = null
       if (!scheduleRes.ok && scheduleRes.status !== 409) {
         const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
         handoffWarning = data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`
       }
 
-      if (launchPromise) {
-        const launchOutcome = await launchPromise
-        if (launchOutcome.error) throw launchOutcome.error
-        launchMode = launchOutcome.result?.mode ?? "local-api"
-        if (launchOutcome.result?.copiedToClipboard) copiedToClipboard = true
-      }
+      const launchOutcome = await launchPromise
+      if (launchOutcome.error) throw launchOutcome.error
+      launchMode = launchOutcome.result?.mode ?? launchMode ?? openTarget.mode
+      if (launchOutcome.result?.copiedToClipboard) copiedToClipboard = true
 
       setCodexSendStatus("sent")
       const copyFeedback = copiedToClipboard ? "プロンプトはコピー済みです。" : "プロンプトのコピーに失敗しました。"
@@ -299,7 +367,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       } else {
         const dispatchFeedback = dispatchMode === "auto"
           ? "MacのrunnerにもCodex.app実行を依頼しました。"
-          : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
+          : isMobileOpenTarget
+            ? "ChatGPTアプリのCodex画面で貼り付けて開始してください。"
+            : repoPath
+            ? "Macセットアップ未完了のため、今回はCodex.appで貼り付けて開始してください。"
+            : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
         setCodexFeedback(
           `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
         )
@@ -308,7 +380,12 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, detail, heading, node.cwd, node.taskId, node.title, saveDraft])
+  }, [candidates, codexRunnerStatus.ready, detail, heading, isMobileOpenTarget, node.cwd, node.taskId, node.title, saveDraft])
+
+  const showCodexSetupPrompt =
+    !canUseLocalCodexOpenApi() &&
+    codexRunnerStatus.checked &&
+    !codexRunnerStatus.ready
 
   return (
     <Dialog
@@ -362,11 +439,17 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                   onClick={sendToCodex}
                   aria-disabled={codexSendStatus === "sending"}
                   className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
-                  aria-label="コピーしてCodexを開く"
-                  title="コピーしてCodexを開く"
+                  aria-label={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
+                  title={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
                 >
-                  {codexSendStatus === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-                  Codexに送る
+                  {codexSendStatus === "sending" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : isMobileOpenTarget ? (
+                    <Smartphone className="h-4 w-4" />
+                  ) : (
+                    <ExternalLink className="h-4 w-4" />
+                  )}
+                  {isMobileOpenTarget ? "ChatGPTでCodex" : "Codexに送る"}
                 </a>
                 <button
                   type="button"
@@ -407,6 +490,27 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
               className="min-h-[44dvh] w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary"
               placeholder="メモの詳細を書いてください"
             />
+
+            {showCodexSetupPrompt && (
+              <div className="rounded-md border border-amber-300/50 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="flex items-center gap-1.5 font-medium">
+                    <TriangleAlert className="h-3.5 w-3.5" />
+                    Codex自動実行はMac未接続
+                  </p>
+                  <a
+                    href="/dashboard/workspace/setup?step=2"
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-amber-400/50 bg-background/70 px-2.5 font-semibold text-amber-900 transition-colors hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-950"
+                  >
+                    <Laptop className="h-3.5 w-3.5" />
+                    Macセットアップ
+                  </a>
+                </div>
+                <p className="mt-1 text-[11px] text-amber-700/80 dark:text-amber-300/80">
+                  今回はコピーとCodex.app起動だけ実行します。セットアップ後はこのボタンからMac側で実行できます。
+                </p>
+              </div>
+            )}
           </div>
 
           <button
