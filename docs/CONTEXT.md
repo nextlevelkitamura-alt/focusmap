@@ -186,6 +186,14 @@ Goals → Projects → TaskGroups → Tasks
 - Codex app-serverは `ws://127.0.0.1:7878` のみを使う。Electron側も `ANTHROPIC_API_KEY` / `CLAUDECODE` を外した環境で起動し、既存のCodex.app連携安全策を維持する。
 - 配布用の最初の形は未署名の自分用ビルドでよい。`npm run mac:build` は `next build` 後に `dist-desktop/` へ `.app` ディレクトリを作る。一般配布する場合はDeveloper ID署名・notarizationを別途追加する。
 
+### Focusmap iPhoneアプリMVP
+
+- iPhone版の初期実装は `mobile/focusmap-app` のExpo/React Nativeアプリを使う。既存Next.jsのモバイルUIを捨てず、React Native側は起動画面・読み込み状態・エラー復旧・ネイティブインストール枠を担当し、アプリ本体は `react-native-webview` で `/dashboard` を表示する。
+- 標準の接続先は `https://focusmap-official.com/dashboard?source=ios-app&standalone=1`。スマホプレビューやローカル検証では、ビルド前に `EXPO_PUBLIC_FOCUSMAP_URL` でCloudflare tunnel等のURLへ差し替える。
+- Apple Developer Programに入らない初期検証では、Xcodeの無料Personal Teamで実機へ直接インストールする。ホーム画面にはFocusmap専用アイコンが出るが、無料署名は7日で切れるため、継続利用には再インストールが必要。
+- 実機インストールの入口は `mobile/focusmap-app/scripts/install-ios-free.sh`。Xcode本体がないMacでは実行を止め、`xcode-select` とライセンス承認の手順を表示する。
+- iPhone版を本格配布する段階では、Google OAuthや外部ログインをWebView内だけで完結させず、ExpoのAuthSession/ASWebAuthenticationSession相当のシステムブラウザ認証へ切り出す。初期MVPは自分用インストールとWeb UI確認を優先する。
+
 ### Codexログ表示方針
 
 - Focusmapに表示する主ログは、Codexの日本語/ユーザー向け返答本文を中心にする。
@@ -208,6 +216,7 @@ Goals → Projects → TaskGroups → Tasks
 | Mac常駐runner/Codex同期 | `scripts/task-runner.ts` / `scripts/focusmap-agent/src/executors/codex-app.ts` |
 | Focusmap Liteセットアップ | `scripts/install.sh` / `src/components/workspace/setup-step-agent.tsx` |
 | Focusmap MacアプリMVP | `desktop/focusmap-mac/main.cjs` / `desktop/focusmap-mac/status.html` |
+| Focusmap iPhoneアプリMVP | `mobile/focusmap-app/App.tsx` / `mobile/focusmap-app/scripts/install-ios-free.sh` |
 
 ---
 

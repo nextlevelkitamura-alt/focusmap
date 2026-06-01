@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Focusmap",
+    "slug": "focusmap-ios",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "focusmap",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#050505",
+    "platforms": [
+      "ios"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.focusmap.mobile",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "CFBundleDisplayName": "Focusmap",
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#050505",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#050505",
+            "image": "./assets/splash-icon.png"
+          }
+        }
+      ]
+    ]
+  }
+}
