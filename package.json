@@ -1,17 +1,23 @@
 {
   "name": "focusmap",
   "version": "0.1.0",
+  "description": "Focusmap dashboard and Mac desktop shell",
+  "author": "Focusmap",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
     "dev": "(sleep 3 && open http://localhost:3001 &) && NODE_OPTIONS='--max-http-header-size=65536' next dev -p 3001",
+    "dev:desktop": "NODE_OPTIONS='--max-http-header-size=65536' next dev -p 3001",
     "dev:phone": "scripts/phone-preview.sh",
     "dev:phone:auth": "node scripts/phone-preview-auth-config.mjs",
     "dev:phone:bg": "scripts/phone-preview-session.sh start",
     "dev:phone:status": "scripts/phone-preview-session.sh status",
     "dev:phone:stop": "scripts/phone-preview-session.sh stop",
+    "mac:dev": "electron ./desktop/focusmap-mac/main.cjs",
+    "mac:build": "npm run build && electron-builder --config desktop/focusmap-mac/electron-builder.yml --mac dir",
+    "mac:dist": "npm run build && electron-builder --config desktop/focusmap-mac/electron-builder.yml --mac dmg",
     "build": "next build",
     "build:render": "NODE_OPTIONS='--max-old-space-size=512' next build",
     "start": "next start",
@@ -73,6 +79,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.3",
     "jsdom": "^28.1.0",

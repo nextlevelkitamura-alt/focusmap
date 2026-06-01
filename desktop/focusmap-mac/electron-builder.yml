@@ -1,0 +1,44 @@
+appId: com.focusmap.desktop
+productName: Focusmap
+extraMetadata:
+  main: desktop/focusmap-mac/main.cjs
+directories:
+  output: dist-desktop
+files:
+  - desktop/focusmap-mac/**
+  - package.json
+extraResources:
+  - from: .next/standalone
+    to: next-standalone
+    filter:
+      - '**/*'
+  - from: .next/static
+    to: next-standalone/.next/static
+    filter:
+      - '**/*'
+  - from: public
+    to: next-standalone/public
+    filter:
+      - '**/*'
+  - from: scripts/focusmap-agent
+    to: focusmap-agent
+    filter:
+      - dist/**
+      - package.json
+      - package-lock.json
+  - from: scripts/run-codex-app-server.sh
+    to: run-codex-app-server.sh
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dir
+      arch:
+        - arm64
+        - x64
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  identity: null

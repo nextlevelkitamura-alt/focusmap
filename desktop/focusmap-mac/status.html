@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Focusmap 接続状態</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070707;
+        --panel: #111;
+        --panel-2: #151515;
+        --line: #282828;
+        --text: #f4f4f5;
+        --muted: #9ca3af;
+        --green: #0aa36b;
+        --amber: #c1861f;
+        --blue: #1687c9;
+        --red: #d14b4b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        overflow-x: hidden;
+      }
+
+      main {
+        display: grid;
+        gap: 14px;
+        padding: 18px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 10px;
+      }
+
+      .card {
+        min-height: 92px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 12px;
+      }
+
+      .card h2 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--red);
+        flex: none;
+      }
+
+      .dot.ok {
+        background: var(--green);
+      }
+
+      .dot.warn {
+        background: var(--amber);
+      }
+
+      .dot.info {
+        background: var(--blue);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      button {
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 0 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.primary {
+        border-color: rgba(10, 163, 107, 0.55);
+        background: rgba(10, 163, 107, 0.18);
+      }
+
+      button:hover {
+        border-color: #3f3f46;
+        background: #1f1f1f;
+      }
+
+      code {
+        display: block;
+        overflow-wrap: anywhere;
+        white-space: normal;
+        color: #d1d5db;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+      }
+
+      pre {
+        overflow: auto;
+        max-height: 180px;
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #050505;
+        padding: 12px;
+        color: #d1d5db;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Focusmap Mac</h1>
+          <div class="muted">Web UI とローカルCodex連携の状態</div>
+        </div>
+        <button id="refresh">更新</button>
+      </header>
+
+      <section class="grid" id="status-grid"></section>
+
+      <section class="actions">
+        <button class="primary" id="open-main">Focusmapを開く</button>
+        <button id="start-agent">Agent開始</button>
+        <button id="stop-agent">Agent停止</button>
+        <button id="start-codex">Codex server開始</button>
+        <button id="stop-codex">Codex server停止</button>
+      </section>
+
+      <section>
+        <div class="muted" style="margin-bottom: 8px;">ログ</div>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script>
+      const grid = document.querySelector('#status-grid');
+      const logs = document.querySelector('#logs');
+      let lastStatus = null;
+
+      function dotClass(ok, warn) {
+        if (ok) return 'ok';
+        if (warn) return 'warn';
+        return '';
+      }
+
+      function card(title, ok, lines, warn = false) {
+        return `
+          <article class="card">
+            <h2><span class="dot ${dotClass(ok, warn)}"></span>${title}</h2>
+            ${lines.map((line) => `<div class="muted">${line}</div>`).join('')}
+          </article>
+        `;
+      }
+
+      function render(status) {
+        lastStatus = status;
+        grid.innerHTML = [
+          card('Focusmap UI', status.nextReady, [
+            status.nextReady ? '起動中' : '未起動（開くと起動）',
+            status.nextManaged ? 'Macアプリ管理' : '外部/既存プロセス',
+            `<code>${status.appOrigin}</code>`,
+          ]),
+          card('Agent', status.agentManaged || status.agentLaunchd, [
+            status.agentManaged ? 'Macアプリ管理で起動中' : status.agentLaunchd ? 'launchdで登録済み' : '未起動',
+            status.configReady ? 'config.jsonあり' : 'config.jsonなし',
+            status.agentApiUrl ? `API: ${status.agentApiUrl}` : 'API: config.jsonの設定',
+            `<code>${status.configPath}</code>`,
+          ], status.configReady),
+          card('Codex', status.codexServerReady, [
+            status.codexServerReady ? 'app-server接続済み' : 'app-server未接続',
+            status.codexAppInstalled ? 'Codex.appあり' : status.codexCliInstalled ? 'codex CLIあり' : 'Codex未検出',
+            status.codexManaged ? 'Macアプリ管理' : status.codexLaunchd ? 'launchd登録済み' : '手動起動待ち',
+          ], status.codexAppInstalled || status.codexCliInstalled),
+          card('Repo', true, [
+            '既存Next.js UIを使用',
+            `<code>${status.repoRoot}</code>`,
+          ]),
+        ].join('');
+        logs.textContent = status.logs.join('\n');
+        logs.scrollTop = logs.scrollHeight;
+      }
+
+      async function refresh() {
+        render(await window.focusmapDesktop.getStatus());
+      }
+
+      async function run(action) {
+        const result = await action();
+        await refresh();
+        return result;
+      }
+
+      document.querySelector('#refresh').addEventListener('click', refresh);
+      document.querySelector('#open-main').addEventListener('click', () => window.focusmapDesktop.openMain());
+      document.querySelector('#start-agent').addEventListener('click', () => run(() => window.focusmapDesktop.startAgent()));
+      document.querySelector('#stop-agent').addEventListener('click', () => run(() => window.focusmapDesktop.stopAgent()));
+      document.querySelector('#start-codex').addEventListener('click', () => run(() => window.focusmapDesktop.startCodexServer()));
+      document.querySelector('#stop-codex').addEventListener('click', () => run(() => window.focusmapDesktop.stopCodexServer()));
+      window.focusmapDesktop.onLog((line) => {
+        if (!lastStatus) return;
+        lastStatus.logs.push(line);
+        lastStatus.logs = lastStatus.logs.slice(-80);
+        render(lastStatus);
+      });
+
+      refresh();
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>

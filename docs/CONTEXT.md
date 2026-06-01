@@ -171,6 +171,16 @@ Goals → Projects → TaskGroups → Tasks
 - Focusmapで完了済みになったノードに紐づくCodex threadのアーカイブ/削除確認も、常時ではなく30分間隔の巡回に抑える。
 - Web側の `useMemoAiTasks` は、実行中のCodexタスクがある場合だけ5秒更新。実行中がない場合は1時間更新に後退し、必要なら手動更新アイコンで即時取得する。
 
+### Focusmap MacアプリMVP
+
+- Mac版は、FocusmapのUIをSwiftUI等で作り直さない。既存のNext.js/React UIをElectronのBrowserWindow内で表示し、ブラウザではできないローカル機能だけをElectronメインプロセス側へ寄せる。
+- 開発・自分用起動は `npm run mac:dev`。起動直後は軽量な「Focusmap 接続状態」ウィンドウだけを開き、メイン画面はユーザーが `Focusmapを開く` を押した時だけ `http://127.0.0.1:3001/dashboard?desktop=1&source=mac` を表示する。3001にFocusmapがいなければ、その時点で `next dev -p 3001` を自動起動する。ブラウザを開く既存 `npm run dev` と分けるため、Macアプリ用には `npm run dev:desktop` を使う。
+- Macアプリの状態確認は `/api/desktop/health` を使い、重い `/dashboard` 初期化やAI/DB接続テストをヘルスチェックで走らせない。
+- Macアプリのメニューと「Focusmap 接続状態」ウィンドウから、既存 `scripts/focusmap-agent/dist/cli.js` と `scripts/run-codex-app-server.sh` を起動・停止・状態確認できる。agentの設定は従来通り `~/.focusmap/config.json` を使い、Macアプリ内にservice role key等は置かない。
+- 開発中のMacアプリでは、`~/.focusmap/config.json` の `api_url` が本番APIを向いていても、agent起動時だけ `~/Library/Application Support/Focusmap/agent-config.json` に一時設定を作り、`api_url` を `http://127.0.0.1:3001/api` へ向ける。この場合、agent起動前に3001のNext APIも自動起動する。これにより本番Cloud Run側の環境変数に依存せず、ローカルNext API経由で `ai_tasks` を同期できる。配布版や本番API固定にしたい場合は `FOCUSMAP_DESKTOP_AGENT_API_URL` で明示する。
+- Codex app-serverは `ws://127.0.0.1:7878` のみを使う。Electron側も `ANTHROPIC_API_KEY` / `CLAUDECODE` を外した環境で起動し、既存のCodex.app連携安全策を維持する。
+- 配布用の最初の形は未署名の自分用ビルドでよい。`npm run mac:build` は `next build` 後に `dist-desktop/` へ `.app` ディレクトリを作る。一般配布する場合はDeveloper ID署名・notarizationを別途追加する。
+
 ### Codexログ表示方針
 
 - Focusmapに表示する主ログは、Codexの日本語/ユーザー向け返答本文を中心にする。
@@ -192,6 +202,7 @@ Goals → Projects → TaskGroups → Tasks
 | ノードに紐づくCodex thread取得 | `src/app/api/codex/node-thread/route.ts` |
 | Mac常駐runner/Codex同期 | `scripts/task-runner.ts` / `scripts/focusmap-agent/src/executors/codex-app.ts` |
 | Focusmap Liteセットアップ | `scripts/install.sh` / `src/components/workspace/setup-step-agent.tsx` |
+| Focusmap MacアプリMVP | `desktop/focusmap-mac/main.cjs` / `desktop/focusmap-mac/status.html` |
 
 ---
 
