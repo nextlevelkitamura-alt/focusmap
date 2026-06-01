@@ -10,6 +10,7 @@ export type CodexLaunchPayload = {
 export type CodexLaunchResult = {
   mode: CodexLaunchMode
   url?: string
+  copiedToClipboard?: boolean
 }
 
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
@@ -44,19 +45,13 @@ export function launchCodexFromBrowser(payload: CodexLaunchPayload): CodexLaunch
 }
 
 export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promise<CodexLaunchResult> {
-  if (payload.threadUrl?.trim()) {
-    return launchCodexFromBrowser(payload)
-  }
-  if (!payload.repoPath?.trim()) {
-    throw new Error("Codex.appで開くリポジトリを設定してください")
-  }
-
   const res = await fetch("/api/codex/open-repo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      repo_path: payload.repoPath.trim(),
+      repo_path: payload.repoPath?.trim() || null,
       prompt: normalizeCodexPrompt(payload.prompt),
+      codex_url: payload.threadUrl?.trim() || null,
       origin_url: payload.originUrl ?? window.location.href,
     }),
   })
@@ -64,8 +59,9 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
     const data = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
   }
+  const data = await res.json().catch(() => ({})) as { copied_to_clipboard?: boolean }
 
-  return { mode: "local-api" }
+  return { mode: "local-api", copiedToClipboard: data.copied_to_clipboard === true }
 }
 
 export function launchFeedbackForMode(mode: CodexLaunchMode) {

@@ -54,6 +54,42 @@ function buildCodexPrompt(heading: string, detail: string) {
   return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
 }
 
+function copyPromptToClipboard(prompt: string): Promise<boolean> {
+  let copied = false
+
+  if (typeof document !== "undefined") {
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const textarea = document.createElement("textarea")
+    textarea.value = prompt
+    textarea.setAttribute("readonly", "")
+    textarea.style.position = "fixed"
+    textarea.style.top = "0"
+    textarea.style.left = "0"
+    textarea.style.width = "1px"
+    textarea.style.height = "1px"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    try {
+      copied = document.execCommand("copy")
+    } catch {
+      copied = false
+    } finally {
+      document.body.removeChild(textarea)
+      activeElement?.focus({ preventScroll: true })
+    }
+  }
+
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(prompt)
+      .then(() => true)
+      .catch(() => copied)
+  }
+
+  return Promise.resolve(copied)
+}
+
 export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [heading, setHeading] = useState(node.title)
@@ -203,12 +239,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
     const prompt = buildCodexPrompt(promptHeading, detail)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
-    const threadUrl = node.codexThreadUrl?.trim() || null
-    if (!repoPath && !threadUrl) {
-      setError("Codex.appで開くリポジトリを設定してください")
-      return
-    }
-
     const useLocalApi = canUseLocalCodexOpenApi()
     let launchMode: CodexLaunchMode | null = null
     setError(null)
@@ -216,20 +246,18 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexSendStatus("sending")
 
     try {
+      const clipboardPromise = copyPromptToClipboard(prompt)
+      const launchPromise = useLocalApi
+        ? launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
+          .then(result => ({ result, error: null }))
+          .catch(error => ({ result: null, error }))
+        : null
+
       if (!useLocalApi) {
-        launchMode = launchCodexFromBrowser({ prompt, repoPath: repoPath || null, threadUrl }).mode
+        launchMode = launchCodexFromBrowser({ prompt, repoPath: repoPath || null }).mode
       }
 
-      let clipboardWarning: string | null = null
-      if (navigator.clipboard?.writeText) {
-        try {
-          await navigator.clipboard.writeText(prompt)
-        } catch {
-          clipboardWarning = "プロンプトのクリップボードコピーに失敗しました。"
-        }
-      } else {
-        clipboardWarning = "ブラウザがクリップボードコピーに対応していません。"
-      }
+      let copiedToClipboard = await clipboardPromise
       await saveDraft(heading, detail)
 
       const scheduleRes = await fetch("/api/ai-tasks/schedule", {
@@ -251,21 +279,27 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         handoffWarning = data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`
       }
 
-      if (useLocalApi) {
-        launchMode = (await launchCodexViaLocalApi({ prompt, repoPath, threadUrl })).mode
+      if (launchPromise) {
+        const launchOutcome = await launchPromise
+        if (launchOutcome.error) throw launchOutcome.error
+        launchMode = launchOutcome.result?.mode ?? "local-api"
+        if (launchOutcome.result?.copiedToClipboard) copiedToClipboard = true
       }
 
       setCodexSendStatus("sent")
+      const copyFeedback = copiedToClipboard ? "プロンプトはコピー済みです。" : "プロンプトのコピーに失敗しました。"
       if (handoffWarning) {
-        setError(`プロンプトはコピー済みです。Codex側で貼り付けてください。${handoffWarning}`)
+        setError(`${copyFeedback} ${handoffWarning}`)
       } else {
-        setCodexFeedback(`${launchFeedbackForMode(launchMode ?? "browser-deep-link")}${clipboardWarning ? ` ${clipboardWarning}` : ""}`)
+        setCodexFeedback(
+          `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback}`,
+        )
       }
     } catch (err) {
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, detail, heading, node.codexThreadUrl, node.cwd, node.taskId, node.title, saveDraft])
+  }, [candidates, detail, heading, node.cwd, node.taskId, node.title, saveDraft])
 
   return (
     <Dialog
@@ -318,9 +352,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                   type="button"
                   onClick={sendToCodex}
                   disabled={codexSendStatus === "sending"}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
-                  aria-label="Codexに送る"
-                  title="Codexに送る"
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
+                  aria-label="コピーしてCodexを開く"
+                  title="コピーしてCodexを開く"
                 >
                   {codexSendStatus === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
                   Codexに送る
@@ -329,7 +363,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                   type="button"
                   onClick={generateHeading}
                   disabled={!detail.trim() || isGeneratingHeading}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-500/20 disabled:opacity-50 dark:text-blue-100"
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-500/20 disabled:opacity-50 dark:text-blue-100"
                   aria-label="見出し生成"
                   title="見出し生成"
                 >
@@ -344,7 +378,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                   type="button"
                   onClick={toggleVoiceInput}
                   disabled={isTranscribing}
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
                   aria-label={isRecording ? "録音を停止" : "音声入力"}
                   title={isRecording ? "録音を停止" : "音声入力"}
                 >

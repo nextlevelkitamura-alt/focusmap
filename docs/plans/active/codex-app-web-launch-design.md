@@ -32,6 +32,8 @@ localhost開発中だけは、Next API `/api/codex/open-repo` が同じMac上で
 
 - `localhost` / `127.0.0.1` / `::1` では `/api/codex/open-repo` を使う。
 - このAPIは同じMac上のNext dev serverでだけ意味がある。本番Cloud Runでは使わない。
+- `CodexNodePanel` の「Codexに送る」は既存threadへの遷移を優先しない。プロンプトをクリップボードへコピーし、リポジトリがあれば `codex://?prompt=...&path=...&originUrl=...`、なければ `codex://?prompt=...&originUrl=...` を開いたうえでCodex.appをactivateする。localhostではブラウザ側クリップボード権限に依存しないよう、API側でもMacの `pbcopy` に同じプロンプトを書き込む。
+- スマホ/本番Webでは、ユーザー操作直後に `codex://` deep link を発火してCodexアプリへ飛ばす。クリップボードコピーも同じクリック処理内で開始し、ブラウザの外部アプリ起動制約を避ける。
 
 ### 3. 本当に安定させる次段階
 

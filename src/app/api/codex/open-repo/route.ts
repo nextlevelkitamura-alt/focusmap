@@ -1,4 +1,4 @@
-import { execFile } from "child_process"
+import { execFile, spawn } from "child_process"
 import fs from "fs"
 import os from "os"
 import path from "path"
@@ -9,11 +9,12 @@ import { createClient } from "@/utils/supabase/server"
 export const runtime = "nodejs"
 
 const execFileAsync = promisify(execFile)
-const BUNDLED_CODEX = "/Applications/Codex.app/Contents/Resources/codex"
+const CODEX_BUNDLE_ID = "com.openai.codex"
 
 type OpenCodexBody = {
   repo_path?: unknown
   prompt?: unknown
+  codex_url?: unknown
   origin_url?: unknown
 }
 
@@ -77,13 +78,51 @@ async function resolveGitRoot(repoPath: string): Promise<string | null> {
   }
 }
 
-function buildCodexChatUrl(prompt: string, repoPath: string, originUrl: string | null): string {
+function buildCodexChatUrl(prompt: string, repoPath: string | null, originUrl: string | null): string {
   const url = new URL("codex://")
   const normalizedPrompt = prompt.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
   if (normalizedPrompt) url.searchParams.set("prompt", normalizedPrompt)
-  url.searchParams.set("path", repoPath)
+  if (repoPath) url.searchParams.set("path", repoPath)
   if (originUrl?.trim()) url.searchParams.set("originUrl", originUrl.trim())
   return url.toString()
+}
+
+function copyToMacClipboard(text: string): Promise<boolean> {
+  if (!text.trim()) return Promise.resolve(false)
+
+  return new Promise((resolve) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const finish = (copied: boolean) => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      resolve(copied)
+    }
+    const child = spawn("/usr/bin/pbcopy", [], {
+      stdio: ["pipe", "ignore", "ignore"],
+    })
+    timeout = setTimeout(() => {
+      child.kill()
+      finish(false)
+    }, 3_000)
+
+    child.on("error", () => finish(false))
+    child.on("close", code => finish(code === 0))
+    child.stdin.end(text)
+  })
+}
+
+function resolveCodexUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  try {
+    const url = new URL(trimmed)
+    return url.protocol === "codex:" ? trimmed : null
+  } catch {
+    return null
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -106,69 +145,75 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({})) as OpenCodexBody
-  if (typeof body.repo_path !== "string" || body.repo_path.trim().length === 0) {
-    return NextResponse.json({ error: "repo_path is required" }, { status: 400 })
+  const codexUrl = resolveCodexUrl(body.codex_url)
+  if (typeof body.codex_url === "string" && body.codex_url.trim() && !codexUrl) {
+    return NextResponse.json({ error: "codex_url must use the codex:// scheme" }, { status: 400 })
   }
 
-  const rawRepoPath = body.repo_path.trim()
-  const expandedRepoPath = expandHome(rawRepoPath)
-  if (!path.isAbsolute(expandedRepoPath)) {
-    return NextResponse.json({ error: "repo_path must be an absolute path" }, { status: 400 })
-  }
+  const rawRepoPath = typeof body.repo_path === "string" ? body.repo_path.trim() : ""
+  let resolvedRepoPath: string | null = null
+  let gitRoot: string | null = null
 
-  let resolvedRepoPath: string
-  try {
-    resolvedRepoPath = fs.realpathSync(expandedRepoPath)
-  } catch {
-    return NextResponse.json({ error: "repo_path does not exist" }, { status: 400 })
-  }
+  if (rawRepoPath) {
+    const expandedRepoPath = expandHome(rawRepoPath)
+    if (!path.isAbsolute(expandedRepoPath)) {
+      return NextResponse.json({ error: "repo_path must be an absolute path" }, { status: 400 })
+    }
 
-  const stat = fs.statSync(resolvedRepoPath)
-  if (!stat.isDirectory()) {
-    return NextResponse.json({ error: "repo_path must be a directory" }, { status: 400 })
-  }
+    try {
+      resolvedRepoPath = fs.realpathSync(expandedRepoPath)
+    } catch {
+      return NextResponse.json({ error: "repo_path does not exist" }, { status: 400 })
+    }
 
-  const gitRoot = await resolveGitRoot(resolvedRepoPath)
-  if (!gitRoot) {
-    return NextResponse.json({ error: "repo_path must be a git repository" }, { status: 400 })
-  }
-  if (gitRoot !== resolvedRepoPath) {
-    return NextResponse.json(
-      { error: "repo_path must point to the git repository root", git_root: gitRoot },
-      { status: 400 },
-    )
-  }
+    const stat = fs.statSync(resolvedRepoPath)
+    if (!stat.isDirectory()) {
+      return NextResponse.json({ error: "repo_path must be a directory" }, { status: 400 })
+    }
 
-  const registered = await isScannedRepo(supabase, user.id, [
-    rawRepoPath,
-    expandedRepoPath,
-    path.resolve(expandedRepoPath),
-    resolvedRepoPath,
-  ])
-  if (!registered) {
-    return NextResponse.json(
-      { error: "Focusmap に登録済みのリポジトリだけ Codex.app で開けます" },
-      { status: 403 },
-    )
-  }
-
-  try {
-    if (!fs.existsSync(BUNDLED_CODEX)) {
+    gitRoot = await resolveGitRoot(resolvedRepoPath)
+    if (!gitRoot) {
+      return NextResponse.json({ error: "repo_path must be a git repository" }, { status: 400 })
+    }
+    if (gitRoot !== resolvedRepoPath) {
       return NextResponse.json(
-        { error: "Codex.app の CLI が見つかりません。/Applications/Codex.app を確認してください" },
-        { status: 500 },
+        { error: "repo_path must point to the git repository root", git_root: gitRoot },
+        { status: 400 },
       )
     }
 
-    const prompt = typeof body.prompt === "string" ? body.prompt : ""
+    const registered = await isScannedRepo(supabase, user.id, [
+      rawRepoPath,
+      expandedRepoPath,
+      path.resolve(expandedRepoPath),
+      resolvedRepoPath,
+    ])
+    if (!registered) {
+      return NextResponse.json(
+        { error: "Focusmap に登録済みのリポジトリだけ Codex.app で開けます" },
+        { status: 403 },
+      )
+    }
+  }
+
+  const prompt = typeof body.prompt === "string" ? body.prompt : ""
+  let copiedToClipboard = false
+
+  try {
     const originUrl = typeof body.origin_url === "string" ? body.origin_url : null
-    if (prompt.trim()) {
+    copiedToClipboard = await copyToMacClipboard(prompt)
+    if (codexUrl) {
+      await execFileAsync("/usr/bin/open", [codexUrl], {
+        timeout: 10_000,
+        windowsHide: true,
+      })
+    } else if (prompt.trim() || resolvedRepoPath) {
       await execFileAsync("/usr/bin/open", [buildCodexChatUrl(prompt, resolvedRepoPath, originUrl)], {
         timeout: 10_000,
         windowsHide: true,
       })
     } else {
-      await execFileAsync(BUNDLED_CODEX, ["app", resolvedRepoPath], {
+      await execFileAsync("/usr/bin/open", ["-b", CODEX_BUNDLE_ID], {
         timeout: 10_000,
         windowsHide: true,
       })
@@ -187,6 +232,11 @@ export async function POST(req: NextRequest) {
     repo_path: resolvedRepoPath,
     git_root: gitRoot,
     activated,
-    command: typeof body.prompt === "string" && body.prompt.trim() ? "open codex:// chat" : "codex app",
+    copied_to_clipboard: copiedToClipboard,
+    command: codexUrl
+      ? "open codex:// url"
+      : typeof body.prompt === "string" && body.prompt.trim()
+        ? "open codex:// chat"
+        : "open Codex.app",
   })
 }
