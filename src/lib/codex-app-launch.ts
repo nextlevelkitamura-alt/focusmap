@@ -17,7 +17,7 @@ export type CodexLaunchResult = {
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".trycloudflare.com"]
 export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
-export const CHATGPT_CODEX_MOBILE_APP_URL = "com.openai.chat://codex/open"
+export const CHATGPT_CODEX_MOBILE_APP_URL = `com.openai.chat://${CHATGPT_CODEX_MOBILE_URL}`
 export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
 export function isLocalCodexOpenHost(hostname: string) {
@@ -57,7 +57,8 @@ export function getCurrentMobilePlatform(): MobilePlatform {
 
 export function buildChatGptCodexMobileAppUrl(platform: MobilePlatform) {
   if (platform === "android") {
-    return `intent://codex/open#Intent;scheme=com.openai.chat;package=${CHATGPT_ANDROID_PACKAGE};end`
+    const fallbackUrl = encodeURIComponent(CHATGPT_CODEX_MOBILE_URL)
+    return `intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=${CHATGPT_ANDROID_PACKAGE};S.browser_fallback_url=${fallbackUrl};end`
   }
   return CHATGPT_CODEX_MOBILE_APP_URL
 }
