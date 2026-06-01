@@ -18,6 +18,7 @@ const AGENT_CLI = app.isPackaged
 const CODEX_SERVER_SCRIPT = app.isPackaged
   ? path.join(RESOURCE_ROOT, 'run-codex-app-server.sh')
   : path.join(REPO_ROOT, 'scripts', 'run-codex-app-server.sh');
+const APP_ICON_PNG = path.join(__dirname, 'assets', 'icon.png');
 const LOG_LIMIT = 160;
 
 let mainWindow = null;
@@ -318,6 +319,7 @@ async function createMainWindow() {
     minHeight: 680,
     show: true,
     title: 'Focusmap',
+    icon: APP_ICON_PNG,
     backgroundColor: '#050505',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -358,6 +360,7 @@ function createStatusWindow() {
     height: 620,
     title: 'Focusmap 接続状態',
     resizable: true,
+    icon: APP_ICON_PNG,
     backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -439,7 +442,10 @@ app.on('activate', () => {
 });
 
 app.whenReady().then(async () => {
-  if (app.dock) app.dock.show();
+  if (app.dock) {
+    if (fs.existsSync(APP_ICON_PNG)) app.dock.setIcon(APP_ICON_PNG);
+    app.dock.show();
+  }
   buildMenu();
   try {
     await createMainWindow();

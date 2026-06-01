@@ -29,6 +29,7 @@ extraResources:
   - from: scripts/run-codex-app-server.sh
     to: run-codex-app-server.sh
 mac:
+  icon: desktop/focusmap-mac/assets/icon.icns
   category: public.app-category.productivity
   target:
     - target: dir
