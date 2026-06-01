@@ -71,6 +71,7 @@ const CODEX_SERVER_SCRIPT = app.isPackaged
 const APP_ICON_PNG = path.join(__dirname, 'assets', 'icon.png');
 const LOG_LIMIT = 160;
 const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'oauth2.googleapis.com']);
+const CHILD_PATH = `${os.homedir()}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`;
 
 let mainWindow = null;
 let statusWindow = null;
@@ -103,6 +104,25 @@ function appendProcessLogs(scope, child) {
   child.stderr?.on('data', (chunk) => {
     for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) log(scope, line);
   });
+}
+
+function attachProcessLifecycle(scope, child, processKey) {
+  appendProcessLogs(scope, child);
+  child.once('error', (error) => {
+    log(scope, `spawn failed: ${error.message}`);
+    if (managedProcesses[processKey] === child) managedProcesses[processKey] = null;
+  });
+  child.once('exit', (code, signal) => {
+    log(scope, `stopped code=${code ?? 'null'} signal=${signal ?? 'null'}`);
+    if (managedProcesses[processKey] === child) managedProcesses[processKey] = null;
+  });
+}
+
+function packagedNodeCommand() {
+  return {
+    command: process.execPath,
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  };
 }
 
 function isChildRunning(child) {
@@ -284,7 +304,8 @@ function startNextServer() {
   const devNextBin = path.join(REPO_ROOT, 'node_modules', '.bin', 'next');
   const standaloneServer = path.join(process.resourcesPath || '', 'next-standalone', 'server.js');
   const isPackagedStandalone = app.isPackaged && fs.existsSync(standaloneServer);
-  const command = isPackagedStandalone ? 'node' : devNextBin;
+  const nodeRuntime = packagedNodeCommand();
+  const command = isPackagedStandalone ? nodeRuntime.command : devNextBin;
   const args = isPackagedStandalone ? [standaloneServer] : ['dev', '-p', String(APP_PORT)];
   const cwd = isPackagedStandalone ? path.dirname(standaloneServer) : REPO_ROOT;
 
@@ -297,6 +318,8 @@ function startNextServer() {
     env: {
       ...DESKTOP_ENV,
       ...process.env,
+      ...(isPackagedStandalone ? nodeRuntime.env : {}),
+      PATH: CHILD_PATH,
       HOSTNAME: '127.0.0.1',
       PORT: String(APP_PORT),
       NEXTAUTH_URL: process.env.NEXTAUTH_URL || DESKTOP_ENV.NEXTAUTH_URL || APP_ORIGIN,
@@ -306,11 +329,7 @@ function startNextServer() {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   managedProcesses.next = child;
-  appendProcessLogs('next', child);
-  child.once('exit', (code, signal) => {
-    log('next', `stopped code=${code ?? 'null'} signal=${signal ?? 'null'}`);
-    if (managedProcesses.next === child) managedProcesses.next = null;
-  });
+  attachProcessLifecycle('next', child, 'next');
   log('next', `starting ${isPackagedStandalone ? 'standalone' : 'dev'} server on ${APP_ORIGIN}`);
   return child;
 }
@@ -341,23 +360,24 @@ async function startAgent() {
   const agentApiUrl = preferredAgentApiUrl();
   if (agentApiUrl?.startsWith(APP_ORIGIN)) await ensureFocusmapApp();
 
-  const env = { ...process.env };
+  const nodeRuntime = packagedNodeCommand();
+  const env = {
+    ...DESKTOP_ENV,
+    ...process.env,
+    ...(app.isPackaged ? nodeRuntime.env : {}),
+  };
   delete env.ANTHROPIC_API_KEY;
   delete env.CLAUDECODE;
-  env.PATH = `${os.homedir()}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH || ''}`;
+  env.PATH = CHILD_PATH;
 
   const agentConfigPath = prepareAgentConfigPath();
-  const child = spawn('node', [AGENT_CLI, 'start', '--config', agentConfigPath], {
+  const child = spawn(app.isPackaged ? nodeRuntime.command : 'node', [AGENT_CLI, 'start', '--config', agentConfigPath], {
     cwd: REPO_ROOT,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   managedProcesses.agent = child;
-  appendProcessLogs('agent', child);
-  child.once('exit', (code, signal) => {
-    log('agent', `stopped code=${code ?? 'null'} signal=${signal ?? 'null'}`);
-    if (managedProcesses.agent === child) managedProcesses.agent = null;
-  });
+  attachProcessLifecycle('agent', child, 'agent');
   log('agent', `starting focusmap-agent with ${agentConfigPath}`);
   return { ok: true, message: 'agentを起動しました' };
 }
@@ -385,7 +405,7 @@ async function startCodexServer() {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
   delete env.CLAUDECODE;
-  env.PATH = `${os.homedir()}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH || ''}`;
+  env.PATH = CHILD_PATH;
 
   const child = spawn(CODEX_SERVER_SCRIPT, [], {
     cwd: REPO_ROOT,
@@ -393,11 +413,7 @@ async function startCodexServer() {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   managedProcesses.codex = child;
-  appendProcessLogs('codex', child);
-  child.once('exit', (code, signal) => {
-    log('codex', `stopped code=${code ?? 'null'} signal=${signal ?? 'null'}`);
-    if (managedProcesses.codex === child) managedProcesses.codex = null;
-  });
+  attachProcessLifecycle('codex', child, 'codex');
   log('codex', 'starting codex app-server on ws://127.0.0.1:7878');
   return { ok: true, message: 'Codex app-serverを起動しました' };
 }

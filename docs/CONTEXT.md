@@ -175,6 +175,7 @@ Goals → Projects → TaskGroups → Tasks
 
 - Mac版は、FocusmapのUIをSwiftUI等で作り直さない。既存のNext.js/React UIをElectronのBrowserWindow内で表示し、ブラウザではできないローカル機能だけをElectronメインプロセス側へ寄せる。
 - 開発・自分用起動は `npm run mac:dev`。起動直後は軽量なローディング画面付きのメインウィンドウを先に開き、その後非同期で `http://127.0.0.1:3001/dashboard?desktop=1&source=mac` に遷移する。3001にFocusmapがいなければ、その時点で `next dev -p 3001` を自動起動し、待機中にユーザーへ画面を返す。ブラウザ版 `npm run dev` と分けるため、Macアプリ用には `npm run dev:desktop` を使う。
+- 配布/パッケージ版をFinderやDockから起動した場合、macOSのPATHには `node` が無いことがあるため、同梱Next standaloneやagent CLIは `node` コマンドに依存しない。パッケージ版ではElectron本体を `ELECTRON_RUN_AS_NODE=1` でNode実行モードにして子プロセスを起動する。子プロセスのspawn失敗はメインプロセス例外にせず、接続状態ログに出す。
 - MacアプリのDock/Finderアイコンは、Web UI左上と同じ丸いFocusmapロゴを `desktop/focusmap-mac/assets/icon.icns` として使う。開発起動時のDock表示にも同じ `icon.png` を設定する。Dockへの永続固定はユーザーのmacOS設定で、アプリ側は起動中に通常アプリとしてDockへ表示する。
 - Macアプリの状態確認は `/api/desktop/health` を使い、重い `/dashboard` 初期化やAI/DB接続テストをヘルスチェックで走らせない。
 - Macアプリ内でGoogle Calendar連携を開始した場合、Google OAuth画面はElectron内WebViewではなく既定ブラウザへ逃がす。ローカルに `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` がある場合は `/api/calendar/connect?desktop_oauth=1` でElectron内のSupabaseセッションを一時的にローカルメモリへ保持し、外部ブラウザから `/api/calendar/callback` に戻った時に同じユーザーのGoogleトークンを保存する。ローカルにGoogle OAuth設定がない場合は `https://focusmap-official.com/api/calendar/connect` を既定ブラウザで開き、ブラウザ側のFocusmap/GoogleログインCookieを使う。Google公式方針に合わせ、Google認証ページをElectron内に表示しない。
