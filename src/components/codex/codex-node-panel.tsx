@@ -1,12 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import {
   buildCodexOpenTarget,
   canUseLocalCodexOpenApi,
@@ -18,7 +19,8 @@ import {
   type MobilePlatform,
   type CodexLaunchMode,
 } from "@/lib/codex-app-launch"
-import { ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { Bot, CheckCircle2, Clock, ExternalLink, Laptop, Loader2, Mic, RefreshCw, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -60,8 +62,25 @@ type AiRunner = {
   last_heartbeat_at?: string | null
 }
 
+type CodexChatEntry = {
+  kind: "assistant" | "event" | "user" | "process"
+  text: string
+}
+
 const RUNNER_ONLINE_WINDOW_MS = 2 * 60 * 1000
 const RUNNER_STATUS_POLL_MS = 10_000
+const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
+const CODEX_DISPLAY_LOG_CHARS = 80_000
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
 
 function hasOnlineCodexRunner(runners: AiRunner[]) {
   const now = Date.now()
@@ -77,6 +96,116 @@ function buildCodexPrompt(heading: string, detail: string) {
   const normalizedHeading = normalizeCodexPrompt(heading)
   const normalizedDetail = normalizeCodexPrompt(detail)
   return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
+}
+
+function stripFocusmapSyncId(prompt: string) {
+  return prompt
+    .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, "")
+    .trim()
+}
+
+function normalizedKey(value: string) {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function promptEchoKeys(prompt: string) {
+  const keys = new Set<string>()
+  const rawPrompt = normalizedKey(prompt)
+  if (rawPrompt) keys.add(rawPrompt)
+  const visiblePrompt = stripFocusmapSyncId(prompt)
+  const normalizedPrompt = normalizedKey(visiblePrompt)
+  if (normalizedPrompt) keys.add(normalizedPrompt)
+  const firstLine = visiblePrompt.split("\n").map(line => line.trim()).find(Boolean)
+  if (firstLine) keys.add(normalizedKey(firstLine))
+  return keys
+}
+
+function sanitizeCodexDisplayLog(value: string): string {
+  const seen = new Set<string>()
+  return value
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(block => block && !/^\[(developer|system)\]/i.test(block))
+    .filter(block => !/^Focusmap同期ID:/i.test(block))
+    .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
+    .filter(block => !/^プロンプト待ち。Codex\.appで送信されると/i.test(block))
+    .filter(block => {
+      const key = normalizedKey(block)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .join("\n\n")
+    .trim()
+}
+
+function buildCodexDisplayLog(liveLog: string, message: string, preview: string): string {
+  const base = liveLog || message || preview
+  return sanitizeCodexDisplayLog(base).slice(-CODEX_DISPLAY_LOG_CHARS)
+}
+
+function parseCodexConversation(value: string, prompt: string): { entries: CodexChatEntry[]; processLogs: string[] } {
+  const entries: CodexChatEntry[] = []
+  const assistantBlocks: string[] = []
+  const processLogs: string[] = []
+  const seen = new Set<string>()
+  const promptKeys = promptEchoKeys(prompt)
+
+  const pushEntry = (entry: CodexChatEntry) => {
+    const key = `${entry.kind}:${normalizedKey(entry.text)}`
+    if (!entry.text.trim() || seen.has(key)) return
+    seen.add(key)
+    entries.push(entry)
+  }
+  const pushProcess = (text: string) => {
+    const key = normalizedKey(text)
+    if (key && !processLogs.some(log => normalizedKey(log) === key)) processLogs.push(text)
+  }
+  const flushAssistant = () => {
+    const text = assistantBlocks.join("\n\n").trim()
+    assistantBlocks.length = 0
+    if (text) pushEntry({ kind: "assistant", text })
+  }
+
+  for (const rawBlock of value.split(/\n{2,}/)) {
+    const block = rawBlock.trim()
+    if (!block || promptKeys.has(normalizedKey(block))) continue
+    if (/^\[(developer|system)\]/i.test(block)) continue
+    if (/^Codex セッションは確認待ちです。/i.test(block)) continue
+
+    const user = block.match(/^\[user\]\s*([\s\S]+)/i)
+    if (user?.[1]?.trim()) {
+      flushAssistant()
+      const userText = user[1].trim()
+      if (!promptKeys.has(normalizedKey(userText))) pushEntry({ kind: "user", text: userText })
+      continue
+    }
+
+    const process = block.match(/^\[(command:[^\]]+|approval-requested|approval-resolved)\]\s*([\s\S]*)/i)
+    if (process?.[1]) {
+      flushAssistant()
+      const tag = process[1].toLowerCase()
+      const body = process[2]?.trim() ?? ""
+      if (tag === "approval-requested") pushProcess(`承認待ち\n${body}`)
+      else if (tag === "approval-resolved") pushProcess("承認済み")
+      else if (tag === "command:started") pushProcess(`実行開始\n${body}`)
+      else if (tag === "command:completed") pushProcess(`実行完了\n${body}`)
+      continue
+    }
+
+    const event = block.match(/^\[Codex\]\s*([\s\S]+)/i)
+    if (event?.[1]?.trim()) {
+      flushAssistant()
+      if (!/実行完了/.test(event[1])) pushEntry({ kind: "event", text: event[1].trim() })
+      continue
+    }
+
+    const assistant = block.match(/^\[assistant\]\s*([\s\S]+)/i)
+    assistantBlocks.push((assistant?.[1] ?? block).trim())
+  }
+
+  flushAssistant()
+  return { entries, processLogs }
 }
 
 function copyPromptToClipboard(prompt: string): Promise<boolean> {
@@ -115,13 +244,16 @@ function copyPromptToClipboard(prompt: string): Promise<boolean> {
   return Promise.resolve(copied)
 }
 
-export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
+export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const { getBySourceId: getAiTaskBySourceId, refresh: refreshAiTasks } = useMemoAiTasks()
   const [heading, setHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
   const [error, setError] = useState<string | null>(null)
   const [codexFeedback, setCodexFeedback] = useState<string | null>(null)
   const [codexSendStatus, setCodexSendStatus] = useState<CodexSendStatus>("idle")
+  const [isSyncingCodex, setIsSyncingCodex] = useState(false)
+  const [justSentPrompt, setJustSentPrompt] = useState("")
   const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
   const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
@@ -139,6 +271,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
     setError(null)
     setCodexFeedback(null)
     setCodexSendStatus("idle")
+    setIsSyncingCodex(false)
+    setJustSentPrompt("")
     setCodexRunnerStatus({ checked: false, ready: false })
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
@@ -291,11 +425,104 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
   const promptHeadingForCodex = heading || node.title
   const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail)
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
+  const codexTask = getAiTaskBySourceId(node.taskId)
+  const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
+  const codexUiState = getCodexTaskUiState(codexTask)
+  const codexResult = asRecord(codexTask?.result)
+  const codexSnapshot = asRecord(codexResult.codex_thread_snapshot)
+  const codexThreadId =
+    stringValue(codexTask?.codex_thread_id) ||
+    stringValue(codexResult.codex_thread_id)
+  const codexThreadUrl =
+    codexThreadId
+      ? `codex://threads/${codexThreadId}`
+      : stringValue(codexResult.codex_thread_url) || node.codexThreadUrl || null
+  const codexManualHandoff = codexResult.codex_manual_handoff === true
+  const hasCodexRun = isCodexTask || !!justSentPrompt
+  const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
+  const codexMessage = stringValue(codexResult.message)
+  const codexLiveLog = stringValue(codexResult.live_log)
+  const codexPreview = stringValue(codexSnapshot.preview)
+  const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
+  const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
+  const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
+  const codexConversation = useMemo(
+    () => parseCodexConversation(codexDisplayLog, rawSentPrompt),
+    [codexDisplayLog, rawSentPrompt],
+  )
+  const codexStatusLabel =
+    codexTask?.status === "completed"
+      ? "Codex完了"
+      : codexWaitingForAppSend
+        ? "プロンプト待ち"
+        : codexTask?.status === "failed"
+          ? "失敗"
+          : codexUiState?.state === "running"
+            ? "Codex実行中"
+            : codexUiState?.state === "awaiting_approval" || codexTask?.status === "awaiting_approval"
+              ? "確認待ち"
+              : codexThreadId
+                ? "送信確認済み"
+                : "Codexで確認"
+  const codexStatusClass =
+    codexTask?.status === "failed"
+      ? "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300"
+      : codexWaitingForAppSend
+        ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+        : codexUiState?.state === "running"
+          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
   const codexOpenTarget = buildCodexOpenTarget(
     { prompt: codexPrompt, repoPath: codexRepoPath || null },
     { preferMobile: isMobileOpenTarget, mobilePlatform },
   )
   const codexHref = codexOpenTarget.url
+
+  const syncCodexState = useCallback(async () => {
+    if (!open || !hasCodexRun) return
+    setIsSyncingCodex(true)
+    try {
+      await fetch("/api/codex/sync-node", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_task_id: node.taskId,
+          ai_task_id: codexTask?.id,
+        }),
+      }).catch(() => undefined)
+      await refreshAiTasks()
+    } finally {
+      setIsSyncingCodex(false)
+    }
+  }, [codexTask?.id, hasCodexRun, node.taskId, open, refreshAiTasks])
+
+  useEffect(() => {
+    if (!open || !hasCodexRun) return
+    void syncCodexState()
+    const intervalId = window.setInterval(() => void syncCodexState(), CODEX_PANEL_SYNC_INTERVAL_MS)
+    return () => window.clearInterval(intervalId)
+  }, [hasCodexRun, open, syncCodexState])
+
+  const openCodexThread = useCallback(async () => {
+    const prompt = codexThreadUrl ? "" : sentPrompt || codexPrompt
+    const repoPath = codexRepoPath || codexTask?.cwd?.trim() || null
+    setError(null)
+    try {
+      if (canUseLocalCodexOpenApi() && !isMobileOpenTarget) {
+        await launchCodexViaLocalApi({ prompt, repoPath, threadUrl: codexThreadUrl })
+      } else {
+        const target = buildCodexOpenTarget(
+          { prompt, repoPath, threadUrl: codexThreadUrl },
+          { preferMobile: isMobileOpenTarget, mobilePlatform },
+        )
+        window.location.href = target.url
+      }
+      window.setTimeout(() => void syncCodexState(), 1200)
+      window.setTimeout(() => void syncCodexState(), 3500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
+    }
+  }, [codexPrompt, codexRepoPath, codexTask?.cwd, codexThreadUrl, isMobileOpenTarget, mobilePlatform, sentPrompt, syncCodexState])
 
   const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const promptHeading = heading || node.title
@@ -324,7 +551,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
 
     try {
       const clipboardPromise = copyPromptToClipboard(prompt)
-      const dispatchMode = repoPath && !isMobileOpenTarget && codexRunnerStatus.ready ? "auto" : "manual"
+      const dispatchMode = "manual"
       const savePromise = saveDraft(heading, detail)
       const schedulePromise = fetch("/api/ai-tasks/schedule", {
         method: "POST",
@@ -366,13 +593,15 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
       if (launchOutcome.result?.copiedToClipboard) copiedToClipboard = true
 
       setCodexSendStatus("sent")
+      setJustSentPrompt(prompt)
+      await refreshAiTasks()
+      window.setTimeout(() => void syncCodexState(), 1200)
+      window.setTimeout(() => void syncCodexState(), 3500)
       const copyFeedback = copiedToClipboard ? "プロンプトはコピー済みです。" : "プロンプトのコピーに失敗しました。"
       if (handoffWarning) {
         setError(`${copyFeedback} ${handoffWarning}`)
       } else {
-        const dispatchFeedback = dispatchMode === "auto"
-          ? "MacのrunnerにもCodex.app実行を依頼しました。"
-          : isMobileOpenTarget
+        const dispatchFeedback = isMobileOpenTarget
             ? "ChatGPTアプリのCodex画面で貼り付けて開始してください。"
             : repoPath
             ? "Macセットアップ未完了のため、今回はCodex.appで貼り付けて開始してください。"
@@ -381,17 +610,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
           `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
         )
       }
-      if (!handoffWarning && onOpenMemo) {
-        window.setTimeout(() => {
-          onClose()
-          onOpenMemo(node.taskId)
-        }, 0)
-      }
     } catch (err) {
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, codexRunnerStatus.ready, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, onClose, onOpenMemo, saveDraft])
+  }, [candidates, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
@@ -445,23 +668,48 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
                 </span>
               </div>
               <div className="flex shrink-0 items-center justify-end gap-2">
-                <a
-                  href={codexHref}
-                  onClick={sendToCodex}
-                  aria-disabled={codexSendStatus === "sending"}
-                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
-                  aria-label={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
-                  title={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
-                >
-                  {codexSendStatus === "sending" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : isMobileOpenTarget ? (
-                    <Smartphone className="h-4 w-4" />
-                  ) : (
-                    <ExternalLink className="h-4 w-4" />
-                  )}
-                  {isMobileOpenTarget ? "ChatGPTでCodex" : "Codexに送る"}
-                </a>
+                {hasCodexRun ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void syncCodexState()}
+                      disabled={isSyncingCodex}
+                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
+                      aria-label="Codexログを更新"
+                      title="Codexログを更新"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isSyncingCodex ? "animate-spin" : ""}`} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openCodexThread()}
+                      className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-100"
+                      aria-label={codexThreadUrl ? "Codexスレッドを開く" : "Codex.appを開く"}
+                      title={codexThreadUrl ? "Codexスレッドを開く" : "Codex.appを開く"}
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      {codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
+                    </button>
+                  </>
+                ) : (
+                  <a
+                    href={codexHref}
+                    onClick={sendToCodex}
+                    aria-disabled={codexSendStatus === "sending"}
+                    className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
+                    aria-label={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
+                    title={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
+                  >
+                    {codexSendStatus === "sending" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : isMobileOpenTarget ? (
+                      <Smartphone className="h-4 w-4" />
+                    ) : (
+                      <ExternalLink className="h-4 w-4" />
+                    )}
+                    {isMobileOpenTarget ? "ChatGPTでCodex" : "Codexに送る"}
+                  </a>
+                )}
                 <button
                   type="button"
                   onClick={generateHeading}
@@ -502,12 +750,146 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
               placeholder="メモの詳細を書いてください"
             />
 
+            {hasCodexRun && (
+              <section className="overflow-hidden rounded-lg border border-border/70 bg-card">
+                <div className="flex flex-col gap-2 border-b border-border/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Bot className={codexUiState?.state === "running" ? "h-4 w-4 text-emerald-500" : "h-4 w-4 text-amber-500"} />
+                    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-semibold ${codexStatusClass}`}>
+                      {codexUiState?.state === "running" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : codexWaitingForAppSend ? (
+                        <Clock className="h-3.5 w-3.5" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      )}
+                      {codexStatusLabel}
+                    </span>
+                    {codexThreadId ? (
+                      <span className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={codexThreadId}>
+                        {codexThreadId}
+                      </span>
+                    ) : (
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                        {codexWaitingForAppSend ? "貼り付け前" : "thread検出待ち"}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground">
+                      {isSyncingCodex ? "同期中" : "約3秒ごとに同期"}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void syncCodexState()}
+                      disabled={isSyncingCodex}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-xs font-semibold transition-colors hover:bg-muted disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${isSyncingCodex ? "animate-spin" : ""}`} />
+                      更新
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openCodexThread()}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-500"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                  <div className="max-h-[46dvh] min-h-64 space-y-3 overflow-y-auto px-3 py-4">
+                    <div className="flex justify-start">
+                      <div className="max-w-[88%] rounded-2xl border bg-background px-3 py-2 text-sm leading-6 shadow-sm">
+                        <p className="mb-1 text-xs font-medium text-muted-foreground">Focusmap</p>
+                        <p className="text-muted-foreground">
+                          {codexWaitingForAppSend
+                            ? "プロンプトはコピー済みです。Codex.appで貼り付けて送信すると、この欄に状態と出力が同期されます。"
+                            : "このノードの続きはCodex.appで進めます。Focusmapは状態と出力だけを同期します。"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {sentPrompt && (
+                      <div className="flex justify-end">
+                        <div className="max-w-[84%] rounded-2xl bg-muted px-3 py-2 text-sm leading-6 text-foreground">
+                          <p className="mb-1 text-xs font-medium text-muted-foreground">
+                            {codexWaitingForAppSend ? "コピー済み" : "Codex側で送信"}
+                          </p>
+                          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-sans">{sentPrompt}</pre>
+                        </div>
+                      </div>
+                    )}
+
+                    {codexConversation.entries.length > 0 ? (
+                      codexConversation.entries.map((entry, index) => {
+                        if (entry.kind === "event") {
+                          return (
+                            <div key={`${entry.kind}-${index}-${entry.text.slice(0, 24)}`} className="flex justify-center">
+                              <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">{entry.text}</span>
+                            </div>
+                          )
+                        }
+                        if (entry.kind === "user") {
+                          return (
+                            <div key={`${entry.kind}-${index}-${entry.text.slice(0, 24)}`} className="flex justify-end">
+                              <div className="max-w-[84%] rounded-2xl bg-muted px-3 py-2 text-sm leading-6">
+                                <p className="mb-1 text-xs font-medium text-muted-foreground">Codex側で追加指示</p>
+                                <pre className="whitespace-pre-wrap break-words font-sans">{entry.text}</pre>
+                              </div>
+                            </div>
+                          )
+                        }
+                        return (
+                          <div key={`${entry.kind}-${index}-${entry.text.slice(0, 24)}`} className="flex justify-start">
+                            <div className="max-w-[94%] rounded-2xl border border-amber-500/25 bg-background px-3 py-2 text-sm leading-6 shadow-sm">
+                              <p className="mb-1 text-xs font-medium text-amber-700 dark:text-amber-300">Codex出力</p>
+                              <pre className="whitespace-pre-wrap break-words font-sans">{entry.text}</pre>
+                            </div>
+                          </div>
+                        )
+                      })
+                    ) : (
+                      <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
+                        {codexWaitingForAppSend
+                          ? "Codex.appで送信されると、ここに同期ログが表示されます"
+                          : "Codex.app側の出力はまだ同期されていません"}
+                      </div>
+                    )}
+                  </div>
+
+                  <aside className="border-t bg-muted/5 px-3 py-3 lg:border-l lg:border-t-0">
+                    <details className="group text-xs">
+                      <summary className="cursor-pointer select-none rounded-md border bg-background px-3 py-2 font-medium text-muted-foreground">
+                        同期ログ {codexConversation.processLogs.length}
+                      </summary>
+                      <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
+                        {codexConversation.processLogs.length > 0 ? (
+                          codexConversation.processLogs.map((log, index) => (
+                            <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md border bg-background px-3 py-2 leading-5 text-muted-foreground">
+                              {log}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-md border bg-background px-3 py-2 leading-5 text-muted-foreground">
+                            まだ詳細ログは同期されていません
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  </aside>
+                </div>
+              </section>
+            )}
+
             {showCodexSetupPrompt && (
               <div className="rounded-md border border-amber-300/50 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="flex items-center gap-1.5 font-medium">
                     <TriangleAlert className="h-3.5 w-3.5" />
-                    Codex自動実行はMac未接続
+                    Mac側のCodex起動補助は未接続
                   </p>
                   <a
                     href="/dashboard/workspace/setup?step=2"
@@ -518,7 +900,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, on
                   </a>
                 </div>
                 <p className="mt-1 text-[11px] text-amber-700/80 dark:text-amber-300/80">
-                  今回はコピーとCodex.app起動だけ実行します。セットアップ後はこのボタンからMac側で実行できます。
+                  今回はブラウザから外部アプリ起動を試します。Macアプリまたはlocalhostで開くと、クリップボードコピーとCodex.app起動まで安定して実行できます。
                 </p>
               </div>
             )}

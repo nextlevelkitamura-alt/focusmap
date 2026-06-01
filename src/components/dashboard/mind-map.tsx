@@ -245,7 +245,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
     }, [collapsedTaskIds, collapsedStorageKey]);
     const selectedNodeIdRef = useRef<string | null>(null);
-    const clipboardFeedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const clipboardFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const flashClipboardFeedback = useCallback((message: string) => {
         if (clipboardFeedbackTimerRef.current) {
@@ -329,7 +329,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     // Ensures focus is captured even if React renders are delayed
     // CRITICAL: Waits for input element to appear (new nodes need time to enter edit mode)
     // RACE CONDITION FIX: Cancels previous focus operation when new one starts
-    const activeTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const activeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const focusNodeWithPollingV2 = useCallback((targetId: string, maxDuration: number = 800, preferInput: boolean = true) => {
         const startTime = Date.now();

@@ -342,7 +342,7 @@ export function NoteClaudeRunnerPanel({
                     )}
                   </div>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    15秒ごとにCodexログを同期
+                    実行中は約3秒ごとにCodexログを同期
                     {codexReviewReason ? ` / ${codexReviewReason}` : ""}
                   </p>
                 </div>

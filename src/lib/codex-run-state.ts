@@ -227,6 +227,10 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   const isManualHandoff = result.codex_manual_handoff === true
   const hasThreadId = typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0
 
+  if (rawState === "prompt_waiting") {
+    return { state: "prompt_waiting", label: "プロンプト待ち" }
+  }
+
   if (isManualHandoff && !hasThreadId) {
     return { state: "prompt_waiting", label: "プロンプト待ち" }
   }

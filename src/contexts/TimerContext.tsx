@@ -1,7 +1,6 @@
 "use client"
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { createClient } from '@/utils/supabase/client';
 import { Task } from '@/types/database';
 
 interface TimerContextType {
@@ -40,11 +39,10 @@ interface TimerProviderProps {
 }
 
 export function TimerProvider({ children, tasks, onUpdateTask, onTimerSessionEnd }: TimerProviderProps) {
-    const supabase = createClient();
     const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
     const [currentElapsedSeconds, setCurrentElapsedSeconds] = useState(0);
     const [isLoading, setIsLoading] = useState(false);
-    const intervalRef = useRef<NodeJS.Timeout | null>(null);
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Local tracking for timer data (works even when task is not in `tasks` prop)
     const localTimerDataRef = useRef<{

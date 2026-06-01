@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
+import { canUseLocalCodexOpenApi } from '@/lib/codex-app-launch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
 const RUNNING_STATUSES: AiTask['status'][] = ['pending', 'running']
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 
 function hasRunningCodexTask(tasks: Map<string, AiTask>) {
@@ -25,6 +26,16 @@ function hasRunningCodexTask(tasks: Map<string, AiTask>) {
     }
   }
   return false
+}
+
+function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
+  const result: Array<{ sourceId: string; task: AiTask }> = []
+  for (const [sourceId, task] of tasks.entries()) {
+    if (task.executor !== 'codex' && task.executor !== 'codex_app') continue
+    if (task.status === 'completed' || task.status === 'failed') continue
+    result.push({ sourceId, task })
+  }
+  return result.slice(0, 8)
 }
 
 /**
@@ -75,6 +86,41 @@ export function useMemoAiTasks() {
     const intervalId = window.setInterval(fetchInitial, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
+
+  useEffect(() => {
+    if (!canUseLocalCodexOpenApi()) return
+    const targets = codexTasksForLocalSync(bySourceId)
+    if (targets.length === 0) return
+
+    let cancelled = false
+    let syncing = false
+    const syncTargets = async () => {
+      if (syncing) return
+      syncing = true
+      try {
+        await Promise.all(targets.map(({ sourceId, task }) => (
+          fetch('/api/codex/sync-node', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source_task_id: sourceId,
+              ai_task_id: task.id,
+            }),
+          }).catch(() => undefined)
+        )))
+        if (!cancelled) await fetchInitial()
+      } finally {
+        syncing = false
+      }
+    }
+
+    void syncTargets()
+    const intervalId = window.setInterval(() => void syncTargets(), ACTIVE_CODEX_REFRESH_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [bySourceId, fetchInitial])
 
   useEffect(() => {
     const supabase = createClient()

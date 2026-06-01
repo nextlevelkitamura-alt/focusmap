@@ -486,7 +486,7 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
             {codexUiState ? (
               <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
                 <p className="font-medium text-foreground">Codex {codexUiState.label}</p>
-                <p className="mt-1">15秒ごとにCodexログを同期しています。</p>
+                <p className="mt-1">実行中は約3秒ごとにCodexログを同期しています。</p>
               </div>
             ) : progress && (
               <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">

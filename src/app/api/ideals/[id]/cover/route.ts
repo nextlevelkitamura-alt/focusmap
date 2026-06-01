@@ -31,7 +31,7 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const formData = await request.formData()
+  const formData = await request.formData() as unknown as { get(name: string): File | string | null }
   const file = formData.get('file') as File | null
 
   if (!file) {

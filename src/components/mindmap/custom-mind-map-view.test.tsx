@@ -333,7 +333,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(onAddSiblingNode).toHaveBeenCalledWith("root-1")
   })
 
-  test("limits the node menu to memo edit and schedule actions", async () => {
+  test("limits the node menu to Codex handoff and schedule actions", async () => {
     const onRunCodex = vi.fn()
     const onUpdateSchedule = vi.fn()
 
@@ -342,7 +342,7 @@ describe("CustomMindMapView keyboard operations", () => {
     const node = getNode("Root task", "root-1")
     fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))
 
-    expect(within(node).getByRole("button", { name: "メモの編集" })).toBeInTheDocument()
+    expect(within(node).getByRole("button", { name: "Codexに送る" })).toBeInTheDocument()
     expect(within(node).getByRole("button", { name: "日時を指定する" })).toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "メモを開く" })).not.toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "子を追加" })).not.toBeInTheDocument()
@@ -350,7 +350,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(within(node).queryByRole("button", { name: "編集" })).not.toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
 
-    fireEvent.click(within(node).getByRole("button", { name: "メモの編集" }))
+    fireEvent.click(within(node).getByRole("button", { name: "Codexに送る" }))
     expect(onRunCodex).toHaveBeenCalledWith("root-1")
 
     fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))

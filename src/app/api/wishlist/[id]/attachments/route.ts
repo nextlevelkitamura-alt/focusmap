@@ -42,7 +42,7 @@ export async function POST(
 
   if (!goal) return NextResponse.json({ error: 'Memo not found' }, { status: 404 })
 
-  const formData = await request.formData()
+  const formData = await request.formData() as unknown as { get(name: string): File | string | null }
   const file = formData.get('file') as File | null
   if (!file) return NextResponse.json({ error: 'File is required' }, { status: 400 })
   if (!file.type.startsWith('image/')) return NextResponse.json({ error: '画像ファイルを選択してください' }, { status: 400 })

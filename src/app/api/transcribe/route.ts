@@ -17,7 +17,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Transcription service not configured' }, { status: 503 })
     }
 
-    const formData = await request.formData()
+    const formData = await request.formData() as unknown as { get(name: string): File | string | null }
     const audioFile = formData.get('audio') as File | null
 
     if (!audioFile) {

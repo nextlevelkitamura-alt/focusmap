@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
 
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 30_000
 
 interface UseAiTasksOptions {

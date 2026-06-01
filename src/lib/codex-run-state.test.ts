@@ -86,6 +86,18 @@ describe("getCodexTaskUiState", () => {
       },
     })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
   })
+
+  test("keeps an opened but unsent Codex thread in prompt waiting", () => {
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "needs_input",
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: "prompt_waiting",
+        codex_thread_id: "019e7961-30b1-7a82-ab25-da26ad30d8ed",
+      },
+    })).toEqual({ state: "prompt_waiting", label: "プロンプト待ち" })
+  })
 })
 
 describe("shouldCompleteSourceTaskForCodexReview", () => {

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, MoreVertical, RotateCcw, StickyNote } from "lucide-react";
+import { Bot, Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -807,8 +807,8 @@ function CustomTaskNode({
                                         className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <StickyNote className="h-4 w-4" />
-                                        メモの編集
+                                        <Bot className="h-4 w-4" />
+                                        Codexに送る
                                     </button>
                                     <DateTimePicker
                                         date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
@@ -876,8 +876,8 @@ function CustomTaskNode({
                                         className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
-                                        <StickyNote className="h-4 w-4" />
-                                        メモの編集
+                                        <Bot className="h-4 w-4" />
+                                        Codexに送る
                                     </button>
                                     <DateTimePicker
                                         date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
