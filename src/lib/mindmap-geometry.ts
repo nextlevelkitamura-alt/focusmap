@@ -14,15 +14,19 @@ export const NODE_MIN_WIDTH_MOBILE = 144;
 export const NODE_RESIZE_MAX_WIDTH = 500;
 
 const NODE_TEXT_LINE_HEIGHT = 16;
-const NODE_VERTICAL_PADDING = 10;
-const NODE_INFO_ROW_HEIGHT = 16;
-const NODE_TEXT_RESERVED_WIDTH = 60;
+const NODE_VERTICAL_PADDING = 8;
+const NODE_TEXT_RESERVED_WIDTH = 48;
 const NODE_TEXT_RESERVED_WIDTH_MOBILE = 56;
-const NODE_CHILD_COUNT_RESERVED_WIDTH = 88;
-const NODE_CHILD_COUNT_RESERVED_WIDTH_MOBILE = 82;
+const NODE_CHILD_COUNT_RESERVED_WIDTH = 76;
+const NODE_CHILD_COUNT_RESERVED_WIDTH_MOBILE = 78;
 const estimateTextWidthPx = (text: string): number => {
     let width = 0;
     for (const ch of text) {
+        if (/\s/.test(ch)) {
+            width += 4.0;
+            continue;
+        }
+
         const code = ch.codePointAt(0) ?? 0;
         const isWide =
             (code >= 0x3000 && code <= 0x9FFF) ||
@@ -30,7 +34,7 @@ const estimateTextWidthPx = (text: string): number => {
             (code >= 0xFF01 && code <= 0xFF60) ||
             (code >= 0xFFE0 && code <= 0xFFE6) ||
             (code >= 0x20000 && code <= 0x2FA1F);
-        width += isWide ? 14.0 : 8.0;
+        width += isWide ? 13.0 : 7.2;
     }
     return width;
 };
@@ -63,7 +67,7 @@ export const estimateProjectNodeWidth = (title: string, isMobile = false) => {
 
 export const estimateTaskNodeHeight = (
     title: string,
-    hasInfoRow: boolean,
+    _hasInfoRow: boolean,
     nodeWidth: number = NODE_WIDTH,
     isMobile = false,
     hasChildren = false,
@@ -85,7 +89,6 @@ export const estimateTaskNodeHeight = (
     );
 
     const textHeight = lines * NODE_TEXT_LINE_HEIGHT;
-    const infoRowHeight = hasInfoRow ? NODE_INFO_ROW_HEIGHT : 0;
-    const estimated = textHeight + infoRowHeight + NODE_VERTICAL_PADDING + 8;
+    const estimated = textHeight + NODE_VERTICAL_PADDING;
     return Math.max(NODE_HEIGHT, estimated);
 };

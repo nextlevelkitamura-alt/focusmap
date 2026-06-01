@@ -220,6 +220,21 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.getByText("確認待ち1")).toBeInTheDocument()
   })
 
+  test("does not render legacy codex_status dots beside nodes", () => {
+    const rootTask = makeTask({
+      id: "root-1",
+      title: "Root task",
+      codex_status: "done",
+    } as Partial<Task>)
+
+    renderMap({
+      groups: [rootTask],
+      tasks: [],
+    })
+
+    expect(screen.queryByLabelText("Codex状態: done")).not.toBeInTheDocument()
+  })
+
   test("does not render the zoom controls", () => {
     renderMap()
 

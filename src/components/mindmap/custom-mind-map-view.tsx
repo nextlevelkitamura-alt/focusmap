@@ -739,29 +739,6 @@ function CustomTaskNode({
                     </div>
                 )}
 
-                {node.codexStatus && (
-                    <button
-                        type="button"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onRunCodex?.(node.id);
-                        }}
-                        className={cn(
-                            "shrink-0 rounded-full transition-transform active:scale-90",
-                            node.codexStatus === "running" && "h-2.5 w-2.5 bg-amber-400 animate-pulse",
-                            node.codexStatus === "done" && "h-2.5 w-2.5 bg-emerald-500",
-                            node.codexStatus === "failed" && "h-2.5 w-2.5 bg-rose-500",
-                        )}
-                        title={
-                            node.codexStatus === "running" ? "Codex 作業中（タップで開く）" :
-                            node.codexStatus === "done" ? "Codex 完了（タップで開く）" :
-                            node.codexStatus === "failed" ? "Codex 失敗（タップで開く）" : ""
-                        }
-                        aria-label={`Codex状態: ${node.codexStatus}`}
-                    />
-                )}
-
                 <div className="flex shrink-0 items-center gap-0.5 leading-none">
                     {node.hasChildren && (
                         <button
