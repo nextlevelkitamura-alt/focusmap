@@ -28,6 +28,14 @@ const managedProcesses = {
   codex: null,
 };
 const processLogs = [];
+const hasSingleInstance = app.requestSingleInstanceLock();
+
+function focusWindow(win) {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+  return true;
+}
 
 function log(scope, message) {
   const line = `[${new Date().toLocaleTimeString('ja-JP', { hour12: false })}] ${scope}: ${message}`;
@@ -298,12 +306,17 @@ async function collectStatus() {
 }
 
 async function createMainWindow() {
-  const origin = await ensureFocusmapApp();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    focusWindow(mainWindow);
+    return;
+  }
+
   mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 900,
+    width: 1280,
+    height: 820,
     minWidth: 980,
-    minHeight: 720,
+    minHeight: 680,
+    show: true,
     title: 'Focusmap',
     backgroundColor: '#050505',
     webPreferences: {
@@ -313,10 +326,26 @@ async function createMainWindow() {
       sandbox: false,
     },
   });
-  mainWindow.loadURL(`${origin}/dashboard?desktop=1&source=mac`);
+  mainWindow.loadFile(path.join(__dirname, 'loading.html'));
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  try {
+    const origin = await ensureFocusmapApp();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await mainWindow.loadURL(`${origin}/dashboard?desktop=1&source=mac`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log('app', message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await mainWindow.loadFile(path.join(__dirname, 'loading.html'), {
+        query: { error: message },
+      });
+    }
+    createStatusWindow();
+  }
 }
 
 function createStatusWindow() {
@@ -372,14 +401,25 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+if (!hasSingleInstance) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (focusWindow(mainWindow) || focusWindow(statusWindow)) return;
+  createMainWindow().catch((error) => {
+    log('app', error instanceof Error ? error.message : String(error));
+    createStatusWindow();
+  });
+});
+
 ipcMain.handle('focusmap-desktop:getStatus', collectStatus);
 ipcMain.handle('focusmap-desktop:startAgent', startAgent);
 ipcMain.handle('focusmap-desktop:stopAgent', () => stopManagedProcess('agent'));
 ipcMain.handle('focusmap-desktop:startCodexServer', startCodexServer);
 ipcMain.handle('focusmap-desktop:stopCodexServer', () => stopManagedProcess('codex'));
 ipcMain.handle('focusmap-desktop:openMain', () => {
-  if (mainWindow) mainWindow.focus();
-  else createMainWindow();
+  createMainWindow();
   return true;
 });
 ipcMain.handle('focusmap-desktop:openExternal', (_event, url) => shell.openExternal(url));
@@ -395,10 +435,15 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (!mainWindow && !statusWindow) createStatusWindow();
+  createMainWindow();
 });
 
 app.whenReady().then(async () => {
+  if (app.dock) app.dock.show();
   buildMenu();
-  createStatusWindow();
+  try {
+    await createMainWindow();
+  } catch (error) {
+    log('app', error instanceof Error ? error.message : String(error));
+  }
 });
