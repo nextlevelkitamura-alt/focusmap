@@ -10,10 +10,12 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import {
   buildCodexOpenTarget,
   canUseLocalCodexOpenApi,
+  getCurrentMobilePlatform,
   isLikelyMobileDevice,
   launchCodexViaLocalApi,
   launchFeedbackForMode,
   normalizeCodexPrompt,
+  type MobilePlatform,
   type CodexLaunchMode,
 } from "@/lib/codex-app-launch"
 import { ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
@@ -122,12 +124,15 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [codexSendStatus, setCodexSendStatus] = useState<CodexSendStatus>("idle")
   const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
   const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
+  const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const saveVersionRef = useRef(0)
 
   useEffect(() => {
     if (!open) return
+    const platform = getCurrentMobilePlatform()
+    setMobilePlatform(platform)
     setIsMobileOpenTarget(isLikelyMobileDevice())
     setHeading(node.title)
     setDetail(node.memo)
@@ -288,7 +293,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
   const codexOpenTarget = buildCodexOpenTarget(
     { prompt: codexPrompt, repoPath: codexRepoPath || null },
-    { preferMobile: isMobileOpenTarget },
+    { preferMobile: isMobileOpenTarget, mobilePlatform },
   )
   const codexHref = codexOpenTarget.url
 
@@ -308,7 +313,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         repoPath: repoPath || null,
         originUrl: typeof window !== "undefined" ? window.location.href : null,
       },
-      { preferMobile: isMobileOpenTarget },
+      { preferMobile: isMobileOpenTarget, mobilePlatform },
     )
     const useLocalApi = canUseLocalCodexOpenApi() && !isMobileOpenTarget
     event?.preventDefault()
@@ -380,7 +385,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, codexRunnerStatus.ready, detail, heading, isMobileOpenTarget, node.cwd, node.taskId, node.title, saveDraft])
+  }, [candidates, codexRunnerStatus.ready, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, saveDraft])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&

@@ -1,4 +1,5 @@
 export type CodexLaunchMode = "thread" | "browser-deep-link" | "chatgpt-mobile" | "local-api"
+export type MobilePlatform = "ios" | "android" | "mobile" | "desktop"
 
 export type CodexLaunchPayload = {
   prompt: string
@@ -16,6 +17,8 @@ export type CodexLaunchResult = {
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".trycloudflare.com"]
 export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
+export const CHATGPT_CODEX_MOBILE_APP_URL = "com.openai.chat://codex/open"
+export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
 export function isLocalCodexOpenHost(hostname: string) {
   const normalized = hostname.trim().toLowerCase()
@@ -33,12 +36,46 @@ export function canUseLocalCodexOpenApi() {
   return isLocalCodexOpenHost(window.location.hostname)
 }
 
+export function detectMobilePlatform(userAgent: string, maxTouchPoints = 0): MobilePlatform {
+  const ua = userAgent || ""
+  if (/Android/i.test(ua)) return "android"
+  if (/iPhone|iPod|iPad/i.test(ua)) return "ios"
+  if (/Macintosh/i.test(ua) && maxTouchPoints > 1) return "ios"
+  if (/IEMobile|Mobile/i.test(ua)) return "mobile"
+  return "desktop"
+}
+
 export function isLikelyMobileDevice() {
   if (typeof navigator === "undefined") return false
-  const ua = navigator.userAgent || ""
-  const mobileUa = /Android|iPhone|iPod|IEMobile|Mobile/i.test(ua)
-  const iPadDesktopUa = /Macintosh/i.test(ua) && navigator.maxTouchPoints > 1
-  return mobileUa || iPadDesktopUa
+  return detectMobilePlatform(navigator.userAgent || "", navigator.maxTouchPoints) !== "desktop"
+}
+
+export function getCurrentMobilePlatform(): MobilePlatform {
+  if (typeof navigator === "undefined") return "desktop"
+  return detectMobilePlatform(navigator.userAgent || "", navigator.maxTouchPoints)
+}
+
+export function buildChatGptCodexMobileAppUrl(platform: MobilePlatform) {
+  if (platform === "android") {
+    return `intent://codex/open#Intent;scheme=com.openai.chat;package=${CHATGPT_ANDROID_PACKAGE};end`
+  }
+  return CHATGPT_CODEX_MOBILE_APP_URL
+}
+
+export function buildChatGptCodexMobileWebUrl() {
+  return CHATGPT_CODEX_MOBILE_URL
+}
+
+export function isLikelyChatGptMobileAppTarget(url: string) {
+  return url.startsWith("com.openai.chat:") || url.startsWith("intent://")
+}
+
+export function isLikelyChatGptMobileWebTarget(url: string) {
+  return url.startsWith("https://chatgpt.com/")
+}
+
+export function isLikelyMobileUserAgent(userAgent: string, maxTouchPoints = 0) {
+  return detectMobilePlatform(userAgent, maxTouchPoints) !== "desktop"
 }
 
 export function buildCodexDeepLink({ prompt, repoPath, threadUrl, originUrl }: CodexLaunchPayload) {
@@ -52,9 +89,13 @@ export function buildCodexDeepLink({ prompt, repoPath, threadUrl, originUrl }: C
   return url.toString()
 }
 
-export function buildCodexOpenTarget(payload: CodexLaunchPayload, options: { preferMobile?: boolean } = {}) {
+export function buildCodexOpenTarget(payload: CodexLaunchPayload, options: { preferMobile?: boolean; mobilePlatform?: MobilePlatform } = {}) {
   if (options.preferMobile) {
-    return { mode: "chatgpt-mobile" as const, url: CHATGPT_CODEX_MOBILE_URL }
+    return {
+      mode: "chatgpt-mobile" as const,
+      url: buildChatGptCodexMobileAppUrl(options.mobilePlatform ?? "mobile"),
+      fallbackUrl: buildChatGptCodexMobileWebUrl(),
+    }
   }
   return {
     mode: payload.threadUrl ? "thread" as const : "browser-deep-link" as const,

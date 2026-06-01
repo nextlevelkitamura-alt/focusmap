@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest"
-import { buildCodexDeepLink, isLocalCodexOpenHost } from "./codex-app-launch"
+import {
+  buildChatGptCodexMobileAppUrl,
+  buildCodexDeepLink,
+  buildCodexOpenTarget,
+  detectMobilePlatform,
+  isLocalCodexOpenHost,
+} from "./codex-app-launch"
 
 describe("isLocalCodexOpenHost", () => {
   test("allows localhost and Cloudflare phone preview hosts", () => {
@@ -26,5 +32,27 @@ describe("buildCodexDeepLink", () => {
     expect(url.searchParams.get("prompt")).toBe("fix this")
     expect(url.searchParams.get("path")).toBe("/Users/me/project")
     expect(url.searchParams.get("originUrl")).toBe("https://abc-123.trycloudflare.com/dashboard")
+  })
+})
+
+describe("ChatGPT mobile open target", () => {
+  test("detects iPhone, Android and iPad desktop user agents", () => {
+    expect(detectMobilePlatform("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)")).toBe("ios")
+    expect(detectMobilePlatform("Mozilla/5.0 (Linux; Android 15; Pixel 9)")).toBe("android")
+    expect(detectMobilePlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)", 5)).toBe("ios")
+  })
+
+  test("uses ChatGPT app scheme on iOS and Android intent on Android", () => {
+    expect(buildChatGptCodexMobileAppUrl("ios")).toBe("com.openai.chat://codex/open")
+    expect(buildChatGptCodexMobileAppUrl("android")).toBe(
+      "intent://codex/open#Intent;scheme=com.openai.chat;package=com.openai.chatgpt;end",
+    )
+  })
+
+  test("prefers app links instead of browser URL for mobile Codex", () => {
+    expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "ios" }).url)
+      .toBe("com.openai.chat://codex/open")
+    expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "android" }).url)
+      .toBe("intent://codex/open#Intent;scheme=com.openai.chat;package=com.openai.chatgpt;end")
   })
 })
