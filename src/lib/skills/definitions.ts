@@ -60,6 +60,22 @@ export const FOCUSMAP_SKILLS: FocusmapSkill[] = [
     prompt_template: '求人情報を取得し、最新化の提案をしてください',
   },
   {
+    id: 'chatwork-issei-post',
+    name: 'Chatwork一斉投稿',
+    description: '関東手配へエージェント求人リストを提示',
+    icon: '📣',
+    approval_type: 'confirm',
+    steps: [
+      { label: '朝の一斉指示を判定', auto: true },
+      { label: '対象枠を確認', auto: true },
+      { label: '求人3件を選定', auto: true },
+      { label: '投稿文を確認', auto: false },
+      { label: 'Chatworkへ送信', auto: true },
+    ],
+    schedule: null,
+    prompt_template: '仕事リポの scripts/chatwork-post を使い、まず dry-run で文面と対象枠を確認してください。本番送信はユーザー確認後に --send --prod --delivery {12:00|15:00|18:00} --confirm-prod で実行してください。',
+  },
+  {
     id: 'pipeline-sync',
     name: '管理表同期',
     description: '候補者の管理表を最新化',
