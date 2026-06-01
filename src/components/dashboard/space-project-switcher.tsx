@@ -98,13 +98,11 @@ export function SpaceProjectSwitcher({
 
   const handlePickProject = (project: Project) => {
     onSelectProject(project.id)
-    if (project.space_id !== selectedSpaceId) onSelectSpace(project.space_id)
     setProjectOpen(false)
   }
 
   const handleProjectCreated = (project: Project) => {
     onProjectCreated?.(project)
-    onSelectSpace(project.space_id)
     onSelectProject(project.id)
     setProjectFormOpen(false)
     setProjectOpen(false)
@@ -112,9 +110,6 @@ export function SpaceProjectSwitcher({
 
   const handleProjectSaved = (project: Project) => {
     onProjectSaved?.(project)
-    if (project.id === selectedProjectId && project.space_id !== selectedSpaceId) {
-      onSelectSpace(project.space_id)
-    }
     setProjectFormOpen(false)
   }
 

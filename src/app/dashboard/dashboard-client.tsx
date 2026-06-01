@@ -460,7 +460,6 @@ export function DashboardClient({
 
     const handleProjectCreatedFromSwitcher = useCallback((project: Project) => {
         handleProjectSavedFromSwitcher(project)
-        setSelectedSpaceId(project.space_id)
         setSelectedProjectId(project.id)
         setContextDialogProject(project)
     }, [handleProjectSavedFromSwitcher])
