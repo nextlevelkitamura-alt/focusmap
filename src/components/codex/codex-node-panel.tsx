@@ -47,19 +47,23 @@ function normalizePromptText(value: string) {
 function buildCodexPrompt(heading: string, detail: string) {
   const normalizedHeading = normalizePromptText(heading)
   const normalizedDetail = normalizePromptText(detail)
-  return `メモの見出し:\n${normalizedHeading}\n\nメモの詳細:\n${normalizedDetail}`.trim()
+  return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
 }
 
-function isMobileCodexTarget() {
-  if (typeof navigator === "undefined") return false
-  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent)
-}
+async function openCodexChat(prompt: string, repoPath: string, threadUrl: string | null) {
+  if (threadUrl) {
+    window.location.href = threadUrl
+    return
+  }
 
-async function openCodexAppForRepo(repoPath: string) {
   const res = await fetch("/api/codex/open-repo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repo_path: repoPath }),
+    body: JSON.stringify({
+      repo_path: repoPath,
+      prompt: normalizePromptText(prompt),
+      origin_url: window.location.href,
+    }),
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({})) as { error?: string }
@@ -247,29 +251,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         handoffWarning = data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`
       }
 
-      let openWarning: string | null = null
-      if (isMobileCodexTarget()) {
-        window.location.href = threadUrl || "codex://"
-      } else if (threadUrl) {
-        window.location.href = threadUrl
-      } else if (repoPath) {
-        try {
-          await openCodexAppForRepo(repoPath)
-        } catch (openErr) {
-          window.location.href = "codex://"
-          openWarning = openErr instanceof Error ? openErr.message : "Codex.app を開けませんでした"
-        }
-      } else {
-        window.location.href = "codex://"
+      if (!repoPath && !threadUrl) {
+        throw new Error("Codex.appで開くリポジトリを設定してください")
       }
+      await openCodexChat(prompt, repoPath, threadUrl)
 
       setCodexSendStatus("sent")
       if (handoffWarning) {
         setError(`プロンプトはコピー済みです。Codex側で貼り付けてください。${handoffWarning}`)
-      } else if (openWarning) {
-        setCodexFeedback(`プロンプトはコピー済みです。Codex.app を手動で開いて貼り付けてください。${openWarning}`)
       } else {
-        setCodexFeedback("Codexに渡す内容をクリップボードへコピーしました")
+        setCodexFeedback("Codex.app のチャットを開いています")
       }
     } catch (err) {
       setCodexSendStatus("idle")

@@ -143,8 +143,8 @@ Goals → Projects → TaskGroups → Tasks
 ### マインドマップとCodex.app連携
 
 - ノードからCodexへ渡す場合、Focusmapは作業本体を裏側で完結させるのではなく、Codex.app側を主軸にする。
-- Focusmap側は `ai_tasks` に待機レコードを作り、プロンプトをクリップボードへコピーし、Codex.appを開く補助をする。
-- マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。押下直後に `メモの見出し:` / `メモの詳細:` ラベル付きプロンプトをクリップボードへコピーし、既存threadがあれば `codex://threads/{threadId}`、なければ `codex://` でCodexアプリ側へ遷移する。デスクトップはプロジェクトの `repo_path` を優先してCodex.appを開く。
+- Focusmap側は `ai_tasks` に待機レコードを作り、プロンプトをクリップボードへコピーし、Codex.appのチャットを開く補助をする。
+- マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。押下直後にメモ見出し本文とメモ詳細本文だけを改行区切りでクリップボードへコピーし、既存threadがあれば `codex://threads/{threadId}`、なければローカルAPI `/api/codex/open-repo` から `open codex://?prompt=...&path=...&originUrl=...` を実行してCodex.appの新規チャットへ遷移する。ブラウザから直接 deep link を叩くと async 後に外部アプリ起動が無視される場合があるため、ローカルAPI経由を正とする。
 - Codex.appの新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。Focusmapは「実行待ち」「実行中」「確認待ち」を表示して、状態確認とログ同期に徹する。
 - プロンプト本文は、メモ見出しなどのラベルを足さず、ノード本文/メモ本文を改行区切りでそのまま渡す。
 - ノードの状態表示は `src/lib/codex-run-state.ts` の `getCodexTaskUiState` を正とする。

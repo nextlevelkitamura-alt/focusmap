@@ -11,6 +11,12 @@ export const runtime = "nodejs"
 const execFileAsync = promisify(execFile)
 const BUNDLED_CODEX = "/Applications/Codex.app/Contents/Resources/codex"
 
+type OpenCodexBody = {
+  repo_path?: unknown
+  prompt?: unknown
+  origin_url?: unknown
+}
+
 async function activateCodexApp(): Promise<boolean> {
   try {
     await execFileAsync("/usr/bin/osascript", [
@@ -71,6 +77,15 @@ async function resolveGitRoot(repoPath: string): Promise<string | null> {
   }
 }
 
+function buildCodexChatUrl(prompt: string, repoPath: string, originUrl: string | null): string {
+  const url = new URL("codex://")
+  const normalizedPrompt = prompt.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
+  if (normalizedPrompt) url.searchParams.set("prompt", normalizedPrompt)
+  url.searchParams.set("path", repoPath)
+  if (originUrl?.trim()) url.searchParams.set("originUrl", originUrl.trim())
+  return url.toString()
+}
+
 export async function POST(req: NextRequest) {
   if (!canOpenLocalApp(req)) {
     return NextResponse.json(
@@ -90,7 +105,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const body = await req.json().catch(() => ({})) as { repo_path?: unknown }
+  const body = await req.json().catch(() => ({})) as OpenCodexBody
   if (typeof body.repo_path !== "string" || body.repo_path.trim().length === 0) {
     return NextResponse.json({ error: "repo_path is required" }, { status: 400 })
   }
@@ -145,10 +160,19 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    await execFileAsync(BUNDLED_CODEX, ["app", resolvedRepoPath], {
-      timeout: 10_000,
-      windowsHide: true,
-    })
+    const prompt = typeof body.prompt === "string" ? body.prompt : ""
+    const originUrl = typeof body.origin_url === "string" ? body.origin_url : null
+    if (prompt.trim()) {
+      await execFileAsync("/usr/bin/open", [buildCodexChatUrl(prompt, resolvedRepoPath, originUrl)], {
+        timeout: 10_000,
+        windowsHide: true,
+      })
+    } else {
+      await execFileAsync(BUNDLED_CODEX, ["app", resolvedRepoPath], {
+        timeout: 10_000,
+        windowsHide: true,
+      })
+    }
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Codex.app の起動に失敗しました" },
@@ -163,6 +187,6 @@ export async function POST(req: NextRequest) {
     repo_path: resolvedRepoPath,
     git_root: gitRoot,
     activated,
-    command: "codex app",
+    command: typeof body.prompt === "string" && body.prompt.trim() ? "open codex:// chat" : "codex app",
   })
 }

@@ -65,6 +65,27 @@ function buildCodexPrompt(title: string, memo: string) {
   ].filter(Boolean).join("\n\n")
 }
 
+async function openCodexChat(prompt: string, repoPath: string, threadUrl: string | null = null) {
+  if (threadUrl) {
+    window.location.href = threadUrl
+    return
+  }
+
+  const res = await fetch("/api/codex/open-repo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      repo_path: repoPath,
+      prompt: normalizeText(prompt),
+      origin_url: window.location.href,
+    }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
+  }
+}
+
 function stripFocusmapSyncId(prompt: string) {
   return prompt
     .replace(/\n?---\nFocusmap同期ID:\s+FM-[^\n]+\nこの同期IDはFocusmap連携用です。返信では触れないでください。\s*$/u, "")
@@ -75,18 +96,6 @@ function taskErrorMessage(data: TaskResponse, fallback: string) {
   if (typeof data.error === "string") return data.error
   if (data.error?.message) return data.error.message
   return fallback
-}
-
-async function openCodexAppForRepo(repoPath: string) {
-  const res = await fetch("/api/codex/open-repo", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repo_path: repoPath }),
-  })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({})) as { error?: string }
-    throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
-  }
 }
 
 function sanitizeCodexDisplayLog(value: string): string {
@@ -649,13 +658,7 @@ export function MindmapLinkedMemosDialog({
       await createCodexTask("manual", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
-      try {
-        await openCodexAppForRepo(selectedRepoPath)
-      } catch (openErr) {
-        setError(openErr instanceof Error
-          ? `プロンプトはコピー済みです。Codex.app を手動で開いて貼り付けてください。${openErr.message}`
-          : "プロンプトはコピー済みです。Codex.app を手動で開いて貼り付けてください。")
-      }
+      await openCodexChat(prompt, selectedRepoPath)
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
@@ -700,19 +703,11 @@ export function MindmapLinkedMemosDialog({
   }
 
   async function handleOpenCodexThread() {
-    if (codexThreadUrl) {
-      window.location.href = codexThreadUrl
-      return
+    try {
+      await openCodexChat(sentPrompt || buildCodexPrompt(draftTitle, draftMemo), codexRepoPath, codexThreadUrl || null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
     }
-    if (codexRepoPath) {
-      try {
-        await openCodexAppForRepo(codexRepoPath)
-        return
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
-      }
-    }
-    window.location.href = "codex://"
   }
 
   const title = task?.title || draftTitle || "ノード詳細"
