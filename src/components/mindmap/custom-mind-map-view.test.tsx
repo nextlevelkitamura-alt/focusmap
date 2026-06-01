@@ -199,13 +199,13 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.queryByText("確認待ち2")).not.toBeInTheDocument()
   })
 
-  test("shows execution waiting state separately from review waiting", () => {
+  test("shows prompt waiting state separately from review waiting", () => {
     renderMap({
       codexRunByNodeId: {
         "root-1": {
-          state: "awaiting_approval",
+          state: "prompt_waiting",
           taskId: "ai-task-1",
-          label: "実行待ち",
+          label: "プロンプト待ち",
         },
         "child-1": {
           state: "awaiting_approval",
@@ -215,8 +215,8 @@ describe("CustomMindMapView keyboard operations", () => {
       },
     })
 
-    expect(screen.getByText("実行待ち1")).toBeInTheDocument()
-    expect(screen.getAllByText("実行待ち")).toHaveLength(1)
+    expect(screen.getByText("プロンプト待ち1")).toBeInTheDocument()
+    expect(screen.getAllByText("プロンプト待ち")).toHaveLength(1)
     expect(screen.getByText("確認待ち1")).toBeInTheDocument()
   })
 

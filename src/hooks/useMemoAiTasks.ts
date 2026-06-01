@@ -16,7 +16,11 @@ function hasRunningCodexTask(tasks: Map<string, AiTask>) {
     const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
       ? task.result as Record<string, unknown>
       : {}
-    if (result.codex_run_state === 'running') {
+    if (result.codex_run_state === 'running' || result.codex_run_state === 'prompt_waiting') {
+      return true
+    }
+    const resultThreadId = typeof result.codex_thread_id === 'string' ? result.codex_thread_id.trim() : ''
+    if (result.codex_manual_handoff === true && !task.codex_thread_id && !resultThreadId) {
       return true
     }
   }

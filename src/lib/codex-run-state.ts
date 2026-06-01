@@ -1,4 +1,4 @@
-export type CodexRunState = "running" | "awaiting_approval"
+export type CodexRunState = "prompt_waiting" | "running" | "awaiting_approval"
 
 export type CodexReviewReason =
   | "started"
@@ -228,7 +228,7 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   const hasThreadId = typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0
 
   if (isManualHandoff && !hasThreadId) {
-    return { state: "awaiting_approval", label: "実行待ち" }
+    return { state: "prompt_waiting", label: "プロンプト待ち" }
   }
 
   if (rawState === "awaiting_approval") {

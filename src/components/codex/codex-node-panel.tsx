@@ -115,7 +115,7 @@ function copyPromptToClipboard(prompt: string): Promise<boolean> {
   return Promise.resolve(copied)
 }
 
-export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
+export function CodexNodePanel({ open, node, candidates, onClose, onOpenMemo, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [heading, setHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
@@ -324,7 +324,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
     try {
       const clipboardPromise = copyPromptToClipboard(prompt)
-      const dispatchMode = repoPath && (useLocalApi || codexRunnerStatus.ready) ? "auto" : "manual"
+      const dispatchMode = repoPath && !isMobileOpenTarget && codexRunnerStatus.ready ? "auto" : "manual"
       const savePromise = saveDraft(heading, detail)
       const schedulePromise = fetch("/api/ai-tasks/schedule", {
         method: "POST",
@@ -381,11 +381,17 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
         )
       }
+      if (!handoffWarning && onOpenMemo) {
+        window.setTimeout(() => {
+          onClose()
+          onOpenMemo(node.taskId)
+        }, 0)
+      }
     } catch (err) {
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, codexRunnerStatus.ready, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, saveDraft])
+  }, [candidates, codexRunnerStatus.ready, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, onClose, onOpenMemo, saveDraft])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&

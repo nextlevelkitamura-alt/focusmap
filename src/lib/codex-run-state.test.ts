@@ -61,7 +61,7 @@ describe("parseCodexRollout", () => {
 })
 
 describe("getCodexTaskUiState", () => {
-  test("normalizes Codex tasks to running or review only", () => {
+  test("normalizes Codex tasks to prompt waiting, running or review", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: null })?.state).toBe("running")
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })?.state).toBe("awaiting_approval")
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })?.state).toBe("awaiting_approval")
@@ -69,12 +69,12 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({ executor: "claude", status: "running", result: null })).toBeNull()
   })
 
-  test("labels manual handoff without a thread as execution waiting", () => {
+  test("labels manual handoff without a thread as prompt waiting", () => {
     expect(getCodexTaskUiState({
       executor: "codex_app",
       status: "awaiting_approval",
-      result: { codex_manual_handoff: true, codex_run_state: "awaiting_approval" },
-    })).toEqual({ state: "awaiting_approval", label: "実行待ち" })
+      result: { codex_manual_handoff: true, codex_run_state: "prompt_waiting" },
+    })).toEqual({ state: "prompt_waiting", label: "プロンプト待ち" })
 
     expect(getCodexTaskUiState({
       executor: "codex_app",

@@ -344,10 +344,12 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
   const displayStyle = codexUiState
     ? {
       label: codexUiState.label,
-      className: codexUiState.state === "running"
-        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-        : "border-amber-500/30 bg-amber-500/10 text-amber-300",
-      dot: codexUiState.state === "running" ? "bg-emerald-400" : "bg-amber-400",
+      className: codexUiState.state === "prompt_waiting"
+        ? "border-sky-500/30 bg-sky-500/10 text-sky-300"
+        : codexUiState.state === "running"
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+      dot: codexUiState.state === "prompt_waiting" ? "bg-sky-400" : codexUiState.state === "running" ? "bg-emerald-400" : "bg-amber-400",
     }
     : style
   const liveLog = getLiveLog(task)
@@ -366,6 +368,8 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
           <div className="shrink-0 pt-0.5">
             {codexUiState?.state === "running" ? (
               <Loader2 className="h-4 w-4 animate-spin text-emerald-300" aria-hidden="true" />
+            ) : codexUiState?.state === "prompt_waiting" ? (
+              <Square className="h-4 w-4 text-sky-300" aria-hidden="true" />
             ) : codexUiState?.state === "awaiting_approval" ? (
               <Square className="h-4 w-4 text-amber-300" aria-hidden="true" />
             ) : (
@@ -380,7 +384,7 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
               <span className={cn("inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium", displayStyle.className)}>
                 {codexUiState?.state === "running" ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : codexUiState?.state === "awaiting_approval" ? (
+                ) : codexUiState?.state === "prompt_waiting" || codexUiState?.state === "awaiting_approval" ? (
                   <Clock className="h-3.5 w-3.5" />
                 ) : (
                   <StatusIcon status={task.status} />
@@ -429,7 +433,9 @@ function AiExecutionCard({ task, spaceName }: { task: AiTask; spaceName?: string
                   "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium",
                   codexUiState.state === "running"
                     ? "bg-emerald-500/10 text-emerald-300"
-                    : "bg-amber-500/10 text-amber-300"
+                    : codexUiState.state === "prompt_waiting"
+                      ? "bg-sky-500/10 text-sky-300"
+                      : "bg-amber-500/10 text-amber-300"
                 )}>
                   {codexUiState.state === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
                   Codex {codexUiState.label}
