@@ -118,30 +118,14 @@ export async function POST(req: NextRequest) {
     ? approval_type
     : 'auto'
 
-  // 同一メモ（notes / ideal_goals）から pending/running のタスクが既にある場合は重複として拒否
-  const dupeColumn = source_task_id ? 'source_task_id' : source_ideal_goal_id ? 'source_ideal_goal_id' : source_note_id ? 'source_note_id' : null
-  const dupeValue = source_task_id || source_ideal_goal_id || source_note_id || null
-  if (dupeColumn && dupeValue) {
-    const { data: existing } = await supabase
-      .from('ai_tasks')
-      .select('id, status')
-      .eq(dupeColumn, dupeValue)
-      .in('status', ['pending', 'running', 'awaiting_approval', 'needs_input'])
-      .limit(1)
-      .maybeSingle()
-    if (existing) {
-      return NextResponse.json(
-        { error: 'この項目は既に実行中または確認待ちです', existing_task_id: existing.id },
-        { status: 409 },
-      )
-    }
-  }
-
   const resolvedExecutor =
     executor === 'codex_app' ? 'codex_app' :
     executor === 'codex' ? 'codex' :
     'claude'
   const manualCodexHandoff = resolvedExecutor === 'codex_app' && dispatch_mode === 'manual'
+  if (resolvedExecutor === 'codex_app' && !manualCodexHandoff && (!cwd || typeof cwd !== 'string' || !cwd.trim())) {
+    return NextResponse.json({ error: 'cwd is required for Codex.app auto dispatch' }, { status: 400 })
+  }
   const handoffToken = typeof codex_handoff_token === 'string' && /^FM-[A-Za-z0-9._:-]{8,120}$/.test(codex_handoff_token.trim())
     ? codex_handoff_token.trim()
     : null
@@ -155,6 +139,87 @@ export async function POST(req: NextRequest) {
   })
   if (resolvedSpace.error) {
     return NextResponse.json({ error: resolvedSpace.error }, { status: 403 })
+  }
+
+  // 同一メモ（notes / ideal_goals）から pending/running のタスクが既にある場合は重複として拒否
+  const dupeColumn = source_task_id ? 'source_task_id' : source_ideal_goal_id ? 'source_ideal_goal_id' : source_note_id ? 'source_note_id' : null
+  const dupeValue = source_task_id || source_ideal_goal_id || source_note_id || null
+  if (dupeColumn && dupeValue) {
+    const { data: existing } = await supabase
+      .from('ai_tasks')
+      .select('id, status, result')
+      .eq(dupeColumn, dupeValue)
+      .in('status', ['pending', 'running', 'awaiting_approval', 'needs_input'])
+      .limit(1)
+      .maybeSingle()
+    if (existing) {
+      const existingResult = (existing.result ?? {}) as Record<string, unknown>
+      const canPromoteManualCodexHandoff =
+        resolvedExecutor === 'codex_app' &&
+        !manualCodexHandoff &&
+        (existing.status === 'needs_input' || existing.status === 'awaiting_approval') &&
+        existingResult.codex_manual_handoff === true
+
+      if (canPromoteManualCodexHandoff) {
+        const { data: promoted, error: promoteError } = await supabase
+          .from('ai_tasks')
+          .update({
+            prompt: prompt.trim(),
+            skill_id: skill_id || null,
+            approval_type: resolvedApprovalType,
+            status: 'pending',
+            started_at: null,
+            completed_at: null,
+            scheduled_at,
+            recurrence_cron: recurrence_cron || null,
+            cwd: cwd || null,
+            codex_resume_thread_id: codex_resume_thread_id || null,
+            executor: resolvedExecutor,
+            run_visibility: normalizeVisibility(run_visibility, resolvedSpace.spaceId ? 'space' : 'private'),
+            error: null,
+            result: {
+              ...existingResult,
+              executor: 'codex_app',
+              codex_manual_handoff: false,
+              codex_run_state: 'running',
+              codex_review_reason: 'queued',
+              live_log: 'Mac の task-runner が Codex.app app-server で実行開始します。',
+              message: 'Codex.app app-server で実行待ちです。',
+              last_activity_at: nowIso,
+              steps: [
+                {
+                  key: 'queued',
+                  label: 'Codex.app 自動実行に切替',
+                  status: 'active',
+                  at: nowIso,
+                },
+              ],
+            },
+          })
+          .eq('id', existing.id)
+          .select()
+          .single()
+
+        if (promoteError) {
+          console.error('[ai-tasks/schedule] promote Codex handoff', promoteError.message)
+          return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+        }
+
+        if (
+          canUseLocalDispatch(req) &&
+          new Date(scheduled_at).getTime() <= Date.now() + 5_000
+        ) {
+          requestImmediateCodexAppDispatch(promoted.id)
+        }
+
+        return NextResponse.json(promoted, { status: 200 })
+      }
+
+      return NextResponse.json(
+        { error: 'この項目は既に実行中または確認待ちです', existing_task_id: existing.id },
+        { status: 409 },
+      )
+    }
   }
 
   const { data, error } = await supabase

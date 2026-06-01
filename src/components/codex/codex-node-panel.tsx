@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react"
 import {
   Dialog,
   DialogContent,
@@ -8,8 +8,8 @@ import {
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import {
+  buildCodexDeepLink,
   canUseLocalCodexOpenApi,
-  launchCodexFromBrowser,
   launchCodexViaLocalApi,
   launchFeedbackForMode,
   normalizeCodexPrompt,
@@ -230,9 +230,15 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }
   }, [detail, handleHeadingChange, heading])
 
-  const sendToCodex = useCallback(async () => {
+  const promptHeadingForCodex = heading || node.title
+  const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail)
+  const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
+  const codexHref = buildCodexDeepLink({ prompt: codexPrompt, repoPath: codexRepoPath || null })
+
+  const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const promptHeading = heading || node.title
     if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(detail)) {
+      event?.preventDefault()
       setError("Codexに渡す内容を入力してください")
       return
     }
@@ -240,6 +246,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     const prompt = buildCodexPrompt(promptHeading, detail)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
     const useLocalApi = canUseLocalCodexOpenApi()
+    if (useLocalApi) event?.preventDefault()
     let launchMode: CodexLaunchMode | null = null
     setError(null)
     setCodexFeedback(null)
@@ -253,12 +260,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           .catch(error => ({ result: null, error }))
         : null
 
-      if (!useLocalApi) {
-        launchMode = launchCodexFromBrowser({ prompt, repoPath: repoPath || null }).mode
-      }
+      if (!useLocalApi) launchMode = "browser-deep-link"
 
       let copiedToClipboard = await clipboardPromise
       await saveDraft(heading, detail)
+      const dispatchMode = repoPath ? "auto" : "manual"
 
       const scheduleRes = await fetch("/api/ai-tasks/schedule", {
         method: "POST",
@@ -270,7 +276,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           source_task_id: node.taskId,
           scheduled_at: new Date().toISOString(),
           executor: "codex_app",
-          dispatch_mode: "manual",
+          dispatch_mode: dispatchMode,
         }),
       })
       let handoffWarning: string | null = null
@@ -291,8 +297,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       if (handoffWarning) {
         setError(`${copyFeedback} ${handoffWarning}`)
       } else {
+        const dispatchFeedback = dispatchMode === "auto"
+          ? "MacのrunnerにもCodex.app実行を依頼しました。"
+          : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
         setCodexFeedback(
-          `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback}`,
+          `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
         )
       }
     } catch (err) {
@@ -348,17 +357,17 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                 </span>
               </div>
               <div className="flex shrink-0 items-center justify-end gap-2">
-                <button
-                  type="button"
+                <a
+                  href={codexHref}
                   onClick={sendToCodex}
-                  disabled={codexSendStatus === "sending"}
-                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-100"
+                  aria-disabled={codexSendStatus === "sending"}
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
                   aria-label="コピーしてCodexを開く"
                   title="コピーしてCodexを開く"
                 >
                   {codexSendStatus === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
                   Codexに送る
-                </button>
+                </a>
                 <button
                   type="button"
                   onClick={generateHeading}
