@@ -2,7 +2,6 @@
 
 import { BottomNav } from "@/components/mobile/bottom-nav"
 import { DashboardBrandBar } from "@/components/layout/dashboard-brand-bar"
-import { NotificationPermissionBanner } from "@/components/notifications"
 import { ViewProvider } from "@/contexts/ViewContext"
 import { useForceDesktopDashboard } from "@/hooks/useForceDesktopDashboard"
 import { cn } from "@/lib/utils"
@@ -14,9 +13,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return (
         <ViewProvider>
             <div className="flex flex-col h-dvh overflow-hidden bg-background text-foreground">
-                {/* Notification Permission Banner */}
-                <NotificationPermissionBanner />
-
                 {/* DashboardClient renders the full header on /dashboard. Sub pages still need a persistent home link. */}
                 <DashboardBrandBar />
 
