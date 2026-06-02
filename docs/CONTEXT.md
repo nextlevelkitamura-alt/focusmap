@@ -139,6 +139,7 @@ Goals → Projects → TaskGroups → Tasks
 
 - デスクトップ上部タブは `Todo` / `メモ` / `マップ` / `チャット` の順に表示する。
 - モバイル下部ナビは `Todo` / `メモ` / `マップ` / `チャット` / `設定` の順に表示し、`チャット` を強調表示の対象にする。
+- モバイル `Todo` 画面は、予定タイムラインだけでなく `予定` / `AI` の切替を持つ。`AI` 側はデスクトップの `Todo > AI実行` と同じ `AiExecutionTimeline` を使い、`ai_tasks` / scheduled AI tasks / Codex状態 / follow-up送信をWeb・Mac・iPhoneで同じAPI経由で表示する。
 - 上部の `SpaceProjectSwitcher` は左のスペース選択と右のプロジェクト選択を独立状態として扱う。右側でプロジェクトを選択・作成・編集しても左側の `selectedSpaceId` は変更せず、スペースは左側のスペースメニューで明示的に選んだ時だけ切り替える。
 - `Todo` タブの `メモ + カレンダー` サブビューは、サブビュータブ自体を見出しとして扱う。中央ペイン内に重複する「今日する」見出しや説明文は置かず、カラム切替・カレンダー選択・今日するメモ追加ボタンだけを薄いツールバーにまとめる。
 - `Todo` タブ左側のメモカードは、`メモ` 画面と同じ `WishlistCardDetail` 編集シートを開く。見出し・本文・タグ・画像・予定化などのメモ編集導線は左ペインからも同じ挙動にする。
@@ -181,7 +182,7 @@ Goals → Projects → TaskGroups → Tasks
 - MacアプリのDock/Finderアイコンは、Web UI左上と同じFocusmapロゴを `desktop/focusmap-mac/assets/icon.icns` として使う。開発起動時は `desktop/focusmap-mac/assets/icon.png`、パッケージ版の起動中Dock表示は `Resources/icon.icns` を設定し、Finder表示と起動中表示でアイコンが切り替わらないようにする。Dockへの永続固定はユーザーのmacOS設定で、アプリ側は起動中に通常アプリとしてDockへ表示する。
 - Macアプリの状態確認は `/api/desktop/health` を使い、重い `/dashboard` 初期化やAI/DB接続テストをヘルスチェックで走らせない。
 - Macアプリ内でGoogle Calendar連携を開始した場合、Google OAuth画面はElectron内WebViewではなく既定ブラウザへ逃がす。ローカルに `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` がある場合は `/api/calendar/connect?desktop_oauth=1` でElectron内のSupabaseセッションを一時的にローカルメモリへ保持し、外部ブラウザから `/api/calendar/callback` に戻った時に同じユーザーのGoogleトークンを保存する。ローカルにGoogle OAuth設定がない場合は `https://focusmap-official.com/api/calendar/connect` を既定ブラウザで開き、ブラウザ側のFocusmap/GoogleログインCookieを使う。Google公式方針に合わせ、Google認証ページをElectron内に表示しない。
-- MacアプリのFocusmapログインでGoogleを選んだ場合も、Googleアカウント選択/認証画面はElectron内WebViewではなく既定ブラウザへ逃がす。ログイン画面は `/auth/native-start?desktop=1&nonce=...` を外部ブラウザで開き、外部ブラウザ側でSupabase OAuthを開始する。これによりPKCE code verifierを外部ブラウザ側へ保存し、コールバックも同じブラウザで処理する。外部ブラウザからローカルNextの `/auth/callback?desktop=1&nonce=...` に戻ったら、同一プロセスの一時メモリにSupabaseセッションを保存し、Macアプリ側が `/api/auth/desktop-session?nonce=...` をポーリングして `supabase.auth.setSession` する。セッション受け渡しは5分TTLで、一般Webログインは従来通りブラウザ内リダイレクトを使う。
+- MacアプリのFocusmapログインでGoogleを選んだ場合も、Googleアカウント選択/認証画面はElectron内WebViewではなく既定ブラウザへ逃がす。ログイン画面はElectron IPCで `FOCUSMAP_WEB_AUTH_ORIGIN`（既定 `https://focusmap-official.com`）を受け取り、外部ブラウザで `https://focusmap-official.com/auth/native-start?desktop=1&nonce=...` を開く。外部ブラウザ側でSupabase OAuthを開始し、PKCE code verifierも同じブラウザ側に保存する。`/auth/callback?desktop=1&nonce=...` は本番側の一時メモリにSupabaseセッションを保存し、Macアプリ側はElectronメインプロセス経由で本番 `/api/auth/desktop-session?nonce=...` をポーリングして `supabase.auth.setSession` する。ブラウザのCORSやローカル127.0.0.1のGoogle許可済みリダイレクト設定に依存しない。セッション受け渡しは5分TTLで、一般Webログインは従来通りブラウザ内リダイレクトを使う。
 - Web UI上のGoogle Calendar接続ボタンは `src/lib/external-auth-launch.ts` の `startCalendarOAuth` を通す。MacアプリではElectronのナビゲーションハンドラが既定ブラウザへ逃がし、通常ブラウザでは従来通り `/api/calendar/connect` に遷移する。
 - Macアプリから起動するNext.jsには、リポジトリの `.env` / `.env.local` と `~/.focusmap/desktop.env` を読み込ませる。`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` がない場合は、空の `client_id` でGoogleへ飛ばさず、Focusmap側の `calendar_error=google_oauth_not_configured` に戻す。
 - Macアプリ/常駐runnerまわりの実行ログは、リポジトリ直下の `logs/` ではなく `~/.focusmap/logs/` に出す。即時Codex実行のstdout/stderrも同じディレクトリへ寄せ、リポジトリサイズに実行ログを混ぜない。

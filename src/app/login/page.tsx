@@ -19,6 +19,18 @@ declare global {
     interface Window {
         focusmapDesktop?: {
             openExternal?: (url: string) => Promise<unknown>
+            getWebAuthOrigin?: () => Promise<string>
+            consumeAuthSession?: (nonce: string, origin?: string) => Promise<{
+                ok: boolean
+                status: number
+                payload?: {
+                    error?: string
+                    access_token?: string
+                    refresh_token?: string
+                    user_id?: string
+                    status?: string
+                } | null
+            }>
         }
     }
 }
@@ -33,13 +45,40 @@ function getAuthCallbackUrl(options?: { desktop?: boolean; nativeApp?: 'ios'; no
     return url.toString()
 }
 
-function getExternalAuthStartUrl(options: { desktop?: boolean; nativeApp?: 'ios'; nonce: string; next: string }) {
-    const url = new URL('/auth/native-start', location.origin)
+function getExternalAuthStartUrl(options: { desktop?: boolean; nativeApp?: 'ios'; nonce: string; next: string; origin?: string }) {
+    const url = new URL('/auth/native-start', options.origin || location.origin)
     url.searchParams.set('nonce', options.nonce)
     url.searchParams.set('next', options.next)
     if (options.desktop) url.searchParams.set('desktop', '1')
     if (options.nativeApp) url.searchParams.set('native_app', options.nativeApp)
     return url.toString()
+}
+
+async function getDesktopAuthOrigin() {
+    const configured = await window.focusmapDesktop?.getWebAuthOrigin?.()
+    return (configured || SITE_URL || location.origin).replace(/\/$/, '')
+}
+
+async function consumeDesktopAuthSession(nonce: string, authOrigin: string) {
+    if (window.focusmapDesktop?.consumeAuthSession) {
+        const result = await window.focusmapDesktop.consumeAuthSession(nonce, authOrigin)
+        if (result.status === 202) return { pending: true as const }
+        if (!result.ok) {
+            throw new Error(result.payload?.error || 'Macアプリへのログイン受け渡しに失敗しました')
+        }
+        return { pending: false as const, payload: result.payload }
+    }
+
+    const url = new URL('/api/auth/desktop-session', authOrigin)
+    if (url.origin !== location.origin) {
+        throw new Error('Macアプリ側の認証受け渡し機能が古い状態です。Macアプリを再ビルドしてください。')
+    }
+    url.searchParams.set('nonce', nonce)
+    const response = await fetch(url.toString())
+    if (response.status === 202) return { pending: true as const }
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) throw new Error(payload?.error || 'Macアプリへのログイン受け渡しに失敗しました')
+    return { pending: false as const, payload }
 }
 
 function LoginContent() {
@@ -108,20 +147,21 @@ function LoginContent() {
             await checkSupabaseAuthAvailable()
             if (isDesktopShell && window.focusmapDesktop?.openExternal) {
                 const nonce = crypto.randomUUID()
+                const authOrigin = await getDesktopAuthOrigin()
                 await window.focusmapDesktop.openExternal(getExternalAuthStartUrl({
                     desktop: true,
                     nonce,
                     next: '/dashboard?desktop=1&source=mac',
+                    origin: authOrigin,
                 }))
                 setMessage({ type: 'success', text: '外部ブラウザでGoogleログインを完了してください。完了後、このMacアプリに自動で戻ります。' })
 
                 const startedAt = Date.now()
                 while (Date.now() - startedAt < 5 * 60 * 1000) {
                     await new Promise(resolve => setTimeout(resolve, 1500))
-                    const response = await fetch(`/api/auth/desktop-session?nonce=${encodeURIComponent(nonce)}`)
-                    if (response.status === 202) continue
-                    const payload = await response.json().catch(() => null)
-                    if (!response.ok) throw new Error(payload?.error || 'Macアプリへのログイン受け渡しに失敗しました')
+                    const session = await consumeDesktopAuthSession(nonce, authOrigin)
+                    if (session.pending) continue
+                    const payload = session.payload
                     if (payload?.access_token && payload?.refresh_token) {
                         const { error: sessionError } = await supabase.auth.setSession({
                             access_token: payload.access_token,

@@ -210,6 +210,29 @@ function isSameOrigin(urlString, origin) {
   }
 }
 
+function normalizeHttpOrigin(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function allowedDesktopAuthOrigins() {
+  return new Set([APP_ORIGIN, WEB_AUTH_ORIGIN].map(normalizeHttpOrigin).filter(Boolean));
+}
+
+function resolveDesktopAuthOrigin(value) {
+  const origin = normalizeHttpOrigin(value || WEB_AUTH_ORIGIN);
+  if (!origin) throw new Error('認証セッション取得先URLが不正です');
+  if (!allowedDesktopAuthOrigins().has(origin)) {
+    throw new Error(`許可されていない認証セッション取得先です: ${origin}`);
+  }
+  return origin;
+}
+
 function isGoogleAuthUrl(urlString) {
   try {
     const url = new URL(urlString);
@@ -268,12 +291,34 @@ function openAuthExternally(url) {
   shell.openExternal(url);
 }
 
+function isNavigationAbortError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('ERR_ABORTED') || message.includes('(-3)');
+}
+
+async function loadFileAllowingAbort(win, filePath, options) {
+  try {
+    await win.loadFile(filePath, options);
+  } catch (error) {
+    if (!isNavigationAbortError(error)) throw error;
+  }
+}
+
+async function loadUrlAllowingRedirect(win, url) {
+  try {
+    await win.loadURL(url);
+  } catch (error) {
+    if (!isNavigationAbortError(error)) throw error;
+    log('app', `navigation redirected or replaced: ${url}`);
+  }
+}
+
 function keepMainWindowOnLocalLogin() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const currentUrl = mainWindow.webContents.getURL();
   if (isSameOrigin(currentUrl, APP_ORIGIN)) return;
   mainWindow.loadURL(`${APP_ORIGIN}/login?desktop=1&source=mac`).catch((error) => {
-    log('auth', `failed to return to local login: ${error.message}`);
+    if (!isNavigationAbortError(error)) log('auth', `failed to return to local login: ${error.message}`);
   });
 }
 
@@ -283,7 +328,9 @@ function handleMainNavigation(event, url) {
     if (nextUrl.searchParams.get('desktop_oauth') !== '1') {
       event.preventDefault();
       if (hasGoogleOAuthConfig()) {
-        mainWindow?.loadURL(withDesktopOAuth(url));
+        mainWindow?.loadURL(withDesktopOAuth(url)).catch((error) => {
+          if (!isNavigationAbortError(error)) log('calendar', `failed to start desktop OAuth: ${error.message}`);
+        });
       } else {
         shell.openExternal(toWebAuthCalendarConnectUrl(url));
       }
@@ -484,6 +531,7 @@ async function collectStatus() {
     appOrigin: APP_ORIGIN,
     agentApiUrl: preferredAgentApiUrl(),
     repoRoot: REPO_ROOT,
+    webAuthOrigin: WEB_AUTH_ORIGIN,
     configPath: CONFIG_PATH,
     configReady,
     googleOAuthReady: hasGoogleOAuthConfig(),
@@ -498,6 +546,37 @@ async function collectStatus() {
     codexLaunchd,
     logs: processLogs.slice(-80),
   };
+}
+
+async function consumeExternalAuthSession(_event, nonce, originInput) {
+  if (typeof nonce !== 'string' || !nonce || nonce.length > 128) {
+    return { ok: false, status: 400, payload: { error: 'nonce is required' } };
+  }
+  if (typeof fetch !== 'function') {
+    return { ok: false, status: 500, payload: { error: 'fetch is not available in this Electron runtime' } };
+  }
+
+  try {
+    const origin = resolveDesktopAuthOrigin(originInput);
+    const url = new URL('/api/auth/desktop-session', origin);
+    url.searchParams.set('nonce', nonce);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url.toString(), {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      return { ok: response.ok, status: response.status, payload };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, status: 500, payload: { error: message } };
+  }
 }
 
 async function createMainWindow() {
@@ -522,7 +601,9 @@ async function createMainWindow() {
       sandbox: false,
     },
   });
-  mainWindow.loadFile(path.join(__dirname, 'loading.html'));
+  void loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html')).catch((error) => {
+    log('app', `failed to load loading screen: ${error.message}`);
+  });
   mainWindow.webContents.on('will-navigate', handleMainNavigation);
   mainWindow.webContents.on('will-redirect', (event, url, isInPlace, isMainFrame) => {
     if (handleMainNavigation(event, url)) return;
@@ -545,13 +626,13 @@ async function createMainWindow() {
   try {
     const origin = await ensureFocusmapApp();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      await mainWindow.loadURL(`${origin}/dashboard?desktop=1&source=mac`);
+      await loadUrlAllowingRedirect(mainWindow, `${origin}/dashboard?desktop=1&source=mac`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log('app', message);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      await mainWindow.loadFile(path.join(__dirname, 'loading.html'), {
+      await loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html'), {
         query: { error: message },
       });
     }
@@ -635,6 +716,8 @@ ipcMain.handle('focusmap-desktop:openMain', () => {
   return true;
 });
 ipcMain.handle('focusmap-desktop:openExternal', (_event, url) => shell.openExternal(url));
+ipcMain.handle('focusmap-desktop:getWebAuthOrigin', () => WEB_AUTH_ORIGIN);
+ipcMain.handle('focusmap-desktop:consumeAuthSession', consumeExternalAuthSession);
 
 app.on('before-quit', () => {
   for (const name of Object.keys(managedProcesses)) {

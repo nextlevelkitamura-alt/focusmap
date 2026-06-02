@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('focusmapDesktop', {
   stopCodexServer: () => ipcRenderer.invoke('focusmap-desktop:stopCodexServer'),
   openMain: () => ipcRenderer.invoke('focusmap-desktop:openMain'),
   openExternal: (url) => ipcRenderer.invoke('focusmap-desktop:openExternal', url),
+  getWebAuthOrigin: () => ipcRenderer.invoke('focusmap-desktop:getWebAuthOrigin'),
+  consumeAuthSession: (nonce, origin) => ipcRenderer.invoke('focusmap-desktop:consumeAuthSession', nonce, origin),
   onLog: (callback) => {
     const listener = (_event, line) => callback(line);
     ipcRenderer.on('focusmap-desktop:log', listener);

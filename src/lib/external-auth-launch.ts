@@ -4,6 +4,18 @@ declare global {
   interface Window {
     focusmapDesktop?: {
       openExternal?: (url: string) => Promise<unknown>
+      getWebAuthOrigin?: () => Promise<string>
+      consumeAuthSession?: (nonce: string, origin?: string) => Promise<{
+        ok: boolean
+        status: number
+        payload?: {
+          error?: string
+          access_token?: string
+          refresh_token?: string
+          user_id?: string
+          status?: string
+        } | null
+      }>
     }
     ReactNativeWebView?: {
       postMessage: (message: string) => void
