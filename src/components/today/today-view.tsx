@@ -276,13 +276,36 @@ export function TodayView({
                         role="status"
                         aria-label={headerRefreshLabel}
                     >
-                        <span
+                        <svg
                             className={cn(
-                                "h-5 w-5 rounded-full border-[2.5px] border-foreground/20 border-t-foreground/90 border-l-foreground/90",
+                                "h-5 w-5 text-foreground/95 transition-transform",
                                 (pullRefreshReady || isHeaderRefreshing) && "animate-spin"
                             )}
                             style={isHeaderRefreshing || pullRefreshReady ? undefined : { transform: `rotate(${headerRefreshProgress * 210}deg)` }}
-                        />
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                        >
+                            <circle
+                                cx="12"
+                                cy="12"
+                                r="8.5"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.2"
+                                opacity="0.14"
+                            />
+                            <circle
+                                cx="12"
+                                cy="12"
+                                r="8.5"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.7"
+                                strokeLinecap="round"
+                                strokeDasharray="14 54"
+                                transform="rotate(-90 12 12)"
+                            />
+                        </svg>
                     </div>
                 )}
                 <div className="flex items-start justify-between gap-2">
