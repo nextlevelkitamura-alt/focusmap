@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Plus, Clock, Timer, Calendar, Star, Bell, ChevronDown, ListTodo, X } from "lucide-react"
+import { Plus, Timer, Calendar, Bell, ChevronDown, ListTodo, X } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -14,8 +14,6 @@ import {
 } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { PRIORITY_OPTIONS, type Priority } from "@/components/ui/priority-select"
-import { DateTimePicker } from "@/components/ui/date-time-picker"
 import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import type { Project } from "@/types/database"
 
@@ -68,10 +66,31 @@ const REMINDER_OPTIONS: Array<{ label: string; value: number }> = [
     { label: "通知なし", value: -1 },
 ]
 
+const DEFAULT_PRIORITY = 3
+
+function toDateTimeLocalValue(date: Date | undefined) {
+    if (!date) return ""
+
+    const pad = (value: number) => String(value).padStart(2, "0")
+    return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate()),
+    ].join("-") + `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function fromDateTimeLocalValue(value: string) {
+    if (!value) return undefined
+
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? undefined : date
+}
+
 export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, onExternalOpenChange, initialScheduledAt, initialEstimatedTime }: QuickTaskFabProps) {
     const [isOpen, setIsOpen] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const fabRef = useRef<HTMLDivElement>(null)
+    const defaultCalendarId = calendars[0]?.id ?? null
 
     const [title, setTitle] = useState("")
     const [projectId, setProjectId] = useState<string | null>(null)
@@ -81,7 +100,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
     const [isDurationExpanded, setIsDurationExpanded] = useState(false)
     const [isCustomDurationPickerOpen, setIsCustomDurationPickerOpen] = useState(false)
     const [calendarId, setCalendarId] = useState<string | null>(null)
-    const [priority, setPriority] = useState<Priority>(3)
     const [memo, setMemo] = useState("")
     const memoRef = useRef<HTMLTextAreaElement>(null)
     const [subtasks, setSubtasks] = useState<string[]>([])
@@ -95,11 +113,12 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         const timer = window.setTimeout(() => {
             if (initialScheduledAt) setScheduledDate(initialScheduledAt)
             if (initialEstimatedTime) setEstimatedTime(initialEstimatedTime)
+            setCalendarId(current => current ?? defaultCalendarId)
             setIsOpen(true)
         }, 0)
 
         return () => window.clearTimeout(timer)
-    }, [externalOpen, initialScheduledAt, initialEstimatedTime])
+    }, [externalOpen, initialScheduledAt, initialEstimatedTime, defaultCalendarId])
 
     useEffect(() => {
         if (isOpen) {
@@ -120,13 +139,12 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         setReminder(0)
         setIsDurationExpanded(false)
         setIsCustomDurationPickerOpen(false)
-        setCalendarId(null)
-        setPriority(3)
+        setCalendarId(defaultCalendarId)
         setMemo("")
         if (memoRef.current) memoRef.current.style.height = "auto"
         setSubtasks([])
         setSubtaskInput("")
-    }, [])
+    }, [defaultCalendarId])
 
     const handleAddSubtask = useCallback(() => {
         const trimmed = subtaskInput.trim()
@@ -156,7 +174,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
             estimated_time: estimatedTime,
             reminders: reminder >= 0 ? [reminder] : [],
             calendar_id: calendarId,
-            priority,
+            priority: DEFAULT_PRIORITY,
             memo: memo.trim() || null,
             subtask_titles: subtasks.length > 0 ? subtasks : undefined,
         })
@@ -164,7 +182,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         resetForm()
         closeSheet()
         setIsSubmitting(false)
-    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, priority, memo, subtasks, isSubmitting, onCreateTask, resetForm, closeSheet])
+    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, memo, subtasks, isSubmitting, onCreateTask, resetForm, closeSheet])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey && title.trim()) {
@@ -179,12 +197,15 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
     }, [])
 
     const handleFabClick = useCallback(() => {
+        setCalendarId(current => current ?? defaultCalendarId)
         setIsOpen(true)
-    }, [])
+    }, [defaultCalendarId])
 
     const selectedProject = projects.find(project => project.id === projectId)
     const selectedCalendar = calendars.find(calendar => calendar.id === calendarId)
-    const selectedPriority = PRIORITY_OPTIONS[priority]
+    const scheduledDateTimeLabel = scheduledDate
+        ? format(scheduledDate, "M/d(E) HH:mm", { locale: ja })
+        : "未設定"
     const schedulePreview = scheduledDate
         ? `${format(scheduledDate, "M/d(E) HH:mm", { locale: ja })} · ${formatDuration(estimatedTime)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
         : `日時未設定 · ${formatDuration(estimatedTime)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
@@ -202,7 +223,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
 
     return (
         <>
-            <div ref={fabRef} className="fixed bottom-20 right-4 z-[70] md:hidden pointer-events-none">
+            <div ref={fabRef} className={cn("fixed bottom-20 right-4 z-[70] md:hidden pointer-events-none", isOpen && "hidden")}>
                 <button
                     onClick={handleFabClick}
                     className={cn(
@@ -225,7 +246,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                     className={cn(
                         "max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
                         "shadow-[0_-18px_48px_rgba(0,0,0,0.55)]",
-                        "[&>button]:text-neutral-400 [&>button:hover]:text-neutral-100"
+                        "[&>button]:right-3 [&>button]:top-3 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center",
+                        "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5"
                     )}
                 >
                     <div className="flex justify-center pt-2 pb-1">
@@ -233,18 +255,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                     </div>
 
                     <SheetHeader className="px-4 pb-3 pt-1">
-                        <div className="flex items-center justify-between pr-8">
+                        <div className="flex items-center pr-12">
                             <SheetTitle className="text-base text-neutral-50">カレンダーにタスク追加</SheetTitle>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    closeSheet()
-                                    resetForm()
-                                }}
-                                className="min-h-10 rounded-lg px-2 text-xs font-medium text-neutral-400 active:bg-white/10"
-                            >
-                                閉じる
-                            </button>
                         </div>
                         <SheetDescription className="sr-only">新しいタスクを追加します</SheetDescription>
                     </SheetHeader>
@@ -267,44 +279,25 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                                 />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2">
-                                <DateTimePicker
-                                    date={scheduledDate}
-                                    setDate={handleScheduledDateChange}
-                                    trigger={
-                                        <button type="button" className={fieldClass}>
-                                            <span className={fieldLabelClass}>
-                                                <Calendar className="h-3 w-3" />
-                                                日付
-                                            </span>
-                                            <span className={fieldValueClass}>
-                                                {scheduledDate
-                                                    ? format(scheduledDate, "M/d(E)", { locale: ja })
-                                                    : "未設定"
-                                                }
-                                            </span>
-                                        </button>
-                                    }
+                            <label className={cn(fieldClass, "relative block min-h-[66px] pr-9")}>
+                                <span className="pointer-events-none block">
+                                    <span className={fieldLabelClass}>
+                                        <Calendar className="h-3 w-3" />
+                                        日時
+                                    </span>
+                                    <span className={fieldValueClass}>
+                                        {scheduledDateTimeLabel}
+                                        <ChevronDown className="ml-auto h-3.5 w-3.5 text-neutral-400" />
+                                    </span>
+                                </span>
+                                <input
+                                    type="datetime-local"
+                                    value={toDateTimeLocalValue(scheduledDate)}
+                                    onChange={(e) => handleScheduledDateChange(fromDateTimeLocalValue(e.target.value))}
+                                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                    aria-label="日時"
                                 />
-                                <DateTimePicker
-                                    date={scheduledDate}
-                                    setDate={handleScheduledDateChange}
-                                    trigger={
-                                        <button type="button" className={fieldClass}>
-                                            <span className={fieldLabelClass}>
-                                                <Clock className="h-3 w-3" />
-                                                時刻
-                                            </span>
-                                            <span className={fieldValueClass}>
-                                                {scheduledDate
-                                                    ? format(scheduledDate, "HH:mm", { locale: ja })
-                                                    : "選択"
-                                                }
-                                            </span>
-                                        </button>
-                                    }
-                                />
-                            </div>
+                            </label>
 
                             <div className="grid grid-cols-2 gap-2">
                                 <button
@@ -331,25 +324,18 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
 
                                 <div className={fieldClass}>
                                     <label className={fieldLabelClass}>
-                                        <Calendar className="h-3 w-3" />
-                                        カレンダー
+                                        <Bell className="h-3 w-3" />
+                                        通知
                                     </label>
-                                    <div className="relative flex items-center gap-1.5">
-                                        {selectedCalendar?.background_color && (
-                                            <span
-                                                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                                style={{ backgroundColor: selectedCalendar.background_color }}
-                                            />
-                                        )}
+                                    <div className="relative">
                                         <select
-                                            value={calendarId ?? ""}
-                                            onChange={(e) => setCalendarId(e.target.value || null)}
+                                            value={reminder}
+                                            onChange={(e) => setReminder(Number(e.target.value))}
                                             className={selectClass}
                                         >
-                                            <option className="bg-neutral-950" value="">なし</option>
-                                            {calendars.map((c) => (
-                                                <option className="bg-neutral-950" key={c.id} value={c.id}>
-                                                    {c.name}
+                                            {REMINDER_OPTIONS.map((option) => (
+                                                <option className="bg-neutral-950" key={option.value} value={option.value}>
+                                                    {option.label}
                                                 </option>
                                             ))}
                                         </select>
@@ -410,6 +396,34 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                                 trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
                             />
 
+                            <div className={cn(fieldClass, "min-h-[66px]")}>
+                                <label className={fieldLabelClass}>
+                                    <Calendar className="h-3 w-3" />
+                                    追加先カレンダー
+                                </label>
+                                <div className="relative flex items-center gap-2">
+                                    {selectedCalendar?.background_color && (
+                                        <span
+                                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                            style={{ backgroundColor: selectedCalendar.background_color }}
+                                        />
+                                    )}
+                                    <select
+                                        value={calendarId ?? ""}
+                                        onChange={(e) => setCalendarId(e.target.value || null)}
+                                        className={selectClass}
+                                    >
+                                        <option className="bg-neutral-950" value="">なし</option>
+                                        {calendars.map((c) => (
+                                            <option className="bg-neutral-950" key={c.id} value={c.id}>
+                                                {c.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-2 gap-2">
                                 <div className={fieldClass}>
                                     <label className={fieldLabelClass}>プロジェクト</label>
@@ -431,51 +445,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                                     {selectedProject && (
                                         <div className="mt-0.5 truncate text-[10px] text-neutral-500">{selectedProject.title}</div>
                                     )}
-                                </div>
-
-                                <div className={fieldClass}>
-                                    <label className={fieldLabelClass}>
-                                        <Star className="h-3 w-3" />
-                                        優先度
-                                    </label>
-                                    <div className="relative">
-                                        <select
-                                            value={priority}
-                                            onChange={(e) => setPriority(Number(e.target.value) as Priority)}
-                                            className={selectClass}
-                                        >
-                                            {Object.values(PRIORITY_OPTIONS).map((opt) => (
-                                                <option className="bg-neutral-950" key={opt.value} value={opt.value}>
-                                                    {opt.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
-                                    </div>
-                                    <div className="mt-0.5 truncate text-[10px] text-neutral-500">{selectedPriority.label}</div>
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                                <div className={fieldClass}>
-                                    <label className={fieldLabelClass}>
-                                        <Bell className="h-3 w-3" />
-                                        通知
-                                    </label>
-                                    <div className="relative">
-                                        <select
-                                            value={reminder}
-                                            onChange={(e) => setReminder(Number(e.target.value))}
-                                            className={selectClass}
-                                        >
-                                            {REMINDER_OPTIONS.map((option) => (
-                                                <option className="bg-neutral-950" key={option.value} value={option.value}>
-                                                    {option.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
-                                    </div>
                                 </div>
 
                                 <div className={fieldClass}>

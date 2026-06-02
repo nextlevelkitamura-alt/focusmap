@@ -1,17 +1,15 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { X, Clock, Calendar as CalendarIcon, Type, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
+import { X, Calendar as CalendarIcon, ChevronDown, Play, Pause, Timer, Trash2, StickyNote, Bell, Plus, CheckSquare, Square, Loader2, ListTodo } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTimer, formatTime } from "@/contexts/TimerContext"
-import { DateTimePicker } from "@/components/ui/date-time-picker"
 import { DurationWheelPicker, formatDuration } from "@/components/ui/duration-wheel-picker"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import type { TimeBlock } from "@/lib/time-block"
 import type { Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
-import { EventMemoPopup } from "@/components/calendar/event-memo-popup"
 
 // --- Types ---
 
@@ -50,6 +48,34 @@ const BASE_REMINDER_OPTIONS = [
     { label: '1時間前', value: 60 },
 ]
 
+const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
+    { label: "5分", value: 5 },
+    { label: "15分", value: 15 },
+    { label: "30分", value: 30 },
+    { label: "45分", value: 45 },
+    { label: "1時間", value: 60 },
+    { label: "1時間30分", value: 90 },
+    { label: "2時間", value: 120 },
+]
+
+function toDateTimeLocalValue(date: Date | undefined) {
+    if (!date) return ""
+
+    const pad = (value: number) => String(value).padStart(2, "0")
+    return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate()),
+    ].join("-") + `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function fromDateTimeLocalValue(value: string) {
+    if (!value) return undefined
+
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? undefined : date
+}
+
 // --- Main Component ---
 
 export function MobileEventEditModal({
@@ -73,9 +99,9 @@ export function MobileEventEditModal({
     const [calendarId, setCalendarId] = useState('')
     const [memo, setMemo] = useState('')
     const [eventDescription, setEventDescription] = useState('')
-    const [isEventMemoOpen, setIsEventMemoOpen] = useState(false)
     const [reminder, setReminder] = useState(-1)
-    const [showCalendarPicker, setShowCalendarPicker] = useState(false)
+    const [isDurationExpanded, setIsDurationExpanded] = useState(false)
+    const [isCustomDurationPickerOpen, setIsCustomDurationPickerOpen] = useState(false)
     const [subtaskInput, setSubtaskInput] = useState('')
     const [isAddingSubTask, setIsAddingSubTask] = useState(false)
     const [isDeleting, setIsDeleting] = useState(false)
@@ -87,6 +113,7 @@ export function MobileEventEditModal({
     const dragStartY = useRef(0)
     const currentTranslateY = useRef(0)
     const openedAtRef = useRef(0)
+    const defaultCalendarId = availableCalendars[0]?.id ?? ''
     const reminderOptions = useMemo(() => {
         if (BASE_REMINDER_OPTIONS.some(opt => opt.value === reminder)) {
             return BASE_REMINDER_OPTIONS
@@ -116,13 +143,14 @@ export function MobileEventEditModal({
 
         setTitle(target.title)
         setScheduledDate(new Date(target.startTime))
-        setCalendarId(target.calendarId || '')
+        setCalendarId(target.calendarId || defaultCalendarId)
         setMemo(target.originalTask?.memo || '')
         setEventDescription(target.originalEvent?.description || '')
         setSubtaskInput('')
         setLinkedTaskId(target.taskId || null)
-        setLocalChildTasks(childTasks)
-        setShowCalendarPicker(false)
+        setLocalChildTasks([])
+        setIsDurationExpanded(false)
+        setIsCustomDurationPickerOpen(false)
         if (target.source === 'task') {
             setDuration(target.estimatedTime || 60)
         } else {
@@ -141,7 +169,7 @@ export function MobileEventEditModal({
         } else {
             setReminder(15)
         }
-    }, [target])
+    }, [target, defaultCalendarId])
 
     // childTasks prop が更新されたときにローカル状態を同期
     // 親が `?? []` で毎レンダー新配列を渡すため、内容が同じなら setState を skip して
@@ -191,6 +219,11 @@ export function MobileEventEditModal({
         ))
         await onToggleSubTask(taskId)
     }, [onToggleSubTask])
+
+    const handleDurationPresetSelect = useCallback((minutes: number) => {
+        setDuration(minutes)
+        setIsDurationExpanded(true)
+    }, [])
 
     // Handle swipe down to close
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -298,49 +331,59 @@ export function MobileEventEditModal({
 
     const isTask = target.source === 'task'
     const selectedCalendar = availableCalendars.find(c => c.id === calendarId)
+    const scheduledDateTimeLabel = scheduledDate
+        ? format(scheduledDate, "M/d(E) HH:mm", { locale: ja })
+        : "未設定"
+    const schedulePreview = scheduledDate
+        ? `${format(scheduledDate, "M/d(E) HH:mm", { locale: ja })}〜${endTimeStr} · ${formatDuration(duration)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
+        : `日時未設定 · ${formatDuration(duration)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
+    const fieldClass = cn(
+        "min-h-[58px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-left",
+        "transition-colors active:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
+    )
+    const fieldLabelClass = "mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-400"
+    const fieldValueClass = "flex min-w-0 items-center gap-1.5 text-sm font-semibold text-neutral-50"
+    const selectClass = cn(
+        "w-full appearance-none border-0 bg-transparent p-0 pr-5 text-sm font-semibold text-neutral-50 outline-none",
+        "focus:ring-0"
+    )
 
     return (
         <>
-            {/* Overlay */}
             <div
-                className="fixed inset-0 z-[60] bg-black/40 animate-in fade-in duration-200"
+                className="fixed inset-0 z-[60] bg-black/60 animate-in fade-in duration-200"
                 onClick={safeClose}
             />
 
-            {/* Bottom Sheet */}
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-[60] bg-background rounded-t-2xl shadow-xl animate-in slide-in-from-bottom duration-300 max-h-[80dvh] flex flex-col overflow-hidden"
+                className="fixed inset-x-0 bottom-0 z-[60] max-h-[88dvh] overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300 flex flex-col"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
             >
-                {/* Drag Handle (fixed) */}
-                <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
-                    <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+                <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
+                    <div className="w-10 h-1 rounded-full bg-white/20" />
                 </div>
 
-                {/* Header (fixed) */}
-                <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
-                    <h3 className="text-base font-semibold">
-                        {isTask ? 'タスクを編集' : '予定を編集'}
+                <div className="relative flex items-center px-4 pb-3 pt-1 flex-shrink-0">
+                    <h3 className="pr-12 text-base font-semibold text-neutral-50">
+                        {isTask ? "タスクを編集" : "予定を編集"}
                     </h3>
                     <button
+                        type="button"
                         onClick={onClose}
-                        className="p-1.5 rounded-full hover:bg-muted transition-colors"
+                        className="absolute right-3 top-0 flex h-11 w-11 items-center justify-center rounded-full text-neutral-400 transition-colors active:bg-white/10 active:text-neutral-100"
+                        aria-label="閉じる"
                     >
-                        <X className="w-4 h-4 text-muted-foreground" />
+                        <X className="h-5 w-5" />
                     </button>
                 </div>
 
-                {/* Form (scrollable) */}
-                <div className="flex-1 min-h-0 overflow-y-auto px-4 space-y-4 pb-2">
-                    {/* Title */}
-                    <div className="space-y-1.5">
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <Type className="w-3.5 h-3.5" />
-                            タイトル
-                        </label>
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
+                    <div className="space-y-3">
+                    <div>
+                        <label className="mb-1 block text-[11px] font-medium text-neutral-400">タイトル</label>
                         <input
                             type="text"
                             value={title}
@@ -351,108 +394,158 @@ export function MobileEventEditModal({
                                 e.preventDefault()
                                 if (title.trim() && !isDeleting) handleSave()
                             }}
-                            className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                            placeholder="タイトルを入力"
+                            className="h-12 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-base text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
+                            placeholder="例: SNS投稿を作る"
                         />
                     </div>
 
-                    {/* Start Date/Time */}
-                    <div className="space-y-1.5">
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <Clock className="w-3.5 h-3.5" />
-                            開始日時
-                        </label>
-                        <DateTimePicker
-                            date={scheduledDate}
-                            setDate={setScheduledDate}
-                            trigger={
-                                <button
-                                    type="button"
-                                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm border rounded-lg bg-background text-left focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                                >
-                                    <CalendarIcon className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
-                                    {scheduledDate
-                                        ? format(scheduledDate, "M月d日 (E) HH:mm", { locale: ja })
-                                        : "日時を選択"
-                                    }
-                                </button>
-                            }
+                    <label className={cn(fieldClass, "relative block min-h-[66px] pr-9")}>
+                        <span className="pointer-events-none block">
+                            <span className={fieldLabelClass}>
+                                <CalendarIcon className="h-3 w-3" />
+                                日時
+                            </span>
+                            <span className={fieldValueClass}>
+                                {scheduledDateTimeLabel}
+                                <ChevronDown className="ml-auto h-3.5 w-3.5 text-neutral-400" />
+                            </span>
+                        </span>
+                        <input
+                            type="datetime-local"
+                            value={toDateTimeLocalValue(scheduledDate)}
+                            onChange={(e) => setScheduledDate(fromDateTimeLocalValue(e.target.value))}
+                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                            aria-label="日時"
                         />
-                    </div>
+                    </label>
 
-                    {/* Duration (both task and event) */}
-                    <div className="space-y-1.5">
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <Clock className="w-3.5 h-3.5" />
-                            所要時間
-                        </label>
-                        <DurationWheelPicker
-                            duration={duration}
-                            onDurationChange={setDuration}
-                            trigger={
-                                <button
-                                    type="button"
-                                    className="w-full flex items-center justify-between px-3 py-2.5 text-sm border rounded-lg bg-background hover:bg-muted transition-colors"
-                                >
-                                    <span>{formatDuration(duration)}</span>
-                                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                                </button>
-                            }
-                        />
-                        <p className="text-[10px] text-muted-foreground">
-                            終了: {endTimeStr}
-                        </p>
-                    </div>
-
-                    {/* Calendar Selection */}
-                    {availableCalendars.length > 0 && (
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <CalendarIcon className="w-3.5 h-3.5" />
-                                カレンダー
-                            </label>
-                            <button
-                                onClick={() => setShowCalendarPicker(!showCalendarPicker)}
-                                className="w-full flex items-center justify-between px-3 py-2.5 text-sm border rounded-lg bg-background hover:bg-muted transition-colors"
-                            >
-                                <div className="flex items-center gap-2">
-                                    {selectedCalendar && (
-                                        <div
-                                            className="w-3 h-3 rounded-full flex-shrink-0"
-                                            style={{ backgroundColor: selectedCalendar.background_color || '#4285F4' }}
-                                        />
-                                    )}
-                                    <span>{selectedCalendar?.name || '未選択'}</span>
-                                </div>
-                                <ChevronDown className={cn(
-                                    "w-4 h-4 text-muted-foreground transition-transform",
-                                    showCalendarPicker && "rotate-180"
-                                )} />
-                            </button>
-                            {showCalendarPicker && (
-                                <div className="border rounded-lg overflow-hidden">
-                                    {availableCalendars.map(cal => (
-                                        <button
-                                            key={cal.id}
-                                            onClick={() => { setCalendarId(cal.id); setShowCalendarPicker(false) }}
-                                            className={cn(
-                                                "w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left hover:bg-muted transition-colors",
-                                                calendarId === cal.id && "bg-primary/5"
-                                            )}
-                                        >
-                                            <div
-                                                className="w-3 h-3 rounded-full flex-shrink-0"
-                                                style={{ backgroundColor: cal.background_color || '#4285F4' }}
-                                            />
-                                            <span>{cal.name}</span>
-                                        </button>
-                                    ))}
-                                </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setIsDurationExpanded(prev => !prev)}
+                            aria-expanded={isDurationExpanded}
+                            className={cn(
+                                fieldClass,
+                                isDurationExpanded && "border-white/25 bg-white/[0.09] ring-1 ring-white/10"
                             )}
+                        >
+                            <span className={fieldLabelClass}>
+                                <Timer className="h-3 w-3" />
+                                所要
+                            </span>
+                            <span className={fieldValueClass}>
+                                {formatDuration(duration)}
+                                <ChevronDown className={cn(
+                                    "ml-auto h-3.5 w-3.5 text-neutral-400 transition-transform",
+                                    isDurationExpanded && "rotate-180"
+                                )} />
+                            </span>
+                        </button>
+
+                        <div className={fieldClass}>
+                            <label className={fieldLabelClass}>
+                                <Bell className="h-3 w-3" />
+                                通知
+                            </label>
+                            <div className="relative">
+                                <select
+                                    value={reminder}
+                                    onChange={(e) => setReminder(Number(e.target.value))}
+                                    className={selectClass}
+                                >
+                                    {reminderOptions.map(opt => (
+                                        <option className="bg-neutral-950" key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {isDurationExpanded && (
+                        <div className="rounded-2xl border border-white/10 bg-black px-3 py-3 shadow-inner">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-medium text-neutral-400">所要時間</span>
+                                <span className="text-xs font-semibold text-neutral-100">{formatDuration(duration)}</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1.5">
+                                {DURATION_OPTIONS.map(option => (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        onClick={() => handleDurationPresetSelect(option.value)}
+                                        className={cn(
+                                            "min-h-10 rounded-lg border px-2 text-xs font-semibold transition-colors",
+                                            duration === option.value
+                                                ? "border-white bg-white text-neutral-950"
+                                                : "border-white/10 bg-white/[0.055] text-neutral-200 active:bg-white/[0.1]"
+                                        )}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCustomDurationPickerOpen(true)}
+                                    className="min-h-10 rounded-lg border border-white/15 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-100 active:bg-white/[0.1]"
+                                >
+                                    カスタム
+                                </button>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsCustomDurationPickerOpen(true)}
+                                className="mt-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 text-left text-xs text-neutral-300 active:bg-white/[0.08]"
+                            >
+                                <span>ホイールで細かく選ぶ</span>
+                                <span className="font-semibold text-neutral-50">カスタム</span>
+                            </button>
                         </div>
                     )}
 
-                    {/* Timer Section (Tasks only) */}
+                    <DurationWheelPicker
+                        duration={duration}
+                        onDurationChange={(minutes) => {
+                            setDuration(minutes)
+                            setIsDurationExpanded(true)
+                        }}
+                        open={isCustomDurationPickerOpen}
+                        onOpenChange={setIsCustomDurationPickerOpen}
+                        trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
+                    />
+
+                    {availableCalendars.length > 0 && (
+                        <div className={cn(fieldClass, "min-h-[66px]")}>
+                            <label className={fieldLabelClass}>
+                                <CalendarIcon className="h-3 w-3" />
+                                追加先カレンダー
+                            </label>
+                            <div className="relative flex items-center gap-2">
+                                {selectedCalendar && (
+                                    <span
+                                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                        style={{ backgroundColor: selectedCalendar.background_color || '#4285F4' }}
+                                    />
+                                )}
+                                <select
+                                    value={calendarId}
+                                    onChange={(e) => setCalendarId(e.target.value)}
+                                    className={selectClass}
+                                >
+                                    {isTask && <option className="bg-neutral-950" value="">なし</option>}
+                                    {availableCalendars.map(cal => (
+                                        <option className="bg-neutral-950" key={cal.id} value={cal.id}>
+                                            {cal.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                            </div>
+                        </div>
+                    )}
+
                     {isTask && target.originalTask && (() => {
                         const task = target.originalTask!
                         const isRunning = timer.runningTaskId === task.id
@@ -462,15 +555,15 @@ export function MobileEventEditModal({
                         const hasElapsed = elapsedSeconds > 0
 
                         return (
-                            <div className="space-y-1.5">
-                                <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                    <Timer className="w-3.5 h-3.5" />
+                            <div className={fieldClass}>
+                                <label className={fieldLabelClass}>
+                                    <Timer className="h-3 w-3" />
                                     記録時間
                                 </label>
-                                <div className="flex items-center gap-3 px-3 py-2.5 border rounded-lg bg-background">
+                                <div className="flex items-center gap-3">
                                     <span className={cn(
-                                        "font-mono text-lg flex-1",
-                                        isRunning ? "text-primary" : hasElapsed ? "text-foreground" : "text-muted-foreground"
+                                        "flex-1 font-mono text-lg",
+                                        isRunning ? "text-emerald-300" : hasElapsed ? "text-neutral-50" : "text-neutral-500"
                                     )}>
                                         {formatTime(elapsedSeconds)}
                                     </span>
@@ -485,17 +578,17 @@ export function MobileEventEditModal({
                                             }
                                         }}
                                         className={cn(
-                                            "p-2.5 rounded-full transition-colors",
+                                            "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
                                             isRunning
-                                                ? "bg-primary/10 text-primary active:bg-primary/20"
-                                                : "bg-muted text-muted-foreground active:bg-muted/80"
+                                                ? "bg-emerald-400/15 text-emerald-200 active:bg-emerald-400/25"
+                                                : "bg-white/[0.06] text-neutral-300 active:bg-white/[0.1]"
                                         )}
                                     >
-                                        {isRunning ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                                        {isRunning ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                                     </button>
                                 </div>
                                 {(task.actual_time_minutes ?? 0) > 0 && !isRunning && (
-                                    <p className="text-[10px] text-muted-foreground">
+                                    <p className="mt-0.5 text-[10px] text-neutral-500">
                                         実績: {task.actual_time_minutes}分
                                     </p>
                                 )}
@@ -503,51 +596,45 @@ export function MobileEventEditModal({
                         )
                     })()}
 
-                    {/* Reminder */}
-                    <div className="space-y-1.5">
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <Bell className="w-3.5 h-3.5" />
-                            通知
-                        </label>
-                        <select
-                            value={reminder}
-                            onChange={(e) => setReminder(Number(e.target.value))}
-                            className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent appearance-none cursor-pointer"
-                            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
-                        >
-                            {reminderOptions.map(opt => (
-                                <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className={fieldClass}>
+                            <label className={fieldLabelClass}>プロジェクト</label>
+                            <div className={fieldValueClass}>
+                                {target.projectId ? "設定済み" : "なし"}
+                            </div>
+                        </div>
 
-                    {/* サブタスク セクション（タスク・イベント共通） */}
-                    {onCreateSubTask && (
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <ListTodo className="w-3.5 h-3.5" />
+                        <div className={fieldClass}>
+                            <label className={fieldLabelClass}>
+                                <ListTodo className="h-3 w-3" />
                                 サブタスク
                             </label>
+                            <div className={fieldValueClass}>
+                                {localChildTasks.length}件
+                            </div>
+                        </div>
+                    </div>
+
+                    {onCreateSubTask && (
+                        <div>
                             {localChildTasks.length > 0 && (
-                                <div className="space-y-0.5">
+                                <div className="mb-2 space-y-1">
                                     {localChildTasks.map(child => (
-                                        <div key={child.id} className="flex items-center gap-2 py-1.5 px-2 rounded-lg border border-border/40 bg-background">
+                                        <div key={child.id} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-1.5">
                                             <button
                                                 type="button"
                                                 onClick={() => handleToggleSubTask(child.id)}
-                                                className="flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-primary/80 rounded"
+                                                className="flex-shrink-0 rounded p-1 text-neutral-400 active:bg-white/10"
                                             >
                                                 {child.status === 'done' ? (
-                                                    <CheckSquare className="w-4 h-4 text-primary" />
+                                                    <CheckSquare className="h-4 w-4 text-emerald-300" />
                                                 ) : (
-                                                    <Square className="w-4 h-4 text-muted-foreground/40" />
+                                                    <Square className="h-4 w-4 text-neutral-500" />
                                                 )}
                                             </button>
                                             <span className={cn(
-                                                "text-sm flex-1",
-                                                child.status === 'done' && "line-through text-muted-foreground"
+                                                "flex-1 truncate text-sm text-neutral-100",
+                                                child.status === 'done' && "text-neutral-500 line-through"
                                             )}>
                                                 {child.title}
                                             </span>
@@ -567,105 +654,85 @@ export function MobileEventEditModal({
                                         }
                                     }}
                                     placeholder="サブタスクを追加..."
-                                    className="flex-1 px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                                    className="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.045] px-3 text-sm text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
                                 />
                                 <button
                                     type="button"
                                     onClick={handleAddSubTask}
                                     disabled={!subtaskInput.trim() || isAddingSubTask}
-                                    className="p-2 rounded-lg bg-primary/10 text-primary disabled:opacity-40 active:bg-primary/20 transition-colors"
+                                    className={cn(
+                                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 transition-colors",
+                                        subtaskInput.trim() && !isAddingSubTask
+                                            ? "bg-white text-neutral-950 active:bg-neutral-200"
+                                            : "bg-white/[0.04] text-neutral-600"
+                                    )}
+                                    aria-label="サブタスクを追加"
                                 >
                                     {isAddingSubTask ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <Loader2 className="h-4 w-4 animate-spin" />
                                     ) : (
-                                        <Plus className="w-4 h-4" />
+                                        <Plus className="h-4 w-4" />
                                     )}
                                 </button>
                             </div>
                         </div>
                     )}
 
-                    {/* Memo (Task only) */}
-                    {isTask && (
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <StickyNote className="w-3.5 h-3.5" />
-                                メモ
-                            </label>
-                            <textarea
-                                value={memo}
-                                onChange={(e) => setMemo(e.target.value)}
-                                className="w-full px-3 py-2.5 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent resize-none min-h-[80px]"
-                                placeholder="メモを入力..."
-                            />
-                        </div>
-                    )}
+                    <div>
+                        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-400">
+                            <StickyNote className="h-3 w-3" />
+                            メモ（任意）
+                        </label>
+                        <textarea
+                            value={isTask ? memo : eventDescription}
+                            onChange={(e) => {
+                                if (isTask) {
+                                    setMemo(e.target.value)
+                                } else {
+                                    setEventDescription(e.target.value)
+                                }
+                            }}
+                            rows={2}
+                            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2.5 text-sm leading-relaxed text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
+                            placeholder="メモを入力..."
+                        />
+                    </div>
 
-                    {/* Memo (Event only) — ポップアップ起動ボタン */}
-                    {!isTask && (
-                        <div className="space-y-1.5">
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <StickyNote className="w-3.5 h-3.5" />
-                                メモ
-                            </label>
-                            <button
-                                type="button"
-                                onClick={() => setIsEventMemoOpen(true)}
-                                className="w-full flex items-center gap-2 px-3 py-2.5 text-sm border rounded-lg bg-background hover:bg-muted transition-colors text-left"
-                            >
-                                <StickyNote className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
-                                <span className={cn(
-                                    "truncate",
-                                    !eventDescription.trim() && "text-muted-foreground"
-                                )}>
-                                    {eventDescription.trim()
-                                        ? eventDescription.replace(/\s+/g, ' ').slice(0, 40) + (eventDescription.length > 40 ? '…' : '')
-                                        : 'メモを追加'}
-                                </span>
-                            </button>
-                        </div>
-                    )}
-
+                    </div>
                 </div>
 
-                {/* Footer: Save + Delete side by side */}
-                <div className="flex-shrink-0 px-4 pt-2 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] border-t">
+                <div className="flex-shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2">
+                    <div className="mb-2 truncate text-center text-[11px] text-neutral-400">
+                        {schedulePreview}
+                    </div>
                     <div className="flex items-center gap-2">
-                        <button
-                            onClick={handleSave}
-                            disabled={!title.trim() || isDeleting}
-                            className={cn(
-                                "py-3 text-sm font-medium rounded-lg transition-colors",
-                                (onDeleteTask || onDeleteEvent) ? "basis-2/3" : "w-full",
-                                !title.trim()
-                                    ? "bg-muted text-muted-foreground cursor-not-allowed"
-                                    : "bg-primary text-primary-foreground active:bg-primary/90"
-                            )}
-                        >
-                            完了
-                        </button>
                         {(onDeleteTask || onDeleteEvent) && (
                             <button
+                                type="button"
                                 onClick={handleDelete}
                                 disabled={isDeleting}
                                 aria-label="削除"
-                                className="basis-1/3 flex items-center justify-center gap-1 py-3 text-sm font-medium text-red-500 bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors disabled:opacity-60"
+                                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10 text-red-300 transition-colors active:bg-red-500/20 disabled:opacity-60"
                             >
-                                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                                <span>削除</span>
+                                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                             </button>
                         )}
+                        <button
+                            type="button"
+                            onClick={handleSave}
+                            disabled={!title.trim() || isDeleting}
+                            className={cn(
+                                "h-12 flex-1 rounded-xl text-base font-semibold transition-colors",
+                                !title.trim() || isDeleting
+                                    ? "bg-white/10 text-neutral-500"
+                                    : "bg-white text-neutral-950 active:bg-neutral-300"
+                            )}
+                        >
+                            保存
+                        </button>
                     </div>
                 </div>
             </div>
-
-            {/* メモポップアップ（イベントのみ） */}
-            <EventMemoPopup
-                initialValue={eventDescription}
-                isOpen={isEventMemoOpen}
-                onClose={() => setIsEventMemoOpen(false)}
-                onSave={(memo) => setEventDescription(memo)}
-            />
         </>
     )
 }
