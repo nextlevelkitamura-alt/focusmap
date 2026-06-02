@@ -141,6 +141,23 @@
   -webkit-touch-callout: none;
 }
 
+/* iOS long-press guard for interactive timeline surfaces. */
+.timeline-touch-guard,
+.timeline-touch-guard * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.timeline-touch-guard input,
+.timeline-touch-guard textarea,
+.timeline-touch-guard select,
+.timeline-touch-guard [contenteditable="true"] {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Custom Mind Map: Codex running state */
 .codex-node-running-orbit {
   position: absolute;

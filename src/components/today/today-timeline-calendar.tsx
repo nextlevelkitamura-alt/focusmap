@@ -133,6 +133,10 @@ function buildCalendarEventMemoPayloadFromTimeBlock(item: TimeBlock): CalendarEv
     }
 }
 
+function isEditableElement(target: EventTarget | null): boolean {
+    return target instanceof HTMLElement && !!target.closest('input, textarea, select, [contenteditable="true"]')
+}
+
 // --- Main Component ---
 export function TodayTimelineCalendar({
     timelineItems,
@@ -545,6 +549,24 @@ export function TodayTimelineCalendar({
         }
     }, [])
 
+    useEffect(() => {
+        const grid = gridRef.current
+        if (!grid) return
+
+        const preventTimelineTextSelection = (event: Event) => {
+            if (isEditableElement(event.target)) return
+            event.preventDefault()
+        }
+
+        grid.addEventListener("selectstart", preventTimelineTextSelection)
+        grid.addEventListener("contextmenu", preventTimelineTextSelection)
+
+        return () => {
+            grid.removeEventListener("selectstart", preventTimelineTextSelection)
+            grid.removeEventListener("contextmenu", preventTimelineTextSelection)
+        }
+    }, [])
+
     // Scroll to saved position (or default hour) on mount
     useEffect(() => {
         const scrollTo = getInitialScrollTop?.() ?? DEFAULT_SCROLL_HOUR * HOUR_HEIGHT - SCROLL_LABEL_OFFSET
@@ -755,6 +777,7 @@ export function TodayTimelineCalendar({
         if (e.pointerType === 'mouse' && e.button !== 0) return
 
         const target = e.target as HTMLElement
+        if (isEditableElement(target)) return
         if (target.closest('[data-time-item="true"]')) return
         if (target.closest('[data-no-quick-create="true"]')) return
 
@@ -764,10 +787,12 @@ export function TodayTimelineCalendar({
         const pointerType = e.pointerType
 
         if (pointerType === 'touch') {
+            window.getSelection()?.removeAllRanges()
             pendingTouchRef.current = { pointerId, clientY: e.clientY, gridY }
             longPressTimerRef.current = setTimeout(() => {
                 const pending = pendingTouchRef.current
                 if (!pending || pending.pointerId !== pointerId) return
+                window.getSelection()?.removeAllRanges()
                 setSelectionState({
                     pointerId,
                     anchorY: pending.gridY,
@@ -947,7 +972,7 @@ export function TodayTimelineCalendar({
             <div
                 ref={gridRef}
                 className={cn(
-                    "flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y",
+                    "timeline-touch-guard flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y",
                     (dragState.isDragging || !!desktopDragState) && "select-none"
                 )}
                 onScroll={handleGridScroll}
