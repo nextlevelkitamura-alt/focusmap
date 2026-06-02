@@ -48,6 +48,10 @@ export function preloadDashboardView(view: DashboardView) {
     preloadOnce("mobile-ai-map", () => import("@/components/ai/mobile-ai-map-view"))
     preloadOnce("center-pane", () => import("@/components/dashboard/center-pane"))
   }
+
+  if (view === "settings") {
+    preloadOnce("settings-overview", () => import("@/components/settings/settings-overview"))
+  }
 }
 
 export function preloadDashboardPanels() {

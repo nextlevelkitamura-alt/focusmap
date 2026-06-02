@@ -90,6 +90,10 @@ const AiExecutionTimeline = dynamic(
     () => import("@/components/today/ai-execution-timeline").then(mod => ({ default: mod.AiExecutionTimeline })),
     { loading: DashboardPaneFallback, ssr: false },
 )
+const SettingsOverview = dynamic(
+    () => import("@/components/settings/settings-overview").then(mod => ({ default: mod.SettingsOverview })),
+    { loading: DashboardPaneFallback, ssr: false },
+)
 const TodayMemoBoard = dynamic(
     () => import("@/components/dashboard/today-memo-board").then(mod => ({ default: mod.TodayMemoBoard })),
     { loading: DashboardPaneFallback, ssr: false },
@@ -170,6 +174,8 @@ export function DashboardClient({
         if (!isViewReady || typeof window === "undefined") return
 
         preloadDashboardView(activeView)
+
+        if (activeView === "settings") return
 
         const warmup = () => {
             preloadDashboardPanels()
@@ -1298,6 +1304,12 @@ export function DashboardClient({
                     </div>
                 )}
 
+                {isViewReady && activeView === 'settings' && (
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                        <SettingsOverview />
+                    </div>
+                )}
+
                 {/* === Mobile/Desktop: Ideal View === */}
                 {isViewReady && activeView === 'ideal' && (
                     <div className="flex-1 flex overflow-hidden">
@@ -1356,7 +1368,7 @@ export function DashboardClient({
                     "flex-1 w-full relative gap-0 overflow-hidden",
                     desktopFlexClass,
                     desktopDashboardWidthClass,
-                    (activeView === 'ai' || activeView === 'automation' || activeView === 'ideal' || activeView === 'ai-todos' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
+                    (activeView === 'ai' || activeView === 'automation' || activeView === 'ideal' || activeView === 'ai-todos' || activeView === 'settings' || (activeView === 'long-term' && !isCalendarPanelVisible)) ? "!hidden" : ""
                 )}>
                 {/* Toggle Button (Today タブでは非表示。サイドバーが常に折りたたまれているため不要) */}
                 {activeView !== 'today' && (
@@ -1588,11 +1600,11 @@ export function DashboardClient({
             </TodayDateProvider>
                 )}
             {/* AI Chat Floating Panel (AI・理想・進捗ビュー中は非表示) */}
-            {isAiChatOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
+            {isAiChatOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
                 <AiChatPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isAiChatOpen} onOpenChange={setIsAiChatOpen} />
             )}
             {/* Scheduling AI Panel */}
-            {isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && (
+            {isSchedulingOpen && activeView !== 'ai' && activeView !== 'automation' && activeView !== 'ideal' && activeView !== 'ai-todos' && activeView !== 'settings' && (
                 <SchedulingPanel hideFab onCalendarEventCreated={handleCalendarEventCreated} isOpen={isSchedulingOpen} onOpenChange={setIsSchedulingOpen} />
             )}
             <MindmapLinkedMemosDialog

@@ -9,14 +9,13 @@ import { preloadDashboardView } from "@/lib/dashboard-preload"
 
 type BottomNavItem =
     | { type: "view"; id: DashboardView; icon: typeof CalendarDays; label: string; primary?: boolean }
-    | { type: "settings"; icon: typeof Settings; label: string }
 
 const mainNavItems: BottomNavItem[] = [
     { type: "view", id: "today",      icon: CalendarDays, label: "Todo" },
     { type: "view", id: "long-term",  icon: StickyNote,   label: "メモ" },
     { type: "view", id: "map",        icon: Network,      label: "マップ" },
     { type: "view", id: "ai",         icon: MessageCircle, label: "チャット", primary: true },
-    { type: "settings",               icon: Settings,     label: "設定" },
+    { type: "view", id: "settings",   icon: Settings,     label: "設定" },
 ]
 
 export function BottomNav() {
@@ -37,28 +36,29 @@ export function BottomNav() {
         <div className="fixed bottom-0 left-0 z-50 w-full bg-background border-t md:hidden pb-[env(safe-area-inset-bottom,0px)]">
             <div className="grid h-16 grid-cols-5 font-medium">
                 {mainNavItems.map((item) => {
-                    const isActive = item.type === "settings"
-                        ? isSettingsPage
+                    const isActive = item.id === "settings"
+                        ? isSettingsPage || (!isSettingsPage && activeView === "settings")
                         : !isSettingsPage && activeView === item.id
                     return (
                         <button
-                            key={item.type === "settings" ? "settings" : item.id}
+                            key={item.id}
                             onFocus={() => {
-                                if (item.type === "view") preloadDashboardView(item.id)
-                                else router.prefetch('/dashboard/settings')
+                                preloadDashboardView(item.id)
                             }}
                             onPointerEnter={() => {
-                                if (item.type === "view") preloadDashboardView(item.id)
-                                else router.prefetch('/dashboard/settings')
+                                preloadDashboardView(item.id)
                             }}
                             onPointerDown={() => {
-                                if (item.type === "view") preloadDashboardView(item.id)
-                                else router.prefetch('/dashboard/settings')
-                                if (item.type === "view" && isSettingsPage) router.prefetch('/dashboard')
+                                preloadDashboardView(item.id)
+                                if (item.id !== "settings" && isSettingsPage) router.prefetch('/dashboard')
                             }}
                             onClick={() => {
-                                if (item.type === "settings") {
-                                    router.push('/dashboard/settings')
+                                if (item.id === "settings") {
+                                    if (isSettingsPage) {
+                                        if (pathname !== '/dashboard/settings') router.push('/dashboard/settings')
+                                        return
+                                    }
+                                    setActiveView("settings")
                                     return
                                 }
                                 if (isSettingsPage) router.push('/dashboard')

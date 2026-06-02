@@ -105,6 +105,10 @@ export function Header({
         setActiveView('today')
     }
 
+    const handleOpenSettings = () => {
+        setActiveView('settings')
+    }
+
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Todo', icon: <CalendarDays className="h-3.5 w-3.5" /> },
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
@@ -271,7 +275,7 @@ export function Header({
                     size="icon"
                     className="text-muted-foreground"
                     title="Settings"
-                    onClick={() => router.push('/dashboard/settings')}
+                    onClick={handleOpenSettings}
                 >
                     <Settings className="h-4 w-4" />
                 </Button>
@@ -297,11 +301,11 @@ export function Header({
                             </div>
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => router.push('/dashboard/settings')}>
+                        <DropdownMenuItem onClick={handleOpenSettings}>
                             <UserIcon className="mr-2 h-4 w-4" />
                             <span>Profile</span>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => router.push('/dashboard/settings')}>
+                        <DropdownMenuItem onClick={handleOpenSettings}>
                             <Settings className="mr-2 h-4 w-4" />
                             <span>Settings</span>
                         </DropdownMenuItem>

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation"
 import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 import { ArrowLeft, Bot, Calendar, ChevronLeft, FolderKanban, KeyRound, Palette, Settings, Workflow } from "lucide-react"
+import { useView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
 
 interface SettingsNavItem {
@@ -32,7 +33,9 @@ interface SettingsShellProps {
 
 export function SettingsShell({ title, description, children, className }: SettingsShellProps) {
   const pathname = usePathname()
-  const isRootSettings = pathname === "/dashboard/settings"
+  const { activeView, setActiveView } = useView()
+  const isLocalSettingsView = pathname === "/dashboard" && activeView === "settings"
+  const isRootSettings = pathname === "/dashboard/settings" || isLocalSettingsView
 
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-black text-zinc-100 md:bg-[#101010]">
@@ -41,6 +44,9 @@ export function SettingsShell({ title, description, children, className }: Setti
           <div className="px-4 pb-3 pt-4 md:px-5 md:pb-6 md:pt-7">
             <Link
               href="/dashboard"
+              onClick={() => {
+                if (isLocalSettingsView) setActiveView("today")
+              }}
               className="inline-flex min-h-10 items-center gap-2 rounded-md text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
             >
               <ArrowLeft className="h-4 w-4" />
