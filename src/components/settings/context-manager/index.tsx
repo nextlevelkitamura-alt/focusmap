@@ -236,9 +236,9 @@ export function ContextManager({ onBack }: ContextManagerProps) {
 
       {/* ヘッダー */}
       <div className="flex min-h-16 items-center gap-3 border-b border-white/10 px-4 py-3 md:px-6">
-        <button onClick={onBack ?? (() => router.push('/dashboard/settings/ai'))} className="flex min-h-10 items-center gap-2 rounded-md text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+        <button onClick={onBack ?? (() => router.push('/dashboard/settings'))} className="flex min-h-10 items-center gap-2 rounded-md text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
           <ArrowLeft className="h-4 w-4" />
-          <span className="hidden sm:inline">AI設定へ戻る</span>
+          <span className="hidden sm:inline">設定へ戻る</span>
         </button>
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-400/10 text-violet-200">
           <Brain className="h-5 w-5" />

@@ -140,6 +140,7 @@ Goals → Projects → TaskGroups → Tasks
 - デスクトップ上部タブは `Todo` / `メモ` / `マップ` / `チャット` の順に表示する。
 - モバイル下部ナビは `Todo` / `メモ` / `マップ` / `チャット` / `設定` の順に表示し、`チャット` を強調表示の対象にする。
 - モバイル下部ナビとデスクトップヘッダーの `設定` は、通常利用では `/dashboard/settings` へルート遷移せず、`DashboardClient` 内の `settings` ビューとして `SettingsOverview` を表示する。マップやTodoのクライアント状態を破棄しないことで、設定へ移動して戻る時の再取得・マップ再初期化を避ける。設定内の詳細カテゴリリンクは従来通り `/dashboard/settings/*` を使う。
+- 設定トップと設定サイドナビのカテゴリリンクは `prefetch={false}` にし、一覧表示だけで重い設定詳細のRSC/JSを先読みしない。AIモデルはアプリ側の固定値を正とし、ユーザー設定UI・AI設定カテゴリ・`/dashboard/settings/ai` の詳細画面は表示しない。古いAI設定URLは設定トップへ戻す。
 - モバイル `Todo` 画面は、予定タイムラインだけでなく `予定` / `AI` の切替を持つ。`AI` 側はデスクトップの `Todo > AI実行` と同じ `AiExecutionTimeline` を使い、`ai_tasks` / scheduled AI tasks / Codex状態 / follow-up送信をWeb・Mac・iPhoneで同じAPI経由で表示する。
 - モバイル `Todo > 予定` のヘッダーは、下へ引くと更新アイコンを表示し、しきい値を超えて離すと `useCalendarEvents.syncNow({ silent: true })` でカレンダー予定だけを強制更新する。iPhoneアプリのWebViewネイティブpull-to-refreshは画面全体のリロードになるため無効にし、このヘッダーpull更新を標準導線にする。
 - モバイル日次カレンダーの予定/タスク長押しドラッグは、ドラッグ中だけカレンダーグリッドとページ全体のtouch scroll / overscrollをロックする。移動中は画面やWebViewのpull-to-refreshを動かさず、予定ブロックの時間変更プレビューだけを動かす。

@@ -11,7 +11,7 @@ export default async function AutomationSettingsPage() {
   return (
     <SettingsShell
       title="自動化"
-      description="PC実行、GWS / Google Workspace MCP、Playwright、Google認証、モデル設定をまとめて確認します。"
+      description="PC実行、GWS / Google Workspace MCP、Playwright、Google認証をまとめて確認します。"
       className="max-w-[1120px]"
     >
       <AutomationSettings />

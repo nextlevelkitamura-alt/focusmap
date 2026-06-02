@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import type { LucideIcon } from "lucide-react"
-import { Bot, Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound, Workflow } from "lucide-react"
+import { Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound, Workflow } from "lucide-react"
 import { SettingsShell } from "@/components/settings/settings-shell"
 import { cn } from "@/lib/utils"
 
@@ -15,13 +15,6 @@ interface OverviewItem {
 }
 
 const PRIMARY_ITEMS: OverviewItem[] = [
-  {
-    href: "/dashboard/settings/ai",
-    title: "AI",
-    description: "モデル選択と、AIに渡す自分・プロジェクト情報を管理",
-    icon: Bot,
-    iconClass: "bg-violet-500 text-white",
-  },
   {
     href: "/dashboard/settings/automation",
     title: "自動化",
@@ -92,6 +85,7 @@ function SettingsListRow({ item, showDivider }: { item: OverviewItem; showDivide
   return (
     <Link
       href={item.href}
+      prefetch={false}
       className="group flex min-h-[58px] items-center gap-3 px-4 transition active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:hover:bg-white/[0.04]"
     >
       <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", item.iconClass)}>
@@ -116,19 +110,15 @@ export function SettingsOverview() {
       className="max-w-[720px]"
     >
       <div className="space-y-7">
-        <Link
-          href="/dashboard/settings/ai"
-          className="flex min-h-[76px] items-center gap-3 rounded-xl bg-[#1c1c1e] px-4 transition active:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:hover:bg-white/[0.04]"
-        >
+        <div className="flex min-h-[76px] items-center gap-3 rounded-xl bg-[#1c1c1e] px-4">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-zinc-800 text-zinc-100">
             <Sparkles className="h-5 w-5 text-blue-300" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[17px] font-semibold text-zinc-50">Focusmap</div>
-            <div className="mt-0.5 truncate text-[13px] text-zinc-500">AIと予定をまとめて管理</div>
+            <div className="mt-0.5 truncate text-[13px] text-zinc-500">予定と自動化をまとめて管理</div>
           </div>
-          <ChevronRight className="h-4.5 w-4.5 shrink-0 text-zinc-600" />
-        </Link>
+        </div>
 
         <div className="space-y-7">
           <SettingsListSection title="よく使う設定" items={PRIMARY_ITEMS} />

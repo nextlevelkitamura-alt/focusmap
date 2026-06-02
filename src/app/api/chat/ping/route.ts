@@ -7,7 +7,7 @@ import { createClient } from '@/utils/supabase/server';
 /**
  * GET /api/chat/ping
  *
- * 現在のAIモデル設定を返し、 軽量プロンプトで応答時間を計測する。
+ * 固定AIモデルの接続先を返し、軽量プロンプトで応答時間を計測する。
  * 「使用感確認」のための接続テスト用エンドポイント。
  *
  * Returns: {

@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import type { ComponentType, ReactNode } from "react"
-import { Bot, CheckCircle2, Chrome, Clipboard, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Terminal, Workflow } from "lucide-react"
+import { CheckCircle2, Chrome, Clipboard, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Terminal, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
@@ -161,48 +161,30 @@ export function AutomationSettings() {
         <FocusmapLiteInstallPanel />
       </SettingBlock>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <SettingBlock
-          icon={Workflow}
-          title="自動化"
-          description="自動化の指示を判定し、ai_tasks に投入してMac側のランナーがバックグラウンド実行します。"
-        >
-          <div className="flex flex-wrap gap-2">
-            <Button asChild className="h-10 gap-1.5">
-              <Link
-                href="/dashboard"
-                onClick={() => {
-                  try { localStorage.setItem("focusmap:activeView", "ai") } catch {}
-                }}
-              >
-                <Play className="h-4 w-4" />
-                チャットを開く
-              </Link>
-            </Button>
-            <Button variant="outline" className="h-10 gap-1.5" onClick={() => window.location.reload()}>
-              <RefreshCw className="h-4 w-4" />
-              状態を再読込
-            </Button>
-          </div>
-        </SettingBlock>
-
-        <SettingBlock
-          icon={Bot}
-          title="モデル設定"
-          description="チャットと自動化のAI実行設定を管理します。"
-        >
-          <div className="grid gap-2 text-sm">
-            <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
-              <div className="text-zinc-500">チャット</div>
-              <div className="font-mono text-zinc-100">gemini-3.1-flash-lite</div>
-            </div>
-            <div className="rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
-              <div className="text-zinc-500">自動化</div>
-              <div className="font-mono text-zinc-100">deepseek-v4-pro</div>
-            </div>
-          </div>
-        </SettingBlock>
-      </div>
+      <SettingBlock
+        icon={Workflow}
+        title="自動化"
+        description="自動化の指示を判定し、ai_tasks に投入してMac側のランナーがバックグラウンド実行します。"
+      >
+        <div className="flex flex-wrap gap-2">
+          <Button asChild className="h-10 gap-1.5">
+            <Link
+              href="/dashboard"
+              prefetch={false}
+              onClick={() => {
+                try { localStorage.setItem("focusmap:activeView", "ai") } catch {}
+              }}
+            >
+              <Play className="h-4 w-4" />
+              チャットを開く
+            </Link>
+          </Button>
+          <Button variant="outline" className="h-10 gap-1.5" onClick={() => window.location.reload()}>
+            <RefreshCw className="h-4 w-4" />
+            状態を再読込
+          </Button>
+        </div>
+      </SettingBlock>
 
       <SettingBlock
         icon={Terminal}

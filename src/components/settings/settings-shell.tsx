@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
-import { ArrowLeft, Bot, Calendar, ChevronLeft, FolderKanban, KeyRound, Palette, Settings, Workflow } from "lucide-react"
+import { ArrowLeft, Calendar, ChevronLeft, FolderKanban, KeyRound, Palette, Settings, Workflow } from "lucide-react"
 import { useView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
 
@@ -16,7 +16,6 @@ interface SettingsNavItem {
 
 const NAV_ITEMS: SettingsNavItem[] = [
   { href: "/dashboard/settings", label: "一般", icon: Settings },
-  { href: "/dashboard/settings/ai", label: "AI", icon: Bot },
   { href: "/dashboard/settings/automation", label: "自動化", icon: Workflow },
   { href: "/dashboard/settings/integrations", label: "連携", icon: Calendar },
   { href: "/dashboard/settings/projects", label: "プロジェクト", icon: FolderKanban },
@@ -44,6 +43,7 @@ export function SettingsShell({ title, description, children, className }: Setti
           <div className="px-4 pb-3 pt-4 md:px-5 md:pb-6 md:pt-7">
             <Link
               href="/dashboard"
+              prefetch={false}
               onClick={() => {
                 if (isLocalSettingsView) setActiveView("today")
               }}
@@ -57,12 +57,13 @@ export function SettingsShell({ title, description, children, className }: Setti
           <nav className="flex gap-1 overflow-x-auto px-3 pb-3 md:block md:space-y-1 md:overflow-visible md:px-3 md:pb-0">
             {NAV_ITEMS.map(item => {
               const Icon = item.icon
-              const active = pathname === item.href
+              const active = pathname === item.href || (isLocalSettingsView && item.href === "/dashboard/settings")
 
               return (
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   className={cn(
                     "inline-flex min-h-10 shrink-0 items-center gap-3 rounded-lg px-3 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 md:flex md:w-full",
                     active
@@ -84,6 +85,7 @@ export function SettingsShell({ title, description, children, className }: Setti
               {!isRootSettings && (
                 <Link
                   href="/dashboard/settings"
+                  prefetch={false}
                   className="-ml-2 mb-2 inline-flex min-h-10 items-center gap-0.5 rounded-md px-1 text-[17px] text-blue-400 active:opacity-60 md:hidden"
                 >
                   <ChevronLeft className="h-5 w-5" />
