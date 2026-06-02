@@ -20,10 +20,11 @@ interface CacheEntry {
   syncedAt: Date;
   staleAt: number;
   expiresAt: number;
+  needsRefresh?: boolean;
 }
 
 const cache = new Map<string, CacheEntry>();
-const CACHE_DISPLAY_TTL_MS = 5 * 60 * 1000;
+const CACHE_DISPLAY_TTL_MS = 12 * 60 * 60 * 1000;
 const CACHE_REVALIDATE_AFTER_MS = 60 * 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 120 * 1000;
 const SYNC_INTERVAL_JITTER_RATIO = 0.25;
@@ -50,6 +51,7 @@ function removeSessionCacheEntry(cacheKey: string) {
   if (typeof window === 'undefined') return;
   try {
     window.sessionStorage.removeItem(getSessionCacheKey(cacheKey));
+    window.localStorage.removeItem(getSessionCacheKey(cacheKey));
   } catch {
     // Ignore storage access errors.
   }
@@ -59,19 +61,22 @@ function writeCacheEntry(cacheKey: string, entry: CacheEntry) {
   cache.set(cacheKey, entry);
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.setItem(getSessionCacheKey(cacheKey), JSON.stringify({
+    const serialized = JSON.stringify({
       ...entry,
       syncedAt: entry.syncedAt.toISOString(),
-    }));
+      needsRefresh: undefined,
+    });
+    window.sessionStorage.setItem(getSessionCacheKey(cacheKey), serialized);
+    window.localStorage.setItem(getSessionCacheKey(cacheKey), serialized);
   } catch {
-    // Calendar data is still available in memory even if sessionStorage is full/blocked.
+    // Calendar data is still available in memory even if browser storage is full/blocked.
   }
 }
 
 function readSessionCacheEntry(cacheKey: string): CacheEntry | null {
   if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.sessionStorage.getItem(getSessionCacheKey(cacheKey));
+  const readStorage = (storage: Storage) => {
+    const raw = storage.getItem(getSessionCacheKey(cacheKey));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       events?: CalendarEvent[];
@@ -88,6 +93,10 @@ function readSessionCacheEntry(cacheKey: string): CacheEntry | null {
       staleAt: parsed.staleAt,
       expiresAt: parsed.expiresAt,
     };
+  };
+
+  try {
+    return readStorage(window.sessionStorage) ?? readStorage(window.localStorage);
   } catch {
     return null;
   }
@@ -128,13 +137,17 @@ function createCacheEntry(events: CalendarEvent[], syncedAt = new Date()): Cache
 
 function clearSessionCache() {
   if (typeof window === 'undefined') return;
-  try {
-    for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
-      const key = window.sessionStorage.key(i);
+  const clearStorage = (storage: Storage) => {
+    for (let i = storage.length - 1; i >= 0; i--) {
+      const key = storage.key(i);
       if (key?.startsWith(SESSION_CACHE_PREFIX)) {
-        window.sessionStorage.removeItem(key);
+        storage.removeItem(key);
       }
     }
+  };
+  try {
+    clearStorage(window.sessionStorage);
+    clearStorage(window.localStorage);
   } catch {
     // Ignore storage access errors.
   }
@@ -247,6 +260,12 @@ function sortEventsByStartTime(events: CalendarEvent[]): CalendarEvent[] {
   return [...events].sort((a, b) =>
     new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   );
+}
+
+function parseSyncedAt(value: unknown): Date {
+  if (typeof value !== 'string') return new Date();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
 function mergeOptimisticEvent(events: CalendarEvent[], event: CalendarEvent): CalendarEvent[] {
@@ -401,7 +420,8 @@ async function fetchEventsShared(
           throw new Error('Failed to fetch events after token refresh');
         }
         const retryData = await retryResponse.json();
-        const entry = createCacheEntry(retryData.events || []);
+        const entry = createCacheEntry(retryData.events || [], parseSyncedAt(retryData.syncedAt));
+        entry.needsRefresh = !!retryData.needsRefresh;
         writeCacheEntry(cacheKey, entry);
         return entry;
       }
@@ -443,15 +463,23 @@ async function fetchEventsShared(
       }
 
       let events: CalendarEvent[] = [];
+      let syncedAt = new Date();
+      let needsRefresh = false;
       if (contentType && contentType.indexOf("application/json") !== -1) {
         const data = await response.json();
         events = data.events || [];
+        syncedAt = parseSyncedAt(data.syncedAt);
+        needsRefresh = !!data.needsRefresh;
       }
 
       // Reset quota error count on success
       quotaErrorCount = 0;
 
-      const entry = createCacheEntry(events);
+      const entry = createCacheEntry(events, syncedAt);
+      if (needsRefresh) {
+        entry.needsRefresh = true;
+        entry.staleAt = 0;
+      }
       writeCacheEntry(cacheKey, entry);
 
       return entry;
@@ -546,6 +574,9 @@ export function useCalendarEvents(options: UseCalendarEventsOptions) {
       );
       commitEvents(prev => mergeRecentOptimisticEvents(entry.events, prev), entry);
       setLastSyncedAt(entry.syncedAt);
+      if (!forceSync && entry.needsRefresh) {
+        void fetchEvents({ forceSync: true, silent: true });
+      }
     } catch (err) {
       setError(err as Error);
       const error = err instanceof Error ? err : new Error(String(err));

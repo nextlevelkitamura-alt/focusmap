@@ -27,12 +27,15 @@ function createMockEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent 
   }
 }
 
-function mockFetchSuccess(events: CalendarEvent[] = []) {
+function mockFetchSuccess(
+  events: CalendarEvent[] = [],
+  meta: Record<string, unknown> = {}
+) {
   mockFetch.mockResolvedValueOnce({
     ok: true,
     status: 200,
     headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve({ events }),
+    json: () => Promise.resolve({ events, ...meta }),
   })
 }
 
@@ -62,6 +65,7 @@ beforeEach(async () => {
   mockFetch.mockReset()
   vi.useFakeTimers()
   window.sessionStorage.clear()
+  window.localStorage.clear()
   // モジュールレベルの cache / quota 状態をリセット
   vi.resetModules()
 })
@@ -379,6 +383,57 @@ describe('useCalendarEvents', () => {
       expect(restored.result.current.events[0].title).toBe('Cached Event')
       expect(restored.result.current.isLoading).toBe(false)
       expect(mockFetch).toHaveBeenCalledTimes(0)
+    })
+
+    test('localStorageの永続キャッシュから即表示する', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([createMockEvent({ title: 'Persistent Event' })])
+
+      const { result, unmount } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(result.current.events[0].title).toBe('Persistent Event')
+      unmount()
+
+      window.sessionStorage.clear()
+      vi.resetModules()
+      const useCalendarEventsReloaded = await getHook()
+      mockFetch.mockClear()
+
+      const restored = renderHook(() => useCalendarEventsReloaded(baseOptions))
+
+      expect(restored.result.current.events[0].title).toBe('Persistent Event')
+      expect(restored.result.current.isLoading).toBe(false)
+      expect(mockFetch).toHaveBeenCalledTimes(0)
+    })
+
+    test('APIキャッシュ応答を表示してからバックグラウンドでforceSyncする', async () => {
+      const useCalendarEvents = await getHook()
+      mockFetchSuccess([createMockEvent({ title: 'DB Cached Event' })], {
+        fromCache: true,
+        needsRefresh: true,
+        syncedAt: '2026-02-18T08:30:00Z',
+      })
+      mockFetchSuccess([createMockEvent({ title: 'Google Fresh Event' })], {
+        fromCache: false,
+        syncedAt: '2026-02-18T09:00:00Z',
+      })
+
+      const { result } = renderHook(() => useCalendarEvents(baseOptions))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(mockFetch.mock.calls[0][0]).toContain('forceSync=false')
+      expect(mockFetch.mock.calls[1][0]).toContain('forceSync=true')
+      expect(result.current.events[0].title).toBe('Google Fresh Event')
+      expect(result.current.lastSyncedAt?.toISOString()).toBe('2026-02-18T09:00:00.000Z')
+      expect(result.current.isLoading).toBe(false)
     })
   })
 

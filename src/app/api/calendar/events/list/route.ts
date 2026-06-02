@@ -3,6 +3,46 @@ import { createClient } from '@/utils/supabase/server';
 import { fetchCalendarEvents, fetchMultipleCalendarEvents, getCalendarClient } from '@/lib/google-calendar';
 import { classifyCalendarAuthError, shouldAttemptTokenRefresh } from '@/lib/calendar-auth-errors';
 import { buildCalendarReauthUrl } from '@/lib/google-oauth';
+import type { CalendarEvent } from '@/types/calendar';
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+type CalendarEventRow = {
+  id: string;
+  user_id: string;
+  google_event_id: string | null;
+  calendar_id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  start_time: string;
+  end_time: string;
+  is_all_day: boolean;
+  timezone: string;
+  recurrence: string[] | null;
+  recurring_event_id: string | null;
+  color: string | null;
+  background_color: string | null;
+  google_created_at: string | null;
+  google_updated_at: string | null;
+  reminders: number[] | null;
+  is_completed: boolean | null;
+  synced_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type UserCalendarRow = {
+  google_calendar_id: string;
+  background_color: string | null;
+  name: string | null;
+};
+
+type CalendarResponseEvent = CalendarEvent & {
+  google_event_id: string;
+};
+
+const SERVER_CACHE_REVALIDATE_AFTER_MS = 60 * 1000;
 
 function getCompletionKey(calendarId: string, googleEventId: string): string {
   return `${calendarId}::${googleEventId}`;
@@ -23,6 +63,212 @@ function toTokyoDateString(date: Date): string {
   return year && month && day
     ? `${year}-${month}-${day}`
     : date.toISOString().slice(0, 10);
+}
+
+function numericPriorityToString(p: number | null | undefined): 'high' | 'medium' | 'low' | undefined {
+  if (p === null || p === undefined) return undefined;
+  if (p >= 3) return 'high';
+  if (p >= 2) return 'medium';
+  return 'low';
+}
+
+function isCachedSyncedAtStale(syncedAt: string | null): boolean {
+  if (!syncedAt) return true;
+  const syncedAtMs = new Date(syncedAt).getTime();
+  if (!Number.isFinite(syncedAtMs)) return true;
+  return Date.now() - syncedAtMs >= SERVER_CACHE_REVALIDATE_AFTER_MS;
+}
+
+function getMostRecentSyncedAt(events: Array<{ synced_at?: string | null }>): string | null {
+  let latestMs = Number.NEGATIVE_INFINITY;
+  let latestIso: string | null = null;
+  for (const event of events) {
+    if (!event.synced_at) continue;
+    const syncedAtMs = new Date(event.synced_at).getTime();
+    if (Number.isFinite(syncedAtMs) && syncedAtMs > latestMs) {
+      latestMs = syncedAtMs;
+      latestIso = event.synced_at;
+    }
+  }
+  return latestIso;
+}
+
+function buildCalendarColorMap(userCalendars: UserCalendarRow[]) {
+  const calendarColorMap = new Map<string, string>();
+  userCalendars.forEach(cal => {
+    if (cal.background_color) {
+      calendarColorMap.set(cal.google_calendar_id, cal.background_color);
+    }
+  });
+  return calendarColorMap;
+}
+
+function buildHolidayCalendarIds(userCalendars: UserCalendarRow[]) {
+  return new Set(
+    userCalendars
+      .filter(cal => {
+        const name = (cal.name || '').toLowerCase();
+        return (
+          name.includes('祝日') ||
+          name.includes('holidays in') ||
+          name.includes('japanese holidays')
+        );
+      })
+      .map(cal => cal.google_calendar_id)
+  );
+}
+
+function normalizeDbEventForResponse(event: CalendarEventRow): CalendarResponseEvent {
+  return {
+    ...event,
+    id: event.google_event_id || event.id,
+    google_event_id: event.google_event_id || '',
+    description: event.description || undefined,
+    location: event.location || undefined,
+    recurrence: event.recurrence || undefined,
+    recurring_event_id: event.recurring_event_id || undefined,
+    color: event.color || undefined,
+    background_color: event.background_color || undefined,
+    google_created_at: event.google_created_at || undefined,
+    google_updated_at: event.google_updated_at || undefined,
+    reminders: event.reminders || undefined,
+    is_completed: !!event.is_completed,
+  };
+}
+
+async function loadUserCalendars(supabase: SupabaseServerClient, userId: string): Promise<UserCalendarRow[]> {
+  const { data, error } = await supabase
+    .from('user_calendars')
+    .select('google_calendar_id, background_color, name')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('[events/list] Failed to load user calendars:', error);
+    return [];
+  }
+
+  return (data || []) as UserCalendarRow[];
+}
+
+async function loadDbCalendarEvents(
+  supabase: SupabaseServerClient,
+  userId: string,
+  timeMin: Date,
+  timeMax: Date,
+  calendarIds?: string[]
+): Promise<CalendarEventRow[]> {
+  let query = supabase
+    .from('calendar_events')
+    .select('*')
+    .eq('user_id', userId)
+    .lt('start_time', timeMax.toISOString())
+    .gt('end_time', timeMin.toISOString());
+
+  if (calendarIds && calendarIds.length > 0) {
+    query = query.in('calendar_id', calendarIds);
+  }
+
+  const { data, error } = await query.order('start_time', { ascending: true });
+  if (error) {
+    console.error('[events/list] Failed to load cached DB events:', error);
+    return [];
+  }
+
+  return (data || []) as CalendarEventRow[];
+}
+
+async function enrichEventsForResponse(
+  supabase: SupabaseServerClient,
+  userId: string,
+  events: CalendarResponseEvent[],
+  dbEvents: CalendarEventRow[],
+  userCalendars: UserCalendarRow[],
+  timeMin: Date,
+  timeMax: Date
+) {
+  const calendarColorMap = buildCalendarColorMap(userCalendars);
+  const holidayCalendarIds = buildHolidayCalendarIds(userCalendars);
+
+  const eventIdsToCheck = events
+    .map(event => event.google_event_id)
+    .filter((id): id is string => !!id);
+
+  const taskMap = new Map<string, { id: string; priority: number | null; estimated_time: number | null }>();
+  if (eventIdsToCheck.length > 0) {
+    const { data: tasksWithEvents } = await supabase
+      .from('tasks')
+      .select('id, google_event_id, priority, estimated_time')
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .in('google_event_id', eventIdsToCheck)
+      .not('google_event_id', 'is', null);
+
+    if (tasksWithEvents) {
+      tasksWithEvents.forEach(task => {
+        if (task.google_event_id) {
+          taskMap.set(task.google_event_id, {
+            id: task.id,
+            priority: task.priority,
+            estimated_time: task.estimated_time
+          });
+        }
+      });
+    }
+  }
+
+  const completionDateMin = toTokyoDateString(timeMin);
+  const completionDateMax = toTokyoDateString(timeMax);
+  const { data: eventCompletions, error: eventCompletionError } = await supabase
+    .from('event_completions')
+    .select('google_event_id, calendar_id, completed_date')
+    .eq('user_id', userId)
+    .gte('completed_date', completionDateMin)
+    .lte('completed_date', completionDateMax);
+
+  if (eventCompletionError) {
+    console.error('[events/list] Failed to load event completions:', eventCompletionError);
+  }
+
+  const completionMap = new Map<string, boolean>();
+  const completionFallbackMap = new Map<string, boolean>();
+  const setCompleted = (calendarId: string | null | undefined, googleEventId: string | null | undefined) => {
+    if (!googleEventId) return;
+    if (calendarId) {
+      completionMap.set(getCompletionKey(calendarId, googleEventId), true);
+    }
+    completionFallbackMap.set(googleEventId, true);
+  };
+  const isEventCompleted = (event: { calendar_id?: string | null; google_event_id?: string | null }) => {
+    if (!event.google_event_id) return false;
+    if (event.calendar_id && completionMap.get(getCompletionKey(event.calendar_id, event.google_event_id))) {
+      return true;
+    }
+    return completionFallbackMap.get(event.google_event_id) || false;
+  };
+
+  dbEvents.forEach(event => {
+    if (event.google_event_id && event.is_completed) {
+      setCompleted(event.calendar_id, event.google_event_id);
+    }
+  });
+  (eventCompletions || []).forEach(completion => {
+    setCompleted(completion.calendar_id, completion.google_event_id);
+  });
+
+  return events
+    .filter(event => !holidayCalendarIds.has(event.calendar_id))
+    .map(event => {
+      const taskInfo = event.google_event_id ? taskMap.get(event.google_event_id) : undefined;
+      const calendarColor = calendarColorMap.get(event.calendar_id);
+      return {
+        ...event,
+        task_id: taskInfo?.id,
+        priority: numericPriorityToString(taskInfo?.priority),
+        estimated_time: taskInfo?.estimated_time ?? undefined,
+        is_completed: event.is_completed || isEventCompleted(event),
+        background_color: calendarColor || event.background_color,
+      };
+    });
 }
 
 /**
@@ -92,6 +338,37 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const cachedUserCalendars = await loadUserCalendars(supabase, user.id);
+    const cachedDbEvents = await loadDbCalendarEvents(supabase, user.id, timeMin, timeMax, calendarIds);
+
+    if (!forceSync && cachedDbEvents.length > 0) {
+      const syncedAt = getMostRecentSyncedAt(cachedDbEvents) || new Date().toISOString();
+      const cachedEvents = cachedDbEvents.map(normalizeDbEventForResponse);
+      const eventsWithColor = await enrichEventsForResponse(
+        supabase,
+        user.id,
+        cachedEvents,
+        cachedDbEvents,
+        cachedUserCalendars,
+        timeMin,
+        timeMax
+      );
+
+      console.log('[events/list] Returning cached DB events:', {
+        total: eventsWithColor.length,
+        syncedAt,
+        needsRefresh: isCachedSyncedAtStale(syncedAt),
+      });
+
+      return NextResponse.json({
+        success: true,
+        events: eventsWithColor,
+        syncedAt,
+        fromCache: true,
+        needsRefresh: isCachedSyncedAtStale(syncedAt),
+      });
+    }
+
     // 常に Google Calendar API から最新のイベントを取得（キャッシュチェックを削除）
     // Google カレンダーを正確性のソースとして扱う
     let googleEvents;
@@ -244,14 +521,6 @@ export async function GET(request: NextRequest) {
       ...localOnlyEvents.map(e => e.google_event_id).filter(Boolean)
     ];
 
-    // priority 数値→文字列変換ヘルパー
-    function numericPriorityToString(p: number | null | undefined): 'high' | 'medium' | 'low' | undefined {
-      if (p === null || p === undefined) return undefined;
-      if (p >= 3) return 'high';
-      if (p >= 2) return 'medium';
-      return 'low';
-    }
-
     const taskMap = new Map<string, { id: string; priority: number | null; estimated_time: number | null }>();
     if (eventIdsToCheck.length > 0) {
       const { data: tasksWithEvents } = await supabase
@@ -377,12 +646,16 @@ export async function GET(request: NextRequest) {
     // id は UUID カラム（DB が自動生成）のため除外する。
     // google_event_id は UUID 形式ではないため id に渡すと PostgreSQL の型エラーで
     // INSERT が失敗し、新規行が一切 upsert されない原因となっていた。
-    const eventsWithSyncTime = googleEventsWithId.map(({ id: _id, ...event }) => ({
-      ...event,
-      // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
-      is_completed: isEventCompleted(event),
-      synced_at: now
-    }));
+    const eventsWithSyncTime = googleEventsWithId.map((eventWithId) => {
+      const event = { ...eventWithId };
+      delete (event as Partial<typeof event>).id;
+      return {
+        ...event,
+        // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
+        is_completed: isEventCompleted(event),
+        synced_at: now
+      };
+    });
 
     // DBに保存（エラーがあってもレスポンスはブロックしないが、awaitでDB整合性を確保）
     if (eventsWithSyncTime.length > 0) {

@@ -124,7 +124,7 @@ Goals → Projects → TaskGroups → Tasks
 |------|------|----------|
 | `useMindMapSync` | Supabase CRUD・同期 | dashboard-client.tsx |
 | `useTaskCalendarSync` | タスク⇄Google Calendar同期 | center-pane.tsx |
-| `useCalendarEvents` | Google Calendarイベント取得 | sidebar-calendar.tsx |
+| `useCalendarEvents` | Calendarイベント取得・ローカル/DBキャッシュ先出し | sidebar-calendar.tsx |
 | `useCalendars` | ユーザーカレンダー一覧・選択管理 | calendar-selector.tsx |
 | `useTimer` | タスクタイマー | center-pane.tsx |
 | `useMemoAiTasks` | マインドマップ/メモ起点の最新 `ai_tasks` 状態を取得し、Codex状態バッジへ反映 | mind-map.tsx / mindmap-linked-memos-dialog.tsx |
@@ -143,6 +143,12 @@ Goals → Projects → TaskGroups → Tasks
 - 上部の `SpaceProjectSwitcher` は左のスペース選択と右のプロジェクト選択を独立状態として扱う。右側でプロジェクトを選択・作成・編集しても左側の `selectedSpaceId` は変更せず、スペースは左側のスペースメニューで明示的に選んだ時だけ切り替える。
 - `Todo` タブの `メモ + カレンダー` サブビューは、サブビュータブ自体を見出しとして扱う。中央ペイン内に重複する「今日する」見出しや説明文は置かず、カラム切替・カレンダー選択・今日するメモ追加ボタンだけを薄いツールバーにまとめる。
 - `Todo` タブ左側のメモカードは、`メモ` 画面と同じ `WishlistCardDetail` 編集シートを開く。見出し・本文・タグ・画像・予定化などのメモ編集導線は左ペインからも同じ挙動にする。
+
+### カレンダー取得・キャッシュ
+
+- `useCalendarEvents` は、同一画面内のメモリキャッシュに加えて `sessionStorage` / `localStorage` に予定を保存する。表示用TTLは12時間、再検証は1分を目安にし、アプリ/Webの再起動後も手元の予定を先に描画してから裏で更新する。
+- `/api/calendar/events/list` は `forceSync=false` かつ `calendar_events` に対象期間のキャッシュがある場合、Google Calendar APIを待たずにDBキャッシュを返す。返却時も `task_id` / 優先度 / 見積時間 / 完了状態 / カレンダー色 / 祝日カレンダー除外を付け直す。
+- DBキャッシュが古い場合、APIは `fromCache: true` / `needsRefresh: true` を返し、フロントは表示後に `forceSync=true` のサイレント同期を1回走らせる。`forceSync=true`、手動更新、定期自動更新、DBキャッシュなしの初回はGoogle Calendar APIから取得して `calendar_events` を更新する。
 
 ### マインドマップとCodex.app連携
 
