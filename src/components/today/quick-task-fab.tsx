@@ -73,13 +73,13 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
     const [isSubmitting, setIsSubmitting] = useState(false)
     const fabRef = useRef<HTMLDivElement>(null)
 
-    // Form state
     const [title, setTitle] = useState("")
     const [projectId, setProjectId] = useState<string | null>(null)
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [estimatedTime, setEstimatedTime] = useState(30)
     const [reminder, setReminder] = useState(0)
-    const [isDurationPickerOpen, setIsDurationPickerOpen] = useState(false)
+    const [isDurationExpanded, setIsDurationExpanded] = useState(false)
+    const [isCustomDurationPickerOpen, setIsCustomDurationPickerOpen] = useState(false)
     const [calendarId, setCalendarId] = useState<string | null>(null)
     const [priority, setPriority] = useState<Priority>(3)
     const [memo, setMemo] = useState("")
@@ -89,7 +89,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
 
     const titleInputRef = useRef<HTMLInputElement>(null)
 
-    // External open control: when externalOpen becomes true, preset values and open sheet
     useEffect(() => {
         if (!externalOpen) return
 
@@ -102,7 +101,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         return () => window.clearTimeout(timer)
     }, [externalOpen, initialScheduledAt, initialEstimatedTime])
 
-    // Auto-focus title input when sheet opens
     useEffect(() => {
         if (isOpen) {
             setTimeout(() => titleInputRef.current?.focus(), 300)
@@ -120,7 +118,8 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         setScheduledDate(undefined)
         setEstimatedTime(30)
         setReminder(0)
-        setIsDurationPickerOpen(false)
+        setIsDurationExpanded(false)
+        setIsCustomDurationPickerOpen(false)
         setCalendarId(null)
         setPriority(3)
         setMemo("")
@@ -174,20 +173,32 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         }
     }, [handleSubmit, title])
 
-    const selectedDurationOption = DURATION_OPTIONS.find(option => option.value === estimatedTime)
-    const durationSelectValue = selectedDurationOption ? String(selectedDurationOption.value) : "custom"
-
-    const handleDurationSelect = useCallback((value: string) => {
-        if (value === "custom") {
-            setIsDurationPickerOpen(true)
-            return
-        }
-        setEstimatedTime(Number(value))
+    const handleDurationPresetSelect = useCallback((minutes: number) => {
+        setEstimatedTime(minutes)
+        setIsDurationExpanded(true)
     }, [])
 
     const handleFabClick = useCallback(() => {
         setIsOpen(true)
     }, [])
+
+    const selectedProject = projects.find(project => project.id === projectId)
+    const selectedCalendar = calendars.find(calendar => calendar.id === calendarId)
+    const selectedPriority = PRIORITY_OPTIONS[priority]
+    const schedulePreview = scheduledDate
+        ? `${format(scheduledDate, "M/d(E) HH:mm", { locale: ja })} · ${formatDuration(estimatedTime)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
+        : `日時未設定 · ${formatDuration(estimatedTime)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
+
+    const fieldClass = cn(
+        "min-h-[58px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-left",
+        "transition-colors active:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
+    )
+    const fieldLabelClass = "mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-400"
+    const fieldValueClass = "flex min-w-0 items-center gap-1.5 text-sm font-semibold text-neutral-50"
+    const selectClass = cn(
+        "w-full appearance-none border-0 bg-transparent p-0 pr-5 text-sm font-semibold text-neutral-50 outline-none",
+        "focus:ring-0"
+    )
 
     return (
         <>
@@ -208,279 +219,365 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                 </button>
             </div>
 
-            {/* Bottom Sheet */}
             <Sheet open={isOpen} onOpenChange={(open) => { if (!open) { closeSheet(); resetForm() } else setIsOpen(true) }}>
-                <SheetContent side="bottom" className="rounded-t-2xl max-h-[85vh] px-4 pb-8">
-                    {/* Drag Handle */}
+                <SheetContent
+                    side="bottom"
+                    className={cn(
+                        "max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
+                        "shadow-[0_-18px_48px_rgba(0,0,0,0.55)]",
+                        "[&>button]:text-neutral-400 [&>button:hover]:text-neutral-100"
+                    )}
+                >
                     <div className="flex justify-center pt-2 pb-1">
-                        <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+                        <div className="w-10 h-1 rounded-full bg-white/20" />
                     </div>
 
-                    <SheetHeader className="p-0 pb-3">
-                        <SheetTitle className="text-base">タスクを追加</SheetTitle>
+                    <SheetHeader className="px-4 pb-3 pt-1">
+                        <div className="flex items-center justify-between pr-8">
+                            <SheetTitle className="text-base text-neutral-50">カレンダーにタスク追加</SheetTitle>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    closeSheet()
+                                    resetForm()
+                                }}
+                                className="min-h-10 rounded-lg px-2 text-xs font-medium text-neutral-400 active:bg-white/10"
+                            >
+                                閉じる
+                            </button>
+                        </div>
                         <SheetDescription className="sr-only">新しいタスクを追加します</SheetDescription>
                     </SheetHeader>
 
-                    <div className="space-y-3">
-                        {/* Task Name */}
-                        <Input
-                            ref={titleInputRef}
-                            placeholder="タスク名"
-                            value={title}
-                            onChange={(e) => setTitle(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            className="h-11 text-base"
-                            autoComplete="off"
-                        />
-
-                        {/* Project Selection */}
-                        <div>
-                            <label className="text-xs text-muted-foreground mb-1 block">プロジェクト（任意）</label>
-                            <select
-                                value={projectId ?? ""}
-                                onChange={(e) => setProjectId(e.target.value || null)}
-                                className={cn(
-                                    "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                                    "focus:outline-none focus:ring-2 focus:ring-ring"
-                                )}
-                            >
-                                <option value="">なし（今日ビュー専用）</option>
-                                {projects.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                        {p.title}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Start Date/Time */}
-                        <div>
-                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                開始日時
-                            </label>
-                            <DateTimePicker
-                                date={scheduledDate}
-                                setDate={handleScheduledDateChange}
-                                trigger={
-                                    <button
-                                        type="button"
-                                        className={cn(
-                                            "w-full h-10 px-3 rounded-md border border-input bg-background text-sm text-left",
-                                            "focus:outline-none focus:ring-2 focus:ring-ring",
-                                            "flex items-center gap-2",
-                                            !scheduledDate && "text-muted-foreground"
-                                        )}
-                                    >
-                                        <Calendar className="w-4 h-4 flex-shrink-0" />
-                                        {scheduledDate
-                                            ? format(scheduledDate, "M月d日 (E) HH:mm", { locale: ja })
-                                            : "日時を選択"
-                                        }
-                                    </button>
-                                }
-                            />
-                        </div>
-
-                        {/* Estimated Time */}
-                        <div>
-                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                <Timer className="w-3 h-3" />
-                                見積もり時間
-                            </label>
-                            <div className="relative">
-                                <select
-                                    value={durationSelectValue}
-                                    onChange={(e) => handleDurationSelect(e.target.value)}
-                                    className={cn(
-                                        "w-full h-10 px-3 pr-9 rounded-md border border-input bg-background text-sm",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
-                                    )}
-                                >
-                                    {DURATION_OPTIONS.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                    <option value="custom">
-                                        {durationSelectValue === "custom"
-                                            ? `カスタム (${formatDuration(estimatedTime)})`
-                                            : "カスタム"
-                                        }
-                                    </option>
-                                </select>
-                                <ChevronDown className="w-4 h-4 text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
-                            </div>
-                            <DurationWheelPicker
-                                duration={estimatedTime}
-                                onDurationChange={setEstimatedTime}
-                                open={isDurationPickerOpen}
-                                onOpenChange={setIsDurationPickerOpen}
-                                trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
-                            />
-                        </div>
-
-                        {/* Subtasks */}
-                        <div>
-                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                <ListTodo className="w-3 h-3" />
-                                サブタスク（任意）
-                            </label>
-                            {subtasks.length > 0 && (
-                                <div className="space-y-1 mb-2">
-                                    {subtasks.map((st, idx) => (
-                                        <div
-                                            key={idx}
-                                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/40 border border-border/60"
-                                        >
-                                            <span className="flex-1 text-sm truncate">{st}</span>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleRemoveSubtask(idx)}
-                                                className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-destructive active:bg-destructive/10 transition-colors"
-                                                aria-label="サブタスクを削除"
-                                            >
-                                                <X className="w-3.5 h-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                            <div className="flex items-center gap-2">
+                    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
+                        <div className="space-y-3">
+                            <div>
+                                <label className="mb-1 block text-[11px] font-medium text-neutral-400">タイトル</label>
                                 <Input
-                                    value={subtaskInput}
-                                    onChange={(e) => setSubtaskInput(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter" && subtaskInput.trim()) {
-                                            e.preventDefault()
-                                            handleAddSubtask()
-                                        }
-                                    }}
-                                    placeholder="サブタスクを追加..."
-                                    className="h-9 text-sm flex-1"
+                                    ref={titleInputRef}
+                                    placeholder="例: SNS投稿を作る"
+                                    value={title}
+                                    onChange={(e) => setTitle(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    className={cn(
+                                        "h-12 rounded-xl border-white/10 bg-white/[0.055] text-base text-neutral-50",
+                                        "placeholder:text-neutral-500 focus-visible:ring-white/25"
+                                    )}
                                     autoComplete="off"
                                 />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <DateTimePicker
+                                    date={scheduledDate}
+                                    setDate={handleScheduledDateChange}
+                                    trigger={
+                                        <button type="button" className={fieldClass}>
+                                            <span className={fieldLabelClass}>
+                                                <Calendar className="h-3 w-3" />
+                                                日付
+                                            </span>
+                                            <span className={fieldValueClass}>
+                                                {scheduledDate
+                                                    ? format(scheduledDate, "M/d(E)", { locale: ja })
+                                                    : "未設定"
+                                                }
+                                            </span>
+                                        </button>
+                                    }
+                                />
+                                <DateTimePicker
+                                    date={scheduledDate}
+                                    setDate={handleScheduledDateChange}
+                                    trigger={
+                                        <button type="button" className={fieldClass}>
+                                            <span className={fieldLabelClass}>
+                                                <Clock className="h-3 w-3" />
+                                                時刻
+                                            </span>
+                                            <span className={fieldValueClass}>
+                                                {scheduledDate
+                                                    ? format(scheduledDate, "HH:mm", { locale: ja })
+                                                    : "選択"
+                                                }
+                                            </span>
+                                        </button>
+                                    }
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
                                 <button
                                     type="button"
-                                    onClick={handleAddSubtask}
-                                    disabled={!subtaskInput.trim()}
+                                    onClick={() => setIsDurationExpanded(prev => !prev)}
+                                    aria-expanded={isDurationExpanded}
                                     className={cn(
-                                        "flex-shrink-0 w-9 h-9 rounded-md border border-input flex items-center justify-center transition-colors",
-                                        subtaskInput.trim()
-                                            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
-                                            : "bg-muted text-muted-foreground/50 cursor-not-allowed"
+                                        fieldClass,
+                                        isDurationExpanded && "border-white/25 bg-white/[0.09] ring-1 ring-white/10"
                                     )}
-                                    aria-label="サブタスクを追加"
                                 >
-                                    <Plus className="w-4 h-4" />
+                                    <span className={fieldLabelClass}>
+                                        <Timer className="h-3 w-3" />
+                                        所要
+                                    </span>
+                                    <span className={fieldValueClass}>
+                                        {formatDuration(estimatedTime)}
+                                        <ChevronDown className={cn(
+                                            "ml-auto h-3.5 w-3.5 text-neutral-400 transition-transform",
+                                            isDurationExpanded && "rotate-180"
+                                        )} />
+                                    </span>
                                 </button>
-                            </div>
-                        </div>
 
-                        {/* Memo */}
-                        <div>
-                            <label className="text-xs text-muted-foreground mb-1 block">メモ（任意）</label>
-                            <textarea
-                                ref={memoRef}
-                                placeholder="メモを入力..."
-                                value={memo}
-                                onChange={(e) => {
-                                    setMemo(e.target.value)
-                                    e.target.style.height = "auto"
-                                    e.target.style.height = `${e.target.scrollHeight}px`
+                                <div className={fieldClass}>
+                                    <label className={fieldLabelClass}>
+                                        <Calendar className="h-3 w-3" />
+                                        カレンダー
+                                    </label>
+                                    <div className="relative flex items-center gap-1.5">
+                                        {selectedCalendar?.background_color && (
+                                            <span
+                                                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                                style={{ backgroundColor: selectedCalendar.background_color }}
+                                            />
+                                        )}
+                                        <select
+                                            value={calendarId ?? ""}
+                                            onChange={(e) => setCalendarId(e.target.value || null)}
+                                            className={selectClass}
+                                        >
+                                            <option className="bg-neutral-950" value="">なし</option>
+                                            {calendars.map((c) => (
+                                                <option className="bg-neutral-950" key={c.id} value={c.id}>
+                                                    {c.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {isDurationExpanded && (
+                                <div className="rounded-2xl border border-white/10 bg-black px-3 py-3 shadow-inner">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                        <span className="text-[11px] font-medium text-neutral-400">所要時間</span>
+                                        <span className="text-xs font-semibold text-neutral-100">{formatDuration(estimatedTime)}</span>
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-1.5">
+                                        {DURATION_OPTIONS.map(option => (
+                                            <button
+                                                key={option.value}
+                                                type="button"
+                                                onClick={() => handleDurationPresetSelect(option.value)}
+                                                className={cn(
+                                                    "min-h-10 rounded-lg border px-2 text-xs font-semibold transition-colors",
+                                                    estimatedTime === option.value
+                                                        ? "border-white bg-white text-neutral-950"
+                                                        : "border-white/10 bg-white/[0.055] text-neutral-200 active:bg-white/[0.1]"
+                                                )}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCustomDurationPickerOpen(true)}
+                                            className="min-h-10 rounded-lg border border-white/15 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-100 active:bg-white/[0.1]"
+                                        >
+                                            カスタム
+                                        </button>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCustomDurationPickerOpen(true)}
+                                        className="mt-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 text-left text-xs text-neutral-300 active:bg-white/[0.08]"
+                                    >
+                                        <span>ホイールで細かく選ぶ</span>
+                                        <span className="font-semibold text-neutral-50">カスタム</span>
+                                    </button>
+                                </div>
+                            )}
+
+                            <DurationWheelPicker
+                                duration={estimatedTime}
+                                onDurationChange={(minutes) => {
+                                    setEstimatedTime(minutes)
+                                    setIsDurationExpanded(true)
                                 }}
-                                rows={1}
-                                className={cn(
-                                    "w-full px-3 py-2.5 rounded-md border border-input bg-background text-sm",
-                                    "focus:outline-none focus:ring-2 focus:ring-ring",
-                                    "resize-none overflow-hidden leading-relaxed"
-                                )}
+                                open={isCustomDurationPickerOpen}
+                                onOpenChange={setIsCustomDurationPickerOpen}
+                                trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
                             />
-                        </div>
 
-                        {/* Reminder */}
-                        <div>
-                            <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                <Bell className="w-3 h-3" />
-                                通知
-                            </label>
-                            <div className="relative">
-                                <select
-                                    value={reminder}
-                                    onChange={(e) => setReminder(Number(e.target.value))}
-                                    className={cn(
-                                        "w-full h-10 px-3 pr-9 rounded-md border border-input bg-background text-sm",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring appearance-none"
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className={fieldClass}>
+                                    <label className={fieldLabelClass}>プロジェクト</label>
+                                    <div className="relative">
+                                        <select
+                                            value={projectId ?? ""}
+                                            onChange={(e) => setProjectId(e.target.value || null)}
+                                            className={selectClass}
+                                        >
+                                            <option className="bg-neutral-950" value="">なし</option>
+                                            {projects.map((p) => (
+                                                <option className="bg-neutral-950" key={p.id} value={p.id}>
+                                                    {p.title}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                                    </div>
+                                    {selectedProject && (
+                                        <div className="mt-0.5 truncate text-[10px] text-neutral-500">{selectedProject.title}</div>
                                     )}
-                                >
-                                    {REMINDER_OPTIONS.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <ChevronDown className="w-4 h-4 text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
-                            </div>
-                            <p className="text-[11px] text-muted-foreground mt-1">
-                                {!scheduledDate
-                                    ? "通知タイミングは先に選べます。開始日時を設定するとその設定で有効になります"
-                                    : "通知は選択したタイミングで有効です"
-                                }
-                            </p>
-                        </div>
+                                </div>
 
-                        {/* Calendar + Priority (side by side) */}
-                        <div className="grid grid-cols-2 gap-3">
+                                <div className={fieldClass}>
+                                    <label className={fieldLabelClass}>
+                                        <Star className="h-3 w-3" />
+                                        優先度
+                                    </label>
+                                    <div className="relative">
+                                        <select
+                                            value={priority}
+                                            onChange={(e) => setPriority(Number(e.target.value) as Priority)}
+                                            className={selectClass}
+                                        >
+                                            {Object.values(PRIORITY_OPTIONS).map((opt) => (
+                                                <option className="bg-neutral-950" key={opt.value} value={opt.value}>
+                                                    {opt.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                                    </div>
+                                    <div className="mt-0.5 truncate text-[10px] text-neutral-500">{selectedPriority.label}</div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className={fieldClass}>
+                                    <label className={fieldLabelClass}>
+                                        <Bell className="h-3 w-3" />
+                                        通知
+                                    </label>
+                                    <div className="relative">
+                                        <select
+                                            value={reminder}
+                                            onChange={(e) => setReminder(Number(e.target.value))}
+                                            className={selectClass}
+                                        >
+                                            {REMINDER_OPTIONS.map((option) => (
+                                                <option className="bg-neutral-950" key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                                    </div>
+                                </div>
+
+                                <div className={fieldClass}>
+                                    <label className={fieldLabelClass}>
+                                        <ListTodo className="h-3 w-3" />
+                                        サブタスク
+                                    </label>
+                                    <div className={fieldValueClass}>
+                                        {subtasks.length}件
+                                    </div>
+                                </div>
+                            </div>
+
                             <div>
-                                <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                    <Calendar className="w-3 h-3" />
-                                    カレンダー
-                                </label>
-                                <select
-                                    value={calendarId ?? ""}
-                                    onChange={(e) => setCalendarId(e.target.value || null)}
-                                    className={cn(
-                                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring"
-                                    )}
-                                >
-                                    <option value="">なし</option>
-                                    {calendars.map((c) => (
-                                        <option key={c.id} value={c.id}>
-                                            {c.name}
-                                        </option>
-                                    ))}
-                                </select>
+                                {subtasks.length > 0 && (
+                                    <div className="mb-2 space-y-1">
+                                        {subtasks.map((st, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-1.5"
+                                            >
+                                                <span className="flex-1 truncate text-sm text-neutral-100">{st}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveSubtask(idx)}
+                                                    className="shrink-0 rounded p-1 text-neutral-400 active:bg-white/10 active:text-red-300"
+                                                    aria-label="サブタスクを削除"
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        value={subtaskInput}
+                                        onChange={(e) => setSubtaskInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter" && subtaskInput.trim()) {
+                                                e.preventDefault()
+                                                handleAddSubtask()
+                                            }
+                                        }}
+                                        placeholder="サブタスクを追加..."
+                                        className="h-10 flex-1 rounded-xl border-white/10 bg-white/[0.045] text-sm text-neutral-50 placeholder:text-neutral-500 focus-visible:ring-white/25"
+                                        autoComplete="off"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleAddSubtask}
+                                        disabled={!subtaskInput.trim()}
+                                        className={cn(
+                                            "h-10 w-10 shrink-0 rounded-xl border border-white/10 transition-colors",
+                                            "flex items-center justify-center",
+                                            subtaskInput.trim()
+                                                ? "bg-white text-neutral-950 active:bg-neutral-200"
+                                                : "bg-white/[0.04] text-neutral-600"
+                                        )}
+                                        aria-label="サブタスクを追加"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                    </button>
+                                </div>
                             </div>
+
                             <div>
-                                <label className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                                    <Star className="w-3 h-3" />
-                                    優先度
-                                </label>
-                                <select
-                                    value={priority}
-                                    onChange={(e) => setPriority(Number(e.target.value) as Priority)}
+                                <label className="mb-1 block text-[11px] font-medium text-neutral-400">メモ（任意）</label>
+                                <textarea
+                                    ref={memoRef}
+                                    placeholder="メモを入力..."
+                                    value={memo}
+                                    onChange={(e) => {
+                                        setMemo(e.target.value)
+                                        e.target.style.height = "auto"
+                                        e.target.style.height = `${e.target.scrollHeight}px`
+                                    }}
+                                    rows={1}
                                     className={cn(
-                                        "w-full h-10 px-3 rounded-md border border-input bg-background text-sm",
-                                        "focus:outline-none focus:ring-2 focus:ring-ring"
+                                        "w-full resize-none overflow-hidden rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2.5 text-sm leading-relaxed text-neutral-50",
+                                        "placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
                                     )}
-                                >
-                                    {Object.values(PRIORITY_OPTIONS).map((opt) => (
-                                        <option key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </option>
-                                    ))}
-                                </select>
+                                />
                             </div>
                         </div>
+                    </div>
 
-                        {/* Submit Button */}
+                    <div className="shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2">
+                        <div className="mb-2 truncate text-center text-[11px] text-neutral-400">
+                            {schedulePreview}
+                        </div>
                         <Button
                             onClick={handleSubmit}
                             disabled={!title.trim() || isSubmitting}
-                            className="w-full h-11 text-base font-medium"
+                            className={cn(
+                                "h-12 w-full rounded-xl text-base font-semibold",
+                                !title.trim() || isSubmitting
+                                    ? "bg-white/10 text-neutral-500"
+                                    : "bg-white text-neutral-950 hover:bg-neutral-200 active:bg-neutral-300"
+                            )}
                         >
-                            {isSubmitting ? "追加中..." : "追加する"}
+                            {isSubmitting ? "追加中..." : "保存"}
                         </Button>
                     </div>
                 </SheetContent>
