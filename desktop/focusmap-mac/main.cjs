@@ -102,7 +102,17 @@ function appIconPath() {
 }
 
 function setDockIcon() {
-  if (app.dock && fs.existsSync(appIconPath())) app.dock.setIcon(appIconPath());
+  if (!app.dock) return;
+  const candidates = [...new Set([appIconPath(), FALLBACK_APP_ICON_PATH])];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      app.dock.setIcon(candidate);
+      return;
+    } catch (error) {
+      log('app', `Dock icon load failed: ${candidate}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 function log(scope, message) {

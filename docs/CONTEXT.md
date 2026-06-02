@@ -188,6 +188,7 @@ Goals → Projects → TaskGroups → Tasks
 - Mac版は、FocusmapのUIをSwiftUI等で作り直さない。既存のNext.js/React UIをElectronのBrowserWindow内で表示し、ブラウザではできないローカル機能だけをElectronメインプロセス側へ寄せる。
 - 開発・自分用起動は `npm run mac:dev`。起動直後は軽量なローディング画面付きのメインウィンドウを先に開き、その後非同期で `http://127.0.0.1:3001/dashboard?desktop=1&source=mac` に遷移する。3001にFocusmapがいなければ、その時点で `next dev -p 3001` を自動起動し、待機中にユーザーへ画面を返す。ブラウザ版 `npm run dev` と分けるため、Macアプリ用には `npm run dev:desktop` を使う。
 - Dock/FinderからMacアプリを起動した場合、3001番ポートが受け付け可能なら `/api/desktop/health` の完了を待たずにダッシュボードへ遷移する。ヘルスチェックはバックグラウンドで継続し、起動中画面のまま既存インスタンスが再フォーカスされた場合も再読み込みを試みる。起動ログは `~/.focusmap/logs/desktop-app.log` に保存する。
+- Dockアイコンの設定は起動を妨げない。`Resources/icon.icns` の読み込みに失敗した場合はASAR内の `assets/icon.png` を試し、それでも失敗した場合はログだけ残してウィンドウ生成とダッシュボード遷移を継続する。
 - 配布/パッケージ版をFinderやDockから起動した場合、macOSのPATHには `node` が無いことがあるため、同梱Next standaloneやagent CLIは `node` コマンドに依存しない。パッケージ版ではElectron本体を `ELECTRON_RUN_AS_NODE=1` でNode実行モードにして子プロセスを起動する。子プロセスのspawn失敗はメインプロセス例外にせず、接続状態ログに出す。
 - MacアプリのDock/Finderアイコンは、Web UI左上と同じFocusmapロゴを `desktop/focusmap-mac/assets/icon.icns` として使う。開発起動時は `desktop/focusmap-mac/assets/icon.png`、パッケージ版の起動中Dock表示は `Resources/icon.icns` を設定し、Finder表示と起動中表示でアイコンが切り替わらないようにする。Dockへの永続固定はユーザーのmacOS設定で、アプリ側は起動中に通常アプリとしてDockへ表示する。
 - Macアプリの状態確認は `/api/desktop/health` を使い、重い `/dashboard` 初期化やAI/DB接続テストをヘルスチェックで走らせない。
