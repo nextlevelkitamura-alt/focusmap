@@ -33,6 +33,15 @@ function getAuthCallbackUrl(options?: { desktop?: boolean; nativeApp?: 'ios'; no
     return url.toString()
 }
 
+function getExternalAuthStartUrl(options: { desktop?: boolean; nativeApp?: 'ios'; nonce: string; next: string }) {
+    const url = new URL('/auth/native-start', location.origin)
+    url.searchParams.set('nonce', options.nonce)
+    url.searchParams.set('next', options.next)
+    if (options.desktop) url.searchParams.set('desktop', '1')
+    if (options.nativeApp) url.searchParams.set('native_app', options.nativeApp)
+    return url.toString()
+}
+
 function LoginContent() {
     const supabase = createClient()
     const searchParams = useSearchParams()
@@ -99,16 +108,11 @@ function LoginContent() {
             await checkSupabaseAuthAvailable()
             if (isDesktopShell && window.focusmapDesktop?.openExternal) {
                 const nonce = crypto.randomUUID()
-                const { data, error } = await supabase.auth.signInWithOAuth({
-                    provider: "google",
-                    options: {
-                        redirectTo: getAuthCallbackUrl({ desktop: true, nonce }),
-                        skipBrowserRedirect: true,
-                    },
-                })
-                if (error) throw error
-                if (!data.url) throw new Error('GoogleログインURLを取得できませんでした')
-                await window.focusmapDesktop.openExternal(data.url)
+                await window.focusmapDesktop.openExternal(getExternalAuthStartUrl({
+                    desktop: true,
+                    nonce,
+                    next: '/dashboard?desktop=1&source=mac',
+                }))
                 setMessage({ type: 'success', text: '外部ブラウザでGoogleログインを完了してください。完了後、このMacアプリに自動で戻ります。' })
 
                 const startedAt = Date.now()
@@ -133,21 +137,12 @@ function LoginContent() {
 
             if (isIosAppShell) {
                 const nonce = crypto.randomUUID()
-                const { data, error } = await supabase.auth.signInWithOAuth({
-                    provider: "google",
-                    options: {
-                        redirectTo: getAuthCallbackUrl({
-                            nativeApp: 'ios',
-                            nonce,
-                            next: dashboardPath,
-                        }),
-                        skipBrowserRedirect: true,
-                    },
-                })
-                if (error) throw error
-                if (!data.url) throw new Error('GoogleログインURLを取得できませんでした')
-                await openExternalAuthUrl(data.url)
-                setMessage({ type: 'success', text: 'SafariでGoogleログインを完了してください。完了後、Focusmapアプリへ戻ります。' })
+                await openExternalAuthUrl(getExternalAuthStartUrl({
+                    nativeApp: 'ios',
+                    nonce,
+                    next: dashboardPath,
+                }))
+                setMessage({ type: 'success', text: '外部ブラウザーでGoogleログインを完了してください。完了後、Focusmapアプリへ戻ります。' })
                 setLoading(false)
                 return
             }
