@@ -184,6 +184,30 @@ describe('useCalendars - fetchCalendars', () => {
       'calendar-selection',
       JSON.stringify({ 'a@gmail.com': true, 'b@gmail.com': false })
     )
+    expect(localStorageMock.setItem).toHaveBeenCalledWith(
+      'focusmap:calendars:list',
+      expect.stringContaining('"google_calendar_id":"a@gmail.com"')
+    )
+  })
+
+  test('localStorageのカレンダー一覧キャッシュから起動直後に復元する', async () => {
+    const calendars = [
+      createCalendar({ id: 'cal-1', google_calendar_id: 'a@gmail.com', selected: true }),
+      createCalendar({ id: 'cal-2', google_calendar_id: 'b@gmail.com', selected: false }),
+    ]
+    localStorageMock.setItem('focusmap:calendars:list', JSON.stringify({
+      calendars,
+      cachedAt: Date.now(),
+    }))
+
+    const useCalendars = await importHook()
+    const { result } = renderHook(() => useCalendars())
+
+    expect(result.current.calendars).toHaveLength(2)
+    expect(result.current.calendars[0].name).toBe('My Calendar')
+    expect(result.current.selectedCalendarIds).toEqual(['a@gmail.com'])
+    expect(result.current.isLoading).toBe(false)
+    expect(mockFetch).toHaveBeenCalledTimes(0)
   })
 })
 
@@ -366,5 +390,20 @@ describe('useCalendars - selectedCalendarIds', () => {
     const { result } = renderHook(() => useCalendars())
 
     expect(result.current.selectedCalendarIds).toEqual([])
+  })
+
+  test('古い選択状態キャッシュだけでも選択IDを先に返す', async () => {
+    localStorageMock.setItem('calendar-selection', JSON.stringify({
+      'a@gmail.com': true,
+      'b@gmail.com': false,
+    }))
+    mockFetch.mockReturnValueOnce(new Promise(() => {}))
+
+    const useCalendars = await importHook()
+    const { result } = renderHook(() => useCalendars())
+
+    expect(result.current.calendars).toEqual([])
+    expect(result.current.selectedCalendarIds).toEqual(['a@gmail.com'])
+    expect(result.current.isLoading).toBe(false)
   })
 })

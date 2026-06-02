@@ -66,11 +66,11 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         const [isRefreshing, setIsRefreshing] = useState(false) // 更新ボタン用のローディング状態
 
         // カレンダーリスト（編集モーダル用）
-        const { calendars } = useCalendars()
+        const { calendars, isLoading: calendarsLoading, selectedCalendarIds } = useCalendars()
         const { toast, hideToast, error: showError } = useCalendarToast()
 
         // CalendarSelector から選択状態を受け取るローカルステート
-        const [visibleCalendarIds, setVisibleCalendarIds] = useState<string[]>([])
+        const [visibleCalendarIds, setVisibleCalendarIds] = useState<string[] | null>(null)
 
         // タイマー・タスクマップ
         const timer = useTimer()
@@ -101,6 +101,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
             onVisibleCalendarIdsChangeProp?.(ids)
         }, [onSelectionChange, onVisibleCalendarIdsChangeProp])
 
+        const effectiveCalendarIds = visibleCalendarIds ?? selectedCalendarIds
+
         // Calculate display range
         const { timeMin, timeMax } = useMemo(() => {
             const monthStart = startOfMonth(currentDate)
@@ -116,7 +118,8 @@ export const SidebarCalendar = forwardRef<SidebarCalendarRef, SidebarCalendarPro
         const { events, setEvents, refetch, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
             timeMin,
             timeMax,
-            calendarIds: visibleCalendarIds.length > 0 ? visibleCalendarIds : undefined,
+            calendarIds: effectiveCalendarIds,
+            enabled: !calendarsLoading && effectiveCalendarIds.length > 0,
             autoSync: true,
         })
 

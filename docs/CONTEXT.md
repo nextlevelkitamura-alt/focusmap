@@ -147,6 +147,8 @@ Goals → Projects → TaskGroups → Tasks
 ### カレンダー取得・キャッシュ
 
 - `useCalendarEvents` は、同一画面内のメモリキャッシュに加えて `sessionStorage` / `localStorage` に予定を保存する。表示用TTLは12時間、再検証は1分を目安にし、アプリ/Webの再起動後も手元の予定を先に描画してから裏で更新する。
+- `useCalendars` はカレンダー一覧と選択状態も `localStorage` に保存し、Macアプリ/スマホ起動直後に選択カレンダーIDを復元する。これによりイベントキャッシュキーが初回描画から確定し、`primary` だけを一瞬表示してから全カレンダーへ増える段階表示を避ける。
+- 選択カレンダーIDが空配列の場合、`useCalendarEvents` はGoogle Calendar APIのデフォルト `primary` 取得へフォールバックせず、空予定として扱う。カレンダー選択が未確定の間は予定取得を開始しない。
 - `/api/calendar/events/list` は `forceSync=false` かつ `calendar_events` に対象期間のキャッシュがある場合、Google Calendar APIを待たずにDBキャッシュを返す。返却時も `task_id` / 優先度 / 見積時間 / 完了状態 / カレンダー色 / 祝日カレンダー除外を付け直す。
 - DBキャッシュが古い場合、APIは `fromCache: true` / `needsRefresh: true` を返し、フロントは表示後に `forceSync=true` のサイレント同期を1回走らせる。`forceSync=true`、手動更新、定期自動更新、DBキャッシュなしの初回はGoogle Calendar APIから取得して `calendar_events` を更新する。
 

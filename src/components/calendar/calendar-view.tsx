@@ -29,7 +29,7 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
   const { hourHeight, zoomLevel } = useCalendarZoom({ gridRef: zoomGridRef })
 
   // マルチカレンダー対応
-  const { selectedCalendarIds } = useCalendars()
+  const { selectedCalendarIds, isLoading: calendarsLoading } = useCalendars()
 
   // 表示期間を計算（表示中の月の前後1ヶ月を含む）
   const { timeMin, timeMax } = useMemo(() => {
@@ -47,6 +47,7 @@ export function CalendarView({ onTaskDrop, onSelectionChange }: CalendarViewProp
     timeMin,
     timeMax,
     calendarIds: selectedCalendarIds,
+    enabled: !calendarsLoading && selectedCalendarIds.length > 0,
     autoSync: true,
   })
 

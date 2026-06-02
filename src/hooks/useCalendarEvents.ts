@@ -39,7 +39,9 @@ let quotaErrorCount = 0;
 let quotaBackoffUntil = 0;
 
 function getCacheKey(timeMin: Date, timeMax: Date, calendarIds?: string[]): string {
-  const ids = calendarIds && calendarIds.length > 0 ? [...calendarIds].sort().join(',') : 'primary';
+  const ids = calendarIds
+    ? (calendarIds.length > 0 ? [...calendarIds].sort().join(',') : 'none')
+    : 'primary';
   return `${timeMin.toISOString()}-${timeMax.toISOString()}-${ids}`;
 }
 
@@ -366,6 +368,12 @@ async function fetchEventsShared(
   forceSync = false
 ): Promise<CacheEntry> {
   const cacheKey = getCacheKey(timeMin, timeMax, calendarIds);
+
+  if (calendarIds && calendarIds.length === 0) {
+    const emptyEntry = createCacheEntry([], new Date());
+    writeCacheEntry(cacheKey, emptyEntry);
+    return emptyEntry;
+  }
 
   // Check backoff
   if (Date.now() < quotaBackoffUntil) {

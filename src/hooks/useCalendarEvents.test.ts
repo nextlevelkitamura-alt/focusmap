@@ -179,6 +179,23 @@ describe('useCalendarEvents', () => {
       expect(url).toContain('calendarId=cal-1%2Ccal-2')
     })
 
+    test('calendarIds が空配列の場合はprimary取得にフォールバックしない', async () => {
+      const useCalendarEvents = await getHook()
+
+      const { result } = renderHook(() => useCalendarEvents({
+        ...baseOptions,
+        calendarIds: [],
+      }))
+
+      await act(async () => {
+        await vi.runAllTimersAsync()
+      })
+
+      expect(mockFetch).toHaveBeenCalledTimes(0)
+      expect(result.current.events).toEqual([])
+      expect(result.current.isLoading).toBe(false)
+    })
+
     test('APIから返った色情報を保持する', async () => {
       const useCalendarEvents = await getHook()
       const events = [createMockEvent({

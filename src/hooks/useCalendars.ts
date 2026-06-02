@@ -23,11 +23,70 @@ export interface UserCalendar {
 }
 
 // --- Module-level cache (shared across all hook instances) ---
-let cachedCalendars: UserCalendar[] | null = null;
-let cacheTimestamp = 0;
-let inflight: Promise<UserCalendar[]> | null = null;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const STARTUP_CACHE_TTL = 12 * 60 * 60 * 1000;
+const CALENDAR_SELECTION_STORAGE_KEY = 'calendar-selection';
+const CALENDAR_LIST_STORAGE_KEY = 'focusmap:calendars:list';
 const listeners = new Set<(calendars: UserCalendar[]) => void>();
+
+type CalendarListCachePayload = {
+  calendars?: UserCalendar[];
+  cachedAt?: number;
+};
+
+function readStoredCalendarList(): { calendars: UserCalendar[]; cachedAt: number } | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(CALENDAR_LIST_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CalendarListCachePayload;
+    if (!Array.isArray(parsed.calendars) || typeof parsed.cachedAt !== 'number') return null;
+    if (Date.now() - parsed.cachedAt > STARTUP_CACHE_TTL) return null;
+    return { calendars: parsed.calendars, cachedAt: parsed.cachedAt };
+  } catch {
+    return null;
+  }
+}
+
+function readStoredSelectedCalendarIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(CALENDAR_SELECTION_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Record<string, boolean>;
+    return Object.entries(parsed)
+      .filter(([, selected]) => selected)
+      .map(([calendarId]) => calendarId);
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredCalendars(calendars: UserCalendar[]) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(CALENDAR_LIST_STORAGE_KEY, JSON.stringify({
+      calendars,
+      cachedAt: Date.now(),
+    }));
+    localStorage.setItem(CALENDAR_SELECTION_STORAGE_KEY, JSON.stringify(
+      calendars.reduce((acc: Record<string, boolean>, cal: UserCalendar) => {
+        acc[cal.google_calendar_id] = cal.selected;
+        return acc;
+      }, {})
+    ));
+  } catch {
+    // Ignore localStorage errors.
+  }
+}
+
+const storedCalendarList = readStoredCalendarList();
+let cachedCalendars: UserCalendar[] | null = storedCalendarList?.calendars ?? null;
+let cachedSelectedCalendarIds = cachedCalendars
+  ? cachedCalendars.filter(c => c.selected).map(c => c.google_calendar_id)
+  : readStoredSelectedCalendarIds();
+let cacheTimestamp = storedCalendarList?.cachedAt ?? 0;
+let inflight: Promise<UserCalendar[]> | null = null;
 
 function notifyListeners(calendars: UserCalendar[]) {
   listeners.forEach(fn => fn(calendars));
@@ -68,20 +127,12 @@ async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]>
 
       const calendars = data.calendars || [];
       cachedCalendars = calendars;
+      cachedSelectedCalendarIds = calendars
+        .filter(cal => cal.selected)
+        .map(cal => cal.google_calendar_id);
       cacheTimestamp = Date.now();
       notifyListeners(calendars);
-
-      // Save to localStorage
-      try {
-        localStorage.setItem('calendar-selection', JSON.stringify(
-          calendars.reduce((acc: Record<string, boolean>, cal: UserCalendar) => {
-            acc[cal.google_calendar_id] = cal.selected;
-            return acc;
-          }, {})
-        ));
-      } catch {
-        // Ignore localStorage errors
-      }
+      writeStoredCalendars(calendars);
 
       return calendars;
     } finally {
@@ -97,7 +148,7 @@ async function fetchCalendarsShared(forceSync: boolean): Promise<UserCalendar[]>
  */
 export function useCalendars() {
   const [calendars, setCalendars] = useState<UserCalendar[]>(cachedCalendars || []);
-  const [isLoading, setIsLoading] = useState(!cachedCalendars);
+  const [isLoading, setIsLoading] = useState(!cachedCalendars && cachedSelectedCalendarIds.length === 0);
   const [error, setError] = useState<Error | null>(null);
 
   // Subscribe to cache updates from other instances
@@ -109,7 +160,8 @@ export function useCalendars() {
 
   // カレンダーリストを取得
   const fetchCalendars = useCallback(async (forceSync = false) => {
-    setIsLoading(true);
+    const hasLocalCalendarData = calendars.length > 0 || cachedSelectedCalendarIds.length > 0;
+    setIsLoading(!hasLocalCalendarData);
     setError(null);
 
     try {
@@ -120,7 +172,7 @@ export function useCalendars() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [calendars.length]);
 
   // 初回取得（キャッシュがあれば即座に返る）
   useEffect(() => {
@@ -134,7 +186,13 @@ export function useCalendars() {
       cal.id === id ? { ...cal, selected } : cal
     );
     setCalendars(updateFn);
-    if (cachedCalendars) cachedCalendars = updateFn(cachedCalendars);
+    if (cachedCalendars) {
+      cachedCalendars = updateFn(cachedCalendars);
+      cachedSelectedCalendarIds = cachedCalendars
+        .filter(cal => cal.selected)
+        .map(cal => cal.google_calendar_id);
+      writeStoredCalendars(cachedCalendars);
+    }
 
     try {
       const response = await fetch(`/api/calendars/${id}`, {
@@ -153,7 +211,13 @@ export function useCalendars() {
         cal.id === id ? { ...cal, selected: !selected } : cal
       );
       setCalendars(rollbackFn);
-      if (cachedCalendars) cachedCalendars = rollbackFn(cachedCalendars);
+      if (cachedCalendars) {
+        cachedCalendars = rollbackFn(cachedCalendars);
+        cachedSelectedCalendarIds = cachedCalendars
+          .filter(cal => cal.selected)
+          .map(cal => cal.google_calendar_id);
+        writeStoredCalendars(cachedCalendars);
+      }
       setError(err as Error);
       throw err;
     }
@@ -166,7 +230,13 @@ export function useCalendars() {
     // Optimistic Update (local + cache)
     const updateFn = (cals: UserCalendar[]) => cals.map(cal => ({ ...cal, selected }));
     setCalendars(updateFn);
-    if (cachedCalendars) cachedCalendars = updateFn(cachedCalendars);
+    if (cachedCalendars) {
+      cachedCalendars = updateFn(cachedCalendars);
+      cachedSelectedCalendarIds = cachedCalendars
+        .filter(cal => cal.selected)
+        .map(cal => cal.google_calendar_id);
+      writeStoredCalendars(cachedCalendars);
+    }
 
     try {
       await Promise.all(
@@ -189,6 +259,9 @@ export function useCalendars() {
   const selectedCalendarIds = calendars
     .filter(c => c.selected)
     .map(c => c.google_calendar_id);
+  const effectiveSelectedCalendarIds = calendars.length > 0
+    ? selectedCalendarIds
+    : cachedSelectedCalendarIds;
 
   return {
     calendars,
@@ -197,6 +270,6 @@ export function useCalendars() {
     fetchCalendars,
     toggleCalendar,
     toggleAll,
-    selectedCalendarIds
+    selectedCalendarIds: effectiveSelectedCalendarIds
   };
 }

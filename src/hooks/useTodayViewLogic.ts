@@ -209,7 +209,7 @@ export function useTodayViewLogic({
     const { events: allFetchedEvents, isLoading: eventsLoading, error: eventsError, syncNow, addOptimisticEvent, removeOptimisticEvent } = useCalendarEvents({
         timeMin: fetchWindow.min,
         timeMax: fetchWindow.max,
-        enabled: !calendarsLoading,
+        enabled: !calendarsLoading && selectedCalendarIds.length > 0,
         calendarIds: selectedCalendarIds,
     })
 
