@@ -534,20 +534,31 @@ describe("CustomMindMapView keyboard operations", () => {
     expect((input as HTMLTextAreaElement).selectionEnd).toBe("Root task".length)
   })
 
-  test("aligns the mobile floating editor to the active node coordinates", async () => {
+  test("aligns the mobile floating editor to the active node screen coordinates", async () => {
     renderMap({ isMobile: true })
 
     fireEvent.click(getNode("Root task", "root-1"))
 
     const editor = await screen.findByTestId("floating-mind-map-editor")
+    const viewport = screen.getByTestId("custom-mind-map-viewport")
     const stage = screen.getByTestId("custom-mind-map-stage")
     const node = document.querySelector('[data-id="root-1"]')
     if (!(node instanceof HTMLElement)) throw new Error("root node not rendered")
 
-    expect(editor.parentElement).toBe(stage)
-    expect(editor.style.left).toBe(node.style.left)
-    expect(editor.style.top).toBe(node.style.top)
-    expect(editor.style.width).toBe(node.style.width)
+    const nodeLeft = parseFloat(node.style.left)
+    const nodeTop = parseFloat(node.style.top)
+    const nodeWidth = parseFloat(node.style.width)
+    const nodeHeight = parseFloat(node.style.minHeight)
+    const editorWidth = Math.max(nodeWidth * 0.85, 120)
+    const editorHeight = Math.max(nodeHeight * 0.85, 34)
+
+    expect(editor.parentElement).toBe(viewport)
+    expect(editor.closest('[data-testid="custom-mind-map-stage"]')).toBeNull()
+    expect(parseFloat(editor.style.width)).toBeCloseTo(Math.round(editorWidth), 0)
+    expect(parseFloat(editor.style.minHeight)).toBeCloseTo(Math.round(editorHeight), 0)
+    expect(parseFloat(editor.style.left)).toBeCloseTo(Math.round(-20 + (nodeLeft + nodeWidth / 2) * 0.85 - editorWidth / 2), 0)
+    expect(parseFloat(editor.style.top)).toBeCloseTo(Math.round(4 + (nodeTop + nodeHeight / 2) * 0.85 - editorHeight / 2), 0)
+    expect(stage).toHaveStyle("transform: translate3d(-20px, 4px, 0) scale(0.85)")
   })
 
   test("closes the mobile floating editor when the map background is tapped", async () => {

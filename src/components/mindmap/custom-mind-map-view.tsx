@@ -83,6 +83,10 @@ const DONE_UNDO_WINDOW_MS = 5000;
 const MOBILE_KEYBOARD_NODE_MARGIN = 12;
 const MOBILE_KEYBOARD_ACCESSORY_CLEARANCE = 68;
 const MOBILE_NODE_FOCUS_DURATION_MS = 120;
+const MOBILE_FLOATING_TASK_MIN_WIDTH = 120;
+const MOBILE_FLOATING_PROJECT_MIN_WIDTH = 104;
+const MOBILE_FLOATING_TASK_MIN_HEIGHT = 34;
+const MOBILE_FLOATING_PROJECT_MIN_HEIGHT = 36;
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
@@ -123,6 +127,11 @@ type PanState = {
 type Point = {
     x: number;
     y: number;
+};
+
+type Rect = Point & {
+    width: number;
+    height: number;
 };
 
 type PinchGestureState = {
@@ -1391,13 +1400,30 @@ export function CustomMindMapView({
 
     const floatingEditNode = floatingEditNodeId ? nodeById.get(floatingEditNodeId) ?? null : null;
     const floatingEditKind = floatingEditNode?.kind ?? null;
-    const floatingEditStageStyle = floatingEditNode
-        ? {
-            left: floatingEditNode.x,
-            top: floatingEditNode.y,
-            width: floatingEditNode.width,
-            minHeight: floatingEditNode.height,
-        }
+    const getFloatingEditorRect = useCallback((node: MindMapModelNode, currentZoom = zoomRef.current, currentPan = panOffsetRef.current): Rect => {
+        const scaledWidth = node.width * currentZoom;
+        const scaledHeight = node.height * currentZoom;
+        const minWidth = node.kind === "project" ? MOBILE_FLOATING_PROJECT_MIN_WIDTH : MOBILE_FLOATING_TASK_MIN_WIDTH;
+        const minHeight = node.kind === "project" ? MOBILE_FLOATING_PROJECT_MIN_HEIGHT : MOBILE_FLOATING_TASK_MIN_HEIGHT;
+        const width = Math.max(scaledWidth, minWidth);
+        const height = Math.max(scaledHeight, minHeight);
+        return {
+            x: currentPan.x + (node.x + node.width / 2) * currentZoom - width / 2,
+            y: currentPan.y + (node.y + node.height / 2) * currentZoom - height / 2,
+            width,
+            height,
+        };
+    }, []);
+    const floatingEditViewportStyle = floatingEditNode
+        ? (() => {
+            const rect = getFloatingEditorRect(floatingEditNode, zoom, panOffset);
+            return {
+                left: Math.round(rect.x),
+                top: Math.round(rect.y),
+                width: Math.round(rect.width),
+                minHeight: Math.round(rect.height),
+            };
+        })()
         : undefined;
     const selectedTaskIds = useMemo(
         () => positionedNodes
@@ -1956,10 +1982,18 @@ export function CustomMindMapView({
             rect.width - MOBILE_KEYBOARD_NODE_MARGIN
         );
 
-        const nodeLeft = currentPan.x + node.x * currentZoom;
-        const nodeRight = nodeLeft + node.width * currentZoom;
-        const nodeTop = currentPan.y + node.y * currentZoom;
-        const nodeBottom = nodeTop + node.height * currentZoom;
+        const nodeRect = floatingEditNodeId === node.id
+            ? getFloatingEditorRect(node, currentZoom, currentPan)
+            : {
+                x: currentPan.x + node.x * currentZoom,
+                y: currentPan.y + node.y * currentZoom,
+                width: node.width * currentZoom,
+                height: node.height * currentZoom,
+            };
+        const nodeLeft = nodeRect.x;
+        const nodeRight = nodeRect.x + nodeRect.width;
+        const nodeTop = nodeRect.y;
+        const nodeBottom = nodeRect.y + nodeRect.height;
 
         let deltaX = 0;
         let deltaY = 0;
@@ -1978,7 +2012,7 @@ export function CustomMindMapView({
         } else {
             applyViewportTransform(currentZoom, nextPan);
         }
-    }, [animateViewportTransform, applyViewportTransform, isKeyboardOpen, mobileKeyboardAccessoryPinned, viewportBottom]);
+    }, [animateViewportTransform, applyViewportTransform, floatingEditNodeId, getFloatingEditorRect, isKeyboardOpen, mobileKeyboardAccessoryPinned, viewportBottom]);
 
     useEffect(() => {
         if (!isMobile || (!isKeyboardOpen && !mobileKeyboardAccessoryPinned)) return;
@@ -1988,7 +2022,7 @@ export function CustomMindMapView({
         const timeoutIds: number[] = [];
         const trackNode = () => {
             const node = nodeById.get(nodeId);
-            if (node) keepNodeAboveKeyboard(node, { animate: pendingEditNodeId === nodeId });
+            if (node) keepNodeAboveKeyboard(node, { animate: pendingEditNodeId === nodeId && floatingEditNodeId !== nodeId });
         };
         const trackOnFrame = () => {
             frameIds.push(requestAnimationFrame(trackNode));
@@ -2947,44 +2981,6 @@ export function CustomMindMapView({
                             />
                         );
                     })}
-                    {isMobile && floatingEditNode && floatingEditStageStyle && (
-                        <div
-                            className={cn(
-                                "absolute z-50 flex items-center justify-center rounded-lg shadow-lg ring-2 ring-white ring-offset-2 ring-offset-background",
-                                floatingEditKind === "project"
-                                    ? "bg-primary px-4 py-2 text-primary-foreground"
-                                    : "border border-border bg-background px-1.5 py-1"
-                            )}
-                            style={floatingEditStageStyle}
-                            data-testid="floating-mind-map-editor"
-                        >
-                            {floatingEditKind === "task" && (
-                                <span className="shrink-0 h-5 w-5 -m-1" aria-hidden="true" />
-                            )}
-                            <textarea
-                                ref={floatingTextareaRef}
-                                rows={1}
-                                aria-label={floatingEditKind === "project" ? "プロジェクト名" : "ノード名"}
-                                value={floatingEditValue}
-                                className={cn(
-                                    "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 font-bold outline-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
-                                    floatingEditKind === "project"
-                                        ? "h-5 min-h-5 text-center text-sm leading-5 text-primary-foreground placeholder:text-primary-foreground/60"
-                                        : "h-[18px] min-h-[18px] px-0.5 text-[13px] leading-[18px] text-foreground placeholder:text-muted-foreground"
-                                )}
-                                onChange={handleFloatingEditValueChange}
-                                onBlur={handleFloatingEditBlur}
-                                onClick={(event) => event.stopPropagation()}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onCompositionStart={handleFloatingEditCompositionStart}
-                                onCompositionEnd={handleFloatingEditCompositionEnd}
-                                onKeyDown={handleFloatingEditKeyDown}
-                            />
-                            {floatingEditKind === "task" && (
-                                <span className="h-6 w-6 shrink-0" aria-hidden="true" />
-                            )}
-                        </div>
-                    )}
                     {selectionRect && (
                         <div
                             className="pointer-events-none absolute z-40 rounded border border-sky-400 bg-sky-400/15 shadow-[0_0_16px_rgba(56,189,248,0.35)]"
@@ -2992,6 +2988,44 @@ export function CustomMindMapView({
                         />
                     )}
                 </div>
+                {isMobile && floatingEditNode && floatingEditViewportStyle && (
+                    <div
+                        className={cn(
+                            "absolute z-50 flex items-center justify-center rounded-lg shadow-lg ring-2 ring-white ring-offset-2 ring-offset-background",
+                            floatingEditKind === "project"
+                                ? "bg-primary px-4 py-2 text-primary-foreground"
+                                : "border border-border bg-background px-1.5 py-1"
+                        )}
+                        style={floatingEditViewportStyle}
+                        data-testid="floating-mind-map-editor"
+                    >
+                        {floatingEditKind === "task" && (
+                            <span className="shrink-0 h-5 w-5 -m-1" aria-hidden="true" />
+                        )}
+                        <textarea
+                            ref={floatingTextareaRef}
+                            rows={1}
+                            aria-label={floatingEditKind === "project" ? "プロジェクト名" : "ノード名"}
+                            value={floatingEditValue}
+                            className={cn(
+                                "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-0 text-base font-bold leading-5 outline-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
+                                floatingEditKind === "project"
+                                    ? "h-5 min-h-5 text-center text-primary-foreground placeholder:text-primary-foreground/60"
+                                    : "h-5 min-h-5 px-0.5 text-foreground placeholder:text-muted-foreground"
+                            )}
+                            onChange={handleFloatingEditValueChange}
+                            onBlur={handleFloatingEditBlur}
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onCompositionStart={handleFloatingEditCompositionStart}
+                            onCompositionEnd={handleFloatingEditCompositionEnd}
+                            onKeyDown={handleFloatingEditKeyDown}
+                        />
+                        {floatingEditKind === "task" && (
+                            <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+                        )}
+                    </div>
+                )}
             </div>
             {shouldShowMobileAccessory && activeAccessoryNode && (
                 <KeyboardAccessoryBar
