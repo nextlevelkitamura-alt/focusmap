@@ -24,6 +24,8 @@ import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 const HEADER_PULL_REFRESH_THRESHOLD = 52
 const HEADER_PULL_REFRESH_MAX = 76
+const HEADER_PULL_REFRESH_HOLD = 46
+const HEADER_BASE_PADDING_TOP = 6
 
 // --- Types ---
 
@@ -218,22 +220,51 @@ export function TodayView({
 
     const handleHeaderTouchEnd = useCallback(() => {
         const shouldRefresh = mobilePane === 'schedule' && pullRefreshReady
-        resetPullRefresh()
         if (shouldRefresh) {
+            pullRefreshStartYRef.current = null
+            setPullRefreshDistance(0)
+            setPullRefreshReady(false)
             void logic.refreshCalendar().catch(() => undefined)
+            return
         }
+        resetPullRefresh()
     }, [logic, mobilePane, pullRefreshReady, resetPullRefresh])
 
-    const showHeaderRefreshIndicator = mobilePane === 'schedule' && pullRefreshDistance > 0
-    const headerRefreshDistance = pullRefreshDistance
+    const isHeaderRefreshing = mobilePane === 'schedule' && logic.syncState === 'syncing'
+    const isHeaderRefreshDone = mobilePane === 'schedule' && logic.syncState === 'done'
+    const showHeaderRefreshIndicator = mobilePane === 'schedule' && (
+        pullRefreshDistance > 0 ||
+        isHeaderRefreshing ||
+        isHeaderRefreshDone
+    )
+    const headerRefreshDistance =
+        isHeaderRefreshing || isHeaderRefreshDone
+            ? HEADER_PULL_REFRESH_HOLD
+            : pullRefreshDistance
     const headerRefreshProgress = Math.min(headerRefreshDistance / HEADER_PULL_REFRESH_THRESHOLD, 1)
+    const headerTopPadding = showHeaderRefreshIndicator
+        ? HEADER_BASE_PADDING_TOP + headerRefreshDistance
+        : HEADER_BASE_PADDING_TOP
+    const headerRefreshLabel = isHeaderRefreshDone
+        ? '更新完了'
+        : isHeaderRefreshing
+            ? '更新中'
+            : pullRefreshReady
+                ? '離すと更新'
+                : '引っ張って更新'
 
     return (
-        <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
+        <div className="relative flex flex-col h-full min-h-0 overflow-hidden bg-background">
             {/* Date Header + Mode Toggle */}
             <div
-                className="relative flex-shrink-0 border-b px-4 py-1.5"
-                style={{ touchAction: 'none' }}
+                className="relative z-20 flex-shrink-0 border-b bg-background px-4 pb-1.5"
+                style={{
+                    touchAction: 'none',
+                    paddingTop: headerTopPadding,
+                    transition: pullRefreshDistance > 0 && logic.syncState === 'idle'
+                        ? 'none'
+                        : 'padding-top 260ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+                }}
                 onTouchStart={handleHeaderTouchStart}
                 onTouchMove={handleHeaderTouchMove}
                 onTouchEnd={handleHeaderTouchEnd}
@@ -241,20 +272,25 @@ export function TodayView({
             >
                 {showHeaderRefreshIndicator && (
                     <div
-                        className="pointer-events-none absolute left-1/2 top-0 z-10 grid h-8 w-8 place-items-center rounded-full border border-border/70 bg-background/95 shadow-sm transition-[opacity,transform]"
+                        className="pointer-events-none absolute left-1/2 top-2 z-10 grid h-9 w-9 place-items-center rounded-full border border-border/70 bg-background/95 shadow-sm transition-[opacity,transform]"
                         style={{
-                            opacity: Math.max(0.35, headerRefreshProgress),
-                            transform: `translate(-50%, ${Math.max(0, headerRefreshDistance - 30)}px)`,
+                            opacity: isHeaderRefreshing || isHeaderRefreshDone ? 1 : Math.max(0.35, headerRefreshProgress),
+                            transform: `translate(-50%, 0) scale(${0.9 + headerRefreshProgress * 0.1})`,
                         }}
-                        aria-hidden="true"
+                        role="status"
+                        aria-label={headerRefreshLabel}
                     >
-                        <RefreshCw
-                            className={cn(
-                                "h-4 w-4 text-primary transition-transform",
-                                pullRefreshReady && "animate-spin"
-                            )}
-                            style={{ transform: `rotate(${headerRefreshProgress * 180}deg)` }}
-                        />
+                        {isHeaderRefreshDone ? (
+                            <Check className="h-4 w-4 text-green-500" />
+                        ) : (
+                            <RefreshCw
+                                className={cn(
+                                    "h-4 w-4 text-primary transition-transform",
+                                    (pullRefreshReady || isHeaderRefreshing) && "animate-spin"
+                                )}
+                                style={isHeaderRefreshing ? undefined : { transform: `rotate(${headerRefreshProgress * 180}deg)` }}
+                            />
+                        )}
                     </div>
                 )}
                 <div className="flex items-start justify-between gap-2">
