@@ -16,6 +16,7 @@ import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { MemoRefineChat } from "@/components/memo/memo-refine-chat"
 import { MemoChatHistory } from "@/components/memo/memo-chat-history"
+import { useIsMobile } from "@/hooks/useIsMobile"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
 
@@ -568,6 +569,7 @@ export function WishlistCardDetail({
   const [placementByItemId, setPlacementByItemId] = useState<Record<string, PlacementState>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
   const draftSourceIdRef = useRef<string | null>(null)
+  const isMobile = useIsMobile()
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
   const categoryOptions = useMemo(() => {
@@ -1000,13 +1002,35 @@ export function WishlistCardDetail({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1280px,calc(100vw-32px))] sm:px-6">
-        <SheetHeader className="px-0 pb-2 pt-4">
-          <SheetTitle className="text-left">メモを編集</SheetTitle>
+      <SheetContent
+        side={isMobile ? "bottom" : "right"}
+        className={cn(
+          isMobile
+            ? [
+                "h-[88dvh] max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
+                "shadow-[0_-18px_48px_rgba(0,0,0,0.55)]",
+                "[&>button]:right-3 [&>button]:top-3 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center",
+                "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5",
+              ]
+            : "w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1280px,calc(100vw-32px))] sm:px-6"
+        )}
+      >
+        {isMobile && (
+          <div className="flex justify-center pb-0.5 pt-1.5">
+            <div className="h-1 w-10 rounded-full bg-white/20" />
+          </div>
+        )}
+
+        <SheetHeader className={cn(isMobile ? "px-4 pb-2 pt-0" : "px-0 pb-2 pt-4")}>
+          <SheetTitle className={cn("text-left", isMobile && "pr-12 text-base text-neutral-50")}>メモを編集</SheetTitle>
         </SheetHeader>
 
-        <div className="grid gap-4 pb-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)] xl:items-start">
-          <div className="min-w-0 space-y-4">
+        <div className={cn(
+          isMobile
+            ? "min-h-0 flex-1 overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]"
+            : "grid gap-4 pb-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)] xl:items-start"
+        )}>
+          <div className={cn("min-w-0", isMobile ? "space-y-3" : "space-y-4")}>
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2">
             <label className="min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
@@ -1207,7 +1231,7 @@ export function WishlistCardDetail({
           <MemoChatHistory memoId={item.id} />
           </div>
 
-          <div className="min-w-0 space-y-4 xl:sticky xl:top-0">
+          <div className={cn("min-w-0", isMobile ? "mt-3 space-y-3" : "space-y-4 xl:sticky xl:top-0")}>
           <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
               <Label className="flex items-center gap-1.5">

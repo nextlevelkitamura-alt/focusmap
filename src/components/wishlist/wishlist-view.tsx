@@ -1859,17 +1859,6 @@ export function WishlistView({
             />
             <Button
               type="button"
-              onClick={handleQuickAdd}
-              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
-              size="icon"
-              className="h-11 w-11 shrink-0 rounded-md"
-              aria-label="メモを追加"
-              title="メモを追加"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-            <Button
-              type="button"
               onClick={handleVoiceToggle}
               disabled={isTranscribing}
               variant={isRecording ? "destructive" : "outline"}
@@ -1885,6 +1874,17 @@ export function WishlistView({
               ) : (
                 <Mic className="h-4 w-4" />
               )}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleQuickAdd}
+              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
+              size="icon"
+              className="h-11 w-11 shrink-0 rounded-md"
+              aria-label="メモを追加"
+              title="メモを追加"
+            >
+              <Plus className="h-4 w-4" />
             </Button>
           </div>
           {isAnalyzing && (
