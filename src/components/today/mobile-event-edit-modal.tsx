@@ -411,10 +411,10 @@ export function MobileEventEditModal({
         ? `${format(scheduledDate, "M/d(E) HH:mm", { locale: ja })}〜${endTimeStr} · ${formatDuration(duration)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
         : `日時未設定 · ${formatDuration(duration)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
     const fieldClass = cn(
-        "min-h-[58px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-left",
+        "min-h-[52px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-1.5 text-left",
         "transition-colors active:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
     )
-    const fieldLabelClass = "mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-400"
+    const fieldLabelClass = "mb-0.5 flex items-center gap-1 text-[11px] font-medium text-neutral-400"
     const fieldValueClass = "flex min-w-0 items-center gap-1.5 text-sm font-semibold text-neutral-50"
     const selectClass = cn(
         "w-full appearance-none border-0 bg-transparent p-0 pr-5 text-sm font-semibold text-neutral-50 outline-none",
@@ -430,16 +430,16 @@ export function MobileEventEditModal({
 
             <div
                 ref={sheetRef}
-                className="fixed inset-x-0 bottom-0 z-[60] max-h-[88dvh] overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300 flex flex-col"
+                className="fixed inset-x-0 bottom-0 z-[60] flex h-[88dvh] max-h-[88dvh] flex-col overflow-hidden rounded-t-2xl border border-neutral-800 bg-neutral-950 text-neutral-50 shadow-[0_-18px_48px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
             >
-                <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
+                <div className="flex flex-shrink-0 justify-center pb-0.5 pt-1.5">
                     <div className="w-10 h-1 rounded-full bg-white/20" />
                 </div>
 
-                <div className="relative flex items-center px-4 pb-3 pt-1 flex-shrink-0">
+                <div className="relative flex flex-shrink-0 items-center px-4 pb-2 pt-0">
                     <h3 className="pr-12 text-base font-semibold text-neutral-50">
                         {isTask ? "タスクを編集" : "予定を編集"}
                     </h3>
@@ -453,10 +453,10 @@ export function MobileEventEditModal({
                     </button>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
-                    <div className="space-y-3">
+                <div className="min-h-0 flex-1 overflow-hidden px-4 pb-2">
+                    <div className="flex min-h-0 flex-col gap-2">
                     <div>
-                        <label className="mb-1 block text-[11px] font-medium text-neutral-400">タイトル</label>
+                        <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>
                         <input
                             type="text"
                             value={title}
@@ -467,12 +467,12 @@ export function MobileEventEditModal({
                                 e.preventDefault()
                                 if (title.trim() && !isDeleting) handleSave()
                             }}
-                            className="h-12 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-base text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
+                            className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
                             placeholder="例: SNS投稿を作る"
                         />
                     </div>
 
-                    <label className={cn(fieldClass, "relative block min-h-[66px] pr-9")}>
+                    <label className={cn(fieldClass, "relative block pr-9")}>
                         <span className="pointer-events-none block">
                             <span className={fieldLabelClass}>
                                 <CalendarIcon className="h-3 w-3" />
@@ -504,7 +504,7 @@ export function MobileEventEditModal({
                         >
                             <span className={fieldLabelClass}>
                                 <Timer className="h-3 w-3" />
-                                所要
+                                所要時間
                             </span>
                             <span className={fieldValueClass}>
                                 {formatDuration(duration)}
@@ -538,8 +538,8 @@ export function MobileEventEditModal({
                     </div>
 
                     {isDurationExpanded && (
-                        <div className="rounded-2xl border border-white/10 bg-black px-3 py-3 shadow-inner">
-                            <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="rounded-xl border border-white/10 bg-black px-3 py-2 shadow-inner">
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
                                 <span className="text-[11px] font-medium text-neutral-400">所要時間</span>
                                 <span className="text-xs font-semibold text-neutral-100">{formatDuration(duration)}</span>
                             </div>
@@ -550,7 +550,7 @@ export function MobileEventEditModal({
                                         type="button"
                                         onClick={() => handleDurationPresetSelect(option.value)}
                                         className={cn(
-                                            "min-h-10 rounded-lg border px-2 text-xs font-semibold transition-colors",
+                                            "min-h-9 rounded-lg border px-2 text-xs font-semibold transition-colors",
                                             duration === option.value
                                                 ? "border-white bg-white text-neutral-950"
                                                 : "border-white/10 bg-white/[0.055] text-neutral-200 active:bg-white/[0.1]"
@@ -562,7 +562,7 @@ export function MobileEventEditModal({
                                 <button
                                     type="button"
                                     onClick={() => setIsCustomDurationPickerOpen(true)}
-                                    className="min-h-10 rounded-lg border border-white/10 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-200 active:bg-white/[0.1]"
+                                    className="min-h-9 rounded-lg border border-white/10 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-200 active:bg-white/[0.1]"
                                 >
                                     カスタム
                                 </button>
@@ -582,7 +582,7 @@ export function MobileEventEditModal({
                     />
 
                     {availableCalendars.length > 0 && (
-                        <div className={cn(fieldClass, "min-h-[66px]")}>
+                        <div className={fieldClass}>
                             <label className={fieldLabelClass}>
                                 <CalendarIcon className="h-3 w-3" />
                                 追加先カレンダー
@@ -663,7 +663,7 @@ export function MobileEventEditModal({
 
                     {onCreateSubTask && (
                         <div className={cn(fieldClass, "min-h-0")}>
-                            <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
                                 <label className={fieldLabelClass}>
                                     <ListTodo className="h-3 w-3" />
                                     サブタスク
@@ -671,7 +671,7 @@ export function MobileEventEditModal({
                                 <span className="text-xs font-semibold text-neutral-100">{localChildTasks.length}件</span>
                             </div>
                             {localChildTasks.length > 0 && (
-                                <div className="mb-2 space-y-1">
+                                <div className="mb-1.5 max-h-24 space-y-1 overflow-y-auto overscroll-contain pr-0.5">
                                     {localChildTasks.map(child => (
                                         <div key={child.id} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-1.5">
                                             <button
@@ -740,7 +740,7 @@ export function MobileEventEditModal({
                     )}
 
                     <div>
-                        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-400">
+                        <label className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-neutral-400">
                             <StickyNote className="h-3 w-3" />
                             メモ（任意）
                         </label>
@@ -753,8 +753,8 @@ export function MobileEventEditModal({
                                     setEventDescription(e.target.value)
                                 }
                             }}
-                            rows={2}
-                            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2.5 text-sm leading-relaxed text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
+                            rows={1}
+                            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-sm leading-relaxed text-neutral-50 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
                             placeholder="メモを入力..."
                         />
                     </div>
@@ -762,8 +762,8 @@ export function MobileEventEditModal({
                     </div>
                 </div>
 
-                <div className="flex-shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2">
-                    <div className="mb-2 truncate text-center text-[11px] text-neutral-400">
+                <div className="flex-shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-1.5">
+                    <div className="mb-1.5 truncate text-center text-[11px] text-neutral-400">
                         {schedulePreview}
                     </div>
                     <div className="flex items-center gap-2">
@@ -773,7 +773,7 @@ export function MobileEventEditModal({
                                 onClick={handleDelete}
                                 disabled={isDeleting}
                                 aria-label="削除"
-                                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10 text-red-300 transition-colors active:bg-red-500/20 disabled:opacity-60"
+                                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10 text-red-300 transition-colors active:bg-red-500/20 disabled:opacity-60"
                             >
                                 {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                             </button>
@@ -783,7 +783,7 @@ export function MobileEventEditModal({
                             onClick={handleSave}
                             disabled={!title.trim() || isDeleting}
                             className={cn(
-                                "h-12 flex-1 rounded-xl text-base font-semibold transition-colors",
+                                "h-11 flex-1 rounded-xl text-base font-semibold transition-colors",
                                 !title.trim() || isDeleting
                                     ? "bg-white/10 text-neutral-500"
                                     : "bg-white text-neutral-950 active:bg-neutral-300"

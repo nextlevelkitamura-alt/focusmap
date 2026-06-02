@@ -208,10 +208,10 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
         : `日時未設定 · ${formatDuration(estimatedTime)}${selectedCalendar ? ` · ${selectedCalendar.name}` : ""}`
 
     const fieldClass = cn(
-        "min-h-[58px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-left",
+        "min-h-[52px] rounded-xl border border-white/10 bg-white/[0.045] px-3 py-1.5 text-left",
         "transition-colors active:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
     )
-    const fieldLabelClass = "mb-1 flex items-center gap-1 text-[11px] font-medium text-neutral-400"
+    const fieldLabelClass = "mb-0.5 flex items-center gap-1 text-[11px] font-medium text-neutral-400"
     const fieldValueClass = "flex min-w-0 items-center gap-1.5 text-sm font-semibold text-neutral-50"
     const selectClass = cn(
         "w-full appearance-none border-0 bg-transparent p-0 pr-5 text-sm font-semibold text-neutral-50 outline-none",
@@ -241,27 +241,27 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                 <SheetContent
                     side="bottom"
                     className={cn(
-                        "max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
+                        "h-[88dvh] max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
                         "shadow-[0_-18px_48px_rgba(0,0,0,0.55)]",
                         "[&>button]:right-3 [&>button]:top-3 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center",
                         "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5"
                     )}
                 >
-                    <div className="flex justify-center pt-2 pb-1">
+                    <div className="flex justify-center pb-0.5 pt-1.5">
                         <div className="w-10 h-1 rounded-full bg-white/20" />
                     </div>
 
-                    <SheetHeader className="px-4 pb-3 pt-1">
+                    <SheetHeader className="px-4 pb-2 pt-0">
                         <div className="flex items-center pr-12">
                             <SheetTitle className="text-base text-neutral-50">カレンダーにタスク追加</SheetTitle>
                         </div>
                         <SheetDescription className="sr-only">新しいタスクを追加します</SheetDescription>
                     </SheetHeader>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
-                        <div className="space-y-3">
+                    <div className="min-h-0 flex-1 overflow-hidden px-4 pb-2">
+                        <div className="flex min-h-0 flex-col gap-2">
                             <div>
-                                <label className="mb-1 block text-[11px] font-medium text-neutral-400">タイトル</label>
+                                <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>
                                 <Input
                                     ref={titleInputRef}
                                     placeholder="例: SNS投稿を作る"
@@ -269,14 +269,14 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                     onChange={(e) => setTitle(e.target.value)}
                                     onKeyDown={handleKeyDown}
                                     className={cn(
-                                        "h-12 rounded-xl border-white/10 bg-white/[0.055] text-base text-neutral-50",
+                                        "h-10 rounded-xl border-white/10 bg-white/[0.055] text-sm text-neutral-50",
                                         "placeholder:text-neutral-500 focus-visible:ring-white/25"
                                     )}
                                     autoComplete="off"
                                 />
                             </div>
 
-                            <label className={cn(fieldClass, "relative block min-h-[66px] pr-9")}>
+                            <label className={cn(fieldClass, "relative block pr-9")}>
                                 <span className="pointer-events-none block">
                                     <span className={fieldLabelClass}>
                                         <Calendar className="h-3 w-3" />
@@ -308,7 +308,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                 >
                                     <span className={fieldLabelClass}>
                                         <Timer className="h-3 w-3" />
-                                        所要
+                                        所要時間
                                     </span>
                                     <span className={fieldValueClass}>
                                         {formatDuration(estimatedTime)}
@@ -342,8 +342,8 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                             </div>
 
                             {isDurationExpanded && (
-                                <div className="rounded-2xl border border-white/10 bg-black px-3 py-3 shadow-inner">
-                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                <div className="rounded-xl border border-white/10 bg-black px-3 py-2 shadow-inner">
+                                    <div className="mb-1.5 flex items-center justify-between gap-2">
                                         <span className="text-[11px] font-medium text-neutral-400">所要時間</span>
                                         <span className="text-xs font-semibold text-neutral-100">{formatDuration(estimatedTime)}</span>
                                     </div>
@@ -354,7 +354,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                                 type="button"
                                                 onClick={() => handleDurationPresetSelect(option.value)}
                                                 className={cn(
-                                                    "min-h-10 rounded-lg border px-2 text-xs font-semibold transition-colors",
+                                                    "min-h-9 rounded-lg border px-2 text-xs font-semibold transition-colors",
                                                     estimatedTime === option.value
                                                         ? "border-white bg-white text-neutral-950"
                                                         : "border-white/10 bg-white/[0.055] text-neutral-200 active:bg-white/[0.1]"
@@ -366,7 +366,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                         <button
                                             type="button"
                                             onClick={() => setIsCustomDurationPickerOpen(true)}
-                                            className="min-h-10 rounded-lg border border-white/10 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-200 active:bg-white/[0.1]"
+                                            className="min-h-9 rounded-lg border border-white/10 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-200 active:bg-white/[0.1]"
                                         >
                                             カスタム
                                         </button>
@@ -385,7 +385,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                 trigger={<button type="button" className="hidden" aria-hidden="true" tabIndex={-1} />}
                             />
 
-                            <div className={cn(fieldClass, "min-h-[66px]")}>
+                            <div className={fieldClass}>
                                 <label className={fieldLabelClass}>
                                     <Calendar className="h-3 w-3" />
                                     追加先カレンダー
@@ -414,7 +414,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                             </div>
 
                             <div className={cn(fieldClass, "min-h-0")}>
-                                <div className="mb-2 flex items-center justify-between gap-2">
+                                <div className="mb-1.5 flex items-center justify-between gap-2">
                                     <label className={fieldLabelClass}>
                                         <ListTodo className="h-3 w-3" />
                                         サブタスク
@@ -422,7 +422,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                     <span className="text-xs font-semibold text-neutral-100">{subtasks.length}件</span>
                                 </div>
                                 {subtasks.length > 0 && (
-                                    <div className="mb-2 space-y-1">
+                                    <div className="mb-1.5 max-h-24 space-y-1 overflow-y-auto overscroll-contain pr-0.5">
                                         {subtasks.map((st, idx) => (
                                             <div
                                                 key={idx}
@@ -475,7 +475,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                             </div>
 
                             <div>
-                                <label className="mb-1 block text-[11px] font-medium text-neutral-400">メモ（任意）</label>
+                                <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">メモ（任意）</label>
                                 <textarea
                                     ref={memoRef}
                                     placeholder="メモを入力..."
@@ -487,7 +487,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                     }}
                                     rows={1}
                                     className={cn(
-                                        "w-full resize-none overflow-hidden rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2.5 text-sm leading-relaxed text-neutral-50",
+                                        "w-full resize-none overflow-hidden rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-sm leading-relaxed text-neutral-50",
                                         "placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/25"
                                     )}
                                 />
@@ -495,15 +495,15 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                         </div>
                     </div>
 
-                    <div className="shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-2">
-                        <div className="mb-2 truncate text-center text-[11px] text-neutral-400">
+                    <div className="shrink-0 border-t border-white/10 bg-neutral-950 px-4 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-1.5">
+                        <div className="mb-1.5 truncate text-center text-[11px] text-neutral-400">
                             {schedulePreview}
                         </div>
                         <Button
                             onClick={handleSubmit}
                             disabled={!title.trim() || isSubmitting}
                             className={cn(
-                                "h-12 w-full rounded-xl text-base font-semibold",
+                                "h-11 w-full rounded-xl text-base font-semibold",
                                 !title.trim() || isSubmitting
                                     ? "bg-white/10 text-neutral-500"
                                     : "bg-white text-neutral-950 hover:bg-neutral-200 active:bg-neutral-300"
