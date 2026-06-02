@@ -191,7 +191,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
 
     const handleDurationPresetSelect = useCallback((minutes: number) => {
         setEstimatedTime(minutes)
-        setIsDurationExpanded(true)
+        setIsDurationExpanded(false)
     }, [])
 
     const handleFabClick = useCallback(() => {
@@ -363,13 +363,6 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                                 {option.label}
                                             </button>
                                         ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsCustomDurationPickerOpen(true)}
-                                            className="min-h-10 rounded-lg border border-white/15 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-100 active:bg-white/[0.1]"
-                                        >
-                                            カスタム
-                                        </button>
                                     </div>
                                     <button
                                         type="button"
@@ -386,7 +379,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                 duration={estimatedTime}
                                 onDurationChange={(minutes) => {
                                     setEstimatedTime(minutes)
-                                    setIsDurationExpanded(true)
+                                    setIsDurationExpanded(false)
                                 }}
                                 open={isCustomDurationPickerOpen}
                                 onOpenChange={setIsCustomDurationPickerOpen}

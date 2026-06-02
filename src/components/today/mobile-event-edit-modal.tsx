@@ -295,7 +295,7 @@ export function MobileEventEditModal({
 
     const handleDurationPresetSelect = useCallback((minutes: number) => {
         setDuration(minutes)
-        setIsDurationExpanded(true)
+        setIsDurationExpanded(false)
     }, [])
 
     // Handle swipe down to close
@@ -559,13 +559,6 @@ export function MobileEventEditModal({
                                         {option.label}
                                     </button>
                                 ))}
-                                <button
-                                    type="button"
-                                    onClick={() => setIsCustomDurationPickerOpen(true)}
-                                    className="min-h-10 rounded-lg border border-white/15 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-100 active:bg-white/[0.1]"
-                                >
-                                    カスタム
-                                </button>
                             </div>
                             <button
                                 type="button"
@@ -582,7 +575,7 @@ export function MobileEventEditModal({
                         duration={duration}
                         onDurationChange={(minutes) => {
                             setDuration(minutes)
-                            setIsDurationExpanded(true)
+                            setIsDurationExpanded(false)
                         }}
                         open={isCustomDurationPickerOpen}
                         onOpenChange={setIsCustomDurationPickerOpen}
