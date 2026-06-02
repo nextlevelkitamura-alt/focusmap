@@ -87,6 +87,7 @@ const processLogs = [];
 const hasSingleInstance = app.requestSingleInstanceLock();
 let lastExternalAuthUrl = '';
 let lastExternalAuthAt = 0;
+let dashboardLoadAttemptedAt = 0;
 
 function focusWindow(win) {
   if (!win || win.isDestroyed()) return false;
@@ -109,6 +110,14 @@ function log(scope, message) {
   processLogs.push(line);
   if (processLogs.length > LOG_LIMIT) processLogs.splice(0, processLogs.length - LOG_LIMIT);
   statusWindow?.webContents.send('focusmap-desktop:log', line);
+
+  try {
+    const logDir = path.join(os.homedir(), '.focusmap', 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'desktop-app.log'), `${line}\n`);
+  } catch {
+    // Keep UI startup independent from filesystem logging.
+  }
 }
 
 function appendProcessLogs(scope, child) {
@@ -205,6 +214,32 @@ function isLocalAppOrigin() {
 function isSameOrigin(urlString, origin) {
   try {
     return new URL(urlString).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+function appOriginUrl() {
+  try {
+    return new URL(APP_ORIGIN);
+  } catch {
+    return null;
+  }
+}
+
+function appOriginHost() {
+  const url = appOriginUrl();
+  return url?.hostname || '127.0.0.1';
+}
+
+function dashboardUrl(origin = APP_ORIGIN) {
+  return `${origin}/dashboard?desktop=1&source=mac`;
+}
+
+function isLoadingScreenUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'file:' && url.pathname.endsWith('/loading.html');
   } catch {
     return false;
   }
@@ -311,6 +346,50 @@ async function loadUrlAllowingRedirect(win, url) {
     if (!isNavigationAbortError(error)) throw error;
     log('app', `navigation redirected or replaced: ${url}`);
   }
+}
+
+function loadDashboardSoon(reason) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const currentUrl = mainWindow.webContents.getURL();
+  if (isSameOrigin(currentUrl, APP_ORIGIN) && !isLoadingScreenUrl(currentUrl)) return;
+
+  const now = Date.now();
+  if (now - dashboardLoadAttemptedAt < 1500) return;
+  dashboardLoadAttemptedAt = now;
+
+  void loadUrlAllowingRedirect(mainWindow, dashboardUrl()).catch((error) => {
+    log('app', `dashboard load failed (${reason}): ${error.message}`);
+  });
+}
+
+async function loadDashboardWhenReady(reason) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (isLocalAppOrigin() && await tcpReady(appOriginHost(), APP_PORT, 250)) {
+    // If the local server is already accepting connections, show the dashboard
+    // immediately and let the health check finish in the background.
+    loadDashboardSoon(`${reason}:tcp-ready`);
+  }
+
+  const origin = await ensureFocusmapApp();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const currentUrl = mainWindow.webContents.getURL();
+    if (!isSameOrigin(currentUrl, origin) || isLoadingScreenUrl(currentUrl)) {
+      await loadUrlAllowingRedirect(mainWindow, dashboardUrl(origin));
+    }
+  }
+}
+
+function focusAndRetryMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  focusWindow(mainWindow);
+  const currentUrl = mainWindow.webContents.getURL();
+  if (isLoadingScreenUrl(currentUrl)) {
+    void loadDashboardWhenReady('focus-retry').catch((error) => {
+      log('app', error instanceof Error ? error.message : String(error));
+    });
+  }
+  return true;
 }
 
 function keepMainWindowOnLocalLogin() {
@@ -581,7 +660,7 @@ async function consumeExternalAuthSession(_event, nonce, originInput) {
 
 async function createMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    focusWindow(mainWindow);
+    focusAndRetryMainWindow();
     return;
   }
 
@@ -624,10 +703,7 @@ async function createMainWindow() {
   });
 
   try {
-    const origin = await ensureFocusmapApp();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      await loadUrlAllowingRedirect(mainWindow, `${origin}/dashboard?desktop=1&source=mac`);
-    }
+    await loadDashboardWhenReady('create-main-window');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log('app', message);
@@ -699,7 +775,7 @@ if (!hasSingleInstance) {
 }
 
 app.on('second-instance', () => {
-  if (focusWindow(mainWindow) || focusWindow(statusWindow)) return;
+  if (focusAndRetryMainWindow() || focusWindow(statusWindow)) return;
   createMainWindow().catch((error) => {
     log('app', error instanceof Error ? error.message : String(error));
     createStatusWindow();
@@ -730,6 +806,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
+  if (focusAndRetryMainWindow()) return;
   createMainWindow();
 });
 
