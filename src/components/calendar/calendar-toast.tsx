@@ -11,9 +11,11 @@ interface ToastProps {
   message: string
   duration?: number
   onClose?: () => void
+  actionLabel?: string
+  onAction?: () => void
 }
 
-export function CalendarToast({ type, message, duration = 3000, onClose }: ToastProps) {
+export function CalendarToast({ type, message, duration = 3000, onClose, actionLabel, onAction }: ToastProps) {
   const [isVisible, setIsVisible] = useState(true)
 
   useEffect(() => {
@@ -40,6 +42,18 @@ export function CalendarToast({ type, message, duration = 3000, onClose }: Toast
     >
       {icons[type]}
       <span className="text-sm font-medium">{message}</span>
+      {actionLabel && onAction && (
+        <button
+          onClick={() => {
+            onAction()
+            setIsVisible(false)
+            setTimeout(() => onClose?.(), 300)
+          }}
+          className="rounded-md border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted"
+        >
+          {actionLabel}
+        </button>
+      )}
       <button
         onClick={() => {
           setIsVisible(false)

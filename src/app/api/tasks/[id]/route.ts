@@ -1,22 +1,266 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { deleteTaskFromCalendar } from '@/lib/google-calendar';
+import {
+  readMindmapLinks,
+  removeManualMappedColumn,
+  removeMindmapLinksForTaskIds,
+  shouldPreserveMemoColumn,
+} from '@/lib/mindmap-memo-links';
+import type { Database } from '@/types/database';
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+type MemoNodeLinkRow = Database['public']['Tables']['memo_node_links']['Row'];
+type MemoItemRow = Database['public']['Tables']['memo_items']['Row'];
+type WishlistMemoSnapshot = Pick<
+  Database['public']['Tables']['ideal_goals']['Row'],
+  'id' | 'is_completed' | 'is_today' | 'memo_status' | 'scheduled_at' | 'google_event_id' | 'ai_source_payload'
+>;
+type DeletedTaskMemoRepairSnapshot = {
+  deleted_task_ids: string[];
+  structured_links: MemoNodeLinkRow[];
+  memo_items: MemoItemRow[];
+  wishlist_items: WishlistMemoSnapshot[];
+};
 
 function hasMindmapTaskLink(payload: unknown, taskId: string): boolean {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
-  const links = (payload as { mindmap_links?: unknown }).mindmap_links;
-  if (!Array.isArray(links)) return false;
-  return links.some(link =>
-    !!link &&
-    typeof link === 'object' &&
-    (link as { task_id?: unknown }).task_id === taskId
+  return readMindmapLinks(payload).some(link => link.task_id === taskId);
+}
+
+function hasAnyMindmapTaskLink(payload: unknown, taskIds: Set<string>): boolean {
+  return readMindmapLinks(payload).some(link =>
+    typeof link.task_id === 'string' && taskIds.has(link.task_id)
   );
+}
+
+function hasManualMappedColumn(payload: unknown): boolean {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    (payload as { manual_column?: unknown }).manual_column === 'mapped'
+  );
+}
+
+async function getDeletedTaskIds(
+  supabase: SupabaseServerClient,
+  userId: string,
+  rootTaskId: string,
+) {
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id, parent_task_id')
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  if (error || !data) {
+    if (error) console.error('[tasks/[id] DELETE] Failed to load task descendants:', error);
+    return [rootTaskId];
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  for (const task of data) {
+    if (!task.parent_task_id) continue;
+    const children = childrenByParent.get(task.parent_task_id) ?? [];
+    children.push(task.id);
+    childrenByParent.set(task.parent_task_id, children);
+  }
+
+  const ids: string[] = [];
+  const visit = (taskId: string) => {
+    ids.push(taskId);
+    for (const childId of childrenByParent.get(taskId) ?? []) {
+      visit(childId);
+    }
+  };
+  visit(rootTaskId);
+  return Array.from(new Set(ids));
+}
+
+async function cleanupDeletedTaskMemoState(
+  supabase: SupabaseServerClient,
+  userId: string,
+  deletedTaskIds: string[],
+) {
+  const deletedTaskIdSet = new Set(deletedTaskIds);
+  const now = new Date().toISOString();
+  const snapshot: DeletedTaskMemoRepairSnapshot = {
+    deleted_task_ids: deletedTaskIds,
+    structured_links: [],
+    memo_items: [],
+    wishlist_items: [],
+  };
+
+  const { data: structuredLinks, error: structuredLinksError } = await supabase
+    .from('memo_node_links')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('link_type', 'mindmap_node')
+    .eq('status', 'active')
+    .in('task_id', deletedTaskIds);
+
+  if (structuredLinksError) {
+    console.error('[tasks/[id] DELETE] Failed to load structured memo links:', structuredLinksError);
+  }
+
+  const activeStructuredLinks = structuredLinks ?? [];
+  snapshot.structured_links = activeStructuredLinks as MemoNodeLinkRow[];
+  const structuredLinkIds = activeStructuredLinks
+    .map(link => link.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  const memoItemIds = Array.from(new Set(
+    activeStructuredLinks
+      .map(link => link.memo_item_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  ));
+  const wishlistSourceIds = new Set(
+    activeStructuredLinks
+      .filter(link => link.source_type === 'wishlist')
+      .map(link => link.source_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  );
+
+  if (memoItemIds.length > 0) {
+    const { data: memoItems, error: memoItemsError } = await supabase
+      .from('memo_items')
+      .select('*')
+      .eq('user_id', userId)
+      .in('id', memoItemIds);
+    if (memoItemsError) {
+      console.error('[tasks/[id] DELETE] Failed to snapshot memo_items:', memoItemsError);
+    } else {
+      snapshot.memo_items = (memoItems ?? []) as MemoItemRow[];
+    }
+  }
+
+  if (structuredLinkIds.length > 0) {
+    const { error } = await supabase
+      .from('memo_node_links')
+      .update({ status: 'archived', updated_at: now })
+      .eq('user_id', userId)
+      .in('id', structuredLinkIds);
+    if (error) {
+      console.error('[tasks/[id] DELETE] Failed to archive memo_node_links:', error);
+    }
+  }
+
+  const { data: legacyCandidates, error: legacyError } = await supabase
+    .from('ideal_goals')
+    .select('id, is_completed, is_today, memo_status, scheduled_at, google_event_id, ai_source_payload')
+    .eq('user_id', userId)
+    .in('status', ['wishlist', 'memo'])
+    .not('ai_source_payload', 'is', null);
+
+  if (legacyError) {
+    console.error('[tasks/[id] DELETE] Failed to load legacy memo links:', legacyError);
+  } else {
+    for (const memo of legacyCandidates ?? []) {
+      if (hasAnyMindmapTaskLink(memo.ai_source_payload, deletedTaskIdSet)) {
+        wishlistSourceIds.add(memo.id);
+      }
+    }
+  }
+
+  const affectedWishlistIds = [...wishlistSourceIds];
+  if (affectedWishlistIds.length === 0) return snapshot;
+
+  const { data: wishlistItems, error: wishlistSnapshotError } = await supabase
+    .from('ideal_goals')
+    .select('id, is_completed, is_today, memo_status, scheduled_at, google_event_id, ai_source_payload')
+    .eq('user_id', userId)
+    .in('id', affectedWishlistIds);
+
+  if (wishlistSnapshotError) {
+    console.error('[tasks/[id] DELETE] Failed to snapshot linked wishlist items:', wishlistSnapshotError);
+    return snapshot;
+  }
+
+  const wishlistRows = wishlistItems ?? [];
+  snapshot.wishlist_items = wishlistRows as WishlistMemoSnapshot[];
+
+  const { data: remainingStructuredLinks, error: remainingStructuredError } = await supabase
+    .from('memo_node_links')
+    .select('source_id, task_id')
+    .eq('user_id', userId)
+    .eq('source_type', 'wishlist')
+    .eq('link_type', 'mindmap_node')
+    .eq('status', 'active')
+    .in('source_id', affectedWishlistIds);
+
+  if (remainingStructuredError) {
+    console.error('[tasks/[id] DELETE] Failed to load remaining structured memo links:', remainingStructuredError);
+  }
+
+  const remainingStructuredBySourceId = new Map<string, number>();
+  for (const link of remainingStructuredLinks ?? []) {
+    if (!link.source_id || !link.task_id || deletedTaskIdSet.has(link.task_id)) continue;
+    remainingStructuredBySourceId.set(link.source_id, (remainingStructuredBySourceId.get(link.source_id) ?? 0) + 1);
+  }
+
+  await Promise.all(wishlistRows.map(async memo => {
+    const legacyRepair = removeMindmapLinksForTaskIds(memo.ai_source_payload, deletedTaskIdSet);
+    const remainingLegacyCount = legacyRepair.remainingLinks.filter(link => typeof link.task_id === 'string').length;
+    const hasRemainingMap = remainingLegacyCount > 0 || (remainingStructuredBySourceId.get(memo.id) ?? 0) > 0;
+    let nextPayload: Record<string, unknown> = legacyRepair.payload;
+    if (!hasRemainingMap) {
+      nextPayload = removeManualMappedColumn(nextPayload);
+    }
+
+    const shouldResetToUnsorted =
+      !hasRemainingMap &&
+      (legacyRepair.removedLinks.length > 0 || hasManualMappedColumn(memo.ai_source_payload) || wishlistSourceIds.has(memo.id)) &&
+      !shouldPreserveMemoColumn(memo);
+    const updates: Record<string, unknown> = {
+      ai_source_payload: nextPayload,
+      updated_at: now,
+    };
+    if (shouldResetToUnsorted) updates.memo_status = 'unsorted';
+
+    const { error } = await supabase
+      .from('ideal_goals')
+      .update(updates)
+      .eq('id', memo.id)
+      .eq('user_id', userId);
+    if (error) {
+      console.error('[tasks/[id] DELETE] Failed to reset linked wishlist memo:', error);
+    }
+  }));
+
+  return snapshot;
+}
+
+async function restoreDeletedTaskMemoStateSnapshot(
+  supabase: SupabaseServerClient,
+  userId: string,
+  snapshot: DeletedTaskMemoRepairSnapshot,
+) {
+  const structuredLinks = snapshot.structured_links ?? [];
+  if (structuredLinks.length > 0) {
+    const { error } = await supabase.from('memo_node_links').upsert(structuredLinks);
+    if (error) console.error('[tasks/[id] DELETE] Failed to restore structured memo links:', error);
+  }
+
+  const memoItems = snapshot.memo_items ?? [];
+  if (memoItems.length > 0) {
+    const { error } = await supabase.from('memo_items').upsert(memoItems);
+    if (error) console.error('[tasks/[id] DELETE] Failed to restore memo_items:', error);
+  }
+
+  const wishlistItems = snapshot.wishlist_items ?? [];
+  await Promise.all(wishlistItems.map(async item => {
+    if (typeof item.id !== 'string') return;
+    const { id, ...updates } = item;
+    const { error } = await supabase
+      .from('ideal_goals')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', userId);
+    if (error) console.error('[tasks/[id] DELETE] Failed to restore wishlist memo:', error);
+  }));
 }
 
 function normalizeTokyoDateString(value: unknown): string | null {
@@ -269,6 +513,9 @@ export async function DELETE(
       }
     }
 
+    const deletedTaskIds = await getDeletedTaskIds(supabase, user.id, taskId);
+    const memoRepairSnapshot = await cleanupDeletedTaskMemoState(supabase, user.id, deletedTaskIds);
+
     // タスクを削除
     const { error: deleteError } = await supabase
       .from('tasks')
@@ -277,6 +524,7 @@ export async function DELETE(
       .eq('user_id', user.id);
 
     if (deleteError) {
+      await restoreDeletedTaskMemoStateSnapshot(supabase, user.id, memoRepairSnapshot);
       console.error('[tasks/[id] DELETE] Failed to delete task:', deleteError);
       return NextResponse.json(
         {
@@ -294,7 +542,8 @@ export async function DELETE(
 
     return NextResponse.json({
       success: true,
-      message: 'Task deleted successfully'
+      message: 'Task deleted successfully',
+      memo_repair: memoRepairSnapshot,
     });
   } catch (error: unknown) {
     console.error('[tasks/[id] DELETE] Error:', error);

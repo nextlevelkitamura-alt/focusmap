@@ -1,19 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { upsertMemoTags } from '@/lib/memo-tags-server'
+import {
+  getMindmapTaskIdsFromPayload,
+  hasManualMappedColumn,
+  keepOnlyExistingMindmapLinks,
+  removeManualMappedColumn,
+  shouldPreserveMemoColumn,
+} from '@/lib/mindmap-memo-links'
 
 type WishlistRow = Record<string, unknown> & {
   id: string
   ai_source_payload?: unknown
+  is_completed?: boolean | null
+  is_today?: boolean | null
+  memo_status?: string | null
+  scheduled_at?: string | null
+  google_event_id?: string | null
 }
 
-function readMindmapLinks(payload: unknown): Array<{ task_id?: unknown; linked_at?: unknown }> {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return []
-  const links = (payload as { mindmap_links?: unknown }).mindmap_links
-  if (!Array.isArray(links)) return []
-  return links.filter((link): link is { task_id?: unknown; linked_at?: unknown } =>
-    !!link && typeof link === 'object' && !Array.isArray(link),
-  )
+type StructuredMindmapLink = {
+  id: string
+  source_id: string
+  task_id: string | null
+  created_at: string | null
+}
+
+async function fetchExistingTaskIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  taskIds: string[],
+) {
+  const uniqueIds = Array.from(new Set(taskIds))
+  if (uniqueIds.length === 0) return new Set<string>()
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id')
+    .eq('user_id', userId)
+    .in('id', uniqueIds)
+    .is('deleted_at', null)
+
+  if (error) {
+    console.error('[wishlist] Failed to verify mindmap task links:', error)
+    // 検証に失敗した時は破壊的な自動修復を避ける。
+    return new Set(uniqueIds)
+  }
+
+  return new Set((data ?? []).map(task => task.id).filter((id): id is string => typeof id === 'string'))
+}
+
+async function archiveStaleStructuredLinks(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  linkIds: string[],
+) {
+  if (linkIds.length === 0) return
+  const { error } = await supabase
+    .from('memo_node_links')
+    .update({ status: 'archived', updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .in('id', linkIds)
+
+  if (error) {
+    console.error('[wishlist] Failed to archive stale memo_node_links:', error)
+  }
 }
 
 async function withMindmapLinkMetadata(
@@ -25,29 +76,43 @@ async function withMindmapLinkMetadata(
   if (items.length === 0) return items
 
   const ids = items.map(item => item.id)
-  const { data: structuredLinks } = await supabase
+  const { data: structuredLinksRaw } = await supabase
     .from('memo_node_links')
-    .select('source_id, task_id, created_at')
+    .select('id, source_id, task_id, created_at')
     .eq('user_id', userId)
     .eq('source_type', 'wishlist')
     .eq('link_type', 'mindmap_node')
     .eq('status', 'active')
     .in('source_id', ids)
 
+  const structuredLinks = (structuredLinksRaw ?? []) as StructuredMindmapLink[]
+  const allTaskIds = [
+    ...structuredLinks.map(link => link.task_id).filter((taskId): taskId is string => !!taskId),
+    ...items.flatMap(item => getMindmapTaskIdsFromPayload(item.ai_source_payload)),
+  ]
+  const existingTaskIds = await fetchExistingTaskIds(supabase, userId, allTaskIds)
+  const staleStructuredLinkIds = structuredLinks
+    .filter(link => !link.task_id || !existingTaskIds.has(link.task_id))
+    .map(link => link.id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  await archiveStaleStructuredLinks(supabase, userId, staleStructuredLinkIds)
+  const validStructuredLinks = structuredLinks.filter(link => link.task_id && existingTaskIds.has(link.task_id))
+
   const linkMetaBySourceId = new Map<string, { taskIds: Set<string>; count: number; linkedAt: string | null }>()
-  for (const link of structuredLinks ?? []) {
+  for (const link of validStructuredLinks) {
     if (!link.source_id) continue
     const current = linkMetaBySourceId.get(link.source_id) ?? { taskIds: new Set<string>(), count: 0, linkedAt: null }
     current.count += 1
     if (link.task_id) current.taskIds.add(link.task_id)
-    if (!current.linkedAt || new Date(link.created_at).getTime() > new Date(current.linkedAt).getTime()) {
+    if (link.created_at && (!current.linkedAt || new Date(link.created_at).getTime() > new Date(current.linkedAt).getTime())) {
       current.linkedAt = link.created_at
     }
     linkMetaBySourceId.set(link.source_id, current)
   }
 
-  return items.map(item => {
-    const legacyLinks = readMindmapLinks(item.ai_source_payload)
+  const repairedItems = await Promise.all(items.map(async item => {
+    const legacyRepair = keepOnlyExistingMindmapLinks(item.ai_source_payload, existingTaskIds)
+    const legacyLinks = legacyRepair.remainingLinks
     const legacyTaskIds = legacyLinks
       .map(link => link.task_id)
       .filter((taskId): taskId is string => typeof taskId === 'string' && taskId.length > 0)
@@ -59,13 +124,54 @@ async function withMindmapLinkMetadata(
     const taskIds = new Set([...(structuredMeta?.taskIds ?? []), ...legacyTaskIds])
     const linkedAtCandidates = [structuredMeta?.linkedAt ?? null, legacyLinkedAt].filter((value): value is string => !!value)
     const linkedAt = linkedAtCandidates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null
+
+    let repairedPayload: Record<string, unknown> = legacyRepair.payload
+    const structuredHadStale = structuredLinks.some(link =>
+      link.source_id === item.id && (!link.task_id || !existingTaskIds.has(link.task_id)),
+    )
+    const hadMappedState =
+      legacyRepair.removedLinks.length > 0 ||
+      structuredHadStale ||
+      hasManualMappedColumn(item.ai_source_payload)
+    if (taskIds.size === 0 && hadMappedState) {
+      repairedPayload = removeManualMappedColumn(repairedPayload)
+    }
+
+    const shouldResetToUnsorted = taskIds.size === 0 && hadMappedState && !shouldPreserveMemoColumn(item)
+    const shouldUpdatePayload =
+      legacyRepair.removedLinks.length > 0 ||
+      (taskIds.size === 0 && hasManualMappedColumn(item.ai_source_payload))
+    if (shouldUpdatePayload || shouldResetToUnsorted) {
+      const updates: Record<string, unknown> = {
+        ai_source_payload: repairedPayload,
+        updated_at: new Date().toISOString(),
+      }
+      if (shouldResetToUnsorted) updates.memo_status = 'unsorted'
+      const { error } = await supabase
+        .from('ideal_goals')
+        .update(updates)
+        .eq('id', item.id)
+        .eq('user_id', userId)
+      if (error) {
+        console.error('[wishlist] Failed to repair stale mindmap memo state:', error)
+      } else {
+        item = {
+          ...item,
+          ai_source_payload: repairedPayload,
+          ...(shouldResetToUnsorted ? { memo_status: 'unsorted' } : {}),
+        }
+      }
+    }
+
     return {
       ...item,
       mindmap_link_count: Math.max(taskIds.size, structuredMeta?.count ?? 0, legacyTaskIds.length),
       mindmap_linked_at: linkedAt,
       mindmap_task_ids: [...taskIds],
     }
-  })
+  }))
+
+  return repairedItems
 }
 
 export async function GET(request: NextRequest) {

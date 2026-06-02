@@ -6,11 +6,17 @@ const MAX_STACK_SIZE = 50
 const globalUndoStack: UndoableAction[] = []
 const globalRedoStack: UndoableAction[] = []
 let isGlobalUndoRedoing = false
+export const UNDOABLE_ACTION_EVENT = 'focusmap:undoable-action'
 
 export interface UndoableAction {
     description: string
     undo: () => Promise<void>
     redo: () => Promise<void>
+    toast?: {
+        message: string
+        actionLabel?: string
+        duration?: number
+    }
 }
 
 export interface UseUndoRedoReturn {
@@ -37,6 +43,17 @@ export function useUndoRedo(): UseUndoRedoReturn {
         }
         // 新しいアクション実行時はredoスタックをクリア
         redoStackRef.current.length = 0
+
+        if (action.toast && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(UNDOABLE_ACTION_EVENT, {
+                detail: {
+                    description: action.description,
+                    message: action.toast.message,
+                    actionLabel: action.toast.actionLabel,
+                    duration: action.toast.duration,
+                },
+            }))
+        }
     }, [])
 
     const undo = useCallback(async (): Promise<string | null> => {

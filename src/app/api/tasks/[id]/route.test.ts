@@ -66,13 +66,17 @@ vi.mock('@/utils/supabase/server', () => ({
         if (table === 'tasks') {
           return {
             // GET / DELETE の最初のタスク取得: .select().eq().eq().single()
-            select: () => ({
-              eq: () => ({
-                eq: () => ({
-                  single: () => Promise.resolve(getSelectResult()),
-                }),
-              }),
-            }),
+            select: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.in = () => builder
+              builder.is = () => Promise.resolve({
+                data: [{ id: 'task-1', parent_task_id: null }],
+                error: null,
+              })
+              builder.single = () => Promise.resolve(getSelectResult())
+              return builder
+            },
             // DELETE: .delete().eq().eq()
             delete: () => ({
               eq: () => ({
@@ -117,6 +121,17 @@ vi.mock('@/utils/supabase/server', () => ({
         }
         if (table === 'ideal_goals') {
           return {
+            select: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.in = () => builder
+              builder.not = () => Promise.resolve({ data: [], error: null })
+              builder.then = (
+                resolve: (value: { data: unknown[]; error: null }) => unknown,
+                reject?: (reason: unknown) => unknown
+              ) => Promise.resolve({ data: [], error: null }).then(resolve, reject)
+              return builder
+            },
             update: () => {
               const builder: Record<string, unknown> = {}
               builder.eq = () => builder
@@ -126,6 +141,34 @@ vi.mock('@/utils/supabase/server', () => ({
               ) => Promise.resolve({ error: null }).then(resolve, reject)
               return builder
             },
+          }
+        }
+        if (table === 'memo_node_links') {
+          return {
+            select: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.in = () => Promise.resolve({ data: [], error: null })
+              return builder
+            },
+            update: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.in = () => Promise.resolve({ error: null })
+              return builder
+            },
+            upsert: () => Promise.resolve({ error: null }),
+          }
+        }
+        if (table === 'memo_items') {
+          return {
+            select: () => {
+              const builder: Record<string, unknown> = {}
+              builder.eq = () => builder
+              builder.in = () => Promise.resolve({ data: [], error: null })
+              return builder
+            },
+            upsert: () => Promise.resolve({ error: null }),
           }
         }
         return {}

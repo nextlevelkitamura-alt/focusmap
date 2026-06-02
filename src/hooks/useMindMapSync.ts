@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { createClient } from '@/utils/supabase/client'
-import { Task } from '@/types/database'
+import type { Database, Task } from '@/types/database'
 import { useNotificationScheduler } from '@/hooks/useNotificationScheduler'
 import { useUndoRedo } from '@/hooks/useUndoRedo'
 import { deriveStageUpdate } from '@/lib/stage-utils'
-import { LINKED_TASK_STATUS_EVENT } from '@/lib/calendar-constants'
+import { LINKED_TASK_STATUS_EVENT, WISHLIST_REFRESH_EVENT } from '@/lib/calendar-constants'
 
 interface UseMindMapSyncProps {
     projectId: string | null
@@ -56,8 +56,20 @@ type TaskRealtimePayload = {
     old: Partial<Task>
 }
 
+type DeletedTaskMemoRepairSnapshot = {
+    deleted_task_ids?: string[]
+    structured_links?: Array<Record<string, unknown>>
+    memo_items?: Array<Record<string, unknown>>
+    wishlist_items?: Array<Record<string, unknown> & { id?: unknown }>
+}
+
 function withoutGoogleEventId(task: Task) {
     return { ...task, google_event_id: null }
+}
+
+function dispatchWishlistRefresh() {
+    if (typeof window === 'undefined') return
+    window.dispatchEvent(new CustomEvent(WISHLIST_REFRESH_EVENT))
 }
 
 export function useMindMapSync({
@@ -123,6 +135,39 @@ export function useMindMapSync({
         allTasksRef.current = applyUpdates(allTasksRef.current)
         setAllTasks(prev => applyUpdates(prev))
     }, [])
+
+    const restoreMemoRepairSnapshot = useCallback(async (snapshot: DeletedTaskMemoRepairSnapshot | null) => {
+        if (!snapshot) return
+
+        const structuredLinks = snapshot.structured_links ?? []
+        if (structuredLinks.length > 0) {
+            const { error } = await supabase
+                .from('memo_node_links')
+                .upsert(structuredLinks as Database['public']['Tables']['memo_node_links']['Insert'][])
+            if (error) console.error('[UndoRedo] restore memo_node_links failed:', error)
+        }
+
+        const memoItems = snapshot.memo_items ?? []
+        if (memoItems.length > 0) {
+            const { error } = await supabase
+                .from('memo_items')
+                .upsert(memoItems as Database['public']['Tables']['memo_items']['Insert'][])
+            if (error) console.error('[UndoRedo] restore memo_items failed:', error)
+        }
+
+        const wishlistItems = snapshot.wishlist_items ?? []
+        for (const item of wishlistItems) {
+            if (typeof item.id !== 'string') continue
+            const { id, ...updates } = item
+            const { error } = await supabase
+                .from('ideal_goals')
+                .update({ ...updates, updated_at: new Date().toISOString() } as Database['public']['Tables']['ideal_goals']['Update'])
+                .eq('id', id)
+            if (error) console.error('[UndoRedo] restore wishlist memo failed:', error)
+        }
+
+        dispatchWishlistRefresh()
+    }, [supabase])
 
     const applyRealtimeTask = useCallback((serverTask: Task) => {
         if (!serverTask.id || serverTask.project_id !== projectId) return
@@ -1031,6 +1076,7 @@ export function useMindMapSync({
             }
         }
 
+        let memoRepairSnapshot: DeletedTaskMemoRepairSnapshot | null = null
         try {
             const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
             if (!response.ok) {
@@ -1046,6 +1092,10 @@ export function useMindMapSync({
                     setAllTasks(prev => [...prev, ...allCaptured])
                     return
                 }
+            } else {
+                const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
+                memoRepairSnapshot = data?.memo_repair ?? null
+                dispatchWishlistRefresh()
             }
         } catch (e) {
             console.error('[Sync] deleteTask failed:', e)
@@ -1058,24 +1108,33 @@ export function useMindMapSync({
         if (capturedTask) {
             pushAction({
                 description: `「${capturedTask.title}」を削除`,
+                toast: {
+                    message: 'マップから外しました。元メモは未予定に戻しました。',
+                    actionLabel: '元に戻す',
+                    duration: 5000,
+                },
                 undo: async () => {
                     const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
                     setAllTasks(prev => [...prev, ...restored])
                     for (const task of allCaptured) {
                         await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                     }
+                    await restoreMemoRepairSnapshot(memoRepairSnapshot)
                 },
                 redo: async () => {
                     setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
                     try {
-                        await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                        const redoResponse = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                        const redoData = await redoResponse.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
+                        memoRepairSnapshot = redoData?.memo_repair ?? memoRepairSnapshot
+                        dispatchWishlistRefresh()
                     } catch (e) {
                         console.error('[UndoRedo] redo deleteTask failed:', e)
                     }
                 },
             })
         }
-    }, [cancelNotifications, supabase, pushAction, onSyncError])
+    }, [cancelNotifications, supabase, pushAction, onSyncError, restoreMemoRepairSnapshot])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
         const currentAll = allTasksRef.current;
@@ -1154,21 +1213,37 @@ export function useMindMapSync({
 
         setAllTasks(prev => prev.filter(t => !allSelectedIds.has(t.id)))
 
+        let memoRepairSnapshots: DeletedTaskMemoRepairSnapshot[] = []
         pushAction({
             description: `${capturedTasks.length}個のタスクを削除`,
+            toast: {
+                message: 'マップから外しました。元メモは未予定に戻しました。',
+                actionLabel: '元に戻す',
+                duration: 5000,
+            },
             undo: async () => {
                 const restored = capturedTasks.map(t => ({ ...t, google_event_id: null }))
                 setAllTasks(prev => [...prev, ...restored])
                 for (const task of capturedTasks) {
                     await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                 }
+                for (const snapshot of memoRepairSnapshots) {
+                    await restoreMemoRepairSnapshot(snapshot)
+                }
             },
             redo: async () => {
                 setAllTasks(prev => prev.filter(t => !allSelectedIds.has(t.id)))
                 // ルートタスクを削除すれば CASCADE で子も消える
+                const nextSnapshots: DeletedTaskMemoRepairSnapshot[] = []
                 for (const id of [...groupIds, ...taskIds]) {
-                    try { await fetch(`/api/tasks/${id}`, { method: 'DELETE' }) } catch { }
+                    try {
+                        const response = await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+                        const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
+                        if (data?.memo_repair) nextSnapshots.push(data.memo_repair)
+                    } catch { }
                 }
+                if (nextSnapshots.length > 0) memoRepairSnapshots = nextSnapshots
+                dispatchWishlistRefresh()
             },
         })
 
@@ -1180,6 +1255,9 @@ export function useMindMapSync({
                 if (!response.ok) {
                     console.error('[Sync] bulkDelete API failed for:', id)
                     bulkFailed = true
+                } else {
+                    const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
+                    if (data?.memo_repair) memoRepairSnapshots.push(data.memo_repair)
                 }
             } catch (e) {
                 console.error('[Sync] bulkDelete failed:', e)
@@ -1190,8 +1268,10 @@ export function useMindMapSync({
             onSyncError?.('一括削除の一部が失敗しました')
             // Rollback: restore all
             setAllTasks(prev => [...prev, ...capturedTasks])
+        } else {
+            dispatchWishlistRefresh()
         }
-    }, [supabase, pushAction, onSyncError])
+    }, [supabase, pushAction, onSyncError, restoreMemoRepairSnapshot])
 
     // --- Helper Functions ---
     const getChildTasks = useCallback((parentTaskId: string): Task[] => {

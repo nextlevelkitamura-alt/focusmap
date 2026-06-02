@@ -7,7 +7,7 @@ import { RightSidebar, RightSidebarRef } from "@/components/dashboard/right-side
 import { Header } from "@/components/layout/header"
 import { Database, Task, Project, Space } from "@/types/database"
 import { useMindMapSync } from "@/hooks/useMindMapSync"
-import { useUndoRedo } from "@/hooks/useUndoRedo"
+import { UNDOABLE_ACTION_EVENT, useUndoRedo } from "@/hooks/useUndoRedo"
 import { TimerProvider } from "@/contexts/TimerContext"
 import { DragProvider } from "@/contexts/DragContext"
 import { CalendarToast } from "@/components/calendar/calendar-toast"
@@ -1012,7 +1012,18 @@ export function DashboardClient({
     }, [])
 
     // --- Undo/Redo Keyboard Listener ---
-    const [undoToast, setUndoToast] = useState<{ type: 'success' | 'info'; message: string } | null>(null)
+    const [undoToast, setUndoToast] = useState<{
+        type: 'success' | 'info'
+        message: string
+        actionLabel?: string
+        duration?: number
+    } | null>(null)
+
+    const handleUndoToastAction = useCallback(() => {
+        undo().then(desc => {
+            if (desc) setUndoToast({ type: 'success', message: `元に戻しました: ${desc}` })
+        })
+    }, [undo])
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -1039,6 +1050,25 @@ export function DashboardClient({
         document.addEventListener('keydown', handler)
         return () => document.removeEventListener('keydown', handler)
     }, [undo, redo])
+
+    useEffect(() => {
+        const handler = (event: Event) => {
+            const detail = (event as CustomEvent<{
+                message?: unknown
+                actionLabel?: unknown
+                duration?: unknown
+            }>).detail
+            if (!detail || typeof detail.message !== 'string') return
+            setUndoToast({
+                type: 'info',
+                message: detail.message,
+                actionLabel: typeof detail.actionLabel === 'string' ? detail.actionLabel : '元に戻す',
+                duration: typeof detail.duration === 'number' ? detail.duration : 5000,
+            })
+        }
+        window.addEventListener(UNDOABLE_ACTION_EVENT, handler)
+        return () => window.removeEventListener(UNDOABLE_ACTION_EVENT, handler)
+    }, [])
 
     // Sidebar State
     const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
@@ -1175,7 +1205,9 @@ export function DashboardClient({
                     <CalendarToast
                         type={undoToast.type}
                         message={undoToast.message}
-                        duration={2000}
+                        duration={undoToast.duration ?? 2000}
+                        actionLabel={undoToast.actionLabel}
+                        onAction={undoToast.actionLabel ? handleUndoToastAction : undefined}
                         onClose={() => setUndoToast(null)}
                     />
                 )}
