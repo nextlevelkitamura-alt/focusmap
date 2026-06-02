@@ -189,7 +189,7 @@ Goals → Projects → TaskGroups → Tasks
 - Macアプリのメニューと「Focusmap 接続状態」ウィンドウから、既存 `scripts/focusmap-agent/dist/cli.js` と `scripts/run-codex-app-server.sh` を起動・停止・状態確認できる。agentの設定は従来通り `~/.focusmap/config.json` を使い、Macアプリ内にservice role key等は置かない。
 - 開発中のMacアプリでは、`~/.focusmap/config.json` の `api_url` が本番APIを向いていても、agent起動時だけ `~/Library/Application Support/Focusmap/agent-config.json` に一時設定を作り、`api_url` を `http://127.0.0.1:3001/api` へ向ける。この場合、agent起動前に3001のNext APIも自動起動する。これにより本番Cloud Run側の環境変数に依存せず、ローカルNext API経由で `ai_tasks` を同期できる。配布版や本番API固定にしたい場合は `FOCUSMAP_DESKTOP_AGENT_API_URL` で明示する。
 - Macアプリの通常導線ではCodex app-serverのWebSocket自動投入に依存しない。Electron側は `ANTHROPIC_API_KEY` / `CLAUDECODE` を外した環境で起動し、クリップボードコピー・Codex.app起動・ローカルsqlite/rollout同期を担う。`ws://127.0.0.1:7878` は既存runner互換やアーカイブ補助用途として残すが、ユーザー向けの確実な導線は手動ハンドオフを正とする。
-- 配布用の最初の形は未署名の自分用ビルドでよい。`npm run mac:build` は `next build` 後に `dist-desktop/` へ arm64 の `.app` ディレクトリを作る。一般配布する場合はDeveloper ID署名・notarizationを別途追加する。
+- 配布用の最初の形は未署名の自分用ビルドでよい。`npm run mac:build` は古い `.next` / `dist-desktop/mac-arm64` を削除してから `next build` し、Nextの `react-loadable-manifest.json` に残る存在しない静的チャンク参照を補正・検査してから `dist-desktop/` へ arm64 の `.app` ディレクトリを作る。packaged app側の `next-standalone/.next` も同じ静的参照検査を通す。一般配布する場合はDeveloper ID署名・notarizationを別途追加する。
 - Macアプリのパッケージングは `desktop/focusmap-mac` をElectron app directoryにし、rootの巨大な `node_modules` をアプリ本体へ入れない。Next standaloneは `extraResources/next-standalone` として同梱する。Nextの `outputFileTracingExcludes` では `mobile/**` / `.git/**` / `dist-desktop/**` を除外し、iOS Podsやビルド成果物がMacアプリへ混入しないようにする。
 
 ### Focusmap iPhoneアプリMVP
