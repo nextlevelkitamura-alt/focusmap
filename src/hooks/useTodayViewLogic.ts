@@ -79,6 +79,7 @@ export function useTodayViewLogic({
     const [habitsExpanded, setHabitsExpanded] = useState(false)
     const [expandedHabitId, setExpandedHabitId] = useState<string | null>(null)
     const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
+    const syncDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [editTarget, setEditTarget] = useState<EditTarget | null>(null)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([])
@@ -212,6 +213,41 @@ export function useTodayViewLogic({
         enabled: !calendarsLoading && selectedCalendarIds.length > 0,
         calendarIds: selectedCalendarIds,
     })
+
+    const completeSyncFeedback = useCallback(() => {
+        if (syncDoneTimerRef.current) clearTimeout(syncDoneTimerRef.current)
+        setSyncState('done')
+        syncDoneTimerRef.current = setTimeout(() => {
+            setSyncState('idle')
+            syncDoneTimerRef.current = null
+        }, 1500)
+    }, [])
+
+    const startSyncFeedback = useCallback(() => {
+        if (syncDoneTimerRef.current) {
+            clearTimeout(syncDoneTimerRef.current)
+            syncDoneTimerRef.current = null
+        }
+        setSyncState('syncing')
+    }, [])
+
+    useEffect(() => {
+        return () => {
+            if (syncDoneTimerRef.current) clearTimeout(syncDoneTimerRef.current)
+        }
+    }, [])
+
+    const refreshCalendar = useCallback(async () => {
+        startSyncFeedback()
+        try {
+            await syncNow({ silent: true })
+            completeSyncFeedback()
+        } catch (err) {
+            console.error('[useTodayViewLogic] Failed to refresh calendar:', err)
+            setSyncState('idle')
+            throw err
+        }
+    }, [completeSyncFeedback, startSyncFeedback, syncNow])
 
     // selectedDate のイベントだけ抽出
     const fetchedCalendarEvents = useMemo(() => {
@@ -1712,7 +1748,7 @@ export function useTodayViewLogic({
             broadcastCalendarEventTimeUpdate(item.id, newStartTime.toISOString(), newEndTime.toISOString())
         }
 
-        setSyncState('syncing')
+        startSyncFeedback()
 
         try {
             if (item.type === 'task') {
@@ -1818,8 +1854,7 @@ export function useTodayViewLogic({
                     },
                 })
             }
-            setSyncState('done')
-            setTimeout(() => setSyncState('idle'), 1500)
+            completeSyncFeedback()
         } catch (err) {
             console.error('[useTodayViewLogic] Failed to update via drag-drop, rolling back:', err)
             if (item.type === 'task') {
@@ -1834,7 +1869,7 @@ export function useTodayViewLogic({
             }
             setSyncState('idle')
         }
-    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask, patchCalendarEvent, pushAction])
+    }, [localTasks, localCalendarEvents, calendarEvents, onUpdateTask, patchCalendarEvent, pushAction, completeSyncFeedback, startSyncFeedback])
 
     // Date header
     const dateFmt = format(today, 'M月d日(E)', { locale: ja })
@@ -1922,6 +1957,7 @@ export function useTodayViewLogic({
         eventsError,
         calendarReauthUrl,
         syncNow,
+        refreshCalendar,
         syncState,
         writableCalendars,
         stableCalendarColorMap,

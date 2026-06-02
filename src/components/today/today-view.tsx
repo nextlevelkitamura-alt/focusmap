@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState, type TouchEvent } from "react"
 import { Task, Project, Space } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
@@ -21,6 +21,9 @@ import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
 import { formatTime } from "@/contexts/TimerContext"
 import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
 import { startCalendarOAuth } from "@/lib/external-auth-launch"
+
+const HEADER_PULL_REFRESH_THRESHOLD = 52
+const HEADER_PULL_REFRESH_MAX = 76
 
 // --- Types ---
 
@@ -50,8 +53,11 @@ export function TodayView({
     spaces = [],
 }: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
+    const pullRefreshStartYRef = useRef<number | null>(null)
     const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | '3days' | 'month'>('day')
     const [mobilePane, setMobilePane] = useState<'schedule' | 'ai'>('schedule')
+    const [pullRefreshDistance, setPullRefreshDistance] = useState(0)
+    const [pullRefreshReady, setPullRefreshReady] = useState(false)
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -176,10 +182,81 @@ export function TodayView({
         estimatedTime: number
     } | null>(null)
 
+    const resetPullRefresh = useCallback(() => {
+        pullRefreshStartYRef.current = null
+        setPullRefreshDistance(0)
+        setPullRefreshReady(false)
+    }, [])
+
+    const handleHeaderTouchStart = useCallback((e: TouchEvent<HTMLDivElement>) => {
+        if (mobilePane !== 'schedule') return
+        if (logic.syncState === 'syncing') return
+        if (e.touches.length !== 1) return
+        pullRefreshStartYRef.current = e.touches[0].clientY
+    }, [logic.syncState, mobilePane])
+
+    const handleHeaderTouchMove = useCallback((e: TouchEvent<HTMLDivElement>) => {
+        if (mobilePane !== 'schedule') return
+        if (pullRefreshStartYRef.current === null) return
+        if (e.touches.length !== 1) {
+            resetPullRefresh()
+            return
+        }
+
+        const deltaY = e.touches[0].clientY - pullRefreshStartYRef.current
+        if (deltaY <= 0) {
+            setPullRefreshDistance(0)
+            setPullRefreshReady(false)
+            return
+        }
+
+        if (e.cancelable) e.preventDefault()
+        const nextDistance = Math.min(HEADER_PULL_REFRESH_MAX, deltaY * 0.55)
+        setPullRefreshDistance(nextDistance)
+        setPullRefreshReady(nextDistance >= HEADER_PULL_REFRESH_THRESHOLD)
+    }, [mobilePane, resetPullRefresh])
+
+    const handleHeaderTouchEnd = useCallback(() => {
+        const shouldRefresh = mobilePane === 'schedule' && pullRefreshReady
+        resetPullRefresh()
+        if (shouldRefresh) {
+            void logic.refreshCalendar().catch(() => undefined)
+        }
+    }, [logic, mobilePane, pullRefreshReady, resetPullRefresh])
+
+    const showHeaderRefreshIndicator = mobilePane === 'schedule' && pullRefreshDistance > 0
+    const headerRefreshDistance = pullRefreshDistance
+    const headerRefreshProgress = Math.min(headerRefreshDistance / HEADER_PULL_REFRESH_THRESHOLD, 1)
+
     return (
         <div className="flex flex-col h-full min-h-0 overflow-hidden bg-background">
             {/* Date Header + Mode Toggle */}
-            <div className="flex-shrink-0 border-b px-4 py-1.5" style={{ touchAction: 'none' }}>
+            <div
+                className="relative flex-shrink-0 border-b px-4 py-1.5"
+                style={{ touchAction: 'none' }}
+                onTouchStart={handleHeaderTouchStart}
+                onTouchMove={handleHeaderTouchMove}
+                onTouchEnd={handleHeaderTouchEnd}
+                onTouchCancel={resetPullRefresh}
+            >
+                {showHeaderRefreshIndicator && (
+                    <div
+                        className="pointer-events-none absolute left-1/2 top-0 z-10 grid h-8 w-8 place-items-center rounded-full border border-border/70 bg-background/95 shadow-sm transition-[opacity,transform]"
+                        style={{
+                            opacity: Math.max(0.35, headerRefreshProgress),
+                            transform: `translate(-50%, ${Math.max(0, headerRefreshDistance - 30)}px)`,
+                        }}
+                        aria-hidden="true"
+                    >
+                        <RefreshCw
+                            className={cn(
+                                "h-4 w-4 text-primary transition-transform",
+                                pullRefreshReady && "animate-spin"
+                            )}
+                            style={{ transform: `rotate(${headerRefreshProgress * 180}deg)` }}
+                        />
+                    </div>
+                )}
                 <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 min-w-0">

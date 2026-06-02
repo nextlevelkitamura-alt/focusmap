@@ -203,7 +203,7 @@ export default function App() {
               allowsBackForwardNavigationGestures
               domStorageEnabled
               javaScriptEnabled
-              pullToRefreshEnabled
+              pullToRefreshEnabled={false}
               setSupportMultipleWindows={false}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled

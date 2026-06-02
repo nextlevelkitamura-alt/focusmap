@@ -140,6 +140,8 @@ Goals → Projects → TaskGroups → Tasks
 - デスクトップ上部タブは `Todo` / `メモ` / `マップ` / `チャット` の順に表示する。
 - モバイル下部ナビは `Todo` / `メモ` / `マップ` / `チャット` / `設定` の順に表示し、`チャット` を強調表示の対象にする。
 - モバイル `Todo` 画面は、予定タイムラインだけでなく `予定` / `AI` の切替を持つ。`AI` 側はデスクトップの `Todo > AI実行` と同じ `AiExecutionTimeline` を使い、`ai_tasks` / scheduled AI tasks / Codex状態 / follow-up送信をWeb・Mac・iPhoneで同じAPI経由で表示する。
+- モバイル `Todo > 予定` のヘッダーは、下へ引くと更新アイコンを表示し、しきい値を超えて離すと `useCalendarEvents.syncNow({ silent: true })` でカレンダー予定だけを強制更新する。iPhoneアプリのWebViewネイティブpull-to-refreshは画面全体のリロードになるため無効にし、このヘッダーpull更新を標準導線にする。
+- モバイル日次カレンダーの予定/タスク長押しドラッグは、ドラッグ中だけカレンダーグリッドとページ全体のtouch scroll / overscrollをロックする。移動中は画面やWebViewのpull-to-refreshを動かさず、予定ブロックの時間変更プレビューだけを動かす。
 - モバイル `Todo > 予定` の右下プラスから開く新規タスク追加シートは黒背景のボトムシートにし、日付/時刻、所要/カレンダー、プロジェクト/優先度、通知/サブタスクを2列で入力する。`所要` は通常時は値だけを表示し、タップ時だけ5分/15分/30分等のプリセットとカスタムホイール導線をインライン展開する。
 - 上部の `SpaceProjectSwitcher` は左のスペース選択と右のプロジェクト選択を独立状態として扱う。右側でプロジェクトを選択・作成・編集しても左側の `selectedSpaceId` は変更せず、スペースは左側のスペースメニューで明示的に選んだ時だけ切り替える。
 - `Todo` タブの `メモ + カレンダー` サブビューは、サブビュータブ自体を見出しとして扱う。中央ペイン内に重複する「今日する」見出しや説明文は置かず、カラム切替・カレンダー選択・今日するメモ追加ボタンだけを薄いツールバーにまとめる。
@@ -215,6 +217,7 @@ Goals → Projects → TaskGroups → Tasks
 
 - iPhone版の初期実装は `mobile/focusmap-app` のExpo/React Nativeアプリを使う。既存Next.jsのモバイルUIを捨てず、React Native側は起動画面・読み込み状態・エラー復旧・ネイティブインストール枠を担当し、アプリ本体は `react-native-webview` で `/dashboard` を表示する。
 - 標準の接続先は `https://focusmap-official.com/dashboard?source=ios-app&standalone=1`。スマホプレビューやローカル検証では、ビルド前に `EXPO_PUBLIC_FOCUSMAP_URL` でCloudflare tunnel等のURLへ差し替える。
+- iPhone版WebViewの `pullToRefreshEnabled` は無効。画面全体をリロードするネイティブpull-to-refreshではなく、Web UI側の `Todo > 予定` ヘッダーpull更新でカレンダー同期だけを実行する。
 - Apple Developer Programに入らない初期検証では、Xcodeの無料Personal Teamで実機へ直接インストールする。ホーム画面にはFocusmap専用アイコンが出るが、無料署名は7日で切れるため、継続利用には再インストールが必要。
 - 実機インストールの入口は `mobile/focusmap-app/scripts/install-ios-free.sh`。Xcode本体がないMacでは実行を止め、`xcode-select` とライセンス承認の手順を表示する。`ios/` がない場合はExpo prebuildとPodsを再生成し、接続済みiPhoneを `xcrun devicectl` のJSON出力から検出する。実機ビルドは `xcodebuild -allowProvisioningUpdates -allowProvisioningDeviceRegistration` を使い、生成された `Focusmap.app` を `devicectl device install app` でiPhoneへ入れる。Expo CLI経由では無料Personal Teamのプロビジョニング自動生成オプションを渡せないため、実機インストールの標準導線は直Xcodeビルドにする。
 - 無料Apple IDルートでは、XcodeのSigning & CapabilitiesでPersonal Teamを一度選ぶ必要がある。`security find-identity -v -p codesigning` にApple Development証明書がない場合、`install-ios-free.sh` は重いビルド前に止める。署名画面を開く入口は `npm run ios:signing` / `mobile/focusmap-app/scripts/open-ios-signing.sh`。初回起動で「信頼されていないデベロッパ」が出た場合は、iPhoneの `設定 > 一般 > VPNとデバイス管理` で開発元を信頼する。

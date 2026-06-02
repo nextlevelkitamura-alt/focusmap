@@ -79,6 +79,11 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
     const initialOffsetInItem = useRef(0)
     const dragItemRef = useRef<DragItem | null>(null)
     const isDraggingRef = useRef(false)
+    const pageScrollLockedRef = useRef(false)
+    const originalBodyOverflowRef = useRef('')
+    const originalBodyTouchActionRef = useRef('')
+    const originalBodyOverscrollBehaviorRef = useRef('')
+    const originalHtmlOverscrollBehaviorRef = useRef('')
     // ドロップ情報を保持するref（setDragState内でonDropを呼ぶのを避けるため）
     const pendingDropRef = useRef<{ item: DragItem; startTime: Date; endTime: Date } | null>(null)
 
@@ -98,11 +103,55 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
         }
     }, [])
 
+    const preventPageTouchMove = useCallback((e: TouchEvent) => {
+        if (!isDraggingRef.current || !e.cancelable) return
+        e.preventDefault()
+    }, [])
+
+    const lockPageScroll = useCallback(() => {
+        if (typeof document === 'undefined' || pageScrollLockedRef.current) return
+
+        const { body, documentElement } = document
+        originalBodyOverflowRef.current = body.style.overflow
+        originalBodyTouchActionRef.current = body.style.touchAction
+        originalBodyOverscrollBehaviorRef.current = body.style.overscrollBehavior
+        originalHtmlOverscrollBehaviorRef.current = documentElement.style.overscrollBehavior
+
+        body.style.overflow = 'hidden'
+        body.style.touchAction = 'none'
+        body.style.overscrollBehavior = 'none'
+        documentElement.style.overscrollBehavior = 'none'
+        document.addEventListener('touchmove', preventPageTouchMove, { passive: false, capture: true })
+        pageScrollLockedRef.current = true
+    }, [preventPageTouchMove])
+
+    const unlockPageScroll = useCallback(() => {
+        if (typeof document === 'undefined' || !pageScrollLockedRef.current) return
+
+        const { body, documentElement } = document
+        body.style.overflow = originalBodyOverflowRef.current
+        body.style.touchAction = originalBodyTouchActionRef.current
+        body.style.overscrollBehavior = originalBodyOverscrollBehaviorRef.current
+        documentElement.style.overscrollBehavior = originalHtmlOverscrollBehaviorRef.current
+        document.removeEventListener('touchmove', preventPageTouchMove, { capture: true })
+        pageScrollLockedRef.current = false
+    }, [preventPageTouchMove])
+
+    const lockDragScroll = useCallback(() => {
+        if (gridRef.current) {
+            gridRef.current.style.overflow = 'hidden'
+            gridRef.current.style.touchAction = 'none'
+        }
+        lockPageScroll()
+    }, [gridRef, lockPageScroll])
+
     const restoreGridScroll = useCallback(() => {
-        if (!gridRef.current) return
-        gridRef.current.style.overflow = ''
-        gridRef.current.style.touchAction = ''
-    }, [gridRef])
+        if (gridRef.current) {
+            gridRef.current.style.overflow = ''
+            gridRef.current.style.touchAction = ''
+        }
+        unlockPageScroll()
+    }, [gridRef, unlockPageScroll])
 
     // Auto-scroll logic
     const runAutoScroll = useCallback((touchClientY: number) => {
@@ -187,6 +236,7 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
 
         dragItemRef.current = item
         isDraggingRef.current = true
+        lockDragScroll()
 
         setDragState({
             isDragging: true,
@@ -195,7 +245,7 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             previewEndTime: item.endTime,
             previewTop: itemTopInGrid,
         })
-    }, [enabled, gridRef])
+    }, [enabled, gridRef, lockDragScroll])
 
     // Touch handlers to attach to individual items
     const createItemTouchHandlers = useCallback((
@@ -214,12 +264,6 @@ export function useTouchDrag({ gridRef, onDrop, enabled = true }: UseTouchDragOp
             longPressTimer.current = setTimeout(() => {
                 // Check if finger hasn't moved much (still a long press)
                 startDragForItem(item, initialClientY, itemTopInGrid)
-
-                // Prevent further scroll handling
-                if (gridRef.current) {
-                    gridRef.current.style.overflow = 'hidden'
-                    gridRef.current.style.touchAction = 'none'
-                }
 
                 // Note: Vibration removed due to browser restrictions causing console warnings
                 // Visual feedback (drag preview) provides sufficient user feedback
