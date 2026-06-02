@@ -363,15 +363,14 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                                                 {option.label}
                                             </button>
                                         ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCustomDurationPickerOpen(true)}
+                                            className="min-h-10 rounded-lg border border-white/10 bg-white/[0.055] px-2 text-xs font-semibold text-neutral-200 active:bg-white/[0.1]"
+                                        >
+                                            カスタム
+                                        </button>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsCustomDurationPickerOpen(true)}
-                                        className="mt-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 text-left text-xs text-neutral-300 active:bg-white/[0.08]"
-                                    >
-                                        <span>ホイールで細かく選ぶ</span>
-                                        <span className="font-semibold text-neutral-50">カスタム</span>
-                                    </button>
                                 </div>
                             )}
 
