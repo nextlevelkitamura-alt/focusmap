@@ -12,8 +12,8 @@
     rm ~/Library/LaunchAgents/com.focusmap.task-runner.plist
 
   ログ確認:
-    tail -f /tmp/focusmap-task-runner.log
-    tail -f /tmp/focusmap-task-runner.err
+    tail -f ~/.focusmap/logs/task-runner.log
+    tail -f ~/.focusmap/logs/task-runner.err
 
   注意:
     - USERNAME を実際のユーザー名に変更してください
@@ -51,10 +51,10 @@
   -->
 
   <key>StandardOutPath</key>
-  <string>/Users/kitamuranaohiro/Private/focusmap/scripts/task-runner.log</string>
+  <string>/Users/kitamuranaohiro/.focusmap/logs/task-runner.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/kitamuranaohiro/Private/focusmap/scripts/task-runner.err</string>
+  <string>/Users/kitamuranaohiro/.focusmap/logs/task-runner.err</string>
 
   <!-- Mac 起動時に自動スタート -->
   <key>RunAtLoad</key>

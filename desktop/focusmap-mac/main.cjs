@@ -85,6 +85,8 @@ const managedProcesses = {
 };
 const processLogs = [];
 const hasSingleInstance = app.requestSingleInstanceLock();
+let lastExternalAuthUrl = '';
+let lastExternalAuthAt = 0;
 
 function focusWindow(win) {
   if (!win || win.isDestroyed()) return false;
@@ -217,6 +219,15 @@ function isGoogleAuthUrl(urlString) {
   }
 }
 
+function isSupabaseAuthUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return url.hostname.endsWith('.supabase.co') && url.pathname.startsWith('/auth/v1/');
+  } catch {
+    return false;
+  }
+}
+
 function isCalendarConnectUrl(urlString) {
   try {
     const url = new URL(urlString);
@@ -249,6 +260,23 @@ function toWebAuthCalendarConnectUrl(urlString) {
   return targetUrl.toString();
 }
 
+function openAuthExternally(url) {
+  const now = Date.now();
+  if (url === lastExternalAuthUrl && now - lastExternalAuthAt < 5000) return;
+  lastExternalAuthUrl = url;
+  lastExternalAuthAt = now;
+  shell.openExternal(url);
+}
+
+function keepMainWindowOnLocalLogin() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const currentUrl = mainWindow.webContents.getURL();
+  if (isSameOrigin(currentUrl, APP_ORIGIN)) return;
+  mainWindow.loadURL(`${APP_ORIGIN}/login?desktop=1&source=mac`).catch((error) => {
+    log('auth', `failed to return to local login: ${error.message}`);
+  });
+}
+
 function handleMainNavigation(event, url) {
   if (isCalendarConnectUrl(url)) {
     const nextUrl = new URL(url);
@@ -265,11 +293,23 @@ function handleMainNavigation(event, url) {
 
   if (isGoogleAuthUrl(url)) {
     event.preventDefault();
-    shell.openExternal(url);
+    openAuthExternally(url);
+    keepMainWindowOnLocalLogin();
     return true;
   }
 
   return false;
+}
+
+function handleAuthNavigationFallback(url, isMainFrame = true) {
+  if (!isMainFrame) return false;
+  if (!isGoogleAuthUrl(url) && !isSupabaseAuthUrl(url)) return false;
+  openAuthExternally(url);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.stop();
+    keepMainWindowOnLocalLogin();
+  }
+  return true;
 }
 
 function preferredAgentApiUrl() {
@@ -484,9 +524,16 @@ async function createMainWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, 'loading.html'));
   mainWindow.webContents.on('will-navigate', handleMainNavigation);
+  mainWindow.webContents.on('will-redirect', (event, url, isInPlace, isMainFrame) => {
+    if (handleMainNavigation(event, url)) return;
+    if (handleAuthNavigationFallback(url, isMainFrame)) event.preventDefault();
+  });
+  mainWindow.webContents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
+    handleAuthNavigationFallback(url, isMainFrame);
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isGoogleAuthUrl(url)) {
-      shell.openExternal(url);
+    if (isGoogleAuthUrl(url) || isSupabaseAuthUrl(url)) {
+      openAuthExternally(url);
       return { action: 'deny' };
     }
     return { action: 'allow' };

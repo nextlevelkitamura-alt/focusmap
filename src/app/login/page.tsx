@@ -14,9 +14,20 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_U
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '')
 
-function getAuthCallbackUrl() {
-    const origin = SITE_URL || location.origin
-    return `${origin}/auth/callback`
+declare global {
+    interface Window {
+        focusmapDesktop?: {
+            openExternal?: (url: string) => Promise<unknown>
+        }
+    }
+}
+
+function getAuthCallbackUrl(options?: { desktop?: boolean; nonce?: string }) {
+    const origin = options?.desktop ? location.origin : SITE_URL || location.origin
+    const url = new URL('/auth/callback', origin)
+    if (options?.desktop) url.searchParams.set('desktop', '1')
+    if (options?.nonce) url.searchParams.set('nonce', options.nonce)
+    return url.toString()
 }
 
 function LoginContent() {
@@ -27,6 +38,8 @@ function LoginContent() {
     const [password, setPassword] = useState("")
     const [loading, setLoading] = useState(false)
     const [message, setMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null)
+    const isDesktopShell = searchParams.get('desktop') === '1' || searchParams.get('source') === 'mac'
+    const dashboardPath = isDesktopShell ? '/dashboard?desktop=1&source=mac' : '/dashboard'
 
     const formatAuthError = (error: unknown) => {
         const text = error instanceof Error ? error.message : String(error)
@@ -65,17 +78,51 @@ function LoginContent() {
         const checkUser = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (user) {
-                router.push('/dashboard')
+                router.push(dashboardPath)
             }
         }
         checkUser()
-    }, [supabase, router])
+    }, [supabase, router, dashboardPath])
 
     const handleGoogleLogin = async () => {
         setLoading(true)
         setMessage(null)
         try {
             await checkSupabaseAuthAvailable()
+            if (isDesktopShell && window.focusmapDesktop?.openExternal) {
+                const nonce = crypto.randomUUID()
+                const { data, error } = await supabase.auth.signInWithOAuth({
+                    provider: "google",
+                    options: {
+                        redirectTo: getAuthCallbackUrl({ desktop: true, nonce }),
+                        skipBrowserRedirect: true,
+                    },
+                })
+                if (error) throw error
+                if (!data.url) throw new Error('GoogleログインURLを取得できませんでした')
+                await window.focusmapDesktop.openExternal(data.url)
+                setMessage({ type: 'success', text: '外部ブラウザでGoogleログインを完了してください。完了後、このMacアプリに自動で戻ります。' })
+
+                const startedAt = Date.now()
+                while (Date.now() - startedAt < 5 * 60 * 1000) {
+                    await new Promise(resolve => setTimeout(resolve, 1500))
+                    const response = await fetch(`/api/auth/desktop-session?nonce=${encodeURIComponent(nonce)}`)
+                    if (response.status === 202) continue
+                    const payload = await response.json().catch(() => null)
+                    if (!response.ok) throw new Error(payload?.error || 'Macアプリへのログイン受け渡しに失敗しました')
+                    if (payload?.access_token && payload?.refresh_token) {
+                        const { error: sessionError } = await supabase.auth.setSession({
+                            access_token: payload.access_token,
+                            refresh_token: payload.refresh_token,
+                        })
+                        if (sessionError) throw sessionError
+                        router.push('/dashboard?desktop=1&source=mac')
+                        return
+                    }
+                }
+                throw new Error('外部ブラウザでのログイン完了を確認できませんでした。もう一度お試しください。')
+            }
+
             const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: {
@@ -100,7 +147,7 @@ function LoginContent() {
                 password,
             })
             if (error) throw error
-            router.push('/dashboard')
+            router.push(dashboardPath)
         } catch (error: unknown) {
             setMessage({ type: 'error', text: formatAuthError(error) })
         } finally {

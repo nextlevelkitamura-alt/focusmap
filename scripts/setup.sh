@@ -156,7 +156,7 @@ else
     cp /tmp/$PLIST_NAME "$PLIST_DST"
     launchctl load "$PLIST_DST" 2>/dev/null || true
     ok "task-runner をインストールしました（毎分実行）"
-    info "ログ: tail -f $PROJECT_DIR/scripts/task-runner.log"
+    info "ログ: tail -f $HOME/.focusmap/logs/task-runner.log"
   else
     warn "plist ファイルが見つかりません: $PLIST_SRC"
   fi

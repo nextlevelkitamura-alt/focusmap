@@ -18,8 +18,10 @@ function requestImmediateCodexAppDispatch(taskId: string): void {
   const args = hasLocalTsx
     ? ['scripts/task-runner.ts', '--task-id', taskId, '--fast']
     : ['--yes', 'tsx', 'scripts/task-runner.ts', '--task-id', taskId, '--fast']
-  const outPath = path.join(root, 'scripts', 'task-runner.log')
-  const errPath = path.join(root, 'scripts', 'task-runner.err')
+  const logDir = path.join(process.env.HOME || root, '.focusmap', 'logs')
+  fs.mkdirSync(logDir, { recursive: true })
+  const outPath = path.join(logDir, 'task-runner.log')
+  const errPath = path.join(logDir, 'task-runner.err')
 
   let outFd: number | null = null
   let errFd: number | null = null
