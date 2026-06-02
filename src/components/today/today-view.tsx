@@ -248,6 +248,7 @@ export function TodayView({
             : pullRefreshReady
                 ? '離すと更新'
                 : '引っ張って更新'
+    const shouldSpinHeaderRefresh = pullRefreshReady || isHeaderRefreshing
 
     return (
         <div className="relative flex flex-col h-full min-h-0 overflow-hidden bg-background">
@@ -278,10 +279,10 @@ export function TodayView({
                     >
                         <svg
                             className={cn(
-                                "h-5 w-5 text-foreground/95 transition-transform",
-                                (pullRefreshReady || isHeaderRefreshing) && "animate-spin"
+                                "h-5 w-5 origin-center text-foreground/95 [transform-box:fill-box]",
+                                shouldSpinHeaderRefresh && "animate-[spin_1.3s_linear_infinite] will-change-transform"
                             )}
-                            style={isHeaderRefreshing || pullRefreshReady ? undefined : { transform: `rotate(${headerRefreshProgress * 210}deg)` }}
+                            style={shouldSpinHeaderRefresh ? undefined : { transform: `rotate(${headerRefreshProgress * 210}deg)` }}
                             viewBox="0 0 24 24"
                             aria-hidden="true"
                         >
