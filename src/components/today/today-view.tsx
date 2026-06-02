@@ -711,6 +711,7 @@ export function TodayView({
                 onCreateSubTask={logic.onCreateSubTask}
                 childTasks={logic.childTasksMap?.get(logic.editTarget?.taskId ?? '') ?? []}
                 onToggleSubTask={logic.toggleTask}
+                onDeleteSubTask={logic.handleDeleteTask}
                 onConvertEventToTask={logic.handleConvertEventToTask}
                 onScheduleReminder={async (targetType, targetId, scheduledAt, title, advanceMinutes) => {
                     await logic.cancelNotifications(targetType, targetId)

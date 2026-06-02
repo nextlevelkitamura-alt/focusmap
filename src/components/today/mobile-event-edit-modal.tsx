@@ -28,6 +28,7 @@ interface MobileEventEditModalProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     childTasks?: Task[]
     onToggleSubTask?: (taskId: string) => Promise<void>
+    onDeleteSubTask?: (taskId: string) => Promise<void>
     onConvertEventToTask?: (event: CalendarEvent) => Promise<Task | null>
 }
 
@@ -57,6 +58,8 @@ const DURATION_OPTIONS: Array<{ label: string; value: number }> = [
     { label: "1時間30分", value: 90 },
     { label: "2時間", value: 120 },
 ]
+
+const LOCAL_SUBTASK_ID_PREFIX = "local-subtask-"
 
 function toDateTimeLocalValue(date: Date | undefined) {
     if (!date) return ""
@@ -91,6 +94,7 @@ export function MobileEventEditModal({
     onCreateSubTask,
     childTasks = [],
     onToggleSubTask,
+    onDeleteSubTask,
     onConvertEventToTask,
 }: MobileEventEditModalProps) {
     const [title, setTitle] = useState('')
@@ -176,11 +180,19 @@ export function MobileEventEditModal({
     // 無限ループを防ぐ（React は setState で同一参照を返すと再レンダーをスキップする）
     useEffect(() => {
         setLocalChildTasks(prev => {
-            if (prev === childTasks) return prev
-            if (prev.length !== childTasks.length) return childTasks
+            const localDrafts = prev
+                .filter(task => task.id.startsWith(LOCAL_SUBTASK_ID_PREFIX))
+                .filter(draft => !childTasks.some(task => task.title === draft.title && task.parent_task_id === draft.parent_task_id))
+            const next = [...childTasks, ...localDrafts]
+
+            if (prev.length !== next.length) return next
             for (let i = 0; i < prev.length; i++) {
-                if (prev[i].id !== childTasks[i].id || prev[i].status !== childTasks[i].status) {
-                    return childTasks
+                if (
+                    prev[i].id !== next[i].id ||
+                    prev[i].status !== next[i].status ||
+                    prev[i].title !== next[i].title
+                ) {
+                    return next
                 }
             }
             return prev
@@ -191,26 +203,71 @@ export function MobileEventEditModal({
         const trimmed = subtaskInput.trim()
         if (!trimmed || !onCreateSubTask) return
 
-        let parentId = linkedTaskId
-
-        if (!parentId && target?.source !== 'task' && target?.originalEvent && onConvertEventToTask) {
-            setIsAddingSubTask(true)
-            const task = await onConvertEventToTask(target.originalEvent)
-            if (!task) { setIsAddingSubTask(false); return }
-            parentId = task.id
-            setLinkedTaskId(task.id)
+        const optimisticId = `${LOCAL_SUBTASK_ID_PREFIX}${crypto.randomUUID()}`
+        const nowIso = new Date().toISOString()
+        let parentId = linkedTaskId ?? (target?.source === 'task' ? target.taskId ?? null : null)
+        const optimisticTask: Task = {
+            id: optimisticId,
+            user_id: target?.originalTask?.user_id ?? '',
+            project_id: target?.projectId ?? target?.originalTask?.project_id ?? null,
+            parent_task_id: parentId,
+            is_group: false,
+            title: trimmed,
+            status: 'todo',
+            stage: 'plan',
+            priority: null,
+            order_index: localChildTasks.length,
+            scheduled_at: null,
+            estimated_time: 0,
+            actual_time_minutes: 0,
+            google_event_id: null,
+            calendar_event_id: null,
+            calendar_id: null,
+            total_elapsed_seconds: 0,
+            last_started_at: null,
+            is_timer_running: false,
+            created_at: nowIso,
+            updated_at: nowIso,
+            source: 'manual',
+            deleted_at: null,
+            google_event_fingerprint: null,
+            is_habit: false,
+            habit_frequency: null,
+            habit_icon: null,
+            habit_start_date: null,
+            habit_end_date: null,
+            memo: null,
+            memo_images: null,
+            node_width: null,
         }
 
-        if (!parentId) { setIsAddingSubTask(false); return }
-
+        setLocalChildTasks(prev => [...prev, optimisticTask])
+        setSubtaskInput('')
         setIsAddingSubTask(true)
+
         try {
+            if (!parentId && target?.source !== 'task' && target?.originalEvent && onConvertEventToTask) {
+                const task = await onConvertEventToTask(target.originalEvent)
+                if (!task) throw new Error('Failed to convert event to task')
+
+                parentId = task.id
+                setLinkedTaskId(task.id)
+                setLocalChildTasks(prev => prev.map(t =>
+                    t.id === optimisticId ? { ...t, parent_task_id: task.id, project_id: task.project_id } : t
+                ))
+            }
+
+            if (!parentId) throw new Error('Missing parent task id')
+
             await onCreateSubTask(parentId, trimmed)
-            setSubtaskInput('')
+        } catch (err) {
+            console.error('[MobileEventEditModal] Add subtask error:', err)
+            setLocalChildTasks(prev => prev.filter(t => t.id !== optimisticId))
+            setSubtaskInput(trimmed)
         } finally {
             setIsAddingSubTask(false)
         }
-    }, [subtaskInput, linkedTaskId, target, onConvertEventToTask, onCreateSubTask])
+    }, [subtaskInput, linkedTaskId, target, onConvertEventToTask, onCreateSubTask, localChildTasks.length])
 
     const handleToggleSubTask = useCallback(async (taskId: string) => {
         if (!onToggleSubTask) return
@@ -219,6 +276,22 @@ export function MobileEventEditModal({
         ))
         await onToggleSubTask(taskId)
     }, [onToggleSubTask])
+
+    const handleDeleteSubTask = useCallback(async (taskId: string) => {
+        const previousTasks = localChildTasks
+        const targetTask = localChildTasks.find(task => task.id === taskId)
+        setLocalChildTasks(prev => prev.filter(task => task.id !== taskId))
+
+        if (!targetTask || taskId.startsWith(LOCAL_SUBTASK_ID_PREFIX)) return
+
+        try {
+            if (!onDeleteSubTask) throw new Error('Missing subtask delete handler')
+            await onDeleteSubTask(taskId)
+        } catch (err) {
+            console.error('[MobileEventEditModal] Delete subtask error:', err)
+            setLocalChildTasks(previousTasks)
+        }
+    }, [localChildTasks, onDeleteSubTask])
 
     const handleDurationPresetSelect = useCallback((minutes: number) => {
         setDuration(minutes)
@@ -596,27 +669,15 @@ export function MobileEventEditModal({
                         )
                     })()}
 
-                    <div className="grid grid-cols-2 gap-2">
-                        <div className={fieldClass}>
-                            <label className={fieldLabelClass}>プロジェクト</label>
-                            <div className={fieldValueClass}>
-                                {target.projectId ? "設定済み" : "なし"}
-                            </div>
-                        </div>
-
-                        <div className={fieldClass}>
-                            <label className={fieldLabelClass}>
-                                <ListTodo className="h-3 w-3" />
-                                サブタスク
-                            </label>
-                            <div className={fieldValueClass}>
-                                {localChildTasks.length}件
-                            </div>
-                        </div>
-                    </div>
-
                     {onCreateSubTask && (
-                        <div>
+                        <div className={cn(fieldClass, "min-h-0")}>
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                                <label className={fieldLabelClass}>
+                                    <ListTodo className="h-3 w-3" />
+                                    サブタスク
+                                </label>
+                                <span className="text-xs font-semibold text-neutral-100">{localChildTasks.length}件</span>
+                            </div>
                             {localChildTasks.length > 0 && (
                                 <div className="mb-2 space-y-1">
                                     {localChildTasks.map(child => (
@@ -638,6 +699,14 @@ export function MobileEventEditModal({
                                             )}>
                                                 {child.title}
                                             </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteSubTask(child.id)}
+                                                className="shrink-0 rounded p-1 text-neutral-500 active:bg-white/10 active:text-red-300"
+                                                aria-label="サブタスクを削除"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
                                         </div>
                                     ))}
                                 </div>

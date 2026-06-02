@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Plus, Timer, Calendar, Bell, ChevronDown, ListTodo, X } from "lucide-react"
+import { Plus, Timer, Calendar, Bell, ChevronDown, ListTodo, Square, Trash2 } from "lucide-react"
 import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -86,14 +86,13 @@ function fromDateTimeLocalValue(value: string) {
     return Number.isNaN(date.getTime()) ? undefined : date
 }
 
-export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, onExternalOpenChange, initialScheduledAt, initialEstimatedTime }: QuickTaskFabProps) {
+export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternalOpenChange, initialScheduledAt, initialEstimatedTime }: QuickTaskFabProps) {
     const [isOpen, setIsOpen] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const fabRef = useRef<HTMLDivElement>(null)
     const defaultCalendarId = calendars[0]?.id ?? null
 
     const [title, setTitle] = useState("")
-    const [projectId, setProjectId] = useState<string | null>(null)
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined)
     const [estimatedTime, setEstimatedTime] = useState(30)
     const [reminder, setReminder] = useState(0)
@@ -133,7 +132,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
 
     const resetForm = useCallback(() => {
         setTitle("")
-        setProjectId(null)
         setScheduledDate(undefined)
         setEstimatedTime(30)
         setReminder(0)
@@ -169,7 +167,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         // 即座にシートを閉じてカレンダーに表示（API保存はバックグラウンド）
         onCreateTask({
             title: title.trim(),
-            project_id: projectId,
+            project_id: null,
             scheduled_at: scheduledDate ? scheduledDate.toISOString() : null,
             estimated_time: estimatedTime,
             reminders: reminder >= 0 ? [reminder] : [],
@@ -182,7 +180,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         resetForm()
         closeSheet()
         setIsSubmitting(false)
-    }, [title, projectId, scheduledDate, estimatedTime, reminder, calendarId, memo, subtasks, isSubmitting, onCreateTask, resetForm, closeSheet])
+    }, [title, scheduledDate, estimatedTime, reminder, calendarId, memo, subtasks, isSubmitting, onCreateTask, resetForm, closeSheet])
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey && title.trim()) {
@@ -201,7 +199,6 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
         setIsOpen(true)
     }, [defaultCalendarId])
 
-    const selectedProject = projects.find(project => project.id === projectId)
     const selectedCalendar = calendars.find(calendar => calendar.id === calendarId)
     const scheduledDateTimeLabel = scheduledDate
         ? format(scheduledDate, "M/d(E) HH:mm", { locale: ja })
@@ -424,41 +421,14 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2">
-                                <div className={fieldClass}>
-                                    <label className={fieldLabelClass}>プロジェクト</label>
-                                    <div className="relative">
-                                        <select
-                                            value={projectId ?? ""}
-                                            onChange={(e) => setProjectId(e.target.value || null)}
-                                            className={selectClass}
-                                        >
-                                            <option className="bg-neutral-950" value="">なし</option>
-                                            {projects.map((p) => (
-                                                <option className="bg-neutral-950" key={p.id} value={p.id}>
-                                                    {p.title}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
-                                    </div>
-                                    {selectedProject && (
-                                        <div className="mt-0.5 truncate text-[10px] text-neutral-500">{selectedProject.title}</div>
-                                    )}
-                                </div>
-
-                                <div className={fieldClass}>
+                            <div className={cn(fieldClass, "min-h-0")}>
+                                <div className="mb-2 flex items-center justify-between gap-2">
                                     <label className={fieldLabelClass}>
                                         <ListTodo className="h-3 w-3" />
                                         サブタスク
                                     </label>
-                                    <div className={fieldValueClass}>
-                                        {subtasks.length}件
-                                    </div>
+                                    <span className="text-xs font-semibold text-neutral-100">{subtasks.length}件</span>
                                 </div>
-                            </div>
-
-                            <div>
                                 {subtasks.length > 0 && (
                                     <div className="mb-2 space-y-1">
                                         {subtasks.map((st, idx) => (
@@ -466,6 +436,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                                                 key={idx}
                                                 className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-1.5"
                                             >
+                                                <Square className="h-4 w-4 shrink-0 text-neutral-500" aria-hidden="true" />
                                                 <span className="flex-1 truncate text-sm text-neutral-100">{st}</span>
                                                 <button
                                                     type="button"
@@ -473,7 +444,7 @@ export function QuickTaskFab({ projects, calendars, onCreateTask, externalOpen, 
                                                     className="shrink-0 rounded p-1 text-neutral-400 active:bg-white/10 active:text-red-300"
                                                     aria-label="サブタスクを削除"
                                                 >
-                                                    <X className="h-3.5 w-3.5" />
+                                                    <Trash2 className="h-3.5 w-3.5" />
                                                 </button>
                                             </div>
                                         ))}
