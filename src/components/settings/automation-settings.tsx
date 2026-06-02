@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
 import { AgentStatusBadge } from "@/components/settings/agent-status-badge"
+import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 interface SpaceOption {
   id: string
@@ -265,11 +266,12 @@ export function AutomationSettings() {
           title="Googleカレンダー認証"
           description="Focusmap本体の予定連携です。GWSとは別に、画面表示とカレンダー同期で使用します。"
         >
-          <Button asChild className="h-10 gap-1.5">
-            <a href="/api/calendar/connect?next=/dashboard/settings/automation">
-              <KeyRound className="h-4 w-4" />
-              Google認証を更新
-            </a>
+          <Button
+            className="h-10 gap-1.5"
+            onClick={() => startCalendarOAuth('/dashboard/settings/automation')}
+          >
+            <KeyRound className="h-4 w-4" />
+            Google認証を更新
           </Button>
         </SettingBlock>
       </div>

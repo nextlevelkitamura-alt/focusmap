@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,9 +10,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { WebView, type WebViewNavigation } from "react-native-webview";
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
 const DEFAULT_FOCUSMAP_URL = "https://focusmap-official.com/dashboard";
+const EXTERNAL_AUTH_HOSTS = new Set(["accounts.google.com", "oauth2.googleapis.com"]);
 
 function buildFocusmapUrl() {
   const configuredUrl = process.env.EXPO_PUBLIC_FOCUSMAP_URL?.trim() || DEFAULT_FOCUSMAP_URL;
@@ -31,10 +32,28 @@ function isHttpUrl(url: string) {
   return url.startsWith("http://") || url.startsWith("https://");
 }
 
+function isExternalAuthUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      EXTERNAL_AUTH_HOSTS.has(url.hostname) ||
+      (url.hostname.endsWith(".supabase.co") && url.pathname.startsWith("/auth/v1/"))
+    );
+  } catch {
+    return false;
+  }
+}
+
 function openExternalUrl(url: string) {
   Linking.openURL(url).catch(() => {
     Alert.alert("開けませんでした", "このリンクを開くアプリが見つかりません。");
   });
+}
+
+function withAppParams(url: URL) {
+  url.searchParams.set("source", "ios-app");
+  url.searchParams.set("standalone", "1");
+  return url;
 }
 
 type ErrorState = {
@@ -72,13 +91,38 @@ function ErrorFallback({
 
 export default function App() {
   const webViewRef = useRef<WebView>(null);
-  const focusmapUrl = useMemo(buildFocusmapUrl, []);
+  const [focusmapUrl] = useState(buildFocusmapUrl);
+  const [webViewUrl, setWebViewUrl] = useState(focusmapUrl);
   const [loadProgress, setLoadProgress] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<ErrorState | null>(null);
 
+  const buildInternalUrl = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
+    const base = new URL(focusmapUrl);
+    const url = pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")
+      ? new URL(pathOrUrl)
+      : new URL(pathOrUrl || "/dashboard", base.origin);
+    withAppParams(url);
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+    }
+    return url.toString();
+  }, [focusmapUrl]);
+
+  const navigateInsideApp = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
+    setError(null);
+    setInitialLoading(true);
+    setLoadProgress(0);
+    setWebViewUrl(buildInternalUrl(pathOrUrl, params));
+  }, [buildInternalUrl]);
+
   const handleShouldStartLoad = (request: WebViewNavigation) => {
     if (!request.url || request.url === "about:blank") return true;
+
+    if (isExternalAuthUrl(request.url)) {
+      openExternalUrl(request.url);
+      return false;
+    }
 
     if (!isHttpUrl(request.url)) {
       openExternalUrl(request.url);
@@ -88,12 +132,56 @@ export default function App() {
     return true;
   };
 
+  const handleDeepLink = useCallback((urlValue: string | null) => {
+    if (!urlValue) return;
+
+    try {
+      const url = new URL(urlValue);
+      if (url.protocol !== "focusmap:") return;
+
+      if (url.hostname === "auth-complete") {
+        const nonce = url.searchParams.get("nonce");
+        const next = url.searchParams.get("next") || "/dashboard";
+        if (!nonce) {
+          Alert.alert("ログインを反映できません", "ログイン情報が見つかりませんでした。");
+          return;
+        }
+        navigateInsideApp("/auth/native-bridge", { nonce, next });
+        return;
+      }
+
+      if (url.hostname === "calendar-connected") {
+        const next = url.searchParams.get("next") || "/dashboard";
+        navigateInsideApp(next, { calendar_connected: "true" });
+      }
+    } catch {
+      // Ignore unrelated deep links.
+    }
+  }, [navigateInsideApp]);
+
+  const handleWebViewMessage = (event: WebViewMessageEvent) => {
+    try {
+      const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string };
+      if (payload.type === "focusmap:openExternal" && payload.url) {
+        openExternalUrl(payload.url);
+      }
+    } catch {
+      // Ignore non-JSON messages from the embedded page.
+    }
+  };
+
   const handleReload = () => {
     setError(null);
     setInitialLoading(true);
     setLoadProgress(0);
     webViewRef.current?.reload();
   };
+
+  useEffect(() => {
+    Linking.getInitialURL().then(handleDeepLink).catch(() => undefined);
+    const subscription = Linking.addEventListener("url", ({ url }) => handleDeepLink(url));
+    return () => subscription.remove();
+  }, [handleDeepLink]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -109,7 +197,7 @@ export default function App() {
           <>
             <WebView
               ref={webViewRef}
-              source={{ uri: focusmapUrl }}
+              source={{ uri: webViewUrl }}
               style={styles.webView}
               applicationNameForUserAgent="FocusmapIOS"
               allowsBackForwardNavigationGestures
@@ -120,6 +208,7 @@ export default function App() {
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               onShouldStartLoadWithRequest={handleShouldStartLoad}
+              onMessage={handleWebViewMessage}
               onLoadStart={() => {
                 setError(null);
                 setInitialLoading(true);

@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 type StatusLevel = "ok" | "warn" | "missing" | "checking" | "unknown"
 
@@ -383,11 +384,13 @@ export function AutomationStatusPanel({ spaceId, embedded = false, className }: 
             <RefreshCw className="h-3.5 w-3.5" />
             権限再スキャン
           </Button>
-          <Button asChild size="sm" className="h-9 gap-1.5 text-xs">
-            <a href="/api/calendar/connect?next=/dashboard/chat">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Google認証
-            </a>
+          <Button
+            size="sm"
+            className="h-9 gap-1.5 text-xs"
+            onClick={() => startCalendarOAuth('/dashboard/chat')}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Google認証
           </Button>
         </div>
       </div>

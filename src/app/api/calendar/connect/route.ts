@@ -52,6 +52,41 @@ function desktopOAuthLaunchPage(authUrl: string) {
 </html>`;
 }
 
+function appOAuthLaunchPage(authUrl: string) {
+  const safeUrl = htmlEscape(authUrl);
+  const scriptUrl = JSON.stringify(authUrl);
+  return `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google認証を開いています</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #f4f4f5; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(460px, calc(100vw - 32px)); border: 1px solid #282828; border-radius: 12px; background: #0d0d0f; padding: 22px; }
+      h1 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 0 0 14px; color: #a1a1aa; }
+      a { color: #34d399; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Google認証をSafariで開いています</h1>
+      <p>認証が終わるとFocusmapアプリへ戻ります。</p>
+      <a href="${safeUrl}" target="_blank" rel="noreferrer">Safariで開けない場合はこちら</a>
+    </main>
+    <script>
+      const authUrl = ${scriptUrl};
+      if (window.ReactNativeWebView?.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'focusmap:openExternal', url: authUrl }));
+      } else {
+        window.location.href = authUrl;
+      }
+    </script>
+  </body>
+</html>`;
+}
+
 /**
  * Google OAuth認証URLにリダイレクト
  * GET /api/calendar/connect
@@ -61,6 +96,7 @@ export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const nextPath = request.nextUrl.searchParams.get('next') || '/dashboard';
   const desktopOAuth = request.nextUrl.searchParams.get('desktop_oauth') === '1';
+  const appOAuth = request.nextUrl.searchParams.get('app_oauth') === 'ios';
 
   // ログインユーザーを確認
   const { data: { user }, error } = await supabase.auth.getUser();
@@ -101,14 +137,17 @@ export async function GET(request: NextRequest) {
     redirectUri
   );
 
-  const state = encodeCalendarOAuthState(user.id, nextPath, { desktop: desktopOAuth });
+  const state = encodeCalendarOAuthState(user.id, nextPath, {
+    desktop: desktopOAuth,
+    app: appOAuth ? 'ios' : undefined,
+  });
 
-  if (desktopOAuth) {
+  if (desktopOAuth || appOAuth) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
       const origin = resolveOriginFromRequest(request);
       return NextResponse.redirect(
-        new URL('/dashboard?calendar_error=desktop_session_missing', origin)
+        new URL('/dashboard?calendar_error=external_session_missing', origin)
       );
     }
     registerDesktopCalendarOAuthSession(state, {
@@ -143,6 +182,14 @@ export async function GET(request: NextRequest) {
 
   if (desktopOAuth) {
     return new NextResponse(desktopOAuthLaunchPage(authUrl), {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+      },
+    });
+  }
+
+  if (appOAuth) {
+    return new NextResponse(appOAuthLaunchPage(authUrl), {
       headers: {
         'content-type': 'text/html; charset=utf-8',
       },

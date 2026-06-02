@@ -56,6 +56,39 @@ function desktopOAuthDonePage() {
 </html>`;
 }
 
+function appOAuthDonePage(nextPath: string) {
+  const deepLink = new URL('focusmap://calendar-connected');
+  deepLink.searchParams.set('next', nextPath || '/dashboard');
+  const safeDeepLink = deepLink.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+  const scriptDeepLink = JSON.stringify(deepLink.toString());
+
+  return `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google連携完了</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #f4f4f5; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(460px, calc(100vw - 32px)); border: 1px solid #282828; border-radius: 12px; background: #0d0d0f; padding: 22px; }
+      h1 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 0 0 14px; color: #a1a1aa; }
+      a { color: #34d399; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Google Calendar を連携しました</h1>
+      <p>Focusmapアプリへ戻っています。</p>
+      <a href="${safeDeepLink}">アプリへ戻る</a>
+    </main>
+    <script>
+      setTimeout(() => { window.location.href = ${scriptDeepLink}; }, 300);
+    </script>
+  </body>
+</html>`;
+}
+
 /**
  * Google OAuth認証後のコールバック
  * GET /api/calendar/callback?code=xxx&state=user_id
@@ -75,7 +108,7 @@ export async function GET(request: NextRequest) {
 
   const supabase = await createClient();
 
-  const { userId: stateUserId, next: nextPath, desktop } = decodeCalendarOAuthState(state);
+  const { userId: stateUserId, next: nextPath, desktop, app } = decodeCalendarOAuthState(state);
 
   // ユーザーIDを検証
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -84,7 +117,7 @@ export async function GET(request: NextRequest) {
   let desktopCallback = false;
 
   if (authError || !user || user.id !== stateUserId) {
-    const desktopSession = desktop ? consumeDesktopCalendarOAuthSession(state) : null;
+    const desktopSession = desktop || app ? consumeDesktopCalendarOAuthSession(state) : null;
     if (desktopSession?.userId === stateUserId) {
       activeUserId = desktopSession.userId;
       writeClient = createUserAccessTokenClient(desktopSession.accessToken);
@@ -100,6 +133,7 @@ export async function GET(request: NextRequest) {
       stateParam: stateUserId,
       match: user?.id === stateUserId,
       desktop,
+      app,
     });
     const reason = authError ? 'auth_error' : !user ? 'no_session' : 'user_mismatch';
     return NextResponse.redirect(
@@ -210,6 +244,13 @@ export async function GET(request: NextRequest) {
     // ダッシュボードにリダイレクト（成功）
     const successUrl = new URL(nextPath || '/dashboard', origin);
     successUrl.searchParams.set('calendar_connected', 'true');
+    if (app === 'ios') {
+      return new NextResponse(appOAuthDonePage(nextPath || '/dashboard'), {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+        },
+      });
+    }
     if (desktopCallback) {
       return new NextResponse(desktopOAuthDonePage(), {
         headers: {

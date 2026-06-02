@@ -52,8 +52,23 @@ npx expo-doctor
 section "Device"
 if command -v xcrun >/dev/null 2>&1 && xcrun devicectl list devices >/tmp/focusmap-ios-devices.txt 2>/dev/null; then
   sed -n '1,80p' /tmp/focusmap-ios-devices.txt
+  if grep -Eq '[[:space:]](available|connected)([[:space:]]|\()' /tmp/focusmap-ios-devices.txt; then
+    printf "OK   iPhone is visible to Xcode\n"
+  else
+    printf "NG   no iPhone is visible to Xcode\n"
+    printf "     Connect iPhone by USB and tap Trust This Computer.\n"
+  fi
 else
   printf "INFO iPhone detection is available after Xcode is installed and selected.\n"
+fi
+
+section "Code Signing"
+if security find-identity -v -p codesigning 2>/dev/null | grep -Eq '"(Apple Development|iPhone Developer)[^"]*"'; then
+  printf "OK   Apple Development signing identity is available\n"
+else
+  printf "NG   Apple Development signing identity is missing\n"
+  printf "     Run: npm run ios:signing\n"
+  printf "     Then choose your free Personal Team in Xcode > Signing & Capabilities.\n"
 fi
 
 section "Next command"

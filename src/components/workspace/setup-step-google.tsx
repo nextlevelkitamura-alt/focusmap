@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Check, ExternalLink, Calendar, Plug } from 'lucide-react';
+import { startCalendarOAuth } from '@/lib/external-auth-launch';
 
 interface SetupStepGoogleProps {
   connected: boolean;
@@ -13,8 +14,6 @@ export function SetupStepGoogle({ connected, spaceId, onNext }: SetupStepGoogleP
   const next = spaceId
     ? `/dashboard/workspace/setup?space=${spaceId}&step=2`
     : '/dashboard/workspace/setup?step=2';
-  const connectHref = `/api/calendar/connect?next=${encodeURIComponent(next)}`;
-
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -50,11 +49,9 @@ export function SetupStepGoogle({ connected, spaceId, onNext }: SetupStepGoogleP
         </div>
       ) : (
         <div className="flex justify-end">
-          <Button asChild>
-            <a href={connectHref}>
-              <ExternalLink className="mr-1 h-3.5 w-3.5" />
-              Google Calendar を連携
-            </a>
+          <Button onClick={() => startCalendarOAuth(next)}>
+            <ExternalLink className="mr-1 h-3.5 w-3.5" />
+            Google Calendar を連携
           </Button>
         </div>
       )}

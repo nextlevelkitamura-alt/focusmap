@@ -107,6 +107,7 @@ interface CalendarOAuthState {
   userId: string;
   next: string;
   desktop?: boolean;
+  app?: 'ios';
   nonce?: string;
 }
 
@@ -120,13 +121,15 @@ function cleanupDesktopOAuthSessions() {
 export function encodeCalendarOAuthState(
   userId: string,
   next = '/dashboard',
-  options: { desktop?: boolean } = {}
+  options: { desktop?: boolean; app?: 'ios' } = {}
 ): string {
+  const external = options.desktop || options.app;
   const payload: CalendarOAuthState = {
     userId,
     next,
     desktop: options.desktop || undefined,
-    nonce: options.desktop ? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` : undefined,
+    app: options.app,
+    nonce: external ? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` : undefined,
   };
   return Buffer.from(JSON.stringify(payload)).toString('base64url');
 }
@@ -139,6 +142,7 @@ export function decodeCalendarOAuthState(state: string): CalendarOAuthState {
         userId: parsed.userId,
         next: parsed.next,
         desktop: parsed.desktop === true,
+        app: parsed.app === 'ios' ? 'ios' : undefined,
         nonce: typeof parsed.nonce === 'string' ? parsed.nonce : undefined,
       };
     }

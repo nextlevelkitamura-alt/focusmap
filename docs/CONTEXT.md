@@ -182,6 +182,7 @@ Goals → Projects → TaskGroups → Tasks
 - Macアプリの状態確認は `/api/desktop/health` を使い、重い `/dashboard` 初期化やAI/DB接続テストをヘルスチェックで走らせない。
 - Macアプリ内でGoogle Calendar連携を開始した場合、Google OAuth画面はElectron内WebViewではなく既定ブラウザへ逃がす。ローカルに `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` がある場合は `/api/calendar/connect?desktop_oauth=1` でElectron内のSupabaseセッションを一時的にローカルメモリへ保持し、外部ブラウザから `/api/calendar/callback` に戻った時に同じユーザーのGoogleトークンを保存する。ローカルにGoogle OAuth設定がない場合は `https://focusmap-official.com/api/calendar/connect` を既定ブラウザで開き、ブラウザ側のFocusmap/GoogleログインCookieを使う。Google公式方針に合わせ、Google認証ページをElectron内に表示しない。
 - MacアプリのFocusmapログインでGoogleを選んだ場合も、Googleアカウント選択/認証画面はElectron内WebViewではなく既定ブラウザへ逃がす。ログイン画面は `skipBrowserRedirect` でOAuth URLを取得し、Electron IPCの `focusmapDesktop.openExternal` で外部ブラウザを開く。外部ブラウザからローカルNextの `/auth/callback?desktop=1&nonce=...` に戻ったら、同一プロセスの一時メモリにSupabaseセッションを保存し、Macアプリ側が `/api/auth/desktop-session?nonce=...` をポーリングして `supabase.auth.setSession` する。セッション受け渡しは5分TTLで、一般Webログインは従来通りブラウザ内リダイレクトを使う。
+- Web UI上のGoogle Calendar接続ボタンは `src/lib/external-auth-launch.ts` の `startCalendarOAuth` を通す。MacアプリではElectronのナビゲーションハンドラが既定ブラウザへ逃がし、通常ブラウザでは従来通り `/api/calendar/connect` に遷移する。
 - Macアプリから起動するNext.jsには、リポジトリの `.env` / `.env.local` と `~/.focusmap/desktop.env` を読み込ませる。`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` がない場合は、空の `client_id` でGoogleへ飛ばさず、Focusmap側の `calendar_error=google_oauth_not_configured` に戻す。
 - Macアプリ/常駐runnerまわりの実行ログは、リポジトリ直下の `logs/` ではなく `~/.focusmap/logs/` に出す。即時Codex実行のstdout/stderrも同じディレクトリへ寄せ、リポジトリサイズに実行ログを混ぜない。
 - Macアプリのメニューと「Focusmap 接続状態」ウィンドウから、既存 `scripts/focusmap-agent/dist/cli.js` と `scripts/run-codex-app-server.sh` を起動・停止・状態確認できる。agentの設定は従来通り `~/.focusmap/config.json` を使い、Macアプリ内にservice role key等は置かない。
@@ -195,8 +196,11 @@ Goals → Projects → TaskGroups → Tasks
 - iPhone版の初期実装は `mobile/focusmap-app` のExpo/React Nativeアプリを使う。既存Next.jsのモバイルUIを捨てず、React Native側は起動画面・読み込み状態・エラー復旧・ネイティブインストール枠を担当し、アプリ本体は `react-native-webview` で `/dashboard` を表示する。
 - 標準の接続先は `https://focusmap-official.com/dashboard?source=ios-app&standalone=1`。スマホプレビューやローカル検証では、ビルド前に `EXPO_PUBLIC_FOCUSMAP_URL` でCloudflare tunnel等のURLへ差し替える。
 - Apple Developer Programに入らない初期検証では、Xcodeの無料Personal Teamで実機へ直接インストールする。ホーム画面にはFocusmap専用アイコンが出るが、無料署名は7日で切れるため、継続利用には再インストールが必要。
-- 実機インストールの入口は `mobile/focusmap-app/scripts/install-ios-free.sh`。Xcode本体がないMacでは実行を止め、`xcode-select` とライセンス承認の手順を表示する。
-- iPhone版を本格配布する段階では、Google OAuthや外部ログインをWebView内だけで完結させず、ExpoのAuthSession/ASWebAuthenticationSession相当のシステムブラウザ認証へ切り出す。初期MVPは自分用インストールとWeb UI確認を優先する。
+- 実機インストールの入口は `mobile/focusmap-app/scripts/install-ios-free.sh`。Xcode本体がないMacでは実行を止め、`xcode-select` とライセンス承認の手順を表示する。`ios/` がない場合はExpo prebuildとPodsを再生成し、接続済みiPhoneを `xcrun devicectl` のJSON出力から検出する。実機ビルドは `xcodebuild -allowProvisioningUpdates -allowProvisioningDeviceRegistration` を使い、生成された `Focusmap.app` を `devicectl device install app` でiPhoneへ入れる。Expo CLI経由では無料Personal Teamのプロビジョニング自動生成オプションを渡せないため、実機インストールの標準導線は直Xcodeビルドにする。
+- 無料Apple IDルートでは、XcodeのSigning & CapabilitiesでPersonal Teamを一度選ぶ必要がある。`security find-identity -v -p codesigning` にApple Development証明書がない場合、`install-ios-free.sh` は重いビルド前に止める。署名画面を開く入口は `npm run ios:signing` / `mobile/focusmap-app/scripts/open-ios-signing.sh`。初回起動で「信頼されていないデベロッパ」が出た場合は、iPhoneの `設定 > 一般 > VPNとデバイス管理` で開発元を信頼する。
+- iPhoneアプリ内のGoogle認証はWebView内にGoogle画面を表示しない。`mobile/focusmap-app/App.tsx` が `accounts.google.com` / `oauth2.googleapis.com` / Supabase Auth URLを検出したらSafariへ開き、`focusmap://...` の戻りURLを受けてWebViewを更新する。
+- iPhoneアプリ内のGoogleログインは、ログイン画面が `skipBrowserRedirect` でSupabase OAuth URLを取得し、React Native WebView bridgeからSafariへ渡す。`/auth/callback?native_app=ios&nonce=...` は外部Safari側でコード交換後に一時セッションを保存し、`focusmap://auth-complete?nonce=...` でアプリへ戻す。アプリは `/auth/native-bridge?nonce=...` をWebViewで開き、`/api/auth/desktop-session` から受け取ったSupabaseセッションを `supabase.auth.setSession` してから `/dashboard?source=ios-app&standalone=1` へ戻す。
+- iPhoneアプリ内のGoogle Calendar連携は、WebView内で `/api/calendar/connect?app_oauth=ios` を開始し、サーバー側で現在のSupabaseセッションをOAuth stateに紐づけてからSafariへGoogle同意画面を開く。`/api/calendar/callback` はSafari側Cookieに依存せず保存済み一時セッションで `user_calendar_settings` にトークンを保存し、`focusmap://calendar-connected` でアプリへ戻す。
 
 ### Codexログ表示方針
 
@@ -222,6 +226,7 @@ Goals → Projects → TaskGroups → Tasks
 | Focusmap Liteセットアップ | `scripts/install.sh` / `src/components/workspace/setup-step-agent.tsx` |
 | Focusmap MacアプリMVP | `desktop/focusmap-mac/main.cjs` / `desktop/focusmap-mac/status.html` |
 | Focusmap iPhoneアプリMVP | `mobile/focusmap-app/App.tsx` / `mobile/focusmap-app/scripts/install-ios-free.sh` |
+| アプリ外部Google認証 | `src/lib/external-auth-launch.ts` / `src/app/auth/native-bridge/page.tsx` / `src/app/api/calendar/connect/route.ts` |
 
 ---
 

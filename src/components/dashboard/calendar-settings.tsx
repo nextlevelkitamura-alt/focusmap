@@ -10,6 +10,7 @@ import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { useCalendars } from "@/hooks/useCalendars"
+import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 interface CalendarStatus {
   isConnected: boolean
@@ -114,7 +115,7 @@ export function CalendarSettings({ compact = false }: CalendarSettingsProps) {
   // useCalendars が自前で /api/calendars をfetchするので、ここでの個別fetchは不要
 
   const handleConnect = () => {
-    window.location.href = '/api/calendar/connect'
+    startCalendarOAuth()
   }
 
   const handleDisconnect = async () => {

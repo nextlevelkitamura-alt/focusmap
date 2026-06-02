@@ -27,6 +27,38 @@ function desktopAuthDonePage() {
 </html>`
 }
 
+function nativeAuthDonePage(nonce: string, next: string) {
+    const deepLink = new URL('focusmap://auth-complete')
+    deepLink.searchParams.set('nonce', nonce)
+    deepLink.searchParams.set('next', next || '/dashboard')
+    const safeDeepLink = deepLink.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;')
+    const scriptDeepLink = JSON.stringify(deepLink.toString())
+
+    return `<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Focusmap ログイン完了</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #050505; color: #f5f5f5; }
+      main { max-width: 420px; padding: 32px; text-align: center; }
+      h1 { font-size: 22px; margin: 0 0 12px; }
+      p { color: #a3a3a3; line-height: 1.7; margin: 0 0 14px; }
+      a { color: #34d399; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Focusmap にログインしました</h1>
+      <p>Focusmapアプリへ戻っています。</p>
+      <a href="${safeDeepLink}">アプリへ戻る</a>
+    </main>
+    <script>setTimeout(() => { window.location.href = ${scriptDeepLink} }, 300)</script>
+  </body>
+</html>`
+}
+
 function getRedirectOrigin(request: Request) {
     if (process.env.NEXTAUTH_URL?.startsWith('https://')) {
         return process.env.NEXTAUTH_URL.replace(/\/$/, '')
@@ -47,6 +79,8 @@ export async function GET(request: Request) {
     const next = searchParams.get('next') ?? '/dashboard'
     const desktop = searchParams.get('desktop') === '1'
     const desktopNonce = searchParams.get('nonce')
+    const nativeApp = searchParams.get('native_app')
+    const nativeNonce = searchParams.get('nonce')
 
     const origin = getRedirectOrigin(request)
 
@@ -77,6 +111,17 @@ export async function GET(request: Request) {
                     userId: data.user.id,
                 })
                 return new NextResponse(desktopAuthDonePage(), {
+                    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+                })
+            }
+            if (nativeApp === 'ios' && nativeNonce && data.session?.access_token && data.session?.refresh_token && data.user?.id) {
+                registerDesktopAuthSession({
+                    nonce: nativeNonce,
+                    accessToken: data.session.access_token,
+                    refreshToken: data.session.refresh_token,
+                    userId: data.user.id,
+                })
+                return new NextResponse(nativeAuthDonePage(nativeNonce, next), {
                     headers: { 'Content-Type': 'text/html; charset=utf-8' },
                 })
             }

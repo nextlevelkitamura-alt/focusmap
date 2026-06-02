@@ -7,6 +7,7 @@ import { useState, useEffect, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { isFocusmapIosAppShell, openExternalAuthUrl } from "@/lib/external-auth-launch"
 
 const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
 const FALLBACK_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA'
@@ -22,11 +23,13 @@ declare global {
     }
 }
 
-function getAuthCallbackUrl(options?: { desktop?: boolean; nonce?: string }) {
+function getAuthCallbackUrl(options?: { desktop?: boolean; nativeApp?: 'ios'; nonce?: string; next?: string }) {
     const origin = options?.desktop ? location.origin : SITE_URL || location.origin
     const url = new URL('/auth/callback', origin)
     if (options?.desktop) url.searchParams.set('desktop', '1')
+    if (options?.nativeApp) url.searchParams.set('native_app', options.nativeApp)
     if (options?.nonce) url.searchParams.set('nonce', options.nonce)
+    if (options?.next) url.searchParams.set('next', options.next)
     return url.toString()
 }
 
@@ -39,7 +42,12 @@ function LoginContent() {
     const [loading, setLoading] = useState(false)
     const [message, setMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null)
     const isDesktopShell = searchParams.get('desktop') === '1' || searchParams.get('source') === 'mac'
-    const dashboardPath = isDesktopShell ? '/dashboard?desktop=1&source=mac' : '/dashboard'
+    const isIosAppShell = isFocusmapIosAppShell()
+    const dashboardPath = isDesktopShell
+        ? '/dashboard?desktop=1&source=mac'
+        : isIosAppShell
+            ? '/dashboard?source=ios-app&standalone=1'
+            : '/dashboard'
 
     const formatAuthError = (error: unknown) => {
         const text = error instanceof Error ? error.message : String(error)
@@ -121,6 +129,27 @@ function LoginContent() {
                     }
                 }
                 throw new Error('外部ブラウザでのログイン完了を確認できませんでした。もう一度お試しください。')
+            }
+
+            if (isIosAppShell) {
+                const nonce = crypto.randomUUID()
+                const { data, error } = await supabase.auth.signInWithOAuth({
+                    provider: "google",
+                    options: {
+                        redirectTo: getAuthCallbackUrl({
+                            nativeApp: 'ios',
+                            nonce,
+                            next: dashboardPath,
+                        }),
+                        skipBrowserRedirect: true,
+                    },
+                })
+                if (error) throw error
+                if (!data.url) throw new Error('GoogleログインURLを取得できませんでした')
+                await openExternalAuthUrl(data.url)
+                setMessage({ type: 'success', text: 'SafariでGoogleログインを完了してください。完了後、Focusmapアプリへ戻ります。' })
+                setLoading(false)
+                return
             }
 
             const { error } = await supabase.auth.signInWithOAuth({

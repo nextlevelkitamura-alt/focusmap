@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { RefreshCw, Settings, ChevronDown, CheckSquare, Square, X } from "lucide-react"
+import { RefreshCw, ChevronDown, CheckSquare, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +10,8 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-import { useCalendars, type UserCalendar } from "@/hooks/useCalendars"
+import { useCalendars } from "@/hooks/useCalendars"
+import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 interface CalendarSelectorProps {
   onVisibleCalendarIdsChange?: (ids: string[]) => void
@@ -28,8 +29,6 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
 
   // 全選択チェック
   const allSelected = calendars.length > 0 && calendars.every(c => c.selected)
-  const someSelected = calendars.some(c => c.selected) && !allSelected
-
   if (isLoading) {
     if (compact) {
       return (
@@ -53,7 +52,7 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
       await fetch('/api/calendar/disconnect', { method: 'POST' })
       alert('連携を解除しました')
       window.location.reload()
-    } catch (e) {
+    } catch {
       alert('解除に失敗しました')
     }
   }
@@ -69,7 +68,7 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
           variant="ghost"
           size="sm"
           className="h-6 text-[10px] gap-1 px-2 text-red-600"
-          onClick={() => window.location.href = '/api/calendar/connect'}
+          onClick={() => startCalendarOAuth()}
           title={error.message}
         >
           カレンダーエラー
@@ -87,7 +86,7 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
         {isTokenError ? (
           <div className="space-y-1">
             <Button
-              onClick={() => window.location.href = '/api/calendar/connect'}
+              onClick={() => startCalendarOAuth()}
               size="sm"
               variant="default"
               className="w-full h-7 text-[10px]"
@@ -131,7 +130,7 @@ export function CalendarSelector({ onVisibleCalendarIdsChange, compact = false }
           variant="ghost"
           size="sm"
           className="h-6 text-[10px] gap-1 px-2 text-muted-foreground"
-          onClick={() => window.location.href = '/api/calendar/connect'}
+          onClick={() => startCalendarOAuth()}
         >
           カレンダー接続
         </Button>

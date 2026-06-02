@@ -19,6 +19,7 @@ import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
 import { formatTime } from "@/contexts/TimerContext"
 import { countScheduleItemsForDateRange, countScheduleItemsForMonth } from "@/lib/today-range-blocks"
+import { startCalendarOAuth } from "@/lib/external-auth-launch"
 
 // --- Types ---
 
@@ -461,7 +462,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             </div>
                             <div className="mt-3">
                                 <button
-                                    onClick={() => window.location.href = '/api/calendar/connect'}
+                                    onClick={() => startCalendarOAuth()}
                                     className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                                 >
                                     カレンダーを接続
