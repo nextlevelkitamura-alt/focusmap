@@ -280,9 +280,11 @@ export function TodayView({
                         <svg
                             className={cn(
                                 "h-5 w-5 origin-center text-foreground/95 [transform-box:fill-box]",
-                                shouldSpinHeaderRefresh && "animate-[spin_1.3s_linear_infinite] will-change-transform"
+                                shouldSpinHeaderRefresh && "animate-spin will-change-transform"
                             )}
-                            style={shouldSpinHeaderRefresh ? undefined : { transform: `rotate(${headerRefreshProgress * 210}deg)` }}
+                            style={shouldSpinHeaderRefresh
+                                ? { animationDuration: '900ms', animationTimingFunction: 'linear' }
+                                : { transform: `rotate(${headerRefreshProgress * 210}deg)` }}
                             viewBox="0 0 24 24"
                             aria-hidden="true"
                         >
