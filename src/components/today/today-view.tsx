@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef, useState, type TouchEvent } from "react"
 import { Task, Project, Space } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
-    List, Flame, Play, Pause, RefreshCw, Check, Loader2, Bot
+    List, Flame, Play, Pause, Check, Loader2, Bot
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -231,23 +231,19 @@ export function TodayView({
     }, [logic, mobilePane, pullRefreshReady, resetPullRefresh])
 
     const isHeaderRefreshing = mobilePane === 'schedule' && logic.syncState === 'syncing'
-    const isHeaderRefreshDone = mobilePane === 'schedule' && logic.syncState === 'done'
     const showHeaderRefreshIndicator = mobilePane === 'schedule' && (
         pullRefreshDistance > 0 ||
-        isHeaderRefreshing ||
-        isHeaderRefreshDone
+        isHeaderRefreshing
     )
     const headerRefreshDistance =
-        isHeaderRefreshing || isHeaderRefreshDone
+        isHeaderRefreshing
             ? HEADER_PULL_REFRESH_HOLD
             : pullRefreshDistance
     const headerRefreshProgress = Math.min(headerRefreshDistance / HEADER_PULL_REFRESH_THRESHOLD, 1)
     const headerTopPadding = showHeaderRefreshIndicator
         ? HEADER_BASE_PADDING_TOP + headerRefreshDistance
         : HEADER_BASE_PADDING_TOP
-    const headerRefreshLabel = isHeaderRefreshDone
-        ? '更新完了'
-        : isHeaderRefreshing
+    const headerRefreshLabel = isHeaderRefreshing
             ? '更新中'
             : pullRefreshReady
                 ? '離すと更新'
@@ -274,23 +270,19 @@ export function TodayView({
                     <div
                         className="pointer-events-none absolute left-1/2 top-2 z-10 grid h-9 w-9 place-items-center rounded-full border border-border/70 bg-background/95 shadow-sm transition-[opacity,transform]"
                         style={{
-                            opacity: isHeaderRefreshing || isHeaderRefreshDone ? 1 : Math.max(0.35, headerRefreshProgress),
+                            opacity: isHeaderRefreshing ? 1 : Math.max(0.35, headerRefreshProgress),
                             transform: `translate(-50%, 0) scale(${0.9 + headerRefreshProgress * 0.1})`,
                         }}
                         role="status"
                         aria-label={headerRefreshLabel}
                     >
-                        {isHeaderRefreshDone ? (
-                            <Check className="h-4 w-4 text-green-500" />
-                        ) : (
-                            <RefreshCw
-                                className={cn(
-                                    "h-4 w-4 text-primary transition-transform",
-                                    (pullRefreshReady || isHeaderRefreshing) && "animate-spin"
-                                )}
-                                style={isHeaderRefreshing ? undefined : { transform: `rotate(${headerRefreshProgress * 180}deg)` }}
-                            />
-                        )}
+                        <span
+                            className={cn(
+                                "h-5 w-5 rounded-full border-[2.5px] border-foreground/20 border-t-foreground/90 border-l-foreground/90",
+                                (pullRefreshReady || isHeaderRefreshing) && "animate-spin"
+                            )}
+                            style={isHeaderRefreshing || pullRefreshReady ? undefined : { transform: `rotate(${headerRefreshProgress * 210}deg)` }}
+                        />
                     </div>
                 )}
                 <div className="flex items-start justify-between gap-2">
@@ -347,10 +339,8 @@ export function TodayView({
                 </div>
                 {mobilePane === 'schedule' && (
                     <div className="mt-1.5 flex items-center justify-end gap-1">
-                        <div className="flex h-4 w-4 items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
-                            {logic.syncState === 'syncing' ? (
-                                <RefreshCw className="h-3.5 w-3.5 animate-spin text-primary" />
-                            ) : logic.syncState === 'done' ? (
+                        <div className="flex h-4 w-4 items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState !== 'done'}>
+                            {logic.syncState === 'done' ? (
                                 <Check className="h-3.5 w-3.5 text-green-500" />
                             ) : (
                                 <span className="opacity-0">•</span>
