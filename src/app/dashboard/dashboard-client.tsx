@@ -1206,6 +1206,8 @@ export function DashboardClient({
                                 allTasks={allTasksMerged}
                                 onUpdateTask={handleUpdateTaskWithQuickSync}
                                 projects={projects}
+                                selectedSpaceId={selectedSpaceId}
+                                spaces={spaces}
                                 onCreateQuickTask={handleCreateQuickTask}
                                 onCreateSubTask={handleCreateSubTask}
                                 onDeleteTask={handleDeleteTaskFromToday}

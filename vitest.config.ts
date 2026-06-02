@@ -6,7 +6,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
-    exclude: [...configDefaults.exclude, '.next/**'],
+    exclude: [...configDefaults.exclude, '.next/**', 'dist-desktop/**'],
     server: {
       deps: {
         external: [/@supabase/],

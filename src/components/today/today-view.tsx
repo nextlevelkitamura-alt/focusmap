@@ -1,10 +1,10 @@
 "use client"
 
 import { useCallback, useMemo, useRef, useState } from "react"
-import { Task, Project } from "@/types/database"
+import { Task, Project, Space } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
-    List, Flame, Play, Pause, RefreshCw, Check, Loader2
+    List, Flame, Play, Pause, RefreshCw, Check, Loader2, Bot
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -14,6 +14,7 @@ import { TodayTimelineCalendar } from "./today-timeline-calendar"
 import { Today3DaysCalendar } from "./today-3days-calendar"
 import { TodayMonthCalendar } from "./today-month-calendar"
 import { MobileEventEditModal } from "./mobile-event-edit-modal"
+import { AiExecutionTimeline } from "./ai-execution-timeline"
 import { useSwipeNavigation } from "@/hooks/useSwipeNavigation"
 import { QuickTaskFab, type QuickTaskData } from "./quick-task-fab"
 import { useTodayViewLogic } from "@/hooks/useTodayViewLogic"
@@ -31,13 +32,26 @@ interface TodayViewProps {
     onCreateSubTask?: (parentTaskId: string, title: string) => Promise<void>
     onDeleteTask?: (taskId: string) => Promise<void>
     onOpenAiChat?: () => void
+    selectedSpaceId?: string | null
+    spaces?: Space[]
 }
 
 // --- Main Component ---
 
-export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuickTask, onCreateSubTask, onDeleteTask, onOpenAiChat }: TodayViewProps) {
+export function TodayView({
+    allTasks,
+    onUpdateTask,
+    projects = [],
+    onCreateQuickTask,
+    onCreateSubTask,
+    onDeleteTask,
+    onOpenAiChat,
+    selectedSpaceId = null,
+    spaces = [],
+}: TodayViewProps) {
     const timelineContainerRef = useRef<HTMLDivElement>(null)
     const [calendarRangeMode, setCalendarRangeMode] = useState<'day' | '3days' | 'month'>('day')
+    const [mobilePane, setMobilePane] = useState<'schedule' | 'ai'>('schedule')
 
     const logic = useTodayViewLogic({
         allTasks,
@@ -179,16 +193,48 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                                     今日
                                 </span>
                             )}
-                            {logic.eventsLoading ? (
+                            {mobilePane === 'schedule' && logic.eventsLoading ? (
                                 <><Loader2 className="h-3 w-3 animate-spin" /><span>取得中...</span></>
                             ) : (
-                                <span className="min-w-0 truncate">{rangeHeader.subtitle}</span>
+                                <span className="min-w-0 truncate">
+                                    {mobilePane === 'ai' ? 'AI実行履歴とCodex状態' : rangeHeader.subtitle}
+                                </span>
                             )}
                         </p>
                     </div>
-                    {/* Range + Day-only timeline mode toggle */}
-                    <div className="flex flex-shrink-0 items-start gap-1">
-                        <div className="mt-1 flex h-4 w-4 items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
+                    <div className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5 gap-0.5">
+                        <button
+                            type="button"
+                            onClick={() => setMobilePane('schedule')}
+                            aria-pressed={mobilePane === 'schedule'}
+                            className={cn(
+                                "min-w-[44px] rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
+                                mobilePane === 'schedule'
+                                    ? "bg-background text-foreground shadow-sm"
+                                    : "text-muted-foreground"
+                            )}
+                        >
+                            予定
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMobilePane('ai')}
+                            aria-pressed={mobilePane === 'ai'}
+                            className={cn(
+                                "inline-flex min-w-[44px] items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
+                                mobilePane === 'ai'
+                                    ? "bg-background text-foreground shadow-sm"
+                                    : "text-muted-foreground"
+                            )}
+                        >
+                            <Bot className="h-3.5 w-3.5" />
+                            AI
+                        </button>
+                    </div>
+                </div>
+                {mobilePane === 'schedule' && (
+                    <div className="mt-1.5 flex items-center justify-end gap-1">
+                        <div className="flex h-4 w-4 items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState === 'idle'}>
                             {logic.syncState === 'syncing' ? (
                                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-primary" />
                             ) : logic.syncState === 'done' ? (
@@ -233,11 +279,11 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                             ))}
                         </div>
                     </div>
-                </div>
+                )}
             </div>
 
             {/* Habit Bar (fixed) + Expandable Detail */}
-            {logic.habitsLoading ? (
+            {mobilePane === 'schedule' && logic.habitsLoading ? (
                 <div className="flex-shrink-0 border-b px-4 py-2">
                     <div className="flex items-center gap-2 mb-1.5">
                         <Target className="w-3.5 h-3.5 text-primary/40 flex-shrink-0" />
@@ -253,7 +299,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         ))}
                     </div>
                 </div>
-            ) : logic.dateHabits.length > 0 ? (
+            ) : mobilePane === 'schedule' && logic.dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
@@ -438,6 +484,16 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
 
             {/* Timeline Content (swipeable) */}
             <div ref={timelineContainerRef} className="flex-1 overflow-hidden flex flex-col">
+                {mobilePane === 'ai' ? (
+                    <AiExecutionTimeline
+                        selectedDate={logic.selectedDate}
+                        compact
+                        showDateControls
+                        onDateChange={logic.setSelectedDate}
+                        selectedSpaceId={selectedSpaceId}
+                        spaces={spaces}
+                    />
+                ) : (
                 <div
                     key={logic.selectedDate.getTime()}
                     className={cn(
@@ -562,6 +618,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
                         </div>
                     )}
                 </div>
+                )}
             </div>
 
             {/* Edit Modal */}
@@ -592,7 +649,7 @@ export function TodayView({ allTasks, onUpdateTask, projects = [], onCreateQuick
             />
 
             {/* Quick Task FAB */}
-            {calendarRangeMode === 'day' && onCreateQuickTask && !logic.isEditModalOpen && (
+            {mobilePane === 'schedule' && calendarRangeMode === 'day' && onCreateQuickTask && !logic.isEditModalOpen && (
                 <QuickTaskFab
                     projects={projects}
                     calendars={logic.writableCalendars}
