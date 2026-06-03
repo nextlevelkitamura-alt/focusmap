@@ -2,14 +2,14 @@
 
 ## Status
 
-Planned.
+Phase 1-6 baseline implemented. Remaining checks are manual Codex thread exercise and mobile screenshot QA.
 
 ## Current Constraints
 
 - Existing `package.json` worktree diff is unrelated and must not be staged into this feature.
 - Other local UI files may be dirty from another agent. This plan must be implemented in isolated commits.
 - Existing Codex sync already uses `ai_tasks`, `result.live_log`, `codex_thread_id`, `~/.codex/state_5.sqlite`, rollout JSONL, and `/api/codex/sync-node`.
-- Existing `project_contexts` has `heading`, `details`, `progress`, and `progress_status`; current memo structure code does not yet fully use it.
+- `project_contexts.heading/details/progress/progress_status` is used as lightweight Stage 1 context for memo structure.
 
 ## Phase 0: Spec And Guardrails
 

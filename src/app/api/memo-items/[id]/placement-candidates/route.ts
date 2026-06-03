@@ -69,12 +69,13 @@ function buildPath(task: TaskCandidate, taskMap: Map<string, TaskCandidate>) {
   return path.join(' / ')
 }
 
-export async function GET(_request: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: RouteContext) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await context.params
+  const requestedProjectId = request.nextUrl.searchParams.get('project_id')?.trim() || null
 
   const { data: item, error: itemError } = await supabase
     .from('memo_items')
@@ -84,13 +85,24 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     .single()
 
   if (itemError || !item) return NextResponse.json({ error: '構造化項目が見つかりません' }, { status: 404 })
-  if (!item.project_id) return NextResponse.json({ candidates: [], recommended: { mode: 'root', task_id: null } })
+  const projectId = requestedProjectId || item.project_id
+  if (!projectId) return NextResponse.json({ candidates: [], recommended: { mode: 'root', task_id: null } })
+
+  if (requestedProjectId && requestedProjectId !== item.project_id) {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('id', requestedProjectId)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (!project) return NextResponse.json({ error: 'プロジェクトが見つかりません' }, { status: 404 })
+  }
 
   const { data: tasks, error: tasksError } = await supabase
     .from('tasks')
     .select('id, title, memo, parent_task_id, is_group, stage')
     .eq('user_id', user.id)
-    .eq('project_id', item.project_id)
+    .eq('project_id', projectId)
     .is('deleted_at', null)
     .neq('stage', 'archived')
     .limit(250)
@@ -106,6 +118,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       const score = scoreText(itemText, task)
       return {
         task_id: task.id,
+        parent_task_id: task.parent_task_id,
         title: task.title,
         path: buildPath(task, taskMap),
         is_group: task.is_group,

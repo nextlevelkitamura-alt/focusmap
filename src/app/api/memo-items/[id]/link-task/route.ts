@@ -50,6 +50,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const title = text(body.title) || item.title
   const memo = text(body.memo) || item.body || null
   const itemIsCompleted = item.status === 'done'
+  const placementMode = text(body.placement_mode)
 
   if (!projectId && !existingTaskId) {
     return NextResponse.json({ error: 'マインドマップに投入するには project_id が必要です' }, { status: 400 })
@@ -123,8 +124,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       created_from_run_id: item.structure_run_id,
       metadata: {
         title_at_link: title,
-        linked_by: existingTaskId ? 'existing_task' : parentTaskId ? 'created_child_task' : 'created_root_task',
-        placement_mode: existingTaskId ? 'link_existing' : parentTaskId ? 'create_child' : 'root',
+        linked_by: existingTaskId
+          ? 'existing_task'
+          : placementMode === 'create_sibling'
+            ? 'created_sibling_task'
+            : parentTaskId
+              ? 'created_child_task'
+              : 'created_root_task',
+        placement_mode: placementMode || (existingTaskId ? 'link_existing' : parentTaskId ? 'create_child' : 'root'),
       },
     })
     .select('*')

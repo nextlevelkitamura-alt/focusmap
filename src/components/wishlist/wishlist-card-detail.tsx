@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Network, Plus, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Download, ImagePlus, Loader2, Minus, Network, Plus, Search, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
 import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,10 +41,11 @@ type StructuredMemoItem = {
   }>
 }
 
-type PlacementMode = "root" | "create_child" | "link_existing"
+type PlacementMode = "root" | "create_child" | "create_sibling" | "link_existing"
 
 type PlacementCandidate = {
   task_id: string
+  parent_task_id: string | null
   title: string
   path: string
   is_group: boolean
@@ -58,6 +59,7 @@ type PlacementState = {
   selected: {
     mode: PlacementMode
     task_id: string | null
+    project_id: string | null
   }
   isLoading: boolean
 }
@@ -228,9 +230,10 @@ function placementValue(placement: PlacementState | null) {
 
 function placementLabel(placement: PlacementState | null) {
   const selected = placement?.selected
-  if (!selected || selected.mode === "root") return "プロジェクト直下に新規追加"
+  if (!selected || selected.mode === "root") return "新しい枝にする"
   const candidate = placement?.candidates.find(item => item.task_id === selected.task_id)
   if (selected.mode === "link_existing") return candidate ? `既存に紐付け: ${candidate.path}` : "既存に紐付け"
+  if (selected.mode === "create_sibling") return candidate ? `同じ階層に追加: ${candidate.path}` : "同じ階層に追加"
   return candidate ? `子として追加: ${candidate.path}` : "子として追加"
 }
 
@@ -240,7 +243,9 @@ function StructuredMemoMindmap({
   researchingItemId,
   researchPrompts,
   placementByItemId,
+  projects,
   onPlacementChange,
+  onPlacementProjectChange,
   onLink,
   onResearch,
 }: {
@@ -249,7 +254,9 @@ function StructuredMemoMindmap({
   researchingItemId: string | null
   researchPrompts: Record<string, string>
   placementByItemId: Record<string, PlacementState>
+  projects: Project[]
   onPlacementChange: (itemId: string, value: string) => void
+  onPlacementProjectChange: (itemId: string, projectId: string) => void
   onLink: (item: StructuredMemoItem) => Promise<void>
   onResearch: (item: StructuredMemoItem) => Promise<void>
 }) {
@@ -285,7 +292,9 @@ function StructuredMemoMindmap({
                     researchingItemId={researchingItemId}
                     researchPrompts={researchPrompts}
                     placementByItemId={placementByItemId}
+                    projects={projects}
                     onPlacementChange={onPlacementChange}
+                    onPlacementProjectChange={onPlacementProjectChange}
                     onLink={onLink}
                     onResearch={onResearch}
                   />
@@ -322,7 +331,9 @@ function StructuredMemoMindmapNode({
   researchingItemId,
   researchPrompts,
   placementByItemId,
+  projects,
   onPlacementChange,
+  onPlacementProjectChange,
   onLink,
   onResearch,
 }: {
@@ -334,7 +345,9 @@ function StructuredMemoMindmapNode({
   researchingItemId: string | null
   researchPrompts: Record<string, string>
   placementByItemId: Record<string, PlacementState>
+  projects: Project[]
   onPlacementChange: (itemId: string, value: string) => void
+  onPlacementProjectChange: (itemId: string, projectId: string) => void
   onLink: (item: StructuredMemoItem) => Promise<void>
   onResearch: (item: StructuredMemoItem) => Promise<void>
 }) {
@@ -351,7 +364,9 @@ function StructuredMemoMindmapNode({
         isResearching={researchingItemId === item.id}
         researchPrompt={researchPrompts[item.id] ?? null}
         placement={placementByItemId[item.id] ?? null}
+        projects={projects}
         onPlacementChange={onPlacementChange}
+        onPlacementProjectChange={onPlacementProjectChange}
         onLink={onLink}
         onResearch={onResearch}
       />
@@ -373,7 +388,9 @@ function StructuredMemoMindmapNode({
                   researchingItemId={researchingItemId}
                   researchPrompts={researchPrompts}
                   placementByItemId={placementByItemId}
+                  projects={projects}
                   onPlacementChange={onPlacementChange}
+                  onPlacementProjectChange={onPlacementProjectChange}
                   onLink={onLink}
                   onResearch={onResearch}
                 />
@@ -394,7 +411,9 @@ function StructuredMemoNodeCard({
   isResearching,
   researchPrompt,
   placement,
+  projects,
   onPlacementChange,
+  onPlacementProjectChange,
   onLink,
   onResearch,
 }: {
@@ -405,7 +424,9 @@ function StructuredMemoNodeCard({
   isResearching: boolean
   researchPrompt: string | null
   placement: PlacementState | null
+  projects: Project[]
   onPlacementChange: (itemId: string, value: string) => void
+  onPlacementProjectChange: (itemId: string, projectId: string) => void
   onLink: (item: StructuredMemoItem) => Promise<void>
   onResearch: (item: StructuredMemoItem) => Promise<void>
 }) {
@@ -413,6 +434,7 @@ function StructuredMemoNodeCard({
   const actionType = getActionType(item)
   const isMobile = useIsMobile()
   const [placementSheetOpen, setPlacementSheetOpen] = useState(false)
+  const [placementSearch, setPlacementSearch] = useState("")
   const confidenceLabel = typeof item.confidence === "number"
     ? `${Math.round(item.confidence * 100)}%`
     : null
@@ -420,11 +442,37 @@ function StructuredMemoNodeCard({
   const canLink = !activeLink && !isLinking && (depth === 0 || parentLinked)
   const linkTitle = depth > 0 && !parentLinked ? "先に親項目をマップへ投入してください" : undefined
   const currentPlacementValue = placementValue(placement)
+  const selectedProjectId = placement?.selected.project_id ?? item.project_id ?? null
+  const selectedProject = selectedProjectId ? projects.find(project => project.id === selectedProjectId) ?? null : null
+  const projectOptions = useMemo(() => {
+    const seen = new Set<string>()
+    return [
+      ...(selectedProject ? [selectedProject] : []),
+      ...projects,
+    ].filter(project => {
+      if (seen.has(project.id)) return false
+      seen.add(project.id)
+      return true
+    }).slice(0, 8)
+  }, [projects, selectedProject])
+  const filteredCandidates = useMemo(() => {
+    const query = placementSearch.trim().normalize("NFKC").toLowerCase()
+    const candidates = placement?.candidates ?? []
+    if (!query) return candidates
+    return candidates.filter(candidate => {
+      const haystack = `${candidate.title} ${candidate.path} ${candidate.reason}`.normalize("NFKC").toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [placement?.candidates, placementSearch])
   const placementOptions = [
-    { value: "root", label: "プロジェクト直下に新規追加" },
+    { value: "root", label: "新しい枝にする" },
     ...(placement?.candidates ?? []).map(candidate => ({
       value: `create_child:${candidate.task_id}`,
-      label: `子として追加: ${candidate.path}`,
+      label: `この下に追加: ${candidate.path}`,
+    })),
+    ...(placement?.candidates ?? []).map(candidate => ({
+      value: `create_sibling:${candidate.task_id}`,
+      label: `同じ階層に追加: ${candidate.path}`,
     })),
     ...(placement?.candidates ?? []).map(candidate => ({
       value: `link_existing:${candidate.task_id}`,
@@ -435,6 +483,12 @@ function StructuredMemoNodeCard({
     onPlacementChange(item.id, value)
     setPlacementSheetOpen(false)
   }
+  const placementActionClassName = (value: string) => cn(
+    "inline-flex min-h-8 items-center rounded-md border px-2.5 py-1 text-xs",
+    value === currentPlacementValue
+      ? "border-primary bg-primary/10 text-primary"
+      : "bg-background text-muted-foreground",
+  )
 
   return (
     <div
@@ -527,27 +581,102 @@ function StructuredMemoNodeCard({
                   <SheetHeader className="border-b px-4 py-3">
                     <SheetTitle className="text-left text-base">配置を変更</SheetTitle>
                   </SheetHeader>
-                  <div className="space-y-2 p-4">
-                    {placementOptions.map(option => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => handlePlacementSelect(option.value)}
-                        className={cn(
-                          "flex w-full items-start gap-2 rounded-lg border px-3 py-3 text-left text-sm",
-                          option.value === currentPlacementValue
-                            ? "border-primary bg-primary/10"
-                            : "bg-background",
-                        )}
-                      >
-                        {option.value === currentPlacementValue ? (
-                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                        ) : (
-                          <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full border" />
-                        )}
-                        <span className="min-w-0 break-words leading-5">{option.label}</span>
-                      </button>
-                    ))}
+                  <div className="space-y-4 p-4">
+                    {projectOptions.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-medium text-muted-foreground">プロジェクト</div>
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                          {projectOptions.map(project => (
+                            <button
+                              key={project.id}
+                              type="button"
+                              onClick={() => onPlacementProjectChange(item.id, project.id)}
+                              className={cn(
+                                "shrink-0 rounded-full border px-3 py-1.5 text-xs",
+                                project.id === selectedProjectId
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "bg-background text-muted-foreground",
+                              )}
+                            >
+                              {project.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handlePlacementSelect("root")}
+                      className={cn(
+                        "flex w-full items-start gap-2 rounded-lg border px-3 py-3 text-left text-sm",
+                        currentPlacementValue === "root" ? "border-primary bg-primary/10" : "bg-background",
+                      )}
+                    >
+                      {currentPlacementValue === "root" ? (
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      ) : (
+                        <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full border" />
+                      )}
+                      <span className="min-w-0 break-words leading-5">新しい枝にする</span>
+                    </button>
+
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={placementSearch}
+                          onChange={event => setPlacementSearch(event.target.value)}
+                          placeholder="ノードを検索"
+                          className="h-10 pl-9 text-sm"
+                        />
+                      </div>
+
+                      {placement?.isLoading ? (
+                        <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed text-xs text-muted-foreground">
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          候補を取得中
+                        </div>
+                      ) : filteredCandidates.length === 0 ? (
+                        <div className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                          候補ノードはありません
+                        </div>
+                      ) : filteredCandidates.map(candidate => (
+                        <div key={candidate.task_id} className="space-y-2 rounded-lg border bg-background p-3">
+                          <div className="min-w-0">
+                            <div className="break-words text-sm font-medium">{candidate.title}</div>
+                            <div className="mt-1 break-words text-[11px] leading-4 text-muted-foreground">{candidate.path}</div>
+                            {candidate.reason && (
+                              <div className="mt-1 break-words text-[11px] leading-4 text-muted-foreground">{candidate.reason}</div>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePlacementSelect(`create_child:${candidate.task_id}`)}
+                              className={placementActionClassName(`create_child:${candidate.task_id}`)}
+                            >
+                              この下に追加
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePlacementSelect(`create_sibling:${candidate.task_id}`)}
+                              className={placementActionClassName(`create_sibling:${candidate.task_id}`)}
+                            >
+                              同じ階層
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePlacementSelect(`link_existing:${candidate.task_id}`)}
+                              className={placementActionClassName(`link_existing:${candidate.task_id}`)}
+                            >
+                              既存に紐付け
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
                   </div>
                 </SheetContent>
               </Sheet>
@@ -692,10 +821,11 @@ export function WishlistCardDetail({
     setPlacementByItemId(prev => {
       const next = { ...prev }
       for (const structuredItem of activeItems) {
+        const projectId = structuredItem.project_id ?? item?.project_id ?? null
         if (!next[structuredItem.id]) {
           next[structuredItem.id] = {
             candidates: [],
-            selected: { mode: "root", task_id: null },
+            selected: { mode: "root", task_id: null, project_id: projectId },
             isLoading: true,
           }
         } else {
@@ -707,7 +837,11 @@ export function WishlistCardDetail({
 
     await Promise.all(activeItems.map(async structuredItem => {
       try {
-        const res = await fetch(`/api/memo-items/${structuredItem.id}/placement-candidates`, { cache: "no-store" })
+        const projectId = structuredItem.project_id ?? item?.project_id ?? null
+        const url = projectId
+          ? `/api/memo-items/${structuredItem.id}/placement-candidates?project_id=${encodeURIComponent(projectId)}`
+          : `/api/memo-items/${structuredItem.id}/placement-candidates`
+        const res = await fetch(url, { cache: "no-store" })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(data?.error || "配置候補の取得に失敗しました")
         const candidates = Array.isArray(data.candidates) ? data.candidates as PlacementCandidate[] : []
@@ -721,6 +855,7 @@ export function WishlistCardDetail({
             selected: {
               mode: recommended?.mode ?? (candidates[0] ? "create_child" : "root"),
               task_id: recommended?.task_id ?? candidates[0]?.task_id ?? null,
+              project_id: projectId,
             },
             isLoading: false,
           },
@@ -730,13 +865,13 @@ export function WishlistCardDetail({
           ...prev,
           [structuredItem.id]: {
             candidates: prev[structuredItem.id]?.candidates ?? [],
-            selected: prev[structuredItem.id]?.selected ?? { mode: "root", task_id: null },
+            selected: prev[structuredItem.id]?.selected ?? { mode: "root", task_id: null, project_id: structuredItem.project_id ?? item?.project_id ?? null },
             isLoading: false,
           },
         }))
       }
     }))
-  }, [])
+  }, [item?.project_id])
 
   const itemId = item?.id ?? null
   const itemTitle = item?.title ?? ""
@@ -923,7 +1058,15 @@ export function WishlistCardDetail({
   }
 
   const handleLinkStructuredItem = async (structuredItem: StructuredMemoItem) => {
-    if (!item.project_id && !structuredItem.project_id) {
+    const placementState = placementByItemId[structuredItem.id]
+    const placement = placementState?.selected ?? {
+      mode: "root" as PlacementMode,
+      task_id: null,
+      project_id: structuredItem.project_id ?? item.project_id ?? null,
+    }
+    const targetProjectId = placement.project_id ?? structuredItem.project_id ?? item.project_id
+
+    if (!targetProjectId && placement.mode !== "link_existing") {
       setStructureError("マップに投入するには、先にメモへプロジェクトを設定してください")
       return
     }
@@ -941,9 +1084,15 @@ export function WishlistCardDetail({
       setStructureError("子項目をマップへ投入するには、先に親項目を投入してください")
       return
     }
-    const placement = placementByItemId[structuredItem.id]?.selected ?? { mode: "root" as PlacementMode, task_id: null }
+    const placementCandidate = placement.task_id
+      ? placementState?.candidates.find(candidate => candidate.task_id === placement.task_id) ?? null
+      : null
     const targetTaskId = placement.mode === "link_existing" ? placement.task_id : null
-    const targetParentTaskId = placement.mode === "create_child" ? placement.task_id : parentTaskId
+    const targetParentTaskId = placement.mode === "create_child"
+      ? placement.task_id
+      : placement.mode === "create_sibling"
+        ? placementCandidate?.parent_task_id ?? null
+        : parentTaskId
 
     setLinkingItemId(structuredItem.id)
     setStructureError(null)
@@ -952,9 +1101,10 @@ export function WishlistCardDetail({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          project_id: structuredItem.project_id ?? item.project_id,
+          project_id: targetProjectId,
           task_id: targetTaskId,
           parent_task_id: targetParentTaskId,
+          placement_mode: placement.mode,
           title: structuredItem.title,
           memo: structuredItem.body,
         }),
@@ -972,11 +1122,11 @@ export function WishlistCardDetail({
 
   const handlePlacementChange = (itemId: string, value: string) => {
     const [modeRaw, taskIdRaw] = value.split(":")
-    const mode: PlacementMode = modeRaw === "link_existing" || modeRaw === "create_child" ? modeRaw : "root"
+    const mode: PlacementMode = modeRaw === "link_existing" || modeRaw === "create_child" || modeRaw === "create_sibling" ? modeRaw : "root"
     setPlacementByItemId(prev => {
       const current = prev[itemId] ?? {
         candidates: [],
-        selected: { mode: "root" as PlacementMode, task_id: null },
+        selected: { mode: "root" as PlacementMode, task_id: null, project_id: item?.project_id ?? null },
         isLoading: false,
       }
       return {
@@ -986,10 +1136,63 @@ export function WishlistCardDetail({
           selected: {
             mode,
             task_id: mode === "root" ? null : taskIdRaw || null,
+            project_id: current.selected.project_id,
           },
         },
       }
     })
+  }
+
+  const handlePlacementProjectChange = (itemId: string, projectId: string) => {
+    setPlacementByItemId(prev => {
+      const current = prev[itemId] ?? {
+        candidates: [],
+        selected: { mode: "root" as PlacementMode, task_id: null, project_id: item?.project_id ?? null },
+        isLoading: false,
+      }
+      return {
+        ...prev,
+        [itemId]: {
+          ...current,
+          candidates: [],
+          selected: { mode: "root", task_id: null, project_id: projectId },
+          isLoading: true,
+        },
+      }
+    })
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/memo-items/${itemId}/placement-candidates?project_id=${encodeURIComponent(projectId)}`, { cache: "no-store" })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data?.error || "配置候補の取得に失敗しました")
+        const candidates = Array.isArray(data.candidates) ? data.candidates as PlacementCandidate[] : []
+        const recommended = data.recommended && typeof data.recommended === "object"
+          ? data.recommended as { mode?: PlacementMode; task_id?: string | null }
+          : null
+        setPlacementByItemId(prev => ({
+          ...prev,
+          [itemId]: {
+            candidates,
+            selected: {
+              mode: recommended?.mode ?? (candidates[0] ? "create_child" : "root"),
+              task_id: recommended?.task_id ?? candidates[0]?.task_id ?? null,
+              project_id: projectId,
+            },
+            isLoading: false,
+          },
+        }))
+      } catch {
+        setPlacementByItemId(prev => ({
+          ...prev,
+          [itemId]: {
+            candidates: [],
+            selected: { mode: "root", task_id: null, project_id: projectId },
+            isLoading: false,
+          },
+        }))
+      }
+    })()
   }
 
   const handleCreateResearchPrompt = async (structuredItem: StructuredMemoItem) => {
@@ -1360,7 +1563,9 @@ export function WishlistCardDetail({
                   researchingItemId={researchingItemId}
                   researchPrompts={researchPrompts}
                   placementByItemId={placementByItemId}
+                  projects={projects}
                   onPlacementChange={handlePlacementChange}
+                  onPlacementProjectChange={handlePlacementProjectChange}
                   onLink={handleLinkStructuredItem}
                   onResearch={handleCreateResearchPrompt}
                 />

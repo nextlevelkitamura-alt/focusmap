@@ -160,7 +160,7 @@ Goals → Projects → TaskGroups → Tasks
 - メモ詳細の `今すぐ実行` は `executor='codex_app'` / `dispatch_mode='manual'` の `ai_tasks` を作り、本文を `docs/specs/memo-codex-execution/requirements.md` の最小テンプレートで包んでCodexへ渡す。プロジェクト/リポジトリ未設定でも実行でき、Macローカルでは `/api/codex/open-repo`、スマホではChatGPTアプリのCodex入口を優先する。
 - メモ詳細のCodex実行表示は `ai_task_activity_messages` を `/api/ai-tasks/[id]/activity` から読み、チャット風活動メッセージを正とする。確認待ちでは最新の質問/承認メッセージを最上部に出し、raw `live_log` は補助データとしてDBに残すだけにする。
 - `整理する` は初期実装では最大2件の構造化項目に抑える。プロジェクト文脈は `projects.title/description/purpose` に加えて `project_contexts.heading`、`details` 先頭、`progress_status`、`progress` 先頭を軽量に取り込み、マインドマップ候補は対象プロジェクトの既存ノード候補だけを後段で読む。
-- 構造化項目のマップ配置は自動追加しない。候補取得後、デスクトップはselect、モバイルは下部シートで `プロジェクト直下に新規追加` / `子として追加` / `既存に紐付け` を選び、ユーザーがマップ投入ボタンを押した時だけ `memo_node_links` と `tasks` を更新する。
+- 構造化項目のマップ配置は自動追加しない。候補取得後、デスクトップはselect、モバイルは下部シートでプロジェクトチップ・ノード検索・候補ノード一覧から `新しい枝にする` / `この下に追加` / `同じ階層に追加` / `既存に紐付け` を選び、ユーザーがマップ投入ボタンを押した時だけ `memo_node_links` と `tasks` を更新する。
 
 ### カレンダー取得・キャッシュ
 
