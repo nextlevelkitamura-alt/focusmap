@@ -7,7 +7,7 @@ import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircl
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
-import type { AiTask, AiTaskProgressState, AiTaskProgressSummary } from "@/types/ai-task"
+import type { AiTask, AiTaskActivityMessage, AiTaskProgressState, AiTaskProgressSummary } from "@/types/ai-task"
 
 interface NoteClaudeRunnerProps {
   noteId: string
@@ -88,6 +88,36 @@ function formatProgressTime(iso?: string) {
   }
 }
 
+function formatActivityTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })
+  } catch {
+    return ""
+  }
+}
+
+function activityTone(message: AiTaskActivityMessage) {
+  if (message.kind === "failed") return "border-red-500/25 bg-red-500/5"
+  if (message.kind === "completed") return "border-emerald-500/25 bg-emerald-500/5"
+  if (message.kind === "question" || message.kind === "approval") return "border-amber-500/30 bg-amber-500/10"
+  if (message.kind === "resumed" || message.kind === "sent") return "border-blue-500/25 bg-blue-500/5"
+  return "border-border bg-background/70"
+}
+
+function activityKindLabel(kind: AiTaskActivityMessage["kind"]) {
+  switch (kind) {
+    case "sent": return "送信"
+    case "progress": return "進捗"
+    case "question": return "質問"
+    case "approval": return "確認"
+    case "resumed": return "再開"
+    case "completed": return "完了"
+    case "failed": return "失敗"
+    case "user_answer": return "回答"
+    default: return kind
+  }
+}
+
 export function NoteClaudeRunnerButton({
   noteId,
   noteContent,
@@ -160,11 +190,50 @@ export function NoteClaudeRunnerPanel({
   const [isCheckingProgress, setIsCheckingProgress] = useState(false)
   const [checkError, setCheckError] = useState<string | null>(null)
   const [progressOverride, setProgressOverride] = useState<AiTaskProgressSummary | null>(null)
+  const [activityMessages, setActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [activityError, setActivityError] = useState<string | null>(null)
+  const latestTaskId = latestTask?.id ?? null
+  const latestExecutor = latestTask?.executor ?? null
+  const isCodexTaskForActivity = latestExecutor === "codex" || latestExecutor === "codex_app"
 
   useEffect(() => {
     setProgressOverride(null)
     setCheckError(null)
   }, [latestTask?.id, latestTask?.result])
+
+  useEffect(() => {
+    if (!latestTaskId || !isCodexTaskForActivity || !expanded) {
+      setActivityMessages([])
+      setActivityError(null)
+      return
+    }
+
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/ai-tasks/${latestTaskId}/activity`, { cache: "no-store" })
+        const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+        if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+        if (!cancelled) {
+          setActivityMessages(Array.isArray(data.messages) ? data.messages : [])
+          setActivityError(null)
+        }
+      } catch (error) {
+        if (!cancelled) setActivityError(error instanceof Error ? error.message : "活動履歴を取得できません")
+      }
+    }
+
+    void load()
+    const interval = latestTask?.result && typeof latestTask.result === "object" && !Array.isArray(latestTask.result)
+      && (latestTask.result as Record<string, unknown>).codex_run_state === "running"
+      ? window.setInterval(() => void load(), 3_000)
+      : null
+
+    return () => {
+      cancelled = true
+      if (interval) window.clearInterval(interval)
+    }
+  }, [expanded, isCodexTaskForActivity, latestTask?.result, latestTaskId])
 
   if (!isProjectAssigned) return null
 
@@ -192,11 +261,14 @@ export function NoteClaudeRunnerPanel({
   const resultMessage = typeof resultObj?.message === "string" ? resultObj.message : null
   const isCodexTask = latestTask.executor === "codex" || latestTask.executor === "codex_app"
   const codexUiState = getCodexTaskUiState(latestTask)
-  const codexLiveLog = typeof resultObj?.live_log === "string" ? resultObj.live_log : ""
   const codexThreadId = typeof resultObj?.codex_thread_id === "string"
     ? resultObj.codex_thread_id
     : latestTask.codex_thread_id
   const codexReviewReason = typeof resultObj?.codex_review_reason === "string" ? resultObj.codex_review_reason : null
+  const codexCurrentStep = typeof resultObj?.current_step === "string" ? resultObj.current_step : ""
+  const importantReviewMessage = [...activityMessages]
+    .reverse()
+    .find(message => message.kind === "question" || message.kind === "approval")
   const progressSummary = progressOverride ?? getProgressSummary(resultObj)
   const progressPercent = progressSummary ? Math.max(0, Math.min(100, Math.round(progressSummary.progress_percent))) : null
   const headerStatusLabel = codexUiState?.label ?? (STATUS_LABEL[latestTask.status] ?? latestTask.status)
@@ -353,13 +425,35 @@ export function NoteClaudeRunnerPanel({
                   thread <span className="font-mono">{codexThreadId.slice(0, 8)}</span>
                 </div>
               )}
-              {codexLiveLog ? (
-                <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[10px] leading-4 font-mono">
-                  {codexLiveLog.slice(-3000)}
-                </pre>
+              {codexUiState?.state === "awaiting_approval" && importantReviewMessage && (
+                <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5">
+                  <div className="mb-1 flex items-center justify-between gap-2 text-amber-700 dark:text-amber-300">
+                    <span className="font-medium">{activityKindLabel(importantReviewMessage.kind)}</span>
+                    <span className="text-[10px] text-muted-foreground">{formatActivityTime(importantReviewMessage.created_at)}</span>
+                  </div>
+                  <p className="whitespace-pre-wrap">{importantReviewMessage.body}</p>
+                </div>
+              )}
+              {activityMessages.length > 0 ? (
+                <div className="space-y-1.5">
+                  {activityMessages.map(message => (
+                    <div key={message.id} className={cn("rounded-md border px-2.5 py-2 text-[11px] leading-5", activityTone(message))}>
+                      <div className="mb-0.5 flex items-center justify-between gap-2 text-muted-foreground">
+                        <span className="font-medium text-foreground">{activityKindLabel(message.kind)}</span>
+                        <span className="text-[10px]">{formatActivityTime(message.created_at)}</span>
+                      </div>
+                      <p className="whitespace-pre-wrap">{message.body}</p>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="rounded bg-muted/20 px-2 py-1.5 text-[10px] text-muted-foreground italic">
-                  まだログはありません
+                  {codexCurrentStep || "まだ活動メッセージはありません"}
+                </div>
+              )}
+              {activityError && (
+                <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
+                  {activityError}
                 </div>
               )}
               {latestTask.status !== "completed" && codexUiState?.state === "awaiting_approval" && (

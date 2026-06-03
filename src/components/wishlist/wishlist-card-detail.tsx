@@ -222,6 +222,18 @@ function getStatusLabel(status: string) {
   }
 }
 
+function placementValue(placement: PlacementState | null) {
+  return placement?.selected.task_id ? `${placement.selected.mode}:${placement.selected.task_id}` : placement?.selected.mode ?? "root"
+}
+
+function placementLabel(placement: PlacementState | null) {
+  const selected = placement?.selected
+  if (!selected || selected.mode === "root") return "プロジェクト直下に新規追加"
+  const candidate = placement?.candidates.find(item => item.task_id === selected.task_id)
+  if (selected.mode === "link_existing") return candidate ? `既存に紐付け: ${candidate.path}` : "既存に紐付け"
+  return candidate ? `子として追加: ${candidate.path}` : "子として追加"
+}
+
 function StructuredMemoMindmap({
   items,
   linkingItemId,
@@ -399,12 +411,30 @@ function StructuredMemoNodeCard({
 }) {
   const activeLink = getActiveMindmapLink(item)
   const actionType = getActionType(item)
+  const isMobile = useIsMobile()
+  const [placementSheetOpen, setPlacementSheetOpen] = useState(false)
   const confidenceLabel = typeof item.confidence === "number"
     ? `${Math.round(item.confidence * 100)}%`
     : null
   const canChoosePlacement = depth === 0
   const canLink = !activeLink && !isLinking && (depth === 0 || parentLinked)
   const linkTitle = depth > 0 && !parentLinked ? "先に親項目をマップへ投入してください" : undefined
+  const currentPlacementValue = placementValue(placement)
+  const placementOptions = [
+    { value: "root", label: "プロジェクト直下に新規追加" },
+    ...(placement?.candidates ?? []).map(candidate => ({
+      value: `create_child:${candidate.task_id}`,
+      label: `子として追加: ${candidate.path}`,
+    })),
+    ...(placement?.candidates ?? []).map(candidate => ({
+      value: `link_existing:${candidate.task_id}`,
+      label: `既存に紐付け: ${candidate.path}`,
+    })),
+  ]
+  const handlePlacementSelect = (value: string) => {
+    onPlacementChange(item.id, value)
+    setPlacementSheetOpen(false)
+  }
 
   return (
     <div
@@ -480,24 +510,60 @@ function StructuredMemoNodeCard({
       {canChoosePlacement && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className="text-[10px] text-muted-foreground">配置</span>
-          <select
-            value={placement?.selected.task_id ? `${placement.selected.mode}:${placement.selected.task_id}` : placement?.selected.mode ?? "root"}
-            onChange={event => onPlacementChange(item.id, event.target.value)}
-            disabled={!!activeLink || placement?.isLoading}
-            className="h-7 min-w-0 max-w-full flex-1 rounded-md border bg-background px-2 text-[11px] text-muted-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
-          >
-            <option value="root">プロジェクト直下に新規追加</option>
-            {placement?.candidates.map(candidate => (
-              <option key={`child-${candidate.task_id}`} value={`create_child:${candidate.task_id}`}>
-                子として追加: {candidate.path}
-              </option>
-            ))}
-            {placement?.candidates.map(candidate => (
-              <option key={`link-${candidate.task_id}`} value={`link_existing:${candidate.task_id}`}>
-                既存に紐付け: {candidate.path}
-              </option>
-            ))}
-          </select>
+          {isMobile ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!!activeLink || placement?.isLoading}
+                onClick={() => setPlacementSheetOpen(true)}
+                className="h-8 min-w-0 flex-1 justify-start px-2 text-xs"
+              >
+                <span className="truncate">{placementLabel(placement)}</span>
+              </Button>
+              <Sheet open={placementSheetOpen} onOpenChange={setPlacementSheetOpen}>
+                <SheetContent side="bottom" className="max-h-[82vh] overflow-y-auto rounded-t-3xl p-0">
+                  <SheetHeader className="border-b px-4 py-3">
+                    <SheetTitle className="text-left text-base">配置を変更</SheetTitle>
+                  </SheetHeader>
+                  <div className="space-y-2 p-4">
+                    {placementOptions.map(option => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => handlePlacementSelect(option.value)}
+                        className={cn(
+                          "flex w-full items-start gap-2 rounded-lg border px-3 py-3 text-left text-sm",
+                          option.value === currentPlacementValue
+                            ? "border-primary bg-primary/10"
+                            : "bg-background",
+                        )}
+                      >
+                        {option.value === currentPlacementValue ? (
+                          <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        ) : (
+                          <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full border" />
+                        )}
+                        <span className="min-w-0 break-words leading-5">{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </>
+          ) : (
+            <select
+              value={currentPlacementValue}
+              onChange={event => onPlacementChange(item.id, event.target.value)}
+              disabled={!!activeLink || placement?.isLoading}
+              className="h-7 min-w-0 max-w-full flex-1 rounded-md border bg-background px-2 text-[11px] text-muted-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+            >
+              {placementOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          )}
           {placement?.isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         </div>
       )}
@@ -710,9 +776,13 @@ export function WishlistCardDetail({
     if (aiTask.remote_session_url && launchStep === 'sent') {
       setLaunchStep('connected')
     }
-    // Codex は remote_session_url がないので status === 'running' で connected に遷移
-    if ((aiTask.executor === 'codex' || aiTask.executor === 'codex_app') && aiTask.status === 'running' && launchStep === 'sent') {
-      setLaunchStep('connected')
+    if ((aiTask.executor === 'codex' || aiTask.executor === 'codex_app') && launchStep === 'sent') {
+      const result = aiTask.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
+        ? aiTask.result as Record<string, unknown>
+        : {}
+      if (aiTask.status === 'running' || result.codex_run_state === 'prompt_waiting') {
+        setLaunchStep('connected')
+      }
     }
     if (aiTask.status === 'completed' && launchStep !== 'completed') {
       setLaunchStep('completed')
@@ -1303,9 +1373,9 @@ export function WishlistCardDetail({
             const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
             const repoConfigured = !!project?.repo_path
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
-            // Claude はリポ設定必須、Codex は不要（クリップボード方式なので）
             const claudeDisabled = !item.project_id || !repoConfigured || !!active
-            const needsConfig = !item.project_id || !repoConfigured
+            const codexDisabled = !draftTitle.trim() || !!active
+            const needsConfig = !!onLaunchClaude && (!item.project_id || !repoConfigured)
             const taskExecutor = aiTask?.executor ?? null
             return (
               <div className="space-y-3 rounded-lg border bg-background/40 p-3">
@@ -1319,9 +1389,9 @@ export function WishlistCardDetail({
                 )}>
                   {active
                     ? `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
-                    : !item.project_id
-                      ? "⚠ プロジェクト未設定（Claude には必須、Codex は任意）"
-                      : "Claude = スマホで監視 / Codex = Mac で Codex.app 起動、ペアリング済の mobile にも自動表示"}
+                    : needsConfig
+                      ? "⚠ プロジェクトまたはリポジトリパスが未設定です"
+                      : "Codexへメモ本文を送ります"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -1366,14 +1436,13 @@ export function WishlistCardDetail({
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={claudeDisabled || isLaunchingCodex}
+                      disabled={codexDisabled || isLaunchingCodex}
                       onClick={async () => {
                         setLaunchError(null)
                         setLaunchStep('sending')
                         setLaunchExecutor('codex')
                         setIsLaunchingCodex(true)
                         try {
-                          // codex app-server 経由で Codex.app に見える thread を作成し、初回turnだけ送信する
                           await onLaunchCodex(item)
                           setLaunchStep('sent')
                         } catch (e) {
@@ -1386,8 +1455,8 @@ export function WishlistCardDetail({
                       }}
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
-                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">◎ Codex</span>}
-                      <span className="text-[10px] text-muted-foreground">初回送信・ログ同期</span>
+                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">今すぐ実行</span>}
+                      <span className="text-[10px] text-muted-foreground">Codexに送る</span>
                     </Button>
                   )}
                 </div>
@@ -1520,7 +1589,7 @@ export function WishlistCardDetail({
 
                 <NoteClaudeRunnerPanel
                   latestTask={aiTask}
-                  isProjectAssigned={!!item.project_id}
+                  isProjectAssigned={!!item.project_id || aiTask?.executor === 'codex' || aiTask?.executor === 'codex_app'}
                   isRepoConfigured={repoConfigured}
                 />
               </div>

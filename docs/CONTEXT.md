@@ -157,6 +157,10 @@ Goals → Projects → TaskGroups → Tasks
 - マップノードを削除した時は、削除対象の子孫ノードも含めて元メモとの対応を外す。そのメモに他の実在マップノードが残っていなければ、元メモは削除せず `未予定`（`memo_status='unsorted'`）へ戻す。
 - ただし元メモが `今日する` / `予定済み` / `完了` の場合、その状態を優先し、マップノード削除だけでは `未予定` へ戻さない。
 - マップ削除後はUndoスタックへ復元用スナップショットを積む。トーストの `元に戻す` と `Cmd/Ctrl+Z` は同じUndo処理を呼び、削除したノード群・元メモ対応・未予定戻し前のメモ状態をまとめて復元する。
+- メモ詳細の `今すぐ実行` は `executor='codex_app'` / `dispatch_mode='manual'` の `ai_tasks` を作り、本文を `docs/specs/memo-codex-execution/requirements.md` の最小テンプレートで包んでCodexへ渡す。プロジェクト/リポジトリ未設定でも実行でき、Macローカルでは `/api/codex/open-repo`、スマホではChatGPTアプリのCodex入口を優先する。
+- メモ詳細のCodex実行表示は `ai_task_activity_messages` を `/api/ai-tasks/[id]/activity` から読み、チャット風活動メッセージを正とする。確認待ちでは最新の質問/承認メッセージを最上部に出し、raw `live_log` は補助データとしてDBに残すだけにする。
+- `整理する` は初期実装では最大2件の構造化項目に抑える。プロジェクト文脈は `projects.title/description/purpose` に加えて `project_contexts.heading`、`details` 先頭、`progress_status`、`progress` 先頭を軽量に取り込み、マインドマップ候補は対象プロジェクトの既存ノード候補だけを後段で読む。
+- 構造化項目のマップ配置は自動追加しない。候補取得後、デスクトップはselect、モバイルは下部シートで `プロジェクト直下に新規追加` / `子として追加` / `既存に紐付け` を選び、ユーザーがマップ投入ボタンを押した時だけ `memo_node_links` と `tasks` を更新する。
 
 ### カレンダー取得・キャッシュ
 

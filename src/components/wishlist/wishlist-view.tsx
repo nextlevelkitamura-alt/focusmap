@@ -33,6 +33,14 @@ import { IdealGoalWithItems, Project, Space } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
 import { getTagColor } from "@/lib/color-utils"
+import {
+  buildCodexOpenTarget,
+  canUseLocalCodexOpenApi,
+  getCurrentMobilePlatform,
+  isLikelyMobileDevice,
+  launchCodexViaLocalApi,
+} from "@/lib/codex-app-launch"
+import { buildImmediateMemoCodexPrompt, memoBodyForCodexExecution } from "@/lib/memo-codex-execution"
 import { WishlistCard } from "./wishlist-card"
 import { WishlistCardDetail } from "./wishlist-card-detail"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
@@ -510,18 +518,52 @@ export function WishlistView({
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const { pushAction } = useUndoRedo()
 
-  // メモから AI エージェント（Claude / Codex.app）を起動
-  // title/description は source_ideal_goal_id から task-runner が再取得する。
-  // ここで両方を連結すると、最終プロンプトで二重送信になる。
+  const openCodexHandoff = useCallback(async (prompt: string, repoPath: string | null) => {
+    if (canUseLocalCodexOpenApi() && !isLikelyMobileDevice()) {
+      try {
+        await launchCodexViaLocalApi({ prompt, repoPath, originUrl: window.location.href })
+        return
+      } catch (error) {
+        console.warn('[wishlist] local Codex open failed, falling back to browser handoff:', error)
+      }
+    }
+
+    let copied = false
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(prompt)
+        copied = true
+      }
+    } catch {
+      copied = false
+    }
+
+    const preferMobile = isLikelyMobileDevice()
+    const target = buildCodexOpenTarget(
+      { prompt, repoPath, originUrl: window.location.href },
+      { preferMobile, mobilePlatform: getCurrentMobilePlatform() },
+    )
+    window.location.href = target.url
+    if (!copied) {
+      throw new Error("クリップボードコピー失敗。Codex側でメモ本文を手動貼り付けしてください")
+    }
+  }, [])
+
+  // メモから AI エージェント（Claude / Codex）を起動
+  // Codex は本文だけを最小テンプレートで包み、手動handoffとして ai_tasks に残す。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
-    // Claude / Codex.app ともにローカル実行のcwdが必要
-    if (!repoPath) {
+    const isCodexExecuteNow = executor === 'codex'
+    if (!repoPath && !isCodexExecuteNow) {
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
-    const prompt = item.description?.trim() || item.title
+    const prompt = isCodexExecuteNow
+      ? buildImmediateMemoCodexPrompt(memoBodyForCodexExecution({ title: item.title, body: item.description }))
+      : item.description?.trim() || item.title
+    const scheduleExecutor = isCodexExecuteNow ? 'codex_app' : executor
+    const handoffToken = `FM-${Date.now().toString(36)}-${item.id.slice(0, 8)}`
 
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
@@ -532,14 +574,20 @@ export function WishlistView({
         approval_type: "auto",
         source_ideal_goal_id: item.id,
         scheduled_at: new Date().toISOString(),
-        executor,
+        executor: scheduleExecutor,
+        dispatch_mode: isCodexExecuteNow ? "manual" : "auto",
+        codex_handoff_token: isCodexExecuteNow ? handoffToken : undefined,
       }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.error || `起動失敗 (${res.status})`)
     }
-  }, [projects])
+
+    if (isCodexExecuteNow) {
+      await openCodexHandoff(prompt, repoPath ?? null)
+    }
+  }, [openCodexHandoff, projects])
 
   // codex に一本化。claude(当環境でENOEXEC) / codex_app(GUI重複) は UI から撤去。
   // 復活時は launchAiForMemo(item, 'claude'|'codex_app') の alias を足して prop を渡す。

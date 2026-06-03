@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import { insertAiTaskActivityMessage } from '@/lib/ai-task-activity'
 import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
@@ -215,6 +216,15 @@ export async function POST(req: NextRequest) {
           requestImmediateCodexAppDispatch(promoted.id)
         }
 
+        await insertAiTaskActivityMessage(supabase, {
+          taskId: promoted.id,
+          userId: user.id,
+          role: 'status',
+          kind: 'sent',
+          body: 'Codexへメモを送信しました。',
+          dedupeKey: `task:${promoted.id}:sent`,
+        })
+
         return NextResponse.json(promoted, { status: 200 })
       }
 
@@ -271,6 +281,19 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('[ai-tasks/schedule]', error.message)
     return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+  }
+
+  if (resolvedExecutor === 'codex' || resolvedExecutor === 'codex_app') {
+    await insertAiTaskActivityMessage(supabase, {
+      taskId: data.id,
+      userId: user.id,
+      role: 'status',
+      kind: 'sent',
+      body: manualCodexHandoff
+        ? 'Codexへメモを送信しました。'
+        : 'Codex実行をキューに追加しました。',
+      dedupeKey: `task:${data.id}:sent`,
+    })
   }
 
   if (

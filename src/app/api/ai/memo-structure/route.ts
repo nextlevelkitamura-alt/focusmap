@@ -26,6 +26,10 @@ type ProjectContext = {
   title: string
   description: string
   purpose: string | null
+  heading: string
+  details: string
+  progress: string
+  progress_status: string
 }
 
 type ExistingMemoItem = {
@@ -190,7 +194,7 @@ function deriveActionItems(source: SourceMemo) {
   const researchIndex = items.findIndex(item => item.actionType === 'research')
   return items
     .filter((item, index) => item.actionType !== 'research' || index === researchIndex)
-    .slice(0, 3)
+    .slice(0, 2)
 }
 
 function chooseLocalProjectId(source: SourceMemo, projects: ProjectContext[]) {
@@ -243,7 +247,7 @@ function buildLocalStructureResult(args: {
   return {
     summary: 'メモを実行可能な単位へ分解しました。必要なら各項目からリサーチプロンプトを作れます。',
     memory: {
-      accepted_rules: ['分解結果は最大3件に抑え、実行/リサーチ/判断として扱う'],
+      accepted_rules: ['分解結果は最大2件に抑え、実行/リサーチ/判断として扱う'],
       rejected_interpretations: args.feedback ? [args.feedback] : [],
       next_questions: [],
     },
@@ -270,7 +274,14 @@ function buildPrompt(args: {
   const projectContext = args.projects
     .map(project => {
       const summary = (project.description || project.purpose || '').trim()
-      return `- ${project.title} (id: ${project.id})\n  context: ${summary.slice(0, 300) || '(説明なし)'}`
+      const contextLines = [
+        summary ? `description: ${summary.slice(0, 300)}` : '',
+        project.heading ? `heading: ${project.heading.slice(0, 120)}` : '',
+        project.details ? `details: ${project.details.slice(0, 300)}` : '',
+        project.progress_status ? `progress_status: ${project.progress_status}` : '',
+        project.progress ? `progress: ${project.progress.slice(0, 150)}` : '',
+      ].filter(Boolean)
+      return `- ${project.title} (id: ${project.id})\n  ${contextLines.join('\n  ') || 'context: (説明なし)'}`
     })
     .join('\n')
 
@@ -291,7 +302,7 @@ function buildPrompt(args: {
 - メモは原材料として残す。
 - メモが目的/要望/問題なら、達成に必要な実行単位へ分ける。
 - メモ自体がミクロな行動なら、無理に分けず1件だけ出す。
-- 分解結果は最大3件。
+- 分解結果は最大2件。
 - 基本は execution。実行前に調査が必要な場合だけ research を最大1件まで含める。
 - 判断が必要な場合だけ decision を出す。乱発しない。
 - 既存項目と同じ内容は二度と出力しない。
@@ -337,7 +348,7 @@ JSONのみ。Markdownや説明文は不要。
 }
 
 # 厳守
-- items は最大3件。
+- items は最大2件。
 - research は最大1件。
 - 原文をそのままコピーしない。次に実行できる動詞の形へ変換する。
 - 同じ意味の項目は既存項目を優先し、新規出力しない。
@@ -418,12 +429,42 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
 
-    const projectContexts = ((projects ?? []) as ProjectContext[]).map(project => ({
-      id: project.id,
-      title: project.title,
-      description: project.description ?? '',
-      purpose: project.purpose ?? null,
-    }))
+    const projectRows = (projects ?? []) as Array<{
+      id: string
+      title: string
+      description: string | null
+      purpose: string | null
+    }>
+    const projectIds = projectRows.map(project => project.id)
+    const { data: contextRows } = projectIds.length > 0
+      ? await supabase
+          .from('project_contexts')
+          .select('project_id, heading, details, progress, progress_status')
+          .eq('user_id', user.id)
+          .in('project_id', projectIds)
+      : { data: [] as Array<{
+          project_id: string
+          heading: string | null
+          details: string | null
+          progress: string | null
+          progress_status: string | null
+        }> }
+    const contextByProjectId = new Map(
+      (contextRows ?? []).map(context => [context.project_id, context]),
+    )
+    const projectContexts: ProjectContext[] = projectRows.map(project => {
+      const context = contextByProjectId.get(project.id)
+      return {
+        id: project.id,
+        title: project.title,
+        description: project.description ?? '',
+        purpose: project.purpose ?? null,
+        heading: context?.heading ?? '',
+        details: context?.details ?? '',
+        progress: context?.progress ?? '',
+        progress_status: context?.progress_status ?? 'not_started',
+      }
+    })
 
     const { data: existingItemsRaw } = await supabase
       .from('memo_items')
@@ -456,7 +497,15 @@ export async function POST(request: Request) {
       mode: mode.data,
       title: source.title,
       body: source.body,
-      project_contexts: projectContexts.map(p => ({ id: p.id, description: p.description, purpose: p.purpose })),
+      project_contexts: projectContexts.map(p => ({
+        id: p.id,
+        description: p.description,
+        purpose: p.purpose,
+        heading: p.heading,
+        details: p.details.slice(0, 300),
+        progress_status: p.progress_status,
+        progress: p.progress.slice(0, 150),
+      })),
       feedback,
     })
 
