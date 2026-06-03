@@ -183,7 +183,7 @@ export function DashboardClient({
             preloadDashboardView("long-term")
             preloadDashboardView("ai")
             preloadDashboardView("map")
-            void fetchWishlistItems({ spaceId: selectedSpaceId }).catch(() => undefined)
+            void fetchWishlistItems({ spaceId: selectedSpaceId, projectId: selectedProjectId }).catch(() => undefined)
         }
 
         if ("requestIdleCallback" in window && "cancelIdleCallback" in window) {
@@ -193,7 +193,7 @@ export function DashboardClient({
 
         const handle = setTimeout(warmup, 1200)
         return () => clearTimeout(handle)
-    }, [activeView, isViewReady, selectedSpaceId])
+    }, [activeView, isViewReady, selectedProjectId, selectedSpaceId])
 
     // STABLE reference for filtered projects using useMemo
     const filteredProjects = useMemo(() =>

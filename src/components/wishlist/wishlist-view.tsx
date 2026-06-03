@@ -721,10 +721,11 @@ export function WishlistView({
   const fetchItems = useCallback(async (options?: { force?: boolean }) => {
     const nextItems = await fetchWishlistItems({
       spaceId: selectedSpaceId,
+      projectId: selectedProjectId,
       force: options?.force,
     })
     setItems(nextItems)
-  }, [selectedSpaceId])
+  }, [selectedProjectId, selectedSpaceId])
 
   useEffect(() => {
     fetchItems().finally(() => setIsLoading(false))
@@ -2124,7 +2125,19 @@ export function WishlistView({
             <Network className="h-4 w-4" />
             <span className="hidden sm:inline">{selectMode ? "選択解除" : "マップ化"}</span>
           </Button>
-          <Button onClick={handleCreate} size="sm" className="min-h-[40px] shrink-0 gap-1 px-3">
+          <Button
+            type="button"
+            onClick={() => {
+              if (hasIntakeText) {
+                void handleQuickAdd()
+                return
+              }
+              void handleCreate()
+            }}
+            disabled={isRecording || isAnalyzing || isTranscribing}
+            size="sm"
+            className="min-h-[40px] shrink-0 gap-1 px-3"
+          >
             <Plus className="h-4 w-4" /> 追加
           </Button>
           </div>

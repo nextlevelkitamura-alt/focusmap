@@ -429,6 +429,54 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
+  test('デスクトップ表示では入力ありの追加ボタンでメモを即時追加する', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>(async (input, init) => {
+      const url = requestUrl(input)
+      if (url.startsWith('/api/wishlist') && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}')
+        return jsonResponse({ item: createMemoItem({ id: 'created-memo', title: body.title, ...body }) }, { status: 201 })
+      }
+      if (url.startsWith('/api/wishlist')) return jsonResponse({ items: [] })
+      if (url === '/api/ai/context') return jsonResponse({ preferences: {} })
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView selectedProjectId="project-1" />)
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /追加/ })[0]).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByPlaceholderText('音声またはテキストで入力'), {
+      target: { value: 'あ' },
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: /追加/ })[0])
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([input, init]) =>
+        requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
+      )
+      expect(createCall).toBeDefined()
+      expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
+        title: 'あ',
+        project_id: 'project-1',
+        memo_status: 'unsorted',
+      })
+    })
+  })
+
   test('スマホ表示では選択中カラムに合わせて追加メモの保存先を変える', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: true,
