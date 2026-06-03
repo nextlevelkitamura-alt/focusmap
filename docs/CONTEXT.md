@@ -194,6 +194,8 @@ Goals → Projects → TaskGroups → Tasks
 - `ai_tasks` が全ての起点。Codex.app連携では `executor='codex_app'` または `executor='codex'` を使う。
 - Mac常駐 `scripts/task-runner.ts` が `~/.codex/state_5.sqlite` と rollout JSONL を読み、`ai_tasks.result` に状態を同期する。
 - 実行中・スレッド検出直後は体感優先で短い間隔で追う。launchdの通常起動に加え、実行中は3秒間隔の追加follow-upを最大4回入れる。ローカル/プレビュー上のマップ表示中とノードパネル表示中は `/api/codex/sync-node` を約3秒間隔で呼び、Codex.app側で貼り付け送信されたthreadを検出して `ai_tasks.result` に反映する。
+- メモからCodexへ渡す導線と活動表示の詳細計画は `docs/specs/memo-codex-execution/requirements.md` / `delivery-plan.md` を正とする。メモ実行は `running` の間だけ3秒監視し、確認待ち・完了・失敗では3秒監視しない。確認待ち後にCodex側で追加プロンプトが送られた場合だけ再開検知で `running` へ戻し、3秒監視を再開する。
+- DBにはCodexの全生ログを保存しない。`ai_tasks.result` は現在状態と表示用通常ログの最新tailを上書き保持し、チャット風の活動記録は1実行最大50件に制限する。50件超過時は通常進捗から削除し、送信・質問・確認待ち・再開・完了・失敗・ユーザー回答を優先保持する。
 - Codex thread未検出の高速探索は開始後2分まで。2分を超えて見つからない場合は `monitoring_lost` として確認待ちにする。
 - 確認待ち・手動貼り付け待ち・needs_inputは、頻繁に追わない。`result.codex_last_checked_at` を使い、通常は30分ごとの再確認に抑える。
 - Focusmapで完了済みになったノードに紐づくCodex threadのアーカイブ/削除確認も、常時ではなく30分間隔の巡回に抑える。
