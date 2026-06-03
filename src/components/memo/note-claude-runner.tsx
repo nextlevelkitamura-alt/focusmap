@@ -170,6 +170,53 @@ function userFacingActivityError(message: string | null) {
   return "活動履歴を読み込めません。少し待ってから開き直してください。"
 }
 
+function isGenericCodexReviewText(value: string) {
+  const text = value.replace(/\s+/g, " ").trim()
+  if (!text) return true
+  return text === "完了確認" ||
+    text === "確認待ち" ||
+    text === "承認待ち" ||
+    text === "プロンプト待ち" ||
+    /^Codexの実行が完了しました。?結果確認待ちです。?$/.test(text) ||
+    /^Codex セッションは確認待ちです。?/.test(text) ||
+    /^\[Codex\] 実行完了。?確認待ちです。?$/.test(text) ||
+    /^Codex側では完了らしき状態です。?/.test(text)
+}
+
+function cleanCodexDisplayText(value: string) {
+  const blocks = value
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .map(block => block.replace(/^\[(assistant|codex)\]\s*/i, "").trim())
+    .filter(block => !isGenericCodexReviewText(block))
+
+  return blocks.join("\n\n").trim()
+}
+
+function readCodexSnapshotPreview(result: Record<string, unknown> | null) {
+  const snapshot = result?.codex_thread_snapshot
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return ""
+  const preview = (snapshot as Record<string, unknown>).preview
+  return typeof preview === "string" ? preview : ""
+}
+
+function codexReadableOutput(result: Record<string, unknown> | null) {
+  const liveLog = typeof result?.live_log === "string" ? cleanCodexDisplayText(result.live_log) : ""
+  if (liveLog) return liveLog
+
+  const message = typeof result?.message === "string" ? cleanCodexDisplayText(result.message) : ""
+  if (message) return message
+
+  return cleanCodexDisplayText(readCodexSnapshotPreview(result))
+}
+
+function reviewActivityBody(message: AiTaskActivityMessage | undefined) {
+  if (!message || isGenericCodexReviewText(message.body)) return ""
+  return message.body
+}
+
 export function NoteClaudeRunnerButton({
   noteId,
   noteContent,
@@ -322,9 +369,11 @@ export function NoteClaudeRunnerPanel({
     .reverse()
     .find(isReviewActivity)
   const codexReviewLabel = codexReviewReasonLabel(codexReviewReason)
-  const codexReviewBody = latestReviewMessage?.body ||
-    (codexCurrentStep && !/^確認待ち（[^）]+）$/.test(codexCurrentStep) ? codexCurrentStep : "") ||
-    resultMessage ||
+  const codexOutput = codexReadableOutput(resultObj)
+  const codexReviewBody = reviewActivityBody(latestReviewMessage) ||
+    codexOutput ||
+    (codexCurrentStep && !isGenericCodexReviewText(codexCurrentStep) ? codexCurrentStep : "") ||
+    (resultMessage && !isGenericCodexReviewText(resultMessage) ? resultMessage : "") ||
     codexReviewDefaultBody(codexReviewReason)
   const codexHeaderSummary = codexUiState
     ? codexUiState.state === "awaiting_approval"
@@ -334,7 +383,10 @@ export function NoteClaudeRunnerPanel({
         : codexCurrentStep || "Codexが実行中です"
     : null
   const activityLoadHelp = userFacingActivityError(activityError)
-  const visibleActivityMessages = activityMessages.slice(-6)
+  const visibleActivityMessages = activityMessages
+    .filter(message => !isReviewActivity(message) || !isGenericCodexReviewText(message.body))
+    .slice(-6)
+  const showActivityLoadHelp = !!activityLoadHelp && visibleActivityMessages.length === 0 && !codexOutput
   const progressSummary = progressOverride ?? getProgressSummary(resultObj)
   const progressPercent = progressSummary ? Math.max(0, Math.min(100, Math.round(progressSummary.progress_percent))) : null
   const headerStatusLabel = codexUiState?.label ?? (STATUS_LABEL[latestTask.status] ?? latestTask.status)
@@ -520,7 +572,7 @@ export function NoteClaudeRunnerPanel({
                   {codexUiState?.state === "awaiting_approval" ? codexReviewBody : codexCurrentStep || "まだ活動メッセージはありません"}
                 </div>
               )}
-              {activityLoadHelp && (
+              {showActivityLoadHelp && (
                 <div className="rounded border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-4 text-amber-700 dark:text-amber-300">
                   {activityLoadHelp}
                 </div>
