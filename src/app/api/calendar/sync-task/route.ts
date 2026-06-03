@@ -214,9 +214,9 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { taskId, google_event_id } = await request.json();
+    const { taskId, google_event_id, calendar_id } = await request.json();
 
-    console.log('[sync-task DELETE] Request:', { taskId, google_event_id });
+    console.log('[sync-task DELETE] Request:', { taskId, google_event_id, calendar_id });
 
     if (!taskId) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
@@ -242,7 +242,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Googleカレンダーからイベントを削除
-    await deleteTaskFromCalendar(user.id, taskId, google_event_id, task.calendar_id || undefined);
+    await deleteTaskFromCalendar(user.id, taskId, google_event_id, calendar_id || task.calendar_id || undefined);
 
     // タスクの google_event_id と calendar_id をクリア
     const { error: updateError } = await supabase

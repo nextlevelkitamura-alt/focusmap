@@ -148,6 +148,7 @@ Goals → Projects → TaskGroups → Tasks
 - 上部の `SpaceProjectSwitcher` は左のスペース選択と右のプロジェクト選択を独立状態として扱う。右側でプロジェクトを選択・作成・編集しても左側の `selectedSpaceId` は変更せず、スペースは左側のスペースメニューで明示的に選んだ時だけ切り替える。
 - `Todo` タブの `メモ + カレンダー` サブビューは、サブビュータブ自体を見出しとして扱う。中央ペイン内に重複する「今日する」見出しや説明文は置かず、カラム切替・カレンダー選択・今日するメモ追加ボタンだけを薄いツールバーにまとめる。
 - `Todo` タブ左側のメモカードは、`メモ` 画面と同じ `WishlistCardDetail` 編集シートを開く。見出し・本文・タグ・画像・予定化などのメモ編集導線は左ペインからも同じ挙動にする。スマホのメモ編集シートは予定編集シートと同じ黒背景の下部シートに寄せ、メモ一覧の入力行は入力欄の右に音声ボタン、その右端に追加ボタンを置く。
+- デスクトップ右側の `Today` パネル上部には、カレンダー予定を手動で強制同期する更新ボタンを常設する。押下時は `useTodayViewLogic.refreshCalendar()` 経由で `useCalendarEvents.syncNow({ silent: true })` を呼び、同期中はボタン内の `RefreshCw` を回し、完了時は一時的にチェック表示にする。
 
 ### メモとマップ追加済みの同期
 
@@ -163,7 +164,10 @@ Goals → Projects → TaskGroups → Tasks
 - `useCalendars` はカレンダー一覧と選択状態も `localStorage` に保存し、Macアプリ/スマホ起動直後に選択カレンダーIDを復元する。これによりイベントキャッシュキーが初回描画から確定し、`primary` だけを一瞬表示してから全カレンダーへ増える段階表示を避ける。
 - 選択カレンダーIDが空配列の場合、`useCalendarEvents` はGoogle Calendar APIのデフォルト `primary` 取得へフォールバックせず、空予定として扱う。カレンダー選択が未確定の間は予定取得を開始しない。
 - `/api/calendar/events/list` は `forceSync=false` かつ `calendar_events` に対象期間のキャッシュがある場合、Google Calendar APIを待たずにDBキャッシュを返す。返却時も `task_id` / 優先度 / 見積時間 / 完了状態 / カレンダー色 / 祝日カレンダー除外を付け直す。
-- DBキャッシュが古い場合、APIは `fromCache: true` / `needsRefresh: true` を返し、フロントは表示後に `forceSync=true` のサイレント同期を1回走らせる。`forceSync=true`、手動更新、定期自動更新、DBキャッシュなしの初回はGoogle Calendar APIから取得して `calendar_events` を更新する。
+- DBキャッシュは初期表示用であり正ではない。APIはキャッシュ返却時に `fromCache: true` / `needsRefresh: true` を返し、フロントは表示後に `forceSync=true` のサイレント同期を1回走らせる。`forceSync=true`、手動更新、定期自動更新、DBキャッシュなしの初回はGoogle Calendar APIから取得して `calendar_events` を更新する。
+- Google Calendar APIの返却は表示にはそのまま使うが、`calendar_events` への保存前には `google_event_id` で重複排除する。DBは `UNIQUE(user_id, google_event_id)` のため、複数カレンダーで同じ `google_event_id` が返った場合に `ON CONFLICT` が同一行を二度更新してキャッシュ保存全体が失敗するのを防ぐ。
+- カレンダー色が未取得の予定も表示対象から落とさない。`Today` の日/3日/月表示では、カレンダー色がないGoogle予定にGoogle Calendar標準色 `#039BE5` を使う。
+- 既存Google予定またはGoogle連携済みタスクのカレンダーを変更する場合は、旧カレンダーから削除して新規作成せず、移動元 `source_calendar_id` と移動先 `calendar_id` を `/api/calendar/sync-task` / `/api/calendar/events/[eventId]` に渡して Google Calendar の `events.move` 後に `events.update` する。これにより既存予定の二重登録を避ける。カレンダー解除時の削除だけは、DB更新後でも旧予定を消せるようリクエストbodyの `calendar_id` を削除先として優先する。
 
 ### マインドマップとCodex.app連携
 

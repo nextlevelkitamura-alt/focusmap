@@ -334,6 +334,31 @@ describe('PATCH /api/calendar/sync-task', () => {
         expect.objectContaining({ google_event_id: 'gevt-existing', memo: 'Task memo' })
       )
     })
+
+    test('source_calendar_id を渡すと移動元として syncTaskToCalendar に渡す', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setTaskSelectResult({
+        data: { ...baseTask, google_event_id: 'gevt-existing', calendar_id: 'old@gmail.com' },
+        error: null,
+      })
+
+      const res = await PATCH(patchReq({
+        ...validPatchBody,
+        calendar_id: 'new@gmail.com',
+        source_calendar_id: 'old@gmail.com',
+      }))
+
+      expect(res.status).toBe(200)
+      expect(mockSyncTaskToCalendar).toHaveBeenCalledWith(
+        'user-1',
+        'task-1',
+        expect.objectContaining({
+          calendar_id: 'new@gmail.com',
+          source_calendar_id: 'old@gmail.com',
+          google_event_id: 'gevt-existing',
+        })
+      )
+    })
   })
 
   describe('認証エラー', () => {
@@ -446,6 +471,26 @@ describe('DELETE /api/calendar/sync-task', () => {
         'task-1',
         'gevt-123',
         undefined
+      )
+    })
+
+    test('body の calendar_id があれば task の calendar_id より優先して削除に使う', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: mockUser } })
+      setTaskSelectResult({
+        data: { ...baseTask, google_event_id: 'gevt-123', calendar_id: null },
+        error: null,
+      })
+
+      const res = await DELETE(deleteReq({ ...validDeleteBody, calendar_id: 'old@gmail.com' }))
+      const json = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(json.success).toBe(true)
+      expect(mockDeleteTaskFromCalendar).toHaveBeenCalledWith(
+        'user-1',
+        'task-1',
+        'gevt-123',
+        'old@gmail.com'
       )
     })
   })

@@ -279,10 +279,10 @@ describe('useMultiTaskCalendarSync - 更新 (PATCH)', () => {
 })
 
 // ============================================================
-// カレンダー変更: DELETE + POST
+// カレンダー変更: PATCH
 // ============================================================
-describe('useMultiTaskCalendarSync - カレンダー変更 (DELETE → POST)', () => {
-  test('calendar_id が変更されると DELETE → POST を呼ぶ', async () => {
+describe('useMultiTaskCalendarSync - カレンダー変更 (PATCH)', () => {
+  test('calendar_id が変更されると旧カレンダーID付きで PATCH を呼ぶ', async () => {
     const onUpdateTask = vi.fn().mockResolvedValue(undefined)
     const onRefreshCalendar = vi.fn().mockResolvedValue(undefined)
 
@@ -301,12 +301,6 @@ describe('useMultiTaskCalendarSync - カレンダー変更 (DELETE → POST)', (
       await new Promise(resolve => setTimeout(resolve, 20))
     })
 
-    // DELETE 成功
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ success: true }),
-    })
-    // POST 成功（新しい google_event_id）
     mockSyncSuccess('gevt-new')
 
     // calendar_id を変更
@@ -321,14 +315,19 @@ describe('useMultiTaskCalendarSync - カレンダー変更 (DELETE → POST)', (
       await new Promise(resolve => setTimeout(resolve, 150))
     })
 
-    // DELETE が先に呼ばれ、次に POST
-    expect(mockFetch).toHaveBeenCalledTimes(2)
-    expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: 'DELETE' })
-    expect(mockFetch.mock.calls[1][1]).toMatchObject({ method: 'POST' })
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: 'PATCH' })
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({
+      taskId: 'task-1',
+      calendar_id: 'new@gmail.com',
+      source_calendar_id: 'old@gmail.com',
+      google_event_id: 'gevt-old',
+    })
 
     // 新しい google_event_id が保存される
     expect(onUpdateTask).toHaveBeenCalledWith('task-1', {
       google_event_id: 'gevt-new',
+      calendar_id: 'new@gmail.com',
     })
   })
 })

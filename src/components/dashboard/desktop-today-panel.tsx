@@ -128,6 +128,7 @@ export function DesktopTodayPanel({
         toggleTask,
         handleConvertEventToMemo,
         handleConvertCalendarPayloadToMemo,
+        refreshCalendar,
         writableCalendars,
         visibleTasks,
         stableCalendarColorMap,
@@ -313,13 +314,28 @@ export function DesktopTodayPanel({
 
                     {/* Range + Day-only mode toggle */}
                     <div className="flex flex-shrink-0 items-start gap-1">
-                        <div className="mt-1 flex h-4 w-4 items-center justify-center" aria-hidden={syncState === 'idle'}>
+                        <button
+                            type="button"
+                            onClick={() => void refreshCalendar()}
+                            disabled={syncState === 'syncing'}
+                            className={cn(
+                                "mt-1 grid h-8 w-8 place-items-center rounded-md border border-border/50 text-muted-foreground transition-colors",
+                                syncState === 'syncing'
+                                    ? "cursor-wait text-primary"
+                                    : "hover:bg-muted/60 hover:text-foreground",
+                                syncState === 'done' && "text-green-500"
+                            )}
+                            aria-label="カレンダーを更新"
+                            title="カレンダーを更新"
+                        >
                             {syncState === 'syncing' ? (
-                                <RefreshCw className="h-3 w-3 animate-spin text-primary" />
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                             ) : syncState === 'done' ? (
-                                <Check className="h-3 w-3 text-green-500" />
-                            ) : null}
-                        </div>
+                                <Check className="h-3.5 w-3.5" />
+                            ) : (
+                                <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                        </button>
                         {calendarRangeMode === 'day' && (
                             <button
                                 type="button"

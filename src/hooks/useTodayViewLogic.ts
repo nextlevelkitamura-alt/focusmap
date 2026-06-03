@@ -45,6 +45,7 @@ export interface UseTodayViewLogicOptions {
 
 const REMINDER_PREFETCH_DELAY_MS = 250
 const REMINDER_PREFETCH_MAX_EVENTS = 12
+const DEFAULT_CALENDAR_EVENT_COLOR = '#039BE5'
 
 export function getWeekDots(completions: HabitCompletion[], today: Date): boolean[] {
     const completedDates = new Set(completions.map(c => c.completed_date))
@@ -652,8 +653,7 @@ export function useTodayViewLogic({
             const calendarColor =
                 stableCalendarColorMap.get(event.calendar_id || '') ||
                 event.background_color ||
-                (event.sync_status === 'pending' ? '#F59E0B' : undefined)
-            if (!calendarColor) continue
+                (event.sync_status === 'pending' ? '#F59E0B' : DEFAULT_CALENDAR_EVENT_COLOR)
             const block = eventToTimeBlock({ ...event, background_color: calendarColor })
             if (block.startTime.getTime() < today.getTime()) block.startTime = new Date(today)
             if (block.endTime.getTime() > tomorrow.getTime()) block.endTime = new Date(tomorrow)
@@ -694,13 +694,13 @@ export function useTodayViewLogic({
     const allDayEvents = useMemo(() => {
         return calendarEvents
             .filter(e => e.is_all_day)
-            .map(e => {
-                const calendarColor = stableCalendarColorMap.get(e.calendar_id || '')
-                return calendarColor
-                    ? { ...e, background_color: calendarColor }
-                    : null
-            })
-            .filter((e): e is NonNullable<typeof e> => e !== null) as CalendarEvent[]
+            .map(e => ({
+                ...e,
+                background_color:
+                    stableCalendarColorMap.get(e.calendar_id || '') ||
+                    e.background_color ||
+                    DEFAULT_CALENDAR_EVENT_COLOR,
+            })) as CalendarEvent[]
     }, [calendarEvents, stableCalendarColorMap])
 
     const displayItems = timelineItems

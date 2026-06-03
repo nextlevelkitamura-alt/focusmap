@@ -2,6 +2,8 @@ import type { Task } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { eventToTimeBlock, taskToTimeBlock, type TimeBlock } from "@/lib/time-block"
 
+const DEFAULT_CALENDAR_EVENT_COLOR = "#039BE5"
+
 function startOfDay(date: Date): Date {
   const d = new Date(date)
   d.setHours(0, 0, 0, 0)
@@ -77,8 +79,7 @@ export function buildTimeBlocksForDay({
     const color =
       calendarColorMap?.get(event.calendar_id || "") ||
       event.background_color ||
-      (event.sync_status === "pending" ? "#F59E0B" : undefined)
-    if (!color) continue
+      (event.sync_status === "pending" ? "#F59E0B" : DEFAULT_CALENDAR_EVENT_COLOR)
 
     const block = eventToTimeBlock({ ...event, background_color: color })
     if (block.startTime.getTime() < dayStart.getTime()) block.startTime = new Date(dayStart)
@@ -119,7 +120,7 @@ export function getAllDayEventsForDay({
     })
     .map((event) => ({
       ...event,
-      background_color: calendarColorMap?.get(event.calendar_id || "") || event.background_color,
+      background_color: calendarColorMap?.get(event.calendar_id || "") || event.background_color || DEFAULT_CALENDAR_EVENT_COLOR,
     }))
 }
 

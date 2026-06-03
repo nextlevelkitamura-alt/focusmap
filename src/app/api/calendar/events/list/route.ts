@@ -42,8 +42,6 @@ type CalendarResponseEvent = CalendarEvent & {
   google_event_id: string;
 };
 
-const SERVER_CACHE_REVALIDATE_AFTER_MS = 60 * 1000;
-
 function getCompletionKey(calendarId: string, googleEventId: string): string {
   return `${calendarId}::${googleEventId}`;
 }
@@ -70,13 +68,6 @@ function numericPriorityToString(p: number | null | undefined): 'high' | 'medium
   if (p >= 3) return 'high';
   if (p >= 2) return 'medium';
   return 'low';
-}
-
-function isCachedSyncedAtStale(syncedAt: string | null): boolean {
-  if (!syncedAt) return true;
-  const syncedAtMs = new Date(syncedAt).getTime();
-  if (!Number.isFinite(syncedAtMs)) return true;
-  return Date.now() - syncedAtMs >= SERVER_CACHE_REVALIDATE_AFTER_MS;
 }
 
 function getMostRecentSyncedAt(events: Array<{ synced_at?: string | null }>): string | null {
@@ -343,6 +334,10 @@ export async function GET(request: NextRequest) {
 
     if (!forceSync && cachedDbEvents.length > 0) {
       const syncedAt = getMostRecentSyncedAt(cachedDbEvents) || new Date().toISOString();
+      // DB cache is a fast first paint, not the source of truth. Always ask the
+      // client to revalidate it silently so partial cache rows cannot hide real
+      // Google Calendar events for the rest of the session.
+      const needsRefresh = true;
       const cachedEvents = cachedDbEvents.map(normalizeDbEventForResponse);
       const eventsWithColor = await enrichEventsForResponse(
         supabase,
@@ -357,7 +352,7 @@ export async function GET(request: NextRequest) {
       console.log('[events/list] Returning cached DB events:', {
         total: eventsWithColor.length,
         syncedAt,
-        needsRefresh: isCachedSyncedAtStale(syncedAt),
+        needsRefresh,
       });
 
       return NextResponse.json({
@@ -365,7 +360,7 @@ export async function GET(request: NextRequest) {
         events: eventsWithColor,
         syncedAt,
         fromCache: true,
-        needsRefresh: isCachedSyncedAtStale(syncedAt),
+        needsRefresh,
       });
     }
 
@@ -646,16 +641,33 @@ export async function GET(request: NextRequest) {
     // id は UUID カラム（DB が自動生成）のため除外する。
     // google_event_id は UUID 形式ではないため id に渡すと PostgreSQL の型エラーで
     // INSERT が失敗し、新規行が一切 upsert されない原因となっていた。
-    const eventsWithSyncTime = googleEventsWithId.map((eventWithId) => {
+    const seenCacheGoogleEventIds = new Set<string>();
+    const skippedDuplicateCacheEvents: Array<{ google_event_id: string; calendar_id: string; title: string }> = [];
+    const eventsWithSyncTime = googleEventsWithId.flatMap((eventWithId) => {
+      if (seenCacheGoogleEventIds.has(eventWithId.google_event_id)) {
+        skippedDuplicateCacheEvents.push({
+          google_event_id: eventWithId.google_event_id,
+          calendar_id: eventWithId.calendar_id,
+          title: eventWithId.title,
+        });
+        return [];
+      }
+      seenCacheGoogleEventIds.add(eventWithId.google_event_id);
       const event = { ...eventWithId };
       delete (event as Partial<typeof event>).id;
-      return {
+      return [{
         ...event,
         // Google Calendar API は is_completed を返さないため、DB の値で明示的に保護
         is_completed: isEventCompleted(event),
         synced_at: now
-      };
+      }];
     });
+    if (skippedDuplicateCacheEvents.length > 0) {
+      console.warn('[events/list] Skipped duplicate google_event_id rows before DB cache upsert:', {
+        count: skippedDuplicateCacheEvents.length,
+        samples: skippedDuplicateCacheEvents.slice(0, 5),
+      });
+    }
 
     // DBに保存（エラーがあってもレスポンスはブロックしないが、awaitでDB整合性を確保）
     if (eventsWithSyncTime.length > 0) {
