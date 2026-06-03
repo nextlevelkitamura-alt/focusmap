@@ -1580,15 +1580,16 @@ export function WishlistCardDetail({
             const aiTask = getMemoAiTask(item.id)
             const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
             const repoConfigured = !!project?.repo_path
-            const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
-            const claudeDisabled = !item.project_id || !repoConfigured || !!active
-            const codexDisabled = !draftTitle.trim() || !!active
-            const needsConfig = !!onLaunchClaude && (!item.project_id || !repoConfigured)
             const taskExecutor = aiTask?.executor ?? null
             const taskResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
               ? aiTask.result as Record<string, unknown>
               : {}
             const codexPromptWaiting = (taskExecutor === "codex" || taskExecutor === "codex_app") && taskResult.codex_run_state === "prompt_waiting"
+            const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
+            const needsRepoConfig = !item.project_id || !repoConfigured
+            const claudeDisabled = needsRepoConfig || !!active
+            const codexDisabled = !draftTitle.trim() || needsRepoConfig || (!!active && !codexPromptWaiting)
+            const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
             return (
               <div className="space-y-3 rounded-lg border bg-background/40 p-3">
                 <Label className="flex items-center gap-1.5">
@@ -1605,7 +1606,7 @@ export function WishlistCardDetail({
                       : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
                     : needsConfig
                       ? "⚠ プロジェクトまたはリポジトリパスが未設定です"
-                      : "メモ本文をそのままコピーしてCodexを開きます"}
+                      : "メモ本文をCodex.appへ送って実行します"}
                 </p>
                 {needsConfig && (
                   <Link
@@ -1669,8 +1670,8 @@ export function WishlistCardDetail({
                       }}
                       className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                     >
-                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">Codexを開く</span>}
-                      <span className="text-[10px] text-muted-foreground">プロンプトをコピー</span>
+                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">Codexで実行</span>}
+                      <span className="text-[10px] text-muted-foreground">Mac runnerで自動送信</span>
                     </Button>
                   )}
                 </div>
@@ -1738,9 +1739,11 @@ export function WishlistCardDetail({
                   const sessionUrl = aiTask?.remote_session_url ?? null
                   const isCodex = launchExecutor === 'codex' || launchExecutor === 'codex_app'
                   const executorLabel = launchExecutor === 'claude' ? 'Claude Code' : 'Codex'
-                  const copyStepText = isCodex
+                  const copyStepText = launchExecutor === 'codex_app'
                     ? (launchStep === 'sending' ? 'プロンプトを準備しています...' : 'プロンプトをコピーしました')
-                    : (launchStep === 'sending' ? `${executorLabel}に送信しています...` : `${executorLabel}に送信しました`)
+                    : launchExecutor === 'codex'
+                      ? (launchStep === 'sending' ? 'Codex実行を準備しています...' : 'Codex実行をキューに追加しました')
+                      : (launchStep === 'sending' ? `${executorLabel}に送信しています...` : `${executorLabel}に送信しました`)
                   return (
                     <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-[12px]">
                       {/* Step 1: コピー/送信 */}
@@ -1761,13 +1764,13 @@ export function WishlistCardDetail({
                               : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
                             <span className={launchStep === 'sent' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}>
                               {launchStep === 'sent'
-                                ? `${isCodex ? 'プロンプト待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
-                                : (isCodex ? 'プロンプト待ち' : '接続しました')}
+                                ? `${launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Codex起動待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
+                                : (launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Codex起動済み' : '接続しました')}
                             </span>
                           </div>
                           {launchStep === 'sent' && (
                             <div className="pl-5 space-y-1 text-[11px] text-muted-foreground">
-                              <p>{isCodex ? 'Codex側で内容を確認して送信してください' : '通常15〜45秒かかります'}</p>
+                              <p>{launchExecutor === 'codex_app' ? 'Codex側で内容を確認して送信してください' : isCodex ? 'Mac runnerがCodex.appへ送信します' : '通常15〜45秒かかります'}</p>
                               {(() => {
                                 const status = aiTask?.status
                                 if (status === 'running') return <p className="text-blue-500 dark:text-blue-400 font-medium">▶ {executorLabel} が実行中です{isCodex ? '' : ' — URLを取得中...'}</p>

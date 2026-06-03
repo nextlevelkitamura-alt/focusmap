@@ -158,7 +158,7 @@ Goals → Projects → TaskGroups → Tasks
 - マップノードを削除した時は、削除対象の子孫ノードも含めて元メモとの対応を外す。そのメモに他の実在マップノードが残っていなければ、元メモは削除せず `未予定`（`memo_status='unsorted'`）へ戻す。
 - ただし元メモが `今日する` / `予定済み` / `完了` の場合、その状態を優先し、マップノード削除だけでは `未予定` へ戻さない。
 - マップ削除後はUndoスタックへ復元用スナップショットを積む。トーストの `元に戻す` と `Cmd/Ctrl+Z` は同じUndo処理を呼び、削除したノード群・元メモ対応・未予定戻し前のメモ状態をまとめて復元する。
-- メモ詳細の `Codexを開く` は `executor='codex_app'` / `dispatch_mode='manual'` の `ai_tasks` を作り、メモ本文をラベルや前置きなしでそのままCodexへ渡す。プロジェクト/リポジトリ未設定でも実行でき、Macローカルでは `/api/codex/open-repo`、スマホではChatGPTアプリのCodex入口を優先する。
+- メモ詳細の `Codexで実行` は `executor='codex_app'` / `dispatch_mode='auto'` の `ai_tasks` を `pending` で作り、Mac runner が `ws://127.0.0.1:7878` のCodex app-serverへ送信する。メモ本文はラベルや前置きなしでそのままCodexへ渡す。実行にはプロジェクト/リポジトリ設定が必要。手動で始めたい場合は再コピー/手動handoff導線を使う。
 - メモに画像添付がある場合、Codex起動直前に `/api/wishlist/[id]/attachments` から署名URLを再発行し、本文末尾に `添付画像:` として画像名・形式・サイズ・URLだけを追加する。画像バイナリを直接deep linkへ詰め込まず、スマホ/デスクトップとも同じクリップボード経路で渡す。
 - メモ詳細のCodex実行表示は `ai_task_activity_messages` を `/api/ai-tasks/[id]/activity` から読み、チャット風活動メッセージを正とする。確認待ちでは最新の質問/承認メッセージを最上部に出し、raw `live_log` は補助データとしてDBに残すだけにする。
 - `整理する` は初期実装では最大2件の構造化項目に抑える。プロジェクト文脈は `projects.title/description/purpose` に加えて `project_contexts.heading`、`details` 先頭、`progress_status`、`progress` 先頭を軽量に取り込み、マインドマップ候補は対象プロジェクトの既存ノード候補だけを後段で読む。
@@ -181,9 +181,9 @@ Goals → Projects → TaskGroups → Tasks
 - Focusmap側は `ai_tasks` に待機レコードを作り、プロンプトをクリップボードへコピーし、Codex.appのチャットを開く補助をする。
 - ユーザー向けの手動実行はMac常駐runnerを必須にしない。Codex.app / ChatGPTアプリが入っていれば、Focusmapはdeep linkとクリップボードで実行開始できる。常駐runnerやローカル同期は状態検出・ログ同期の補助であり、起動条件にはしない。
 - マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。押下直後にメモ見出し本文とメモ詳細本文だけを改行区切りでクリップボードへコピーし、既存threadへの遷移は狙わず、Mac/デスクトップでは実体のある `codex://?prompt=...&path=...&originUrl=...` リンクとしてCodex.appを開く。スマホではブラウザURLではなく、iOS/iPadOSは `com.openai.chat://https://chatgpt.com/codex/mobile/`、Androidは `intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end` を開き、ChatGPTアプリ側のCodex mobile入口を優先する。どちらもコピーと外部アプリ起動をクリック直後に開始し、保存や `ai_tasks` 登録の完了を待たない。
-- Codex.app連携の主導線は手動ハンドオフ。オンラインrunnerがあっても、ノードパネルの「Codexに送る」は `dispatch_mode='manual'` の `ai_tasks` を作り、メモ見出し本文とメモ詳細本文だけをラベルなしでクリップボードへコピーし、Codex.appを開く。`app-server` 経由の自動turn作成はCodex.app/スマホRemote ControlのUI同期が不安定なため、通常導線では前提にしない。
+- マインドマップのCodex.app連携主導線は手動ハンドオフ。オンラインrunnerがあっても、ノードパネルの「Codexに送る」は `dispatch_mode='manual'` の `ai_tasks` を作り、メモ見出し本文とメモ詳細本文だけをラベルなしでクリップボードへコピーし、Codex.appを開く。メモ詳細の `Codexで実行` だけは、ローカルMacのrunnerが使える前提で `dispatch_mode='auto'` を正とする。
 - localhost と `*.trycloudflare.com` のスマホプレビューでは、デスクトップの場合だけローカルAPI `/api/codex/open-repo` からMacの `pbcopy`、`open codex://...`、Codex.appのactivateを実行する。スマホ判定時はChatGPT mobile入口を優先する。ブラウザが外部アプリ起動を止めても、プロンプトはクリップボードに残し、Focusmap側は `ai_tasks` の `プロンプト待ち` として状態を追う。
-- Codex.appの新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。Focusmapは「プロンプト待ち」「実行中」「確認待ち」を表示し、`/api/codex/sync-node` と `~/.codex/state_5.sqlite` / rollout JSONL から状態確認とログ同期に徹する。
+- `codex://` deep link 経由の新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。自動実行が必要なメモ詳細の主導線は `ws://127.0.0.1:7878` のCodex app-serverへ送る。Focusmapは「プロンプト待ち」「実行中」「確認待ち」を表示し、`/api/codex/sync-node` と `~/.codex/state_5.sqlite` / rollout JSONL から状態確認とログ同期する。
 - Focusmap Lite `scripts/focusmap-agent` は、Codex.appまたはCodex CLIを検出したMacでは `codex_app` executorをheartbeatに含める。`codex_app` taskをclaimした場合は `ws://127.0.0.1:7878` のCodex app-serverへ `initialize` → `thread/start|thread/resume` → `turn/start` を送り、スレッドURL・ログ・確認待ち状態を `ai_tasks.result` に書き戻す。
 - `scripts/install.sh` はWeb同梱の `focusmap-agent.tar.gz` を優先導入し、Codex.app/Codex CLIがあるMacでは `~/.focusmap/bin/run-codex-app-server.sh` と `~/Library/LaunchAgents/com.focusmap-official.codex-app-server.plist` も作成する。Codex.app未導入の場合は警告だけ出し、Codex導入後に再実行すれば `codex_app` executorが有効になる。
 - プロンプト本文は、メモ見出しなどのラベルを足さず、ノード本文/メモ本文を改行区切りでそのまま渡す。
@@ -224,7 +224,7 @@ Goals → Projects → TaskGroups → Tasks
 - Macアプリ/常駐runnerまわりの実行ログは、リポジトリ直下の `logs/` ではなく `~/.focusmap/logs/` に出す。即時Codex実行のstdout/stderrも同じディレクトリへ寄せ、リポジトリサイズに実行ログを混ぜない。
 - Macアプリのメニューと「Focusmap 接続状態」ウィンドウから、既存 `scripts/focusmap-agent/dist/cli.js` と `scripts/run-codex-app-server.sh` を起動・停止・状態確認できる。agentの設定は従来通り `~/.focusmap/config.json` を使い、Macアプリ内にservice role key等は置かない。
 - 開発中のMacアプリでは、`~/.focusmap/config.json` の `api_url` が本番APIを向いていても、agent起動時だけ `~/Library/Application Support/Focusmap/agent-config.json` に一時設定を作り、`api_url` を `http://127.0.0.1:3001/api` へ向ける。この場合、agent起動前に3001のNext APIも自動起動する。これにより本番Cloud Run側の環境変数に依存せず、ローカルNext API経由で `ai_tasks` を同期できる。配布版や本番API固定にしたい場合は `FOCUSMAP_DESKTOP_AGENT_API_URL` で明示する。
-- Macアプリの通常導線ではCodex app-serverのWebSocket自動投入に依存しない。Electron側は `ANTHROPIC_API_KEY` / `CLAUDECODE` を外した環境で起動し、クリップボードコピー・Codex.app起動・ローカルsqlite/rollout同期を担う。`ws://127.0.0.1:7878` は既存runner互換やアーカイブ補助用途として残すが、ユーザー向けの確実な導線は手動ハンドオフを正とする。
+- Macアプリ/ローカルWebのメモ詳細では、Codex app-serverのWebSocket自動投入を主導線にする。Electron側は `ANTHROPIC_API_KEY` / `CLAUDECODE` を外した環境で起動し、クリップボードコピー・Codex.app起動・ローカルsqlite/rollout同期も担う。マインドマップのノードパネルやスマホ単体など、app-server自動投入を使えない場面では手動ハンドオフを正とする。
 - 配布用の最初の形は未署名の自分用ビルドでよい。`npm run mac:build` は古い `.next` / `dist-desktop/mac-arm64` を削除してから `next build` し、Nextの `react-loadable-manifest.json` に残る存在しない静的チャンク参照を補正・検査してから `dist-desktop/` へ arm64 の `.app` ディレクトリを作る。packaged app側の `next-standalone/.next` も同じ静的参照検査を通す。一般配布する場合はDeveloper ID署名・notarizationを別途追加する。
 - Macアプリのパッケージングは `desktop/focusmap-mac` をElectron app directoryにし、rootの巨大な `node_modules` をアプリ本体へ入れない。Next standaloneは `extraResources/next-standalone` として同梱する。Nextの `outputFileTracingExcludes` では `mobile/**` / `.git/**` / `dist-desktop/**` を除外し、iOS Podsやビルド成果物がMacアプリへ混入しないようにする。
 

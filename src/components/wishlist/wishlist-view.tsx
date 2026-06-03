@@ -582,20 +582,21 @@ export function WishlistView({
   }, [loadMemoCodexImages])
 
   // メモから AI エージェント（Claude / Codex）を起動
-  // Codex はメモ本文そのものと画像URLだけをコピーし、手動handoffとして ai_tasks に残す。
+  // Codex の主導線は Mac runner による自動実行。手動handoffは別導線で残す。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
-    const isCodexExecuteNow = executor === 'codex'
-    if (!repoPath && !isCodexExecuteNow) {
+    const isCodexAutoRun = executor === 'codex'
+    const isCodexManualHandoff = executor === 'codex_app'
+    if (!repoPath && (executor === 'claude' || isCodexAutoRun)) {
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
-    const prompt = isCodexExecuteNow
+    const prompt = (isCodexAutoRun || isCodexManualHandoff)
       ? await buildMemoCodexHandoffText(item)
       : item.description?.trim() || item.title
-    const scheduleExecutor = isCodexExecuteNow ? 'codex_app' : executor
-    const handoffToken = `FM-${Date.now().toString(36)}-${item.id.slice(0, 8)}`
+    const scheduleExecutor = (isCodexAutoRun || isCodexManualHandoff) ? 'codex_app' : executor
+    const handoffToken = isCodexManualHandoff ? `FM-${Date.now().toString(36)}-${item.id.slice(0, 8)}` : undefined
 
     const registerTask = async () => {
       const res = await fetch("/api/ai-tasks/schedule", {
@@ -608,8 +609,8 @@ export function WishlistView({
           source_ideal_goal_id: item.id,
           scheduled_at: new Date().toISOString(),
           executor: scheduleExecutor,
-          dispatch_mode: isCodexExecuteNow ? "manual" : "auto",
-          codex_handoff_token: isCodexExecuteNow ? handoffToken : undefined,
+          dispatch_mode: isCodexManualHandoff ? "manual" : "auto",
+          codex_handoff_token: handoffToken,
         }),
       })
       if (!res.ok) {
@@ -618,7 +619,7 @@ export function WishlistView({
       }
     }
 
-    if (isCodexExecuteNow) {
+    if (isCodexManualHandoff) {
       await openCodexHandoff(prompt, repoPath ?? null)
       void registerTask().catch(error => {
         console.error("[wishlist] Codex handoff tracking failed:", error instanceof Error ? error.message : error)
