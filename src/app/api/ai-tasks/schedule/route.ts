@@ -221,7 +221,7 @@ export async function POST(req: NextRequest) {
           userId: user.id,
           role: 'status',
           kind: 'sent',
-          body: 'Codexへメモを送信しました。',
+          body: 'Codex自動実行に切り替えました。',
           dedupeKey: `task:${promoted.id}:sent`,
         })
 
@@ -288,11 +288,11 @@ export async function POST(req: NextRequest) {
       taskId: data.id,
       userId: user.id,
       role: 'status',
-      kind: 'sent',
+      kind: manualCodexHandoff ? 'prompt_waiting' : 'sent',
       body: manualCodexHandoff
-        ? 'Codexへメモを送信しました。'
+        ? 'プロンプト待ちです。Codex側で貼り付けて送信してください。'
         : 'Codex実行をキューに追加しました。',
-      dedupeKey: `task:${data.id}:sent`,
+      dedupeKey: `task:${data.id}:${manualCodexHandoff ? 'prompt_waiting' : 'sent'}`,
     })
   }
 

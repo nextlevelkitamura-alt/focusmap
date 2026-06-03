@@ -204,6 +204,17 @@ function activityForReviewReason(reason: CodexReviewReason): {
   return { kind: 'approval', role: 'status', body: 'Codexセッションは確認待ちです。' }
 }
 
+function reviewReasonLabel(reason: CodexReviewReason): string {
+  if (reason === 'completed') return '完了確認'
+  if (reason === 'approval_requested') return '承認待ち'
+  if (reason === 'manual_handoff') return 'プロンプト待ち'
+  if (reason === 'monitoring_lost') return '同期確認'
+  if (reason === 'thread_deleted') return 'スレッド確認'
+  if (reason === 'aborted') return '停止確認'
+  if (reason === 'archived') return 'アーカイブ確認'
+  return '確認待ち'
+}
+
 export async function POST(req: NextRequest) {
   if (!canUseLocalSync(req)) {
     return NextResponse.json(
@@ -330,7 +341,7 @@ export async function POST(req: NextRequest) {
     ? (parsed.liveLog || buildFallbackLog(row))
     : (typeof current.live_log === 'string' ? current.live_log : 'プロンプト待ち。Codex.appで送信されると、Focusmapはthread状態とログを同期します。')
   const currentStep = codexState === 'awaiting_approval'
-    ? `確認待ち（${reviewReason}）`
+    ? reviewReasonLabel(reviewReason)
     : codexState === 'running'
       ? (parsed.currentStep || 'Codex.appで実行中')
       : 'プロンプト待ち'
@@ -358,7 +369,7 @@ export async function POST(req: NextRequest) {
     const completedIndex = steps.findIndex(step => asRecord(step).key === 'completed')
     const completedStep = {
       key: 'completed',
-      label: `確認待ち（${parsed.reviewReason}）`,
+      label: reviewReasonLabel(parsed.reviewReason),
       status: 'active',
       at: nowIso,
     }

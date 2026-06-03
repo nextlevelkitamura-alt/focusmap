@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 
 const BUCKET = 'ideal-attachments'
 const MAX_FILE_SIZE = 20 * 1024 * 1024
+const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365
 
 export async function GET(
   _request: NextRequest,
@@ -21,7 +22,17 @@ export async function GET(
     .order('created_at', { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ attachments: data })
+
+  const attachments = await Promise.all((data ?? []).map(async attachment => {
+    const { data: signedData } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUrl(attachment.storage_path, SIGNED_URL_TTL_SECONDS)
+    return signedData?.signedUrl
+      ? { ...attachment, file_url: signedData.signedUrl }
+      : attachment
+  }))
+
+  return NextResponse.json({ attachments })
 }
 
 export async function POST(
@@ -63,7 +74,7 @@ export async function POST(
 
   const { data: signedData, error: signedError } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(storagePath, 60 * 60 * 24 * 365)
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS)
 
   if (signedError || !signedData) {
     await supabase.storage.from(BUCKET).remove([storagePath])

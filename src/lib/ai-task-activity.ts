@@ -1,6 +1,7 @@
 export type AiTaskActivityRole = 'system' | 'codex' | 'user' | 'status'
 
 export type AiTaskActivityKind =
+  | 'prompt_waiting'
   | 'sent'
   | 'progress'
   | 'question'
@@ -44,6 +45,7 @@ export type InsertAiTaskActivityMessageInput = {
 export const AI_TASK_ACTIVITY_MAX_MESSAGES = 50
 
 export const AI_TASK_ACTIVITY_PROTECTED_KINDS = new Set<AiTaskActivityKind>([
+  'prompt_waiting',
   'sent',
   'question',
   'approval',

@@ -107,6 +107,7 @@ export interface AiTask {
 export type AiTaskActivityRole = 'system' | 'codex' | 'user' | 'status'
 
 export type AiTaskActivityKind =
+  | 'prompt_waiting'
   | 'sent'
   | 'progress'
   | 'question'

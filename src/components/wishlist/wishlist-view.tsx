@@ -40,7 +40,7 @@ import {
   isLikelyMobileDevice,
   launchCodexViaLocalApi,
 } from "@/lib/codex-app-launch"
-import { buildImmediateMemoCodexPrompt, memoBodyForCodexExecution } from "@/lib/memo-codex-execution"
+import { buildImmediateMemoCodexPrompt, memoBodyForCodexExecution, type MemoCodexImageAttachment } from "@/lib/memo-codex-execution"
 import { WishlistCard } from "./wishlist-card"
 import { WishlistCardDetail } from "./wishlist-card-detail"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
@@ -54,6 +54,12 @@ type MemoItem = IdealGoalWithItems & {
   mindmap_link_count?: number | null
   mindmap_linked_at?: string | null
   mindmap_task_ids?: string[] | null
+}
+
+type MemoAttachmentResponse = {
+  attachments?: Array<MemoCodexImageAttachment & {
+    id?: string
+  }>
 }
 
 type LinkedStructuredItem = {
@@ -549,8 +555,34 @@ export function WishlistView({
     }
   }, [])
 
+  const loadMemoCodexImages = useCallback(async (memoId: string): Promise<MemoCodexImageAttachment[]> => {
+    try {
+      const res = await fetch(`/api/wishlist/${memoId}/attachments`, { cache: "no-store" })
+      const data = await res.json().catch(() => ({})) as MemoAttachmentResponse
+      if (!res.ok || !Array.isArray(data.attachments)) return []
+      return data.attachments
+        .filter(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim())
+        .map(attachment => ({
+          file_name: attachment.file_name,
+          file_url: attachment.file_url,
+          file_type: attachment.file_type,
+          file_size: attachment.file_size,
+        }))
+    } catch {
+      return []
+    }
+  }, [])
+
+  const buildMemoCodexHandoffText = useCallback(async (item: MemoItem) => {
+    const images = await loadMemoCodexImages(item.id)
+    return buildImmediateMemoCodexPrompt(
+      memoBodyForCodexExecution({ title: item.title, body: item.description }),
+      images,
+    )
+  }, [loadMemoCodexImages])
+
   // メモから AI エージェント（Claude / Codex）を起動
-  // Codex は本文だけを最小テンプレートで包み、手動handoffとして ai_tasks に残す。
+  // Codex はメモ本文そのものと画像URLだけをコピーし、手動handoffとして ai_tasks に残す。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
@@ -560,44 +592,61 @@ export function WishlistView({
     }
 
     const prompt = isCodexExecuteNow
-      ? buildImmediateMemoCodexPrompt(memoBodyForCodexExecution({ title: item.title, body: item.description }))
+      ? await buildMemoCodexHandoffText(item)
       : item.description?.trim() || item.title
     const scheduleExecutor = isCodexExecuteNow ? 'codex_app' : executor
     const handoffToken = `FM-${Date.now().toString(36)}-${item.id.slice(0, 8)}`
 
-    const res = await fetch("/api/ai-tasks/schedule", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        cwd: repoPath ?? null,
-        approval_type: "auto",
-        source_ideal_goal_id: item.id,
-        scheduled_at: new Date().toISOString(),
-        executor: scheduleExecutor,
-        dispatch_mode: isCodexExecuteNow ? "manual" : "auto",
-        codex_handoff_token: isCodexExecuteNow ? handoffToken : undefined,
-      }),
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err?.error || `起動失敗 (${res.status})`)
+    const registerTask = async () => {
+      const res = await fetch("/api/ai-tasks/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          cwd: repoPath ?? null,
+          approval_type: "auto",
+          source_ideal_goal_id: item.id,
+          scheduled_at: new Date().toISOString(),
+          executor: scheduleExecutor,
+          dispatch_mode: isCodexExecuteNow ? "manual" : "auto",
+          codex_handoff_token: isCodexExecuteNow ? handoffToken : undefined,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error || `起動失敗 (${res.status})`)
+      }
     }
 
     if (isCodexExecuteNow) {
       await openCodexHandoff(prompt, repoPath ?? null)
+      void registerTask().catch(error => {
+        console.error("[wishlist] Codex handoff tracking failed:", error instanceof Error ? error.message : error)
+      })
+      return
     }
-  }, [openCodexHandoff, projects])
+
+    await registerTask()
+  }, [buildMemoCodexHandoffText, openCodexHandoff, projects])
 
   // codex に一本化。claude(当環境でENOEXEC) / codex_app(GUI重複) は UI から撤去。
   // 復活時は launchAiForMemo(item, 'claude'|'codex_app') の alias を足して prop を渡す。
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
 
-  // 一覧カードの Codex ボタン: Codex Web を新規タブで開く + タイトル/本文をクリップボードへ
+  const copyCodexPromptForMemo = useCallback(async (item: MemoItem) => {
+    const text = await buildMemoCodexHandoffText(item)
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return
+      }
+    } catch {}
+    throw new Error("クリップボードコピー失敗。手動でコピーしてください")
+  }, [buildMemoCodexHandoffText])
+
+  // 一覧カードの Codex ボタン: Codex Web を新規タブで開く + メモ/画像URLをクリップボードへ
   const openInCodexWebForMemo = useCallback(async (item: MemoItem) => {
-    const title = item.title.trim()
-    const desc = (item.description ?? "").trim()
-    const clip = desc ? `${title}\n\n${desc}` : title
+    const clip = await buildMemoCodexHandoffText(item)
     let copied = false
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -611,7 +660,7 @@ export function WishlistView({
     if (!copied) {
       throw new Error("クリップボードコピー失敗。手動でコピーしてください")
     }
-  }, [])
+  }, [buildMemoCodexHandoffText])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -2505,6 +2554,7 @@ export function WishlistView({
         projects={projects}
         tagColors={tagColors}
         onLaunchCodex={launchCodexForMemo}
+        onCopyCodexPrompt={copyCodexPromptForMemo}
         onMemoChanged={fetchItems}
       />
 

@@ -100,12 +100,13 @@ function activityTone(message: AiTaskActivityMessage) {
   if (message.kind === "failed") return "border-red-500/25 bg-red-500/5"
   if (message.kind === "completed") return "border-emerald-500/25 bg-emerald-500/5"
   if (message.kind === "question" || message.kind === "approval") return "border-amber-500/30 bg-amber-500/10"
-  if (message.kind === "resumed" || message.kind === "sent") return "border-blue-500/25 bg-blue-500/5"
+  if (message.kind === "resumed" || message.kind === "sent" || message.kind === "prompt_waiting") return "border-blue-500/25 bg-blue-500/5"
   return "border-border bg-background/70"
 }
 
 function activityKindLabel(kind: AiTaskActivityMessage["kind"]) {
   switch (kind) {
+    case "prompt_waiting": return "プロンプト待ち"
     case "sent": return "送信"
     case "progress": return "進捗"
     case "question": return "質問"
@@ -116,6 +117,57 @@ function activityKindLabel(kind: AiTaskActivityMessage["kind"]) {
     case "user_answer": return "回答"
     default: return kind
   }
+}
+
+function codexReviewReasonLabel(reason: string | null) {
+  switch (reason) {
+    case "completed": return "完了確認"
+    case "approval_requested": return "承認待ち"
+    case "manual_handoff": return "プロンプト待ち"
+    case "monitoring_lost": return "同期確認"
+    case "thread_deleted": return "スレッド確認"
+    case "aborted": return "停止確認"
+    case "archived": return "アーカイブ確認"
+    case "started": return "実行開始"
+    default: return "確認待ち"
+  }
+}
+
+function codexReviewDefaultBody(reason: string | null) {
+  switch (reason) {
+    case "completed":
+      return "Codex側では完了らしき状態です。結果を見て問題なければ完了にしてください。"
+    case "approval_requested":
+      return "Codexが承認を待っています。Codex側の確認内容を見て、承認または追加指示をしてください。"
+    case "manual_handoff":
+      return "プロンプトはコピー済みです。Codex側で貼り付けて送信すると、Focusmapに状態が同期されます。"
+    case "monitoring_lost":
+      return "Codexの状態同期が途切れています。Codex側の画面を開いて、作業が続いているか確認してください。"
+    case "thread_deleted":
+      return "Codex threadが見つかりません。Codex側で対象スレッドが残っているか確認してください。"
+    case "aborted":
+      return "Codex実行が停止しています。中断理由を確認して、必要なら再実行してください。"
+    case "archived":
+      return "Codex threadがアーカイブされています。必要ならCodex側で開き直してください。"
+    default:
+      return "Codex側で確認が必要です。最新の質問や承認内容を確認してください。"
+  }
+}
+
+function isReviewActivity(message: AiTaskActivityMessage) {
+  return message.kind === "question" ||
+    message.kind === "approval" ||
+    message.kind === "completed" ||
+    message.kind === "failed" ||
+    message.kind === "prompt_waiting"
+}
+
+function userFacingActivityError(message: string | null) {
+  if (!message) return null
+  if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
+    return "活動履歴を読み込めません。接続またはログイン状態を確認してください。"
+  }
+  return "活動履歴を読み込めません。少し待ってから開き直してください。"
 }
 
 export function NoteClaudeRunnerButton({
@@ -266,9 +318,23 @@ export function NoteClaudeRunnerPanel({
     : latestTask.codex_thread_id
   const codexReviewReason = typeof resultObj?.codex_review_reason === "string" ? resultObj.codex_review_reason : null
   const codexCurrentStep = typeof resultObj?.current_step === "string" ? resultObj.current_step : ""
-  const importantReviewMessage = [...activityMessages]
+  const latestReviewMessage = [...activityMessages]
     .reverse()
-    .find(message => message.kind === "question" || message.kind === "approval")
+    .find(isReviewActivity)
+  const codexReviewLabel = codexReviewReasonLabel(codexReviewReason)
+  const codexReviewBody = latestReviewMessage?.body ||
+    (codexCurrentStep && !/^確認待ち（[^）]+）$/.test(codexCurrentStep) ? codexCurrentStep : "") ||
+    resultMessage ||
+    codexReviewDefaultBody(codexReviewReason)
+  const codexHeaderSummary = codexUiState
+    ? codexUiState.state === "awaiting_approval"
+      ? `${codexReviewLabel}: ${codexReviewBody}`
+      : codexUiState.state === "prompt_waiting"
+        ? "プロンプト待ち: Codex側で貼り付けて送信してください"
+        : codexCurrentStep || "Codexが実行中です"
+    : null
+  const activityLoadHelp = userFacingActivityError(activityError)
+  const visibleActivityMessages = activityMessages.slice(-6)
   const progressSummary = progressOverride ?? getProgressSummary(resultObj)
   const progressPercent = progressSummary ? Math.max(0, Math.min(100, Math.round(progressSummary.progress_percent))) : null
   const headerStatusLabel = codexUiState?.label ?? (STATUS_LABEL[latestTask.status] ?? latestTask.status)
@@ -365,14 +431,12 @@ export function NoteClaudeRunnerPanel({
           )}>
             {latestTask.executor === "codex" || latestTask.executor === "codex_app" ? "◎ Codex" : "▲ Claude"}
           </span>
-          {codexUiState ? (
+          {codexUiState?.state === "awaiting_approval" ? (
             <span className={cn(
               "text-[11px] px-1.5 py-0.5 rounded font-medium shrink-0",
-              codexUiState.state === "running"
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              "bg-amber-500/10 text-amber-700 dark:text-amber-300",
             )}>
-              {codexUiState.label}
+              {codexReviewLabel}
             </span>
           ) : progressSummary && (
             <span className={cn(
@@ -384,7 +448,7 @@ export function NoteClaudeRunnerPanel({
           )}
           <span className="min-w-0 flex-1 basis-24 truncate text-[11px] text-muted-foreground">
             {codexUiState
-              ? `Codex ${codexUiState.label}${codexReviewReason ? ` / ${codexReviewReason}` : ""}`
+              ? codexHeaderSummary
               : progressSummary && progressPercent !== null
               ? `${progressPercent}% / ${PROGRESS_STATE_LABEL[progressSummary.state] ?? "不明"} / ${progressSummary.current_step || progressSummary.summary}`
               : "セッション"}
@@ -414,29 +478,34 @@ export function NoteClaudeRunnerPanel({
                     )}
                   </div>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    実行中は約3秒ごとにCodexログを同期
-                    {codexReviewReason ? ` / ${codexReviewReason}` : ""}
+                    {codexUiState?.state === "running"
+                      ? "実行中だけ約3秒ごとに状態を同期します"
+                      : codexUiState?.state === "prompt_waiting"
+                        ? "Codex側で送信されるまで待機しています"
+                        : "最新の確認内容を優先して表示します"}
                   </p>
                 </div>
                 {codexUiState?.state === "running" && <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />}
               </div>
-              {codexThreadId && (
-                <div className="rounded bg-background/70 px-2 py-1.5 text-[10px] leading-4 text-muted-foreground">
-                  thread <span className="font-mono">{codexThreadId.slice(0, 8)}</span>
-                </div>
-              )}
-              {codexUiState?.state === "awaiting_approval" && importantReviewMessage && (
+
+              {(codexUiState?.state === "awaiting_approval" || codexUiState?.state === "prompt_waiting") && (
                 <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5">
                   <div className="mb-1 flex items-center justify-between gap-2 text-amber-700 dark:text-amber-300">
-                    <span className="font-medium">{activityKindLabel(importantReviewMessage.kind)}</span>
-                    <span className="text-[10px] text-muted-foreground">{formatActivityTime(importantReviewMessage.created_at)}</span>
+                    <span className="font-medium">
+                      {codexUiState.state === "prompt_waiting" ? "プロンプト待ち" : codexReviewLabel}
+                    </span>
+                    {latestReviewMessage && (
+                      <span className="text-[10px] text-muted-foreground">{formatActivityTime(latestReviewMessage.created_at)}</span>
+                    )}
                   </div>
-                  <p className="whitespace-pre-wrap">{importantReviewMessage.body}</p>
+                  <p className="whitespace-pre-wrap">{codexReviewBody}</p>
                 </div>
               )}
-              {activityMessages.length > 0 ? (
+
+              {visibleActivityMessages.length > 0 ? (
                 <div className="space-y-1.5">
-                  {activityMessages.map(message => (
+                  <div className="text-[10px] font-medium text-muted-foreground">最近の活動</div>
+                  {visibleActivityMessages.map(message => (
                     <div key={message.id} className={cn("rounded-md border px-2.5 py-2 text-[11px] leading-5", activityTone(message))}>
                       <div className="mb-0.5 flex items-center justify-between gap-2 text-muted-foreground">
                         <span className="font-medium text-foreground">{activityKindLabel(message.kind)}</span>
@@ -448,13 +517,21 @@ export function NoteClaudeRunnerPanel({
                 </div>
               ) : (
                 <div className="rounded bg-muted/20 px-2 py-1.5 text-[10px] text-muted-foreground italic">
-                  {codexCurrentStep || "まだ活動メッセージはありません"}
+                  {codexUiState?.state === "awaiting_approval" ? codexReviewBody : codexCurrentStep || "まだ活動メッセージはありません"}
                 </div>
               )}
-              {activityError && (
-                <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
-                  {activityError}
+              {activityLoadHelp && (
+                <div className="rounded border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-4 text-amber-700 dark:text-amber-300">
+                  {activityLoadHelp}
                 </div>
+              )}
+              {codexThreadId && (
+                <details className="text-[10px] text-muted-foreground">
+                  <summary className="cursor-pointer hover:text-foreground">同期情報</summary>
+                  <div className="mt-1 rounded bg-background/70 px-2 py-1.5 leading-4">
+                    thread <span className="font-mono">{codexThreadId.slice(0, 8)}</span>
+                  </div>
+                </details>
               )}
               {latestTask.status !== "completed" && codexUiState?.state === "awaiting_approval" && (
                 <Button
