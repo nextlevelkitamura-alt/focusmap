@@ -27,7 +27,12 @@ export type CodexRolloutSummary = {
   state: CodexRunState
   reviewReason: CodexReviewReason
   liveLog: string
+  currentStep: string
   lastActivityAt: string | null
+  latestUserMessageAt: string | null
+  latestTaskStartedAt: string | null
+  latestAgentMessage: string | null
+  latestQuestion: string | null
   sawTaskStarted: boolean
   sawTerminalEvent: boolean
 }
@@ -88,6 +93,17 @@ function compactLine(value: string, max = 12_000) {
   return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim().slice(0, max)
 }
 
+function compactStep(value: string, max = 240) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max)
+}
+
+function looksLikeQuestion(value: string): boolean {
+  const text = value.trim()
+  if (!text) return false
+  if (/[?？]\s*$/.test(text)) return true
+  return /(確認してください|教えてください|選んでください|必要ですか|よいですか|しますか|どちら|どれ)/.test(text.slice(-160))
+}
+
 function isInternalUserMessage(value: string): boolean {
   const text = value.trim()
   return text.startsWith("# AGENTS.md instructions") ||
@@ -114,6 +130,11 @@ export function parseCodexRollout(
   let state: CodexRunState = options.archived ? "awaiting_approval" : "running"
   let reviewReason: CodexReviewReason = options.archived ? "archived" : "unknown"
   let lastActivityAt: string | null = timestampToIso(options.snapshot?.updated_at_ms ?? null)
+  let latestUserMessageAt: string | null = null
+  let latestTaskStartedAt: string | null = null
+  let latestAgentMessage: string | null = null
+  let latestQuestion: string | null = null
+  let currentStep = options.archived ? "Codex thread は確認待ちです" : "Codex.appで実行中"
   let sawTaskStarted = false
   let sawTerminalEvent = false
 
@@ -134,12 +155,15 @@ export function parseCodexRollout(
     const payloadType = typeof payload.type === "string" ? payload.type : ""
     const payloadTime = timestampToIso(payload.timestamp ?? payload.started_at ?? payload.completed_at)
     if (payloadTime) lastActivityAt = payloadTime
+    const eventTime = payloadTime ?? rowTime ?? lastActivityAt
 
     if (payloadType === "task_started") {
       sawTaskStarted = true
+      latestTaskStartedAt = eventTime
       sawTerminalEvent = false
       state = "running"
       reviewReason = "started"
+      currentStep = "Codexが実行を開始しました"
       appendLog(logs, "[Codex] 実行開始")
       continue
     }
@@ -148,6 +172,7 @@ export function parseCodexRollout(
       sawTerminalEvent = true
       state = "awaiting_approval"
       reviewReason = "completed"
+      currentStep = "Codexが実行完了し確認待ちです"
       appendLog(logs, "[Codex] 実行完了。確認待ちです")
       continue
     }
@@ -156,19 +181,28 @@ export function parseCodexRollout(
       sawTerminalEvent = true
       state = "awaiting_approval"
       reviewReason = "aborted"
+      currentStep = "Codexのターンが停止し確認待ちです"
       appendLog(logs, "[Codex] ターンが停止しました。確認待ちです")
       continue
     }
 
     if (payloadType === "agent_message") {
       const text = safeText(payload)
-      if (text) appendLog(logs, `[assistant] ${text}`)
+      if (text) {
+        latestAgentMessage = compactLine(text, 2_000)
+        currentStep = compactStep(text)
+        if (looksLikeQuestion(text)) latestQuestion = latestAgentMessage
+        appendLog(logs, `[assistant] ${text}`)
+      }
       continue
     }
 
     if (payloadType === "user_message") {
       const text = safeText(payload)
-      if (text && !isInternalUserMessage(text)) appendLog(logs, `[user] ${text}`)
+      if (text && !isInternalUserMessage(text)) {
+        latestUserMessageAt = eventTime
+        appendLog(logs, `[user] ${text}`)
+      }
       continue
     }
 
@@ -176,7 +210,14 @@ export function parseCodexRollout(
       const role = typeof payload.role === "string" ? payload.role : "message"
       if (role === "developer" || role === "system" || role === "user") continue
       const text = safeText(payload)
-      if (text) appendLog(logs, `[${role}] ${text}`)
+      if (text) {
+        if (role === "assistant") {
+          latestAgentMessage = compactLine(text, 2_000)
+          currentStep = compactStep(text)
+          if (looksLikeQuestion(text)) latestQuestion = latestAgentMessage
+        }
+        appendLog(logs, `[${role}] ${text}`)
+      }
       continue
     }
 
@@ -206,16 +247,53 @@ export function parseCodexRollout(
 
   if (logs.length === 0 && options.snapshot?.preview) {
     appendLog(logs, options.snapshot.preview)
+    if (currentStep === "Codex.appで実行中") {
+      currentStep = compactStep(options.snapshot.preview)
+    }
   }
 
   return {
     state,
     reviewReason,
     liveLog: logs.join("\n\n").slice(-MAX_LIVE_LOG_CHARS),
+    currentStep,
     lastActivityAt,
+    latestUserMessageAt,
+    latestTaskStartedAt,
+    latestAgentMessage,
+    latestQuestion,
     sawTaskStarted,
     sawTerminalEvent,
   }
+}
+
+export function detectCodexResumeAfterApproval(
+  summary: Pick<CodexRolloutSummary, "latestUserMessageAt" | "latestTaskStartedAt">,
+  awaitingApprovalAt: unknown,
+  snapshot?: Pick<CodexThreadSnapshot, "updated_at_ms"> | null,
+): boolean {
+  const approvalMs = parseTimeMsForResume(awaitingApprovalAt)
+  if (approvalMs == null) return false
+
+  const userMessageMs = parseTimeMsForResume(summary.latestUserMessageAt)
+  if (userMessageMs != null && userMessageMs > approvalMs) return true
+
+  const taskStartedMs = parseTimeMsForResume(summary.latestTaskStartedAt)
+  if (taskStartedMs != null && taskStartedMs > approvalMs) return true
+
+  const updatedAtMs = parseTimeMsForResume(snapshot?.updated_at_ms)
+  return updatedAtMs != null && updatedAtMs > approvalMs
+}
+
+function parseTimeMsForResume(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000
+  }
+  if (typeof value === "string" && value.trim()) {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : null
+  }
+  return null
 }
 
 export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): CodexTaskUiState | null {

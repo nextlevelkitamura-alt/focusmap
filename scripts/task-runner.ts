@@ -26,6 +26,12 @@ import * as fs from 'fs'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
 import {
+  insertAiTaskActivityMessage,
+  type AiTaskActivityKind,
+  type AiTaskActivityRole,
+} from '../src/lib/ai-task-activity'
+import {
+  detectCodexResumeAfterApproval,
   parseCodexRollout,
   shouldCompleteSourceTaskForCodexReview,
   type CodexReviewReason,
@@ -78,6 +84,7 @@ const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
 const CODEX_LIVE_LOG_MAX_CHARS = 20_000
 const CODEX_ACTIVE_SYNC_INTERVAL_MS = 3_000
 const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 4
+const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
 const CODEX_THREAD_MATCH_FAST_WINDOW_MS = 2 * 60_000
 const CODEX_AWAITING_RECHECK_MS = 30 * 60_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
@@ -111,6 +118,7 @@ type StaffStatusDueTask = {
 
 type MonitoredCodexTask = {
   id: string
+  user_id: string
   prompt: string
   codex_thread_id: string | null
   started_at: string | null
@@ -205,6 +213,52 @@ function parseTimeMs(value: unknown): number | null {
     return Number.isFinite(ms) ? ms : null
   }
   return null
+}
+
+function textFingerprint(value: string): string {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(i) | 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
+function normalizeCodexStep(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function isMeaningfulCodexStepChange(previous: unknown, next: string): boolean {
+  const prevText = typeof previous === 'string' ? normalizeCodexStep(previous) : ''
+  const nextText = normalizeCodexStep(next)
+  if (!nextText) return false
+  if (!prevText) return true
+  if (prevText === nextText) return false
+  return !prevText.includes(nextText) && !nextText.includes(prevText)
+}
+
+function shouldWriteCodexProgressActivity(current: Record<string, unknown>, currentStep: string, nowMs: number): boolean {
+  if (!currentStep.trim()) return false
+  if (isMeaningfulCodexStepChange(current.codex_activity_last_progress_step, currentStep)) return true
+
+  const lastProgressAtMs = parseTimeMs(current.codex_activity_last_progress_at)
+  return lastProgressAtMs == null || nowMs - lastProgressAtMs >= CODEX_PROGRESS_ACTIVITY_INTERVAL_MS
+}
+
+function codexReviewActivity(reason: CodexReviewReason): {
+  kind: AiTaskActivityKind
+  role: AiTaskActivityRole
+  body: string
+} {
+  if (reason === 'completed') {
+    return { kind: 'completed', role: 'codex', body: 'Codexの実行が完了しました。結果確認待ちです。' }
+  }
+  if (reason === 'approval_requested') {
+    return { kind: 'approval', role: 'codex', body: 'Codexが承認を待っています。内容を確認してください。' }
+  }
+  if (reason === 'aborted' || reason === 'monitoring_lost' || reason === 'thread_deleted') {
+    return { kind: 'failed', role: 'status', body: 'Codexの実行が停止しました。Codex.app側の状態確認が必要です。' }
+  }
+  return { kind: 'approval', role: 'status', body: 'Codexセッションは確認待ちです。' }
 }
 
 function readJsonTimestamp(pathname: string): number | null {
@@ -1458,6 +1512,15 @@ async function completeCodexTaskClosedFromApp(
       },
     })
     .eq('id', task.id)
+
+  await insertAiTaskActivityMessage(supabase, {
+    taskId: task.id,
+    userId: task.user_id,
+    role: opts.reason === 'archived' ? 'codex' : 'status',
+    kind: opts.reason === 'archived' ? 'completed' : 'failed',
+    body: completionNotice,
+    dedupeKey: `thread:${opts.threadId}:${opts.reason}`,
+  })
 }
 
 async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set<string>> {
@@ -1552,7 +1615,7 @@ async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient
 
   const { data: aiTasks, error } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
+    .select('id, user_id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .not('source_task_id', 'is', null)
     .not('codex_thread_id', 'is', null)
@@ -1639,7 +1702,7 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
   // 実行中は細かく追い、確認待ち以降は codex_last_checked_at で間引く。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
+    .select('id, user_id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
@@ -1657,7 +1720,8 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
 
   for (const task of dueTasks) {
     // thread_id 未確定なら、プロンプト先頭でマッチング
-    let threadId = task.codex_thread_id
+    let threadId = codexTaskThreadId(task)
+    const hadThreadId = Boolean(threadId)
     if (!threadId) {
       try {
         const matchedThreadId = findMatchingCodexThread(dbPath, task)
@@ -1687,6 +1751,7 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
               executor: task.executor === 'codex_app' ? 'codex_app' : 'codex',
               codex_run_state: 'awaiting_approval',
               codex_review_reason: 'monitoring_lost',
+              current_step: 'Codex threadを2分以内に検出できませんでした',
               live_log: typeof current.live_log === 'string'
                 ? current.live_log
                 : 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
@@ -1695,6 +1760,14 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
             },
           })
           .eq('id', task.id)
+        await insertAiTaskActivityMessage(supabase, {
+          taskId: task.id,
+          userId: task.user_id,
+          role: 'status',
+          kind: 'failed',
+          body: 'Codex threadを2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
+          dedupeKey: `task:${task.id}:monitoring_lost`,
+        })
       } else {
         await supabase
           .from('ai_tasks')
@@ -1725,6 +1798,12 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
       if (rows.length === 0) continue
       const row = rows[0]
       const archived = row.archived === 1 || row.archived === true
+      const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
+      const previousRunState = typeof current.codex_run_state === 'string' ? current.codex_run_state : null
+      const wasAwaitingApproval =
+        task.status === 'awaiting_approval' ||
+        task.status === 'needs_input' ||
+        previousRunState === 'awaiting_approval'
       let rolloutRaw = ''
       if (row.rollout_path && fs.existsSync(row.rollout_path)) {
         try {
@@ -1768,9 +1847,26 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
         }
       }
 
+      const resumedFromApproval = wasAwaitingApproval && detectCodexResumeAfterApproval(
+        parsed,
+        current.awaiting_approval_at,
+        row,
+      )
+      if (resumedFromApproval) {
+        codexState = 'running'
+        reviewReason = 'started'
+      }
+
       if (!liveLog) liveLog = fallbackLog
 
       const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
+      const currentStep = codexState === 'awaiting_approval'
+        ? `確認待ち（${reviewReason}）`
+        : codexState === 'running'
+          ? (parsed.currentStep || 'Codex.appで実行中')
+          : 'プロンプト待ち'
+      const shouldRecordProgress = codexState === 'running'
+        && shouldWriteCodexProgressActivity(current, currentStep, nowMs)
 
       const closureReason = archived ? 'archived' : reviewReason
       if (shouldCompleteSourceTaskForCodexReview(closureReason)) {
@@ -1784,7 +1880,6 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
       }
 
       // 既存 steps を保持しつつ thread 検出を step として記録
-      const current = (task.result ?? {}) as { steps?: CodexStep[]; [k: string]: unknown }
       const steps: CodexStep[] = Array.isArray(current.steps) ? [...current.steps] : []
       const hasThreadStep = steps.some(s => s.key === 'thread_visible')
       if (!hasThreadStep) {
@@ -1798,8 +1893,12 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
         codex_thread_id: threadId,
         codex_run_state: codexState,
         codex_review_reason: reviewReason,
+        current_step: currentStep,
         last_activity_at: lastActivityAt,
         codex_last_checked_at: nowIso,
+        awaiting_approval_at: codexState === 'awaiting_approval'
+          ? (typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso)
+          : null,
         codex_sync_log: bridge.logBlocks,
         codex_thread_snapshot: {
           title: row.title ?? null,
@@ -1811,6 +1910,12 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
           source: row.source ?? null,
           cwd: row.cwd ?? null,
         },
+        ...(shouldRecordProgress
+          ? {
+              codex_activity_last_progress_step: currentStep,
+              codex_activity_last_progress_at: nowIso,
+            }
+          : {}),
         steps,
       }
 
@@ -1827,7 +1932,6 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
           steps,
           message: `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`,
           session_health: reviewReason === 'approval_requested' ? 'waiting_on_approval' : 'stopped',
-          awaiting_approval_at: new Date().toISOString(),
         }
       } else if (codexState === 'running' && task.status !== 'running') {
         const runningIdx = steps.findIndex(s => s.key === 'turn_started')
@@ -1845,6 +1949,82 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
         .from('ai_tasks')
         .update(updates)
         .eq('id', task.id)
+
+      const activityEvents: Array<{
+        role: AiTaskActivityRole
+        kind: AiTaskActivityKind
+        body: string
+        dedupeKey: string
+        importance?: 'normal' | 'important'
+      }> = []
+
+      if (!hadThreadId && (!wasAwaitingApproval || resumedFromApproval)) {
+        activityEvents.push({
+          role: 'status',
+          kind: 'sent',
+          body: `Codex threadを検出しました (${threadId.slice(0, 8)})`,
+          dedupeKey: `thread:${threadId}:sent`,
+        })
+      }
+
+      if (resumedFromApproval) {
+        activityEvents.push({
+          role: 'status',
+          kind: 'resumed',
+          body: '確認待ち後の追加プロンプトを検知しました。Codex実行を再開します。',
+          dedupeKey: `thread:${threadId}:resumed:${textFingerprint(String(current.awaiting_approval_at ?? ''))}`,
+        })
+      } else if (previousRunState !== codexState) {
+        if (codexState === 'running') {
+          activityEvents.push({
+            role: 'status',
+            kind: 'progress',
+            body: 'Codex実行を開始しました。',
+            dedupeKey: `thread:${threadId}:running`,
+            importance: 'important',
+          })
+        } else if (codexState === 'awaiting_approval' && !wasAwaitingApproval) {
+          const reviewActivity = codexReviewActivity(reviewReason)
+          activityEvents.push({
+            ...reviewActivity,
+            dedupeKey: `thread:${threadId}:review:${reviewReason}`,
+          })
+        }
+      }
+
+      if (codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
+        activityEvents.push({
+          role: 'codex',
+          kind: 'question',
+          body: parsed.latestQuestion,
+          dedupeKey: `thread:${threadId}:question:${textFingerprint(parsed.latestQuestion)}`,
+        })
+      }
+
+      if (
+        codexState === 'running' &&
+        !resumedFromApproval &&
+        activityEvents.length === 0 &&
+        shouldRecordProgress
+      ) {
+        activityEvents.push({
+          role: 'codex',
+          kind: 'progress',
+          body: currentStep,
+          dedupeKey: `thread:${threadId}:progress:${textFingerprint(currentStep)}:${Math.floor(nowMs / CODEX_PROGRESS_ACTIVITY_INTERVAL_MS)}`,
+          importance: 'normal',
+        })
+      }
+
+      await Promise.all(activityEvents.map(event => insertAiTaskActivityMessage(supabase, {
+        taskId: task.id,
+        userId: task.user_id,
+        role: event.role,
+        kind: event.kind,
+        body: event.body,
+        importance: event.importance,
+        dedupeKey: event.dedupeKey,
+      })))
     } catch (e) {
       console.error(`[codex-app] state read failed for ${task.id}:`, e instanceof Error ? e.message : e)
     }
@@ -2869,7 +3049,7 @@ async function main() {
       process.exit(1)
     }
 
-    dueTasks = immediateTask ? [immediateTask as StaffStatusDueTask] : []
+    dueTasks = immediateTask ? [immediateTask as unknown as StaffStatusDueTask] : []
     console.log(`[task-runner] immediate dispatch requested: ${immediateTaskId}`)
   } else {
     // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─

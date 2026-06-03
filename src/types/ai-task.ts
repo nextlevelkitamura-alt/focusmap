@@ -103,3 +103,29 @@ export interface AiTask {
   /** Codex.app の thread ID (~/.codex/state_5.sqlite) */
   codex_thread_id: string | null
 }
+
+export type AiTaskActivityRole = 'system' | 'codex' | 'user' | 'status'
+
+export type AiTaskActivityKind =
+  | 'sent'
+  | 'progress'
+  | 'question'
+  | 'approval'
+  | 'resumed'
+  | 'completed'
+  | 'failed'
+  | 'user_answer'
+
+export type AiTaskActivityImportance = 'normal' | 'important'
+
+export interface AiTaskActivityMessage {
+  id: string
+  task_id: string
+  user_id: string
+  role: AiTaskActivityRole
+  kind: AiTaskActivityKind
+  body: string
+  importance: AiTaskActivityImportance
+  metadata: Record<string, unknown>
+  created_at: string
+}

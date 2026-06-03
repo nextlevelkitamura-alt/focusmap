@@ -4,8 +4,19 @@ import os from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  insertAiTaskActivityMessage,
+  type AiTaskActivityKind,
+  type AiTaskActivityRole,
+} from '@/lib/ai-task-activity'
 import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
-import { parseCodexRollout, type CodexRunState, type CodexThreadSnapshot } from '@/lib/codex-run-state'
+import {
+  detectCodexResumeAfterApproval,
+  parseCodexRollout,
+  type CodexReviewReason,
+  type CodexRunState,
+  type CodexThreadSnapshot,
+} from '@/lib/codex-run-state'
 import { createClient } from '@/utils/supabase/server'
 
 export const runtime = 'nodejs'
@@ -13,6 +24,7 @@ export const dynamic = 'force-dynamic'
 
 const execFileAsync = promisify(execFile)
 const SQLITE_BIN = '/usr/bin/sqlite3'
+const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
 
 type SyncNodeBody = {
   source_task_id?: unknown
@@ -21,6 +33,7 @@ type SyncNodeBody = {
 
 type CodexTaskRow = {
   id: string
+  user_id: string
   prompt: string
   codex_thread_id: string | null
   cwd: string | null
@@ -139,6 +152,58 @@ function buildFallbackLog(row: CodexThreadRow): string {
   ].filter(Boolean).join('\n')
 }
 
+function textFingerprint(value: string): string {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(i) | 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
+function parseIsoMs(value: unknown): number | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : null
+}
+
+function normalizeStep(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function isMeaningfulStepChange(previous: unknown, next: string): boolean {
+  const prevText = typeof previous === 'string' ? normalizeStep(previous) : ''
+  const nextText = normalizeStep(next)
+  if (!nextText) return false
+  if (!prevText) return true
+  if (prevText === nextText) return false
+  return !prevText.includes(nextText) && !nextText.includes(prevText)
+}
+
+function shouldWriteProgressActivity(current: Record<string, unknown>, currentStep: string, nowMs: number): boolean {
+  if (!currentStep.trim()) return false
+  if (isMeaningfulStepChange(current.codex_activity_last_progress_step, currentStep)) return true
+
+  const lastProgressAtMs = parseIsoMs(current.codex_activity_last_progress_at)
+  return lastProgressAtMs == null || nowMs - lastProgressAtMs >= CODEX_PROGRESS_ACTIVITY_INTERVAL_MS
+}
+
+function activityForReviewReason(reason: CodexReviewReason): {
+  kind: AiTaskActivityKind
+  role: AiTaskActivityRole
+  body: string
+} {
+  if (reason === 'completed') {
+    return { kind: 'completed', role: 'codex', body: 'Codexの実行が完了しました。結果確認待ちです。' }
+  }
+  if (reason === 'approval_requested') {
+    return { kind: 'approval', role: 'codex', body: 'Codexが承認を待っています。内容を確認してください。' }
+  }
+  if (reason === 'aborted' || reason === 'monitoring_lost' || reason === 'thread_deleted') {
+    return { kind: 'failed', role: 'status', body: 'Codexの実行が停止しました。Codex.app側の状態確認が必要です。' }
+  }
+  return { kind: 'approval', role: 'status', body: 'Codexセッションは確認待ちです。' }
+}
+
 export async function POST(req: NextRequest) {
   if (!canUseLocalSync(req)) {
     return NextResponse.json(
@@ -168,7 +233,7 @@ export async function POST(req: NextRequest) {
 
   let query = supabase
     .from('ai_tasks')
-    .select('id, prompt, codex_thread_id, cwd, result, status, started_at, created_at, executor')
+    .select('id, user_id, prompt, codex_thread_id, cwd, result, status, started_at, created_at, executor')
     .eq('user_id', user.id)
     .in('executor', ['codex', 'codex_app'])
     .order('created_at', { ascending: false })
@@ -184,7 +249,14 @@ export async function POST(req: NextRequest) {
   if (!task) return NextResponse.json({ task: null, synced: false })
 
   const nowIso = new Date().toISOString()
+  const nowMs = Date.parse(nowIso)
   const current = asRecord(task.result)
+  const previousRunState = typeof current.codex_run_state === 'string' ? current.codex_run_state : null
+  const wasAwaitingApproval =
+    task.status === 'awaiting_approval' ||
+    task.status === 'needs_input' ||
+    previousRunState === 'awaiting_approval'
+  const hadThreadId = Boolean(codexTaskThreadId(task))
   let threadId = codexTaskThreadId(task)
 
   if (!threadId) {
@@ -205,6 +277,17 @@ export async function POST(req: NextRequest) {
 
   const row = await readCodexThread(dbPath, threadId)
   if (!row) {
+    if (!wasAwaitingApproval) {
+      await insertAiTaskActivityMessage(supabase, {
+        taskId: task.id,
+        userId: task.user_id,
+        role: 'status',
+        kind: 'failed',
+        body: 'Codex threadが見つかりません。Codex.app側の状態確認が必要です。',
+        dedupeKey: `thread:${threadId}:deleted`,
+      })
+    }
+
     await supabase
       .from('ai_tasks')
       .update({
@@ -215,6 +298,7 @@ export async function POST(req: NextRequest) {
           codex_run_state: 'awaiting_approval',
           codex_review_reason: 'thread_deleted',
           codex_last_checked_at: nowIso,
+          current_step: 'Codex threadが見つかりません',
           live_log: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
           message: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
         },
@@ -231,10 +315,25 @@ export async function POST(req: NextRequest) {
   const archived = row.archived === 1 || row.archived === true
   const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
   const sentInCodex = parsed.sawTaskStarted || parsed.sawTerminalEvent
-  const codexState: CodexRunState = sentInCodex ? parsed.state : 'prompt_waiting'
-  const liveLog = sentInCodex
+  const resumedFromApproval = wasAwaitingApproval && detectCodexResumeAfterApproval(
+    parsed,
+    current.awaiting_approval_at,
+    row,
+  )
+  const codexState: CodexRunState = resumedFromApproval
+    ? 'running'
+    : sentInCodex ? parsed.state : 'prompt_waiting'
+  const reviewReason: CodexReviewReason = resumedFromApproval
+    ? 'started'
+    : sentInCodex ? parsed.reviewReason : 'manual_handoff'
+  const liveLog = sentInCodex || resumedFromApproval
     ? (parsed.liveLog || buildFallbackLog(row))
     : (typeof current.live_log === 'string' ? current.live_log : 'プロンプト待ち。Codex.appで送信されると、Focusmapはthread状態とログを同期します。')
+  const currentStep = codexState === 'awaiting_approval'
+    ? `確認待ち（${reviewReason}）`
+    : codexState === 'running'
+      ? (parsed.currentStep || 'Codex.appで実行中')
+      : 'プロンプト待ち'
 
   const nextStatus =
     codexState === 'prompt_waiting'
@@ -287,7 +386,11 @@ export async function POST(req: NextRequest) {
         message: codexState === 'awaiting_approval'
           ? `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`
           : liveLog,
+        current_step: currentStep,
         session_health: codexState === 'running' ? 'active' : codexState === 'awaiting_approval' ? 'stopped' : 'unknown',
+        awaiting_approval_at: codexState === 'awaiting_approval'
+          ? (typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso)
+          : null,
         codex_thread_snapshot: {
           title: row.title ?? null,
           preview: row.preview ?? null,
@@ -298,10 +401,92 @@ export async function POST(req: NextRequest) {
           source: row.source ?? null,
           cwd: row.cwd ?? null,
         },
+        ...(codexState === 'running' && shouldWriteProgressActivity(current, currentStep, nowMs)
+          ? {
+              codex_activity_last_progress_step: currentStep,
+              codex_activity_last_progress_at: nowIso,
+            }
+          : {}),
         steps,
       },
     })
     .eq('id', task.id)
+
+  const activityEvents: Array<{
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+  }> = []
+
+  if (!hadThreadId && (!wasAwaitingApproval || resumedFromApproval)) {
+    activityEvents.push({
+      role: 'status',
+      kind: 'sent',
+      body: `Codex threadを検出しました (${threadId.slice(0, 8)})`,
+      dedupeKey: `thread:${threadId}:sent`,
+    })
+  }
+
+  if (resumedFromApproval) {
+    activityEvents.push({
+      role: 'status',
+      kind: 'resumed',
+      body: '確認待ち後の追加プロンプトを検知しました。Codex実行を再開します。',
+      dedupeKey: `thread:${threadId}:resumed:${textFingerprint(String(current.awaiting_approval_at ?? ''))}`,
+    })
+  } else if (previousRunState !== codexState) {
+    if (codexState === 'running') {
+      activityEvents.push({
+        role: 'status',
+        kind: 'progress',
+        body: 'Codex実行を開始しました。',
+        dedupeKey: `thread:${threadId}:running`,
+        importance: 'important',
+      })
+    } else if (codexState === 'awaiting_approval' && !wasAwaitingApproval) {
+      const reviewActivity = activityForReviewReason(reviewReason)
+      activityEvents.push({
+        ...reviewActivity,
+        dedupeKey: `thread:${threadId}:review:${reviewReason}`,
+      })
+    }
+  }
+
+  if (codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
+    activityEvents.push({
+      role: 'codex',
+      kind: 'question',
+      body: parsed.latestQuestion,
+      dedupeKey: `thread:${threadId}:question:${textFingerprint(parsed.latestQuestion)}`,
+    })
+  }
+
+  if (
+    codexState === 'running' &&
+    !resumedFromApproval &&
+    activityEvents.length === 0 &&
+    shouldWriteProgressActivity(current, currentStep, nowMs)
+  ) {
+    activityEvents.push({
+      role: 'codex',
+      kind: 'progress',
+      body: currentStep,
+      dedupeKey: `thread:${threadId}:progress:${textFingerprint(currentStep)}:${Math.floor(nowMs / CODEX_PROGRESS_ACTIVITY_INTERVAL_MS)}`,
+      importance: 'normal',
+    })
+  }
+
+  await Promise.all(activityEvents.map(event => insertAiTaskActivityMessage(supabase, {
+    taskId: task.id,
+    userId: task.user_id,
+    role: event.role,
+    kind: event.kind,
+    body: event.body,
+    importance: event.importance,
+    dedupeKey: event.dedupeKey,
+  })))
 
   return NextResponse.json({
     task_id: task.id,

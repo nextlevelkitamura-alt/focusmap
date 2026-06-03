@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest"
-import { getCodexTaskUiState, parseCodexRollout, shouldCompleteSourceTaskForCodexReview } from "./codex-run-state"
+import {
+  detectCodexResumeAfterApproval,
+  getCodexTaskUiState,
+  parseCodexRollout,
+  shouldCompleteSourceTaskForCodexReview,
+} from "./codex-run-state"
 
 const row = (payload: Record<string, unknown>, timestamp = "2026-05-30T08:00:00.000Z") =>
   JSON.stringify({ timestamp, type: "event_msg", payload })
@@ -22,6 +27,7 @@ describe("parseCodexRollout", () => {
     expect(parsed.liveLog).not.toContain("[command:started] exec_command")
     expect(parsed.liveLog).not.toContain("internal instructions")
     expect(parsed.liveLog).not.toContain("AGENTS.md")
+    expect(parsed.currentStep).toBe("作業を始めます")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:02.000Z")
   })
 
@@ -40,6 +46,8 @@ describe("parseCodexRollout", () => {
     expect(parsed.liveLog).toContain("[user] この方針で続けて")
     expect(parsed.liveLog).not.toContain("[command:started] npm test -- --run src/lib/codex-run-state.test.ts")
     expect(parsed.liveLog).toContain("[assistant] 続きの結果です")
+    expect(parsed.latestUserMessageAt).toBe("2026-05-30T08:00:01.000Z")
+    expect(parsed.currentStep).toBe("続きの結果です")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:03.000Z")
   })
 
@@ -51,12 +59,57 @@ describe("parseCodexRollout", () => {
 
     expect(parsed.state).toBe("awaiting_approval")
     expect(parsed.reviewReason).toBe("completed")
+    expect(parsed.currentStep).toBe("Codexが実行完了し確認待ちです")
     expect(parsed.liveLog).toContain("確認待ち")
+  })
+
+  test("tracks user-visible questions", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }),
+      row({ type: "agent_message", message: "どの方針で進めますか？" }, "2026-05-30T08:00:03.000Z"),
+    ].join("\n"))
+
+    expect(parsed.latestQuestion).toBe("どの方針で進めますか？")
+    expect(parsed.currentStep).toBe("どの方針で進めますか？")
   })
 
   test("moves to review when a turn is aborted or the thread is archived", () => {
     expect(parseCodexRollout(row({ type: "turn_aborted" })).reviewReason).toBe("aborted")
     expect(parseCodexRollout("", { archived: true, snapshot: { preview: "archived preview" } }).reviewReason).toBe("archived")
+  })
+})
+
+describe("detectCodexResumeAfterApproval", () => {
+  test("detects a user follow-up after awaiting approval", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }),
+      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
+      row({ type: "user_message", message: "続けてください" }, "2026-05-30T08:03:00.000Z"),
+    ].join("\n"))
+
+    expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:02:30.000Z")).toBe(true)
+  })
+
+  test("detects a later task_started or thread timestamp", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }, "2026-05-30T08:04:00.000Z"),
+    ].join("\n"))
+
+    expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:03:59.000Z")).toBe(true)
+    expect(detectCodexResumeAfterApproval(
+      { latestUserMessageAt: null, latestTaskStartedAt: null },
+      "2026-05-30T08:03:59.000Z",
+      { updated_at_ms: Date.parse("2026-05-30T08:04:01.000Z") },
+    )).toBe(true)
+  })
+
+  test("does not resume from older internal activity", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_complete" }, "2026-05-30T08:02:00.000Z"),
+      row({ type: "user_message", content: "# AGENTS.md instructions" }, "2026-05-30T08:03:00.000Z"),
+    ].join("\n"))
+
+    expect(detectCodexResumeAfterApproval(parsed, "2026-05-30T08:02:30.000Z")).toBe(false)
   })
 })
 

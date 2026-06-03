@@ -6,24 +6,25 @@ import type { AiTask } from '@/types/ai-task'
 import { canUseLocalCodexOpenApi } from '@/lib/codex-app-launch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const RUNNING_STATUSES: AiTask['status'][] = ['pending', 'running']
 const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 
+function isCodexTask(task: AiTask) {
+  return task.executor === 'codex' || task.executor === 'codex_app'
+}
+
+function isRunningCodexTask(task: AiTask) {
+  if (!isCodexTask(task)) return false
+  if (task.status === 'running') return true
+  const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
+    ? task.result as Record<string, unknown>
+    : {}
+  return result.codex_run_state === 'running'
+}
+
 function hasRunningCodexTask(tasks: Map<string, AiTask>) {
   for (const task of tasks.values()) {
-    if (task.executor !== 'codex' && task.executor !== 'codex_app') continue
-    if (RUNNING_STATUSES.includes(task.status)) return true
-    const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
-      ? task.result as Record<string, unknown>
-      : {}
-    if (result.codex_run_state === 'running' || result.codex_run_state === 'prompt_waiting') {
-      return true
-    }
-    const resultThreadId = typeof result.codex_thread_id === 'string' ? result.codex_thread_id.trim() : ''
-    if (result.codex_manual_handoff === true && !task.codex_thread_id && !resultThreadId) {
-      return true
-    }
+    if (isRunningCodexTask(task)) return true
   }
   return false
 }
@@ -31,7 +32,7 @@ function hasRunningCodexTask(tasks: Map<string, AiTask>) {
 function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
   const result: Array<{ sourceId: string; task: AiTask }> = []
   for (const [sourceId, task] of tasks.entries()) {
-    if (task.executor !== 'codex' && task.executor !== 'codex_app') continue
+    if (!isCodexTask(task)) continue
     if (task.status === 'completed' || task.status === 'failed') continue
     result.push({ sourceId, task })
   }
@@ -91,6 +92,9 @@ export function useMemoAiTasks() {
     if (!canUseLocalCodexOpenApi()) return
     const targets = codexTasksForLocalSync(bySourceId)
     if (targets.length === 0) return
+    const localSyncIntervalMs = hasRunningCodexTask(bySourceId)
+      ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+      : IDLE_REFRESH_INTERVAL_MS
 
     let cancelled = false
     let syncing = false
@@ -115,7 +119,7 @@ export function useMemoAiTasks() {
     }
 
     void syncTargets()
-    const intervalId = window.setInterval(() => void syncTargets(), ACTIVE_CODEX_REFRESH_INTERVAL_MS)
+    const intervalId = window.setInterval(() => void syncTargets(), localSyncIntervalMs)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
