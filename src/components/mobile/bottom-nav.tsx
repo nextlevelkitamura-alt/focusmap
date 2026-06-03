@@ -33,8 +33,8 @@ export function BottomNav() {
     }, [activeView, isSettingsPage, setActiveView])
 
     return (
-        <div className="fixed bottom-0 left-0 z-50 w-full bg-background border-t md:hidden pb-[env(safe-area-inset-bottom,0px)]">
-            <div className="grid h-16 grid-cols-5 font-medium">
+        <div className="fixed bottom-0 left-0 z-50 w-full border-t border-white/10 bg-[#050607]/[0.98] shadow-[0_-1px_0_rgba(255,255,255,0.04)] md:hidden pb-[env(safe-area-inset-bottom,0px)]">
+            <div className="grid h-[76px] grid-cols-5 font-medium">
                 {mainNavItems.map((item) => {
                     const isActive = item.id === "settings"
                         ? isSettingsPage || (!isSettingsPage && activeView === "settings")
@@ -67,21 +67,21 @@ export function BottomNav() {
                             aria-label={item.label}
                             title={item.label}
                             className={cn(
-                                "inline-flex flex-col items-center justify-center gap-0.5 text-[10px]",
-                                isActive ? "text-primary" : "text-muted-foreground"
+                                "inline-flex flex-col items-center justify-center gap-1 text-[11px] transition-colors",
+                                isActive ? "text-[#58a6ff]" : "text-neutral-500 active:text-neutral-300"
                             )}
                         >
                             <span
                                 className={cn(
-                                    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                                    "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
                                     isActive
-                                        ? "bg-muted text-foreground"
-                                        : "text-muted-foreground active:bg-muted/70",
-                                    item.type === "view" && item.primary && !isActive && "bg-primary/10 text-primary",
-                                    item.type === "view" && item.primary && isActive && "bg-primary text-primary-foreground",
+                                        ? "text-[#58a6ff]"
+                                        : "text-neutral-500 active:bg-white/[0.06]",
+                                    item.type === "view" && item.primary && !isActive && "text-neutral-500",
+                                    item.type === "view" && item.primary && isActive && "text-[#58a6ff]",
                                 )}
                             >
-                                <item.icon className={cn("h-[18px] w-[18px]", isActive && "stroke-[2.4]")} />
+                                <item.icon className={cn("h-[23px] w-[23px]", isActive && "stroke-[2.4]")} />
                             </span>
                             <span className="leading-none">{item.label}</span>
                         </button>

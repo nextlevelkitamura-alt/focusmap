@@ -196,8 +196,10 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
 
     const handleFabClick = useCallback(() => {
         setCalendarId(current => current ?? defaultCalendarId)
+        if (initialScheduledAt) setScheduledDate(initialScheduledAt)
+        if (initialEstimatedTime) setEstimatedTime(initialEstimatedTime)
         setIsOpen(true)
-    }, [defaultCalendarId])
+    }, [defaultCalendarId, initialEstimatedTime, initialScheduledAt])
 
     const selectedCalendar = calendars.find(calendar => calendar.id === calendarId)
     const scheduledDateTimeLabel = scheduledDate
@@ -220,20 +222,20 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
 
     return (
         <>
-            <div ref={fabRef} className={cn("fixed bottom-20 right-4 z-[70] md:hidden pointer-events-none", isOpen && "hidden")}>
+            <div ref={fabRef} className={cn("fixed bottom-[calc(88px+env(safe-area-inset-bottom,0px))] right-4 z-[70] md:hidden pointer-events-none", isOpen && "hidden")}>
                 <button
                     onClick={handleFabClick}
                     className={cn(
-                        "w-14 h-14 rounded-full",
-                        "bg-neutral-900 text-white",
-                        "shadow-xl shadow-black/35 ring-1 ring-white/10",
+                        "h-16 w-16 rounded-full",
+                        "bg-[#0b57d0] text-white",
+                        "shadow-[0_14px_32px_rgba(11,87,208,0.38)] ring-1 ring-white/15",
                         "flex items-center justify-center pointer-events-auto",
                         "active:scale-95 transition-all duration-150",
-                        "hover:bg-neutral-800"
+                        "hover:bg-[#0a4fc0]"
                     )}
                     aria-label="タスクを追加"
                 >
-                    <Plus className="w-6 h-6" />
+                    <Plus className="h-8 w-8" />
                 </button>
             </div>
 

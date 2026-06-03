@@ -1830,20 +1830,20 @@ export function WishlistView({
       : isRecording
         ? "停止"
         : hasIntakeText
-          ? "生成"
+          ? "追加"
           : "音声"
   const PrimaryActionIcon = isAnalyzing || isTranscribing
     ? Loader2
     : isRecording
       ? Square
       : hasIntakeText
-        ? Sparkles
+        ? Plus
         : Mic
   const showPrimaryActionText = hasIntakeText || isAnalyzing
   const handlePrimaryIntakeAction = async () => {
     if (isAnalyzing || isTranscribing) return
     if (hasIntakeText) {
-      await handleAnalyze()
+      await handleQuickAdd()
       return
     }
     await handleVoiceToggle()
@@ -2128,18 +2128,14 @@ export function WishlistView({
           </Button>
           <Button
             type="button"
-            onClick={() => {
-              if (hasIntakeText) {
-                void handleQuickAdd()
-                return
-              }
-              void handleCreate()
-            }}
-            disabled={isRecording || isAnalyzing || isTranscribing}
+            variant="outline"
+            onClick={() => { void handleAnalyze() }}
+            disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
             size="sm"
             className="min-h-[40px] shrink-0 gap-1 px-3"
+            title="AIで整理して生成"
           >
-            <Plus className="h-4 w-4" /> 追加
+            <Sparkles className="h-4 w-4" /> 生成
           </Button>
           </div>
 

@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef, useState, type TouchEvent } from "react"
 import { Task, Project, Space } from "@/types/database"
 import {
     Square, CheckSquare, Target, ChevronDown, ChevronUp,
-    List, Flame, Play, Pause, Check, Loader2, Bot
+    List, Flame, Play, Pause, Loader2, Sparkles
 } from "lucide-react"
 import { addDays, addMonths, format } from "date-fns"
 import { ja } from "date-fns/locale"
@@ -183,6 +183,15 @@ export function TodayView({
         scheduledAt: Date
         estimatedTime: number
     } | null>(null)
+    const quickTaskInitialScheduledAt = useMemo(() => {
+        if (fabRangeSelect?.scheduledAt) return fabRangeSelect.scheduledAt
+        if (calendarRangeMode === 'month') {
+            const date = new Date(logic.selectedDate)
+            date.setHours(9, 0, 0, 0)
+            return date
+        }
+        return undefined
+    }, [calendarRangeMode, fabRangeSelect?.scheduledAt, logic.selectedDate])
 
     const resetPullRefresh = useCallback(() => {
         pullRefreshStartYRef.current = null
@@ -249,12 +258,19 @@ export function TodayView({
                 ? '離すと更新'
                 : '引っ張って更新'
     const shouldSpinHeaderRefresh = pullRefreshReady || isHeaderRefreshing
+    const headerMetaText = mobilePane === 'ai'
+        ? 'AI実行履歴'
+        : logic.eventsLoading
+            ? '取得中...'
+            : calendarRangeMode === 'month'
+                ? ''
+                : rangeHeader.subtitle
 
     return (
-        <div className="relative flex flex-col h-full min-h-0 overflow-hidden bg-background">
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#050607] text-neutral-100 md:bg-background md:text-foreground">
             {/* Date Header + Mode Toggle */}
             <div
-                className="relative z-20 flex-shrink-0 border-b bg-background px-4 pb-1.5"
+                className="relative z-20 flex-shrink-0 border-b border-white/10 bg-[#090b0d] px-4 pb-2 shadow-[0_1px_0_rgba(255,255,255,0.04)] md:bg-background"
                 style={{
                     touchAction: 'none',
                     paddingTop: headerTopPadding,
@@ -269,7 +285,7 @@ export function TodayView({
             >
                 {showHeaderRefreshIndicator && (
                     <div
-                        className="pointer-events-none absolute left-1/2 top-2 z-10 grid h-9 w-9 place-items-center rounded-full border border-border/70 bg-background/95 shadow-sm transition-[opacity,transform]"
+                        className="pointer-events-none absolute left-1/2 top-2 z-10 grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-[#101214]/95 shadow-sm transition-[opacity,transform]"
                         style={{
                             opacity: isHeaderRefreshing ? 1 : Math.max(0.35, headerRefreshProgress),
                             transform: `translate(-50%, 0) scale(${0.9 + headerRefreshProgress * 0.1})`,
@@ -279,7 +295,7 @@ export function TodayView({
                     >
                         <svg
                             className={cn(
-                                "h-5 w-5 origin-center text-foreground/95 [transform-box:fill-box]",
+                                "h-5 w-5 origin-center text-neutral-100 [transform-box:fill-box]",
                                 shouldSpinHeaderRefresh && "animate-spin will-change-transform"
                             )}
                             style={shouldSpinHeaderRefresh
@@ -311,94 +327,49 @@ export function TodayView({
                         </svg>
                     </div>
                 )}
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex min-h-10 items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                            <h1 className="min-w-0 truncate whitespace-nowrap text-left text-lg font-bold leading-tight">
-                                {rangeHeader.title}
-                            </h1>
-                        </div>
-                        <p className="mt-0.5 flex min-h-[16px] min-w-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
-                            {calendarRangeMode === 'day' && logic.isToday && (
-                                <span className="inline-flex flex-shrink-0 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary">
-                                    今日
-                                </span>
-                            )}
-                            {mobilePane === 'schedule' && logic.eventsLoading ? (
-                                <><Loader2 className="h-3 w-3 animate-spin" /><span>取得中...</span></>
-                            ) : (
-                                <span className="min-w-0 truncate">
-                                    {mobilePane === 'ai' ? 'AI実行履歴とCodex状態' : rangeHeader.subtitle}
-                                </span>
-                            )}
-                        </p>
+                        <h1 className="min-w-0 truncate whitespace-nowrap text-left text-[21px] font-bold leading-tight text-neutral-50">
+                            {rangeHeader.title}
+                        </h1>
+                        {headerMetaText && (
+                            <p className="mt-0.5 flex min-h-[15px] min-w-0 items-center gap-1.5 truncate whitespace-nowrap text-[11px] font-medium text-neutral-400">
+                                {logic.eventsLoading && mobilePane === 'schedule' && <Loader2 className="h-3 w-3 shrink-0 animate-spin" />}
+                                <span className="min-w-0 truncate">{headerMetaText}</span>
+                            </p>
+                        )}
                     </div>
-                    <div className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5 gap-0.5">
-                        <button
-                            type="button"
-                            onClick={() => setMobilePane('schedule')}
-                            aria-pressed={mobilePane === 'schedule'}
-                            className={cn(
-                                "min-w-[44px] rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
-                                mobilePane === 'schedule'
-                                    ? "bg-background text-foreground shadow-sm"
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            予定
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setMobilePane('ai')}
-                            aria-pressed={mobilePane === 'ai'}
-                            className={cn(
-                                "inline-flex min-w-[44px] items-center justify-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
-                                mobilePane === 'ai'
-                                    ? "bg-background text-foreground shadow-sm"
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            <Bot className="h-3.5 w-3.5" />
-                            AI
-                        </button>
-                    </div>
-                </div>
-                {mobilePane === 'schedule' && (
-                    <div className="mt-1.5 flex items-center justify-end gap-1">
-                        <div className="flex h-4 w-4 items-center justify-center text-xs text-muted-foreground" aria-hidden={logic.syncState !== 'done'}>
-                            {logic.syncState === 'done' ? (
-                                <Check className="h-3.5 w-3.5 text-green-500" />
-                            ) : (
-                                <span className="opacity-0">•</span>
-                            )}
-                        </div>
-                        {calendarRangeMode === 'day' && (
+                    <div className="flex shrink-0 items-center gap-2">
+                        {mobilePane === 'schedule' && calendarRangeMode === 'day' && (
                             <button
                                 type="button"
                                 onClick={() => logic.setTimelineMode(logic.timelineMode === 'cards' ? 'calendar' : 'cards')}
                                 className={cn(
-                                    "grid h-8 w-8 place-items-center rounded-md border border-border/50 transition-colors",
+                                    "hidden h-9 w-9 place-items-center rounded-lg border border-white/10 transition-colors min-[420px]:grid",
                                     logic.timelineMode === 'cards'
-                                        ? "bg-muted text-foreground"
-                                        : "text-muted-foreground active:bg-muted/70"
+                                        ? "bg-white/10 text-neutral-50"
+                                        : "text-neutral-400 active:bg-white/[0.08]"
                                 )}
                                 aria-label={logic.timelineMode === 'cards' ? "通常表示に戻す" : "タイムライン表示"}
                                 aria-pressed={logic.timelineMode === 'cards'}
                             >
-                                <List className="h-3.5 w-3.5" />
+                                <List className="h-4 w-4" />
                             </button>
                         )}
-                        <div className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5 gap-0.5">
+                        <div className="inline-flex h-10 w-fit items-center gap-0.5 rounded-xl border border-white/15 bg-white/[0.055] p-0.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]">
                             {(['day', '3days', 'month'] as const).map(mode => (
                                 <button
                                     key={mode}
-                                    onClick={() => handleCalendarRangeModeChange(mode)}
+                                    onClick={() => {
+                                        handleCalendarRangeModeChange(mode)
+                                        if (mobilePane === 'ai') setMobilePane('schedule')
+                                    }}
                                     aria-pressed={calendarRangeMode === mode}
                                     className={cn(
-                                        "min-w-[54px] rounded-md px-1.5 py-1 text-[11px] font-semibold leading-5 transition-colors",
+                                        "h-8 min-w-[46px] rounded-lg px-1.5 text-[12px] font-bold leading-8 transition-colors",
                                         calendarRangeMode === mode
-                                            ? "bg-background text-foreground shadow-sm"
-                                            : "text-muted-foreground"
+                                            ? "bg-black text-neutral-50 shadow-sm"
+                                            : "text-neutral-400 active:bg-white/[0.07]"
                                     )}
                                 >
                                     {mode === 'day' && 'Day'}
@@ -407,12 +378,26 @@ export function TodayView({
                                 </button>
                             ))}
                         </div>
+                        <button
+                            type="button"
+                            onClick={() => setMobilePane(prev => prev === 'ai' ? 'schedule' : 'ai')}
+                            aria-pressed={mobilePane === 'ai'}
+                            className={cn(
+                                "inline-flex h-10 min-w-[52px] items-center justify-center gap-1 rounded-xl border px-2 text-[13px] font-bold transition-colors",
+                                mobilePane === 'ai'
+                                    ? "border-[#b793ff]/50 bg-[#2b2142] text-[#e0cfff] shadow-[0_0_14px_rgba(167,139,250,0.18)]"
+                                    : "border-white/15 bg-white/[0.055] text-neutral-300 active:bg-white/[0.09]"
+                            )}
+                        >
+                            <Sparkles className="h-3.5 w-3.5" />
+                            AI
+                        </button>
                     </div>
-                )}
+                </div>
             </div>
 
             {/* Habit Bar (fixed) + Expandable Detail */}
-            {mobilePane === 'schedule' && logic.habitsLoading ? (
+            {mobilePane === 'schedule' && calendarRangeMode === 'day' && logic.habitsLoading ? (
                 <div className="flex-shrink-0 border-b px-4 py-2">
                     <div className="flex items-center gap-2 mb-1.5">
                         <Target className="w-3.5 h-3.5 text-primary/40 flex-shrink-0" />
@@ -428,7 +413,7 @@ export function TodayView({
                         ))}
                     </div>
                 </div>
-            ) : mobilePane === 'schedule' && logic.dateHabits.length > 0 ? (
+            ) : mobilePane === 'schedule' && calendarRangeMode === 'day' && logic.dateHabits.length > 0 ? (
                 <div className="flex-shrink-0 border-b max-h-[40vh] overflow-y-auto">
                     {/* Compact Habit Bar */}
                     <div className="px-4 py-2">
@@ -706,6 +691,7 @@ export function TodayView({
                             calendarColorMap={logic.stableCalendarColorMap}
                             eventsLoading={logic.eventsLoading}
                             onDateSelect={handleRangeDateSelect}
+                            variant="mobile"
                         />
                     ) : logic.timelineMode === 'calendar' ? (
                         <TodayTimelineCalendar
@@ -779,7 +765,7 @@ export function TodayView({
             />
 
             {/* Quick Task FAB */}
-            {mobilePane === 'schedule' && calendarRangeMode === 'day' && onCreateQuickTask && !logic.isEditModalOpen && (
+            {mobilePane === 'schedule' && onCreateQuickTask && !logic.isEditModalOpen && (
                 <QuickTaskFab
                     projects={projects}
                     calendars={logic.writableCalendars}
@@ -787,7 +773,7 @@ export function TodayView({
                     onOpenAiChat={onOpenAiChat}
                     externalOpen={!!fabRangeSelect}
                     onExternalOpenChange={(open) => { if (!open) setFabRangeSelect(null) }}
-                    initialScheduledAt={fabRangeSelect?.scheduledAt}
+                    initialScheduledAt={quickTaskInitialScheduledAt}
                     initialEstimatedTime={fabRangeSelect?.estimatedTime}
                 />
             )}
