@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
-import { Calendar, Check, ChevronDown, Clock, Filter, Loader2, Mic, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
+import { Calendar, Check, ChevronDown, Clock, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -13,6 +13,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
@@ -129,7 +137,7 @@ const COLUMN_LABEL: Record<ColumnKey, string> = {
   completed: "完了",
 }
 
-const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "scheduled", "mapped", "completed"]
+const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "mapped", "scheduled", "completed"]
 
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -1318,6 +1326,8 @@ export function WishlistView({
       setIntakeText("")
       setStatusFilter("all")
       setTagFilter("all")
+      setSelectedItem(item)
+      setDetailOpen(true)
       await refreshTags()
       pushAction({
         description: `「${item.title}」を追加`,
@@ -1427,6 +1437,8 @@ export function WishlistView({
       setItems(prev => [item, ...prev])
       setStatusFilter("all")
       setTagFilter("all")
+      setSelectedItem(item)
+      setDetailOpen(true)
       await refreshTags()
       if (addToCalendar && item.scheduled_at && item.duration_minutes) {
         await handleCalendarAdd(item)
