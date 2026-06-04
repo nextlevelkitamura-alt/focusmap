@@ -14,7 +14,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut, MessageCircle, Settings, User as UserIcon, CalendarDays, Sparkles, StickyNote } from "lucide-react"
+import { LogOut, MessageCircle, Network, Settings, User as UserIcon, CalendarDays, Sparkles, StickyNote } from "lucide-react"
 import { Project, Space } from "@/types/database"
 import { useView, DashboardView } from "@/contexts/ViewContext"
 import { cn } from "@/lib/utils"
@@ -112,6 +112,7 @@ export function Header({
     const viewTabs: { id: DashboardView; label: string; icon: React.ReactNode }[] = [
         { id: 'today',     label: 'Todo', icon: <CalendarDays className="h-3.5 w-3.5" /> },
         { id: 'long-term', label: 'メモ',  icon: <Sparkles className="h-3.5 w-3.5" /> },
+        { id: 'map',       label: 'マップ', icon: <Network className="h-3.5 w-3.5" /> },
         { id: 'ai',        label: 'チャット', icon: <MessageCircle className="h-3.5 w-3.5" /> },
     ]
 

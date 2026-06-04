@@ -40,7 +40,7 @@ import {
 import { IdealGoalWithItems, Project, Space } from "@/types/database"
 import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
-import { getTagColor } from "@/lib/color-utils"
+import { colorToRgba, getTagColor } from "@/lib/color-utils"
 import {
   buildCodexOpenTarget,
   canUseLocalCodexOpenApi,
@@ -120,15 +120,6 @@ const DURATION_OPTIONS = [
   { label: "60分", minutes: 60 },
 ]
 
-const STATUS_LABEL: Record<MemoStatus | "all", string> = {
-  all: "すべて",
-  unsorted: "未予定",
-  organized: "未予定",
-  time_candidates: "未予定",
-  scheduled: "予定済み",
-  completed: "完了",
-}
-
 const COLUMN_LABEL: Record<ColumnKey, string> = {
   unsorted: "未予定",
   mapped: "マップ追加済み",
@@ -138,6 +129,8 @@ const COLUMN_LABEL: Record<ColumnKey, string> = {
 }
 
 const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "mapped", "scheduled", "completed"]
+const SHOW_MEMO_TAG_FILTER_ENTRY = false
+const SHOW_MEMO_MINDMAP_ENTRY = false
 
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -176,12 +169,6 @@ function actionLabel(actionType: LinkedStructuredItem["actionType"]) {
   if (actionType === "research") return "リサーチ"
   if (actionType === "decision") return "判断"
   return "実行"
-}
-
-function getStatus(item: MemoItem): MemoStatus {
-  if (item.is_completed || item.memo_status === "completed") return "completed"
-  if (item.google_event_id || item.scheduled_at || item.memo_status === "scheduled") return "scheduled"
-  return "unsorted"
 }
 
 function extractMindmapTaskIds(item: MemoItem | null | undefined): string[] {
@@ -506,9 +493,7 @@ export function WishlistView({
   const [suggestion, setSuggestion] = useState<MemoSuggestion | null>(null)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
-  const [statusFilter, setStatusFilter] = useState<MemoStatus | "all">("all")
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
-  const [filterOpen, setFilterOpen] = useState(false)
   const [isCheckingVisibleAi, setIsCheckingVisibleAi] = useState(false)
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
   const [selectMode, setSelectMode] = useState(false)
@@ -824,12 +809,10 @@ export function WishlistView({
     if (linkedMemoIds) return sourceItems
     return sourceItems.filter(item => {
       if (selectedProjectId && item.project_id !== selectedProjectId) return false
-      const status = getStatus(item)
-      if (statusFilter !== "all" && status !== statusFilter) return false
       if (tagFilter !== "all" && item.category !== tagFilter && !(item.tags ?? []).includes(tagFilter)) return false
       return true
     })
-  }, [items, linkedMemoIds, selectedProjectId, statusFilter, tagFilter])
+  }, [items, linkedMemoIds, selectedProjectId, tagFilter])
 
   const visibleAiTaskIds = useMemo(() => {
     const ids = new Set<string>()
@@ -1263,7 +1246,6 @@ export function WishlistView({
       invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
       setSelectedItem(item)
-      setStatusFilter("all")
       setTagFilter("all")
       await refreshTags()
       setDetailOpen(true)
@@ -1324,7 +1306,6 @@ export function WishlistView({
       invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
       setIntakeText("")
-      setStatusFilter("all")
       setTagFilter("all")
       setSelectedItem(item)
       setDetailOpen(true)
@@ -1435,7 +1416,6 @@ export function WishlistView({
       const item = data.item as MemoItem
       invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
-      setStatusFilter("all")
       setTagFilter("all")
       setSelectedItem(item)
       setDetailOpen(true)
@@ -1834,31 +1814,14 @@ export function WishlistView({
   }
 
   const hasIntakeText = intakeText.trim().length > 0
-  const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (tagFilter !== "all" ? 1 : 0)
-  const primaryActionLabel = isAnalyzing
-    ? "整理中"
-    : isTranscribing
-      ? "変換中"
-      : isRecording
-        ? "停止"
-        : hasIntakeText
-          ? "追加"
-          : "音声"
-  const PrimaryActionIcon = isAnalyzing || isTranscribing
-    ? Loader2
-    : isRecording
-      ? Square
-      : hasIntakeText
-        ? Plus
-        : Mic
-  const showPrimaryActionText = hasIntakeText || isAnalyzing
-  const handlePrimaryIntakeAction = async () => {
-    if (isAnalyzing || isTranscribing) return
+  const disableMemoAdd = isRecording || isAnalyzing || isTranscribing
+  const handleAddMemoFromComposer = async () => {
+    if (disableMemoAdd) return
     if (hasIntakeText) {
       await handleQuickAdd()
       return
     }
-    await handleVoiceToggle()
+    await handleCreate()
   }
 
   return (
@@ -1896,13 +1859,14 @@ export function WishlistView({
             </Button>
             <Button
               type="button"
-              onClick={handleQuickAdd}
-              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
+              onClick={handleAddMemoFromComposer}
+              disabled={disableMemoAdd}
               className="h-10 shrink-0 gap-1 px-3"
             >
               <Plus className="h-4 w-4" />
               追加
             </Button>
+            {SHOW_MEMO_MINDMAP_ENTRY && (
             <Button
               type="button"
               variant={selectMode ? "secondary" : "outline"}
@@ -1915,6 +1879,7 @@ export function WishlistView({
             >
               <Network className="h-4 w-4" />
             </Button>
+            )}
           </div>
         ) : isMobileMemoLayout && !linkedMemoFocus ? (
         <>
@@ -1939,22 +1904,15 @@ export function WishlistView({
                 />
               )}
             </div>
-            <Button
-              type="button"
-              variant={filterOpen ? "default" : "outline"}
-              size="icon"
-              onClick={() => setFilterOpen(open => !open)}
-              aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-              className="relative h-9 w-9 shrink-0 rounded-md"
-              title={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-            >
-              <Filter className="h-4 w-4" />
-              {activeFilterCount > 0 && (
-                <span className="absolute -right-1 -top-1 rounded-full bg-background px-1.5 text-[10px] leading-4 text-foreground ring-1 ring-border">
-                  {activeFilterCount}
-                </span>
-              )}
-            </Button>
+            {SHOW_MEMO_TAG_FILTER_ENTRY && (
+            <TagFilterMenu
+              tags={allTags}
+              selectedTag={tagFilter}
+              tagColors={tagColors}
+              onTagChange={setTagFilter}
+              className="h-9 w-9 shrink-0 rounded-md"
+            />
+            )}
           </div>
 
           <div className="flex gap-2">
@@ -1988,14 +1946,26 @@ export function WishlistView({
             </Button>
             <Button
               type="button"
-              onClick={handleQuickAdd}
-              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
+              onClick={handleAddMemoFromComposer}
+              disabled={disableMemoAdd}
               size="icon"
               className="h-11 w-11 shrink-0 rounded-md"
               aria-label="メモを追加"
               title="メモを追加"
             >
               <Plus className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { void handleAnalyze() }}
+              disabled={!hasIntakeText || isRecording || isAnalyzing || isTranscribing}
+              size="icon"
+              className="h-11 w-11 shrink-0 rounded-md"
+              aria-label="AIで整理して生成"
+              title="AIで整理して生成"
+            >
+              <Sparkles className="h-4 w-4" />
             </Button>
           </div>
           {isAnalyzing && (
@@ -2061,16 +2031,6 @@ export function WishlistView({
             )}
           </div>
           )}
-          <div className={cn(!filterOpen && "hidden")}>
-          <FilterBar
-            statusFilter={statusFilter}
-            tagFilter={tagFilter}
-            tags={allTags}
-            tagColors={tagColors}
-            onStatusChange={setStatusFilter}
-            onTagChange={setTagFilter}
-          />
-          </div>
         </>
         ) : (
         <>
@@ -2110,22 +2070,16 @@ export function WishlistView({
               <Calendar className="h-4 w-4" />
             </Button>
           )}
-          <Button
-            type="button"
-            variant={filterOpen ? "default" : "outline"}
-            size="icon"
-            onClick={() => setFilterOpen(open => !open)}
-            aria-label={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-            className="relative min-h-[40px] min-w-[40px] shrink-0"
-            title={filterOpen ? "フィルターを閉じる" : "フィルターを開く"}
-          >
-            <Filter className="h-4 w-4" />
-            {activeFilterCount > 0 && (
-              <span className="absolute -right-1 -top-1 rounded-full bg-background px-1.5 text-[10px] leading-4 text-foreground ring-1 ring-border">
-                {activeFilterCount}
-              </span>
-            )}
-          </Button>
+          {SHOW_MEMO_TAG_FILTER_ENTRY && (
+          <TagFilterMenu
+            tags={allTags}
+            selectedTag={tagFilter}
+            tagColors={tagColors}
+            onTagChange={setTagFilter}
+            className="min-h-[40px] min-w-[40px] shrink-0"
+          />
+          )}
+          {SHOW_MEMO_MINDMAP_ENTRY && (
           <Button
             type="button"
             variant={selectMode ? "secondary" : "outline"}
@@ -2137,6 +2091,17 @@ export function WishlistView({
           >
             <Network className="h-4 w-4" />
             <span className="hidden sm:inline">{selectMode ? "選択解除" : "マップ化"}</span>
+          </Button>
+          )}
+          <Button
+            type="button"
+            onClick={handleAddMemoFromComposer}
+            disabled={disableMemoAdd}
+            size="sm"
+            className="min-h-[40px] shrink-0 gap-1 px-3"
+            title={hasIntakeText ? "入力内容をメモとして追加" : "新しいメモを追加"}
+          >
+            <Plus className="h-4 w-4" /> 追加
           </Button>
           <Button
             type="button"
@@ -2166,19 +2131,21 @@ export function WishlistView({
           />
           <Button
             type="button"
-            onClick={handlePrimaryIntakeAction}
-            disabled={isAnalyzing || isTranscribing}
-            variant={isRecording ? "destructive" : hasIntakeText ? "default" : "outline"}
-            size={showPrimaryActionText ? "default" : "icon"}
-            className={cn(
-              "min-h-[44px] shrink-0",
-              showPrimaryActionText ? "min-w-[86px] gap-1 px-3" : "w-11 px-0",
-            )}
-            aria-label={primaryActionLabel}
-            title={primaryActionLabel}
+            onClick={handleVoiceToggle}
+            disabled={isTranscribing}
+            variant={isRecording ? "destructive" : "outline"}
+            size="icon"
+            className="min-h-[44px] w-11 shrink-0 px-0"
+            aria-label={isRecording ? "録音を停止" : "音声入力"}
+            title={isRecording ? "録音を停止" : "音声入力"}
           >
-            <PrimaryActionIcon className={cn("h-4 w-4", (isAnalyzing || isTranscribing) && "animate-spin")} />
-            {showPrimaryActionText && <span>{primaryActionLabel}</span>}
+            {isTranscribing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isRecording ? (
+              <Square className="h-4 w-4" />
+            ) : (
+              <Mic className="h-4 w-4" />
+            )}
           </Button>
           </div>
           {isAnalyzing && (
@@ -2244,16 +2211,6 @@ export function WishlistView({
             )}
           </div>
           )}
-          <div className={cn(!filterOpen && "hidden")}>
-          <FilterBar
-            statusFilter={statusFilter}
-            tagFilter={tagFilter}
-            tags={allTags}
-            tagColors={tagColors}
-            onStatusChange={setStatusFilter}
-            onTagChange={setTagFilter}
-          />
-          </div>
         </>
         )}
         {isMobileMemoLayout && !linkedMemoFocus && (
@@ -2286,7 +2243,7 @@ export function WishlistView({
             })}
           </div>
         )}
-        {selectMode && (
+        {SHOW_MEMO_MINDMAP_ENTRY && selectMode && (
           <MemoSelectionToolbar
             selectedCount={selectedMemoIds.size}
             allVisibleSelected={visibleMemoIds.length > 0 && visibleMemoIds.every(id => selectedMemoIds.has(id))}
@@ -2475,25 +2432,6 @@ export function WishlistView({
                   onToggleSelect={toggleMemoSelection}
                 />
                 <MemoSection
-                  columnKey="mapped"
-                  title="マップ追加済み"
-                  count={mappedItems.length}
-                  items={mappedItems}
-                  emptyText="マップ追加済みのメモはありません"
-                  onUpdate={handleUpdate}
-                  onDelete={handleDelete}
-                  onOpen={openDetail}
-                  projectById={projectById}
-                  tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
-                  nativeMemoDrag={false}
-                  selectMode={selectMode}
-                  selectedMemoIds={selectedMemoIds}
-                  onToggleSelect={toggleMemoSelection}
-                />
-                <MemoSection
                   columnKey="today"
                   title="今日する"
                   count={todayItems.length}
@@ -2508,6 +2446,25 @@ export function WishlistView({
                   onOpenCodex={openInCodexWebForMemo}
                   onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={isCalendarSplitVisible}
+                  selectMode={selectMode}
+                  selectedMemoIds={selectedMemoIds}
+                  onToggleSelect={toggleMemoSelection}
+                />
+                <MemoSection
+                  columnKey="mapped"
+                  title="マップ追加済み"
+                  count={mappedItems.length}
+                  items={mappedItems}
+                  emptyText="マップ追加済みのメモはありません"
+                  onUpdate={handleUpdate}
+                  onDelete={handleDelete}
+                  onOpen={openDetail}
+                  projectById={projectById}
+                  tagColors={tagColors}
+                  getAiTask={getMemoAiTask}
+                  onOpenCodex={openInCodexWebForMemo}
+                  onToggleToday={handleToggleTodayFromCard}
+                  nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
                   onToggleSelect={toggleMemoSelection}
@@ -2595,7 +2552,7 @@ export function WishlistView({
         onReschedule={handleDialogReschedule}
       />
 
-      {selectMode && !showMindmapDialog && (
+      {SHOW_MEMO_MINDMAP_ENTRY && selectMode && !showMindmapDialog && (
         <div className="fixed bottom-20 left-1/2 z-50 flex w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2 items-center gap-2 rounded-full border bg-background/95 p-1.5 shadow-lg backdrop-blur md:hidden">
           <Button
             type="button"
@@ -2909,68 +2866,71 @@ function MemoSection({
   )
 }
 
-function FilterBar({
-  statusFilter,
-  tagFilter,
+function TagFilterMenu({
   tags,
+  selectedTag,
   tagColors,
-  onStatusChange,
   onTagChange,
+  className,
 }: {
-  statusFilter: MemoStatus | "all"
-  tagFilter: string | "all"
   tags: string[]
+  selectedTag: string | "all"
   tagColors: Record<string, string>
-  onStatusChange: (status: MemoStatus | "all") => void
   onTagChange: (tag: string | "all") => void
+  className?: string
 }) {
-  const statusOptions: Array<MemoStatus | "all"> = ["all", "unsorted", "scheduled", "completed"]
   return (
-    <div className="flex items-center gap-2 overflow-x-auto pb-1">
-      <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="flex shrink-0 items-center gap-1 border-r pr-2">
-        {statusOptions.map(status => (
-          <button
-            key={status}
-            onClick={() => onStatusChange(status)}
-            className={cn(
-              "min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]",
-              statusFilter === status ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground",
-            )}
-          >
-            {STATUS_LABEL[status]}
-          </button>
-        ))}
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          onClick={() => onTagChange("all")}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className={cn("relative", className)}
+          aria-label="タグメニューを開く"
+          title="タグ"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+          {selectedTag !== "all" && (
+            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-background" />
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72 p-2">
+        <DropdownMenuLabel className="px-2 text-xs text-muted-foreground">タグで絞り込み</DropdownMenuLabel>
+        <DropdownMenuItem
+          onSelect={() => onTagChange("all")}
           className={cn(
-            "min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]",
-            tagFilter === "all" ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground",
+            "min-h-11 cursor-pointer gap-2 rounded-md text-sm",
+            selectedTag === "all" && "bg-muted font-medium",
           )}
         >
-          タグすべて
-        </button>
-        {tags.map(tag => {
+          <Check className={cn("h-4 w-4", selectedTag === "all" ? "opacity-100" : "opacity-0")} />
+          すべて
+        </DropdownMenuItem>
+        {tags.length > 0 && <DropdownMenuSeparator />}
+        <div className="grid max-h-[45vh] grid-cols-2 gap-1 overflow-y-auto p-1">
+          {tags.map(tag => {
           const color = getTagColor(tag, tagColors)
           return (
-            <button
+            <DropdownMenuItem
               key={tag}
-              onClick={() => onTagChange(tag)}
-              className="min-h-8 shrink-0 rounded-full border px-2.5 text-[11px]"
+              onSelect={() => onTagChange(tag)}
+              className="min-h-11 cursor-pointer justify-between rounded-md border px-2 text-xs"
               style={{
-                borderColor: color,
-                backgroundColor: tagFilter === tag ? color : `${color}22`,
-                color: tagFilter === tag ? "#fff" : color,
+                borderColor: colorToRgba(color, selectedTag === tag ? 0.8 : 0.35),
+                backgroundColor: selectedTag === tag ? colorToRgba(color, 0.24) : colorToRgba(color, 0.1),
+                color,
               }}
             >
-              {tag}
-            </button>
+              <span className="min-w-0 truncate">{tag}</span>
+              {selectedTag === tag && <Check className="h-3.5 w-3.5 shrink-0" />}
+            </DropdownMenuItem>
           )
-        })}
-      </div>
-    </div>
+          })}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

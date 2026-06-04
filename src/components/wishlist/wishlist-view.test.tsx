@@ -225,10 +225,10 @@ describe('WishlistView calendar D&D', () => {
       title: 'Drop memo',
       description: 'Drop description',
       calendar_id: 'work-cal',
-    })
-    await waitFor(() => {
-      expect(screen.getAllByText('予定済み').length).toBeGreaterThan(2)
-    })
+	    })
+	    await waitFor(() => {
+	      expect(screen.getAllByText('予定済み').length).toBeGreaterThanOrEqual(2)
+	    })
     expect(calendarEvents.invalidateCalendarCache).toHaveBeenCalled()
   })
 
@@ -264,7 +264,7 @@ describe('WishlistView calendar D&D', () => {
     await waitFor(() => {
       expect(screen.getByText('カレンダー登録に失敗しました: Google Calendar error')).toBeInTheDocument()
     })
-    expect(screen.getAllByText('予定済み')).toHaveLength(2)
+	    expect(screen.getAllByText('予定済み')).toHaveLength(1)
     expect(calendarEvents.broadcastCalendarOptimisticEventRemoval).toHaveBeenCalled()
   })
 
@@ -299,7 +299,8 @@ describe('WishlistView calendar D&D', () => {
     await renderVisibleWishlist('Unsorted memo')
 
     expect(screen.getByLabelText('カレンダーを閉じる')).toHaveTextContent('')
-    expect(screen.getByLabelText('フィルターを開く')).toHaveTextContent('')
+    expect(screen.queryByLabelText('タグメニューを開く')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('複数メモをマインドマップに整理')).not.toBeInTheDocument()
     expect(screen.getByText('Unsorted memo').closest('div[draggable="true"]')).toBeTruthy()
     expect(screen.getByText('Today memo').closest('div[draggable="true"]')).toBeTruthy()
     expect(screen.getByText('Scheduled memo').closest('div[draggable="true"]')).toBeNull()

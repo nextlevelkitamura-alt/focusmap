@@ -14,8 +14,6 @@ import Link from "next/link"
 import { Settings as SettingsIcon } from "lucide-react"
 import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
-import { MemoRefineChat } from "@/components/memo/memo-refine-chat"
-import { MemoChatHistory } from "@/components/memo/memo-chat-history"
 import { useIsMobile } from "@/hooks/useIsMobile"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
@@ -743,10 +741,11 @@ export function WishlistCardDetail({
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
   const [launchExecutor, setLaunchExecutor] = useState<'claude' | 'codex' | 'codex_app' | null>(null)
+  const [isCodexPanelOpen, setIsCodexPanelOpen] = useState(false)
+  const [activeDetailPanel, setActiveDetailPanel] = useState<"tags" | "images" | null>(null)
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [elapsedSecs, setElapsedSecs] = useState(0)
   const sentAtRef = useRef<number | null>(null)
-  const [chatOpen, setChatOpen] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
@@ -770,12 +769,21 @@ export function WishlistCardDetail({
   const isMobile = useIsMobile()
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
+  const selectedTags = useMemo(() => {
+    return Array.from(new Set(
+      [item?.category, ...(item?.tags ?? [])]
+        .filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0),
+    ))
+  }, [item?.category, item?.tags])
   const categoryOptions = useMemo(() => {
     const set = new Set<string>(tagOptions)
     if (item?.category) set.add(item.category)
     for (const tag of item?.tags ?? []) set.add(tag)
     return [...set].slice(0, 12)
   }, [item?.category, item?.tags, tagOptions])
+  const tagSuggestions = useMemo(() => {
+    return categoryOptions.filter(tag => !selectedTags.includes(tag))
+  }, [categoryOptions, selectedTags])
 
   const loadImages = useCallback(async () => {
     if (!item?.id || !open) return
@@ -891,6 +899,8 @@ export function WishlistCardDetail({
     setDraftTitle(itemTitle)
     setDraftDescription(itemDescription)
     setSaveError(null)
+    setActiveDetailPanel(null)
+    setIsCodexPanelOpen(false)
   }, [itemId, itemTitle, itemDescription, open])
 
   useEffect(() => {
@@ -951,6 +961,7 @@ export function WishlistCardDetail({
   const timeValue = formatTimeValue(item.scheduled_at)
   const dateOptions = buildDateOptions(dateValue)
   const timeOptions = buildTimeOptions(timeValue)
+  const showStructureTools = false
 
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
   const selectedProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
@@ -1218,14 +1229,27 @@ export function WishlistCardDetail({
     }
   }
 
-  const handleAddTag = async () => {
-    const tag = tagText.trim()
-    if (!tag || tags.includes(tag)) return
+  const addTagValue = async (value: string) => {
+    const tag = value.trim()
+    if (!tag || selectedTags.includes(tag)) return
     setTagText("")
-    await update({ tags: [...tags, tag] })
+    if (!item.category) {
+      await update({ category: tag })
+    } else {
+      await update({ tags: [...tags, tag] })
+    }
+    setActiveDetailPanel(null)
+  }
+
+  const handleAddTag = async () => {
+    await addTagValue(tagText)
   }
 
   const removeTag = async (tag: string) => {
+    if (item.category === tag) {
+      await update({ category: null })
+      return
+    }
     await update({ tags: tags.filter(t => t !== tag) })
   }
 
@@ -1254,6 +1278,7 @@ export function WishlistCardDetail({
       }
       if (uploaded.length > 0) {
         setImages(prev => [...prev, ...uploaded])
+        setActiveDetailPanel(null)
       }
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch (err) {
@@ -1338,143 +1363,265 @@ export function WishlistCardDetail({
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               </div>
-            </label>
-          </div>
+              </label>
+            </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Label className="shrink-0">タグ</Label>
-              <div className="-mr-3 flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-1 pr-3">
-                {categoryOptions.map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => update({ category: item.category === cat ? null : cat })}
-                    className="min-h-8 shrink-0 rounded-full border px-2.5 text-xs transition-colors"
-                    style={{
-                      borderColor: getTagColor(cat, tagColors),
-                      backgroundColor: item.category === cat ? getTagColor(cat, tagColors) : colorToRgba(getTagColor(cat, tagColors), 0.12),
-                      color: item.category === cat ? "#fff" : getTagColor(cat, tagColors),
-                    }}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex gap-1.5 overflow-x-auto pb-1">
-              {tags.map(tag => (
-                <button
-                  key={tag}
-                  onClick={() => removeTag(tag)}
-                  className="shrink-0 rounded-full border px-2 py-1 text-xs hover:opacity-80"
-                  style={{
-                    borderColor: colorToRgba(getTagColor(tag, tagColors), 0.55),
-                    backgroundColor: colorToRgba(getTagColor(tag, tagColors), 0.08),
-                    color: getTagColor(tag, tagColors),
-                  }}
-                >
-                  {tag} ×
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={tagText}
-                onChange={e => setTagText(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleAddTag()}
-                placeholder="タグを追加"
-                className="h-10"
-              />
-              <Button variant="outline" onClick={handleAddTag} className="h-10 shrink-0">追加</Button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Label className="shrink-0">画像</Label>
-              <span className="text-[11px] text-muted-foreground">{images.length}枚</span>
-            </div>
-            <div className="-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploadingImage}
-                className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
-              >
-                {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                <span className="text-[10px]">複数選択</span>
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={e => {
-                  const files = Array.from(e.target.files ?? [])
-                  if (files.length > 0) void uploadImages(files)
-                }}
-              />
-              {images.map(image => (
-                <div key={image.id} className="w-20 shrink-0 overflow-hidden rounded-md border bg-muted/20">
-                  <a
-                    href={image.file_url}
-                    download={image.file_name}
-                    target="_blank"
-                    rel="noreferrer"
-                    onDoubleClick={e => e.currentTarget.click()}
-                    title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={image.file_url} alt={image.file_name} className="h-16 w-20 object-cover" />
-                  </a>
-                  <div className="flex items-center justify-end gap-0.5 px-1 py-0.5">
-                    <a
-                      href={image.file_url}
-                      download={image.file_name}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded p-1 text-muted-foreground hover:text-foreground"
-                      title="保存"
+            <div className="space-y-2 rounded-lg border bg-background/40 p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">日付</span>
+                  <div className="relative flex min-h-[44px] items-center rounded-md border bg-background px-2">
+                    <Calendar className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <select
+                      value={dateValue}
+                      onChange={e => handleScheduleChange(e.target.value, timeValue || "09:00")}
+                      className="h-10 min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm outline-none"
+                      aria-label="日付"
                     >
-                      <Download className="h-3.5 w-3.5" />
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => handleImageDelete(image.id)}
-                      disabled={deletingImageId === image.id}
-                      className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-60"
-                      title="削除"
-                    >
-                      {deletingImageId === image.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                    </button>
+                      <option value="">未設定</option>
+                      {dateOptions.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 h-4 w-4 text-muted-foreground" />
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label>メモ</Label>
-            <textarea
-              value={draftDescription}
-              onChange={e => setDraftDescription(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault()
-                  handleSaveMemo()
-                }
-              }}
-              rows={6}
-              placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
-              className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-            {draftDescription && (
-              <div className="rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
-                {linkify(draftDescription)}
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">時刻</span>
+                  <div className="relative flex min-h-[44px] items-center rounded-md border bg-background px-2">
+                    <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <select
+                      value={timeValue}
+                      onChange={e => handleScheduleChange(dateValue, e.target.value)}
+                      disabled={!dateValue}
+                      className="h-10 min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm outline-none disabled:text-muted-foreground"
+                      aria-label="時刻"
+                    >
+                      <option value="">未設定</option>
+                      {timeOptions.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 h-4 w-4 text-muted-foreground" />
+                  </div>
+                </label>
               </div>
-            )}
-          </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="icon" onClick={() => changeDuration(-15)} className="min-h-[44px] min-w-[44px]">
+                  <Minus className="h-4 w-4" />
+                </Button>
+                <div className="flex min-h-[44px] min-w-20 items-center justify-center rounded-md border bg-background text-sm font-medium">
+                  {item.duration_minutes ?? 60}分
+                </div>
+                <Button variant="outline" size="icon" onClick={() => changeDuration(15)} className="min-h-[44px] min-w-[44px]">
+                  <Plus className="h-4 w-4" />
+                </Button>
+                <div className="grid min-w-0 flex-1 basis-full grid-cols-4 gap-1 sm:basis-auto">
+                  {QUICK_MINUTES.map(minutes => (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => update({ duration_minutes: minutes })}
+                      className={cn(
+                        "min-h-9 rounded-md border px-2 text-xs transition-colors",
+                        item.duration_minutes === minutes ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {minutes}分
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Button
+                onClick={handleAddCalendar}
+                disabled={isAddingCalendar || !item.scheduled_at || !item.duration_minutes}
+                variant={item.google_event_id ? "outline" : "default"}
+                className="w-full min-h-[44px]"
+              >
+                {isAddingCalendar ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calendar className="mr-2 h-4 w-4" />}
+                {item.google_event_id ? "カレンダー登録済み" : "カレンダーに入れる"}
+              </Button>
+            </div>
+
+            <div className="space-y-1">
+              <Label>メモ</Label>
+              <textarea
+                value={draftDescription}
+                onChange={e => setDraftDescription(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault()
+                    handleSaveMemo()
+                  }
+                }}
+                rows={6}
+                placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
+                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              {draftDescription && (
+                <div className="rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
+                  {linkify(draftDescription)}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 rounded-lg border bg-background/40 p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveDetailPanel(panel => panel === "tags" ? null : "tags")}
+                  className={cn(
+                    "flex min-h-[48px] items-center justify-between rounded-md border px-3 text-left text-sm transition-colors",
+                    activeDetailPanel === "tags" ? "border-primary bg-primary/10 text-foreground" : "bg-background text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="font-medium">タグ</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{selectedTags.length}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveDetailPanel(panel => panel === "images" ? null : "images")}
+                  className={cn(
+                    "flex min-h-[48px] items-center justify-between rounded-md border px-3 text-left text-sm transition-colors",
+                    activeDetailPanel === "images" ? "border-primary bg-primary/10 text-foreground" : "bg-background text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="font-medium">画像</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{images.length}</span>
+                </button>
+              </div>
+
+              {activeDetailPanel === "tags" && (
+                <div className="space-y-3 rounded-md border bg-background p-3">
+                  <div className="flex gap-2">
+                    <Input
+                      value={tagText}
+                      onChange={e => setTagText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          void handleAddTag()
+                        }
+                      }}
+                      placeholder="タグを追加"
+                      className="h-11"
+                    />
+                    <Button variant="outline" onClick={() => void handleAddTag()} className="h-11 shrink-0">追加</Button>
+                  </div>
+                  {tagSuggestions.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {tagSuggestions.map(tag => {
+                        const color = getTagColor(tag, tagColors)
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => void addTagValue(tag)}
+                            className="min-h-[44px] rounded-md border px-3 text-left text-sm font-medium"
+                            style={{
+                              borderColor: colorToRgba(color, 0.45),
+                              backgroundColor: colorToRgba(color, 0.1),
+                              color,
+                            }}
+                          >
+                            {tag}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeDetailPanel === "images" && (
+                <div className="rounded-md border bg-background p-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingImage}
+                    className="flex min-h-[64px] w-full items-center justify-center gap-2 rounded-md border border-dashed text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                  >
+                    {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                    画像を追加
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      const files = Array.from(e.target.files ?? [])
+                      if (files.length > 0) void uploadImages(files)
+                    }}
+                  />
+                </div>
+              )}
+
+              {selectedTags.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedTags.map(tag => {
+                    const color = getTagColor(tag, tagColors)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => void removeTag(tag)}
+                        className="min-h-[40px] rounded-full border px-3 text-sm font-medium hover:opacity-80"
+                        style={{
+                          borderColor: colorToRgba(color, 0.55),
+                          backgroundColor: colorToRgba(color, 0.12),
+                          color,
+                        }}
+                      >
+                        {tag} ×
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {images.length > 0 && (
+                <div className="-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3">
+                  {images.map(image => (
+                    <div key={image.id} className="w-24 shrink-0 overflow-hidden rounded-md border bg-muted/20">
+                      <a
+                        href={image.file_url}
+                        download={image.file_name}
+                        target="_blank"
+                        rel="noreferrer"
+                        onDoubleClick={e => e.currentTarget.click()}
+                        title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={image.file_url} alt={image.file_name} className="h-20 w-24 object-cover" />
+                      </a>
+                      <div className="flex items-center justify-end gap-0.5 px-1 py-0.5">
+                        <a
+                          href={image.file_url}
+                          download={image.file_name}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded p-1 text-muted-foreground hover:text-foreground"
+                          title="保存"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleImageDelete(image.id)}
+                          disabled={deletingImageId === image.id}
+                          className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-60"
+                          title="削除"
+                        >
+                          {deletingImageId === image.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
           {saveError && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -1491,24 +1638,11 @@ export function WishlistCardDetail({
             メモを保存
           </Button>
 
-          {/* 対話で詰めるボタン: GLMと2-3ラリーしてメモを更新（Claude起動とは独立）*/}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setChatOpen(true)}
-            disabled={!draftTitle.trim()}
-            className="w-full min-h-[44px] border-amber-500/50 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
-          >
-            <Sparkles className="mr-2 h-4 w-4" />
-            対話で詰める（GLM と相談）
-          </Button>
+            </div>
 
-          {/* 過去の対話履歴（このメモの分） */}
-          <MemoChatHistory memoId={item.id} />
-          </div>
-
-          <div className={cn("min-w-0", isMobile ? "mt-3 space-y-3" : "space-y-4 xl:sticky xl:top-0")}>
-          <div className="space-y-3 rounded-lg border bg-background/40 p-3">
+            <div className={cn("min-w-0", isMobile ? "mt-3 space-y-3" : "space-y-4 xl:sticky xl:top-0")}>
+            {showStructureTools && (
+            <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
               <Label className="flex items-center gap-1.5">
                 <Network className="h-4 w-4" />
@@ -1574,9 +1708,10 @@ export function WishlistCardDetail({
                 />
               )}
             </div>
-          </div>
+            </div>
+            )}
 
-          {(onLaunchClaude || onLaunchCodex || onCopyCodexPrompt) && (() => {
+            {(onLaunchClaude || onLaunchCodex || onCopyCodexPrompt) && (() => {
             const aiTask = getMemoAiTask(item.id)
             const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
             const repoConfigured = !!project?.repo_path
@@ -1588,46 +1723,22 @@ export function WishlistCardDetail({
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
             const needsRepoConfig = !item.project_id || !repoConfigured
             const claudeDisabled = needsRepoConfig || !!active
-            const codexDisabled = !draftTitle.trim() || needsRepoConfig || (!!active && !codexPromptWaiting)
-            const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
-            return (
-              <div className="space-y-3 rounded-lg border bg-background/40 p-3">
-                <Label className="flex items-center gap-1.5">
-                  <Terminal className="h-4 w-4" />
-                  AI エージェントで実行
-                </Label>
-                <p className={cn(
-                  "text-xs leading-5",
-                  needsConfig && !active ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
-                )}>
-                  {active
-                    ? codexPromptWaiting
-                      ? "Codexはプロンプト待ちです。必要なら下から再コピーできます"
-                      : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
-                    : needsConfig
-                      ? "⚠ プロジェクトまたはリポジトリパスが未設定です"
-                      : "メモ本文をCodex.appへ送って実行します"}
-                </p>
-                {needsConfig && (
-                  <Link
-                    href="/dashboard/settings/projects#project-repos"
-                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
-                  >
-                    <SettingsIcon className="h-3.5 w-3.5" />
-                    {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
-                  </Link>
-                )}
-
-                {/* Codex 起動（codex に一本化。claude/codex_app は親から prop 未提供で非表示） */}
-                <div className="grid grid-cols-1 gap-2">
-                  {onLaunchClaude && (
+              const codexDisabled = !draftTitle.trim() || needsRepoConfig || (!!active && !codexPromptWaiting)
+              const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
+              const showCodexDetails = isCodexPanelOpen || !!active || launchStep !== null || !!launchError || needsConfig
+              return (
+                <div className="space-y-3 rounded-lg border bg-background/40 p-3">
+                  {/* Codex 起動（codex に一本化。claude/codex_app は親から prop 未提供で非表示） */}
+                  <div className="grid grid-cols-1 gap-2">
+                    {onLaunchClaude && (
                     <Button
                       type="button"
                       variant="outline"
                       disabled={claudeDisabled || isLaunchingClaude}
-                      onClick={async () => {
-                        setLaunchError(null)
-                        setLaunchStep('sending')
+                        onClick={async () => {
+                          setIsCodexPanelOpen(true)
+                          setLaunchError(null)
+                          setLaunchStep('sending')
                         setLaunchExecutor('claude')
                         setIsLaunchingClaude(true)
                         try {
@@ -1642,19 +1753,19 @@ export function WishlistCardDetail({
                         }
                       }}
                       className="min-h-[60px] flex-col gap-0.5 border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 dark:hover:bg-amber-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
-                    >
-                      {isLaunchingClaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">▲ Claude</span>}
-                      <span className="text-[10px] text-muted-foreground">スマホで監視・指示可</span>
-                    </Button>
-                  )}
-                  {onLaunchCodex && (
+                      >
+                        {isLaunchingClaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">▲ Claude</span>}
+                      </Button>
+                    )}
+                    {onLaunchCodex && (
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={codexDisabled || isLaunchingCodex}
-                      onClick={async () => {
-                        setLaunchError(null)
-                        setLaunchStep('sending')
+                        disabled={codexDisabled || isLaunchingCodex}
+                        onClick={async () => {
+                          setIsCodexPanelOpen(true)
+                          setLaunchError(null)
+                          setLaunchStep('sending')
                         setLaunchExecutor('codex')
                         setIsLaunchingCodex(true)
                         try {
@@ -1667,22 +1778,53 @@ export function WishlistCardDetail({
                         } finally {
                           setIsLaunchingCodex(false)
                         }
-                      }}
-                      className="min-h-[60px] flex-col gap-0.5 border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
-                    >
-                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">Codexで実行</span>}
-                      <span className="text-[10px] text-muted-foreground">Mac runnerで自動送信</span>
-                    </Button>
-                  )}
-                </div>
+                        }}
+                        className="min-h-[48px] gap-2 border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
+                      >
+                        {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
+                        <span className="font-semibold">Codexにプロンプトを送る</span>
+                      </Button>
+                    )}
+                  </div>
 
-                {onCopyCodexPrompt && (active || launchStep !== null) && (
-                  <Button
+                  {showCodexDetails && (
+                    <>
+                      <Label className="flex items-center gap-1.5">
+                        <Terminal className="h-4 w-4" />
+                        実行状況
+                      </Label>
+                      <p className={cn(
+                        "text-xs leading-5",
+                        needsConfig && !active ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
+                      )}>
+                        {active
+                          ? codexPromptWaiting
+                            ? "Codexはプロンプト待ちです。必要なら下から再コピーできます"
+                            : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
+                          : needsConfig
+                            ? "プロジェクトまたはリポジトリパスが未設定です"
+                            : "メモ本文をCodex.appへ送って実行します"}
+                      </p>
+                      {needsConfig && (
+                        <Link
+                          href="/dashboard/settings/projects#project-repos"
+                          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
+                        >
+                          <SettingsIcon className="h-3.5 w-3.5" />
+                          {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
+                        </Link>
+                      )}
+                    </>
+                  )}
+
+                  {showCodexDetails && onCopyCodexPrompt && (active || launchStep !== null) && (
+                    <Button
                     type="button"
                     variant="secondary"
                     disabled={!draftTitle.trim() || isCopyingCodexPrompt}
-                    onClick={async () => {
-                      setLaunchError(null)
+                      onClick={async () => {
+                        setIsCodexPanelOpen(true)
+                        setLaunchError(null)
                       setIsCopyingCodexPrompt(true)
                       try {
                         await onCopyCodexPrompt(item)
@@ -1702,12 +1844,13 @@ export function WishlistCardDetail({
                 )}
 
                 {/* サブオプション: codex:// URL スキームで Codex.app に prefill だけ（送信は手動）*/}
-                {onLaunchCodexApp && (
-                  <button
+                  {showCodexDetails && onLaunchCodexApp && (
+                    <button
                     type="button"
                     disabled={!draftTitle.trim() || isLaunchingCodex}
-                    onClick={async () => {
-                      setLaunchError(null)
+                      onClick={async () => {
+                        setIsCodexPanelOpen(true)
+                        setLaunchError(null)
                       setLaunchStep('sending')
                       setLaunchExecutor('codex_app')
                       setIsLaunchingCodex(true)
@@ -1728,14 +1871,14 @@ export function WishlistCardDetail({
                   </button>
                 )}
 
-                {launchError && (
-                  <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
+                  {showCodexDetails && launchError && (
+                    <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
                     {launchError}
                   </div>
                 )}
 
                 {/* ステップログ */}
-                {launchStep !== null && (() => {
+                  {showCodexDetails && launchStep !== null && (() => {
                   const sessionUrl = aiTask?.remote_session_url ?? null
                   const isCodex = launchExecutor === 'codex' || launchExecutor === 'codex_app'
                   const executorLabel = launchExecutor === 'claude' ? 'Claude Code' : 'Codex'
@@ -1832,91 +1975,18 @@ export function WishlistCardDetail({
                   )
                 })()}
 
-                <NoteClaudeRunnerPanel
-                  latestTask={aiTask}
-                  isProjectAssigned={!!item.project_id || aiTask?.executor === 'codex' || aiTask?.executor === 'codex_app'}
-                  isRepoConfigured={repoConfigured}
-                />
+                  {showCodexDetails && (
+                    <NoteClaudeRunnerPanel
+                      latestTask={aiTask}
+                      isProjectAssigned={!!item.project_id || aiTask?.executor === 'codex' || aiTask?.executor === 'codex_app'}
+                      isRepoConfigured={repoConfigured}
+                    />
+                  )}
               </div>
             )
           })()}
 
-          <div className="space-y-3">
-            <Label>時間</Label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="space-y-1.5">
-                <span className="text-xs text-muted-foreground">日付</span>
-                <div className="relative flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
-                  <Calendar className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <select
-                    value={dateValue}
-                    onChange={e => handleScheduleChange(e.target.value, timeValue || "09:00")}
-                    className="h-12 min-w-0 flex-1 appearance-none bg-transparent pr-7 text-sm font-medium outline-none"
-                    aria-label="日付"
-                  >
-                    <option value="">未設定</option>
-                    {dateOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
-                </div>
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-xs text-muted-foreground">時刻</span>
-                <div className="relative flex min-h-[52px] items-center rounded-xl border border-border/80 bg-muted/20 px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-primary/20">
-                  <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <select
-                    value={timeValue}
-                    onChange={e => handleScheduleChange(dateValue, e.target.value)}
-                    disabled={!dateValue}
-                    className="h-12 min-w-0 flex-1 appearance-none bg-transparent pr-7 text-sm font-medium outline-none disabled:text-muted-foreground"
-                    aria-label="時刻"
-                  >
-                    <option value="">未設定</option>
-                    {timeOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-muted-foreground" />
-                </div>
-              </label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={() => changeDuration(-15)} className="min-h-[44px] min-w-[44px]">
-                <Minus className="h-4 w-4" />
-              </Button>
-              <div className="flex min-h-[44px] min-w-20 items-center justify-center rounded-md border text-sm font-medium">
-                {item.duration_minutes ?? 60}分
-              </div>
-              <Button variant="outline" size="icon" onClick={() => changeDuration(15)} className="min-h-[44px] min-w-[44px]">
-                <Plus className="h-4 w-4" />
-              </Button>
-              <div className="flex flex-wrap gap-1">
-                {QUICK_MINUTES.map(minutes => (
-                  <button
-                    key={minutes}
-                    onClick={() => update({ duration_minutes: minutes })}
-                    className="min-h-9 rounded-md border px-2 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    {minutes}分
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <Button
-            onClick={handleAddCalendar}
-            disabled={isAddingCalendar || !item.scheduled_at || !item.duration_minutes}
-            variant={item.google_event_id ? "outline" : "default"}
-            className="w-full min-h-[44px]"
-          >
-            {isAddingCalendar ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calendar className="mr-2 h-4 w-4" />}
-            {item.google_event_id ? "カレンダー登録済み" : "カレンダーに入れる"}
-          </Button>
-
-          <div className="space-y-2">
+            <div className="space-y-2">
             <Label>サブタスク候補</Label>
             <ul className="space-y-1">
               {(item.ideal_items ?? []).map(sub => (
@@ -1948,19 +2018,6 @@ export function WishlistCardDetail({
         </div>
       </SheetContent>
 
-      {/* 対話で詰める Sheet (tool calling: 元メモ更新 + 新メモ作成 + 他メモ検索) */}
-      <MemoRefineChat
-        open={chatOpen}
-        onOpenChange={setChatOpen}
-        source={{
-          id: item.id,
-          title: draftTitle || item.title,
-          description: draftDescription || item.description || undefined,
-          repo_path: item.project_id ? projects.find(p => p.id === item.project_id)?.repo_path || undefined : undefined,
-        }}
-        model="gemini-3-flash-preview"
-        onTouched={onMemoChanged}
-      />
-    </Sheet>
+      </Sheet>
   )
 }

@@ -86,6 +86,7 @@ describe('WishlistCardDetail', () => {
 
     fireEvent.change(titleInput, { target: { value: 'Draft title' } })
     fireEvent.change(bodyInput, { target: { value: 'Draft body' } })
+    fireEvent.click(screen.getByRole('button', { name: /タグ/ }))
     fireEvent.click(screen.getByRole('button', { name: '仕事' }))
 
     await waitFor(() => {
