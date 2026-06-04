@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
 import { canUseLocalCodexOpenApi } from '@/lib/codex-app-launch'
@@ -8,6 +8,7 @@ import { canUseLocalCodexOpenApi } from '@/lib/codex-app-launch'
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
 const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
+const lastLocalSyncByTaskId = new Map<string, number>()
 
 function isCodexTask(task: AiTask) {
   return task.executor === 'codex' || task.executor === 'codex_app'
@@ -37,6 +38,10 @@ function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
     result.push({ sourceId, task })
   }
   return result.slice(0, 8)
+}
+
+function localSyncIntervalForTask(task: AiTask) {
+  return isRunningCodexTask(task) ? ACTIVE_CODEX_REFRESH_INTERVAL_MS : IDLE_REFRESH_INTERVAL_MS
 }
 
 /**
@@ -88,10 +93,22 @@ export function useMemoAiTasks() {
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
 
+  const localSyncTargets = useMemo(() => codexTasksForLocalSync(bySourceId), [bySourceId])
+  const localSyncTargetKey = useMemo(() => {
+    return localSyncTargets
+      .map(({ sourceId, task }) => `${sourceId}:${task.id}:${task.status}:${isRunningCodexTask(task) ? 'running' : 'idle'}`)
+      .join('|')
+  }, [localSyncTargets])
+  const hasRunningLocalSyncTarget = useMemo(() => (
+    localSyncTargets.some(({ task }) => isRunningCodexTask(task))
+  ), [localSyncTargets])
+
   useEffect(() => {
     if (!canUseLocalCodexOpenApi()) return
-    const targets = codexTasksForLocalSync(bySourceId)
-    if (targets.length === 0) return
+    const targets = localSyncTargets
+    if (targets.length === 0) {
+      return
+    }
     const localSyncIntervalMs = hasRunningCodexTask(bySourceId)
       ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
       : IDLE_REFRESH_INTERVAL_MS
@@ -100,9 +117,18 @@ export function useMemoAiTasks() {
     let syncing = false
     const syncTargets = async () => {
       if (syncing) return
+      const now = Date.now()
+      const dueTargets = targets.filter(({ task }) => {
+        const lastSyncedAt = lastLocalSyncByTaskId.get(task.id) ?? 0
+        return now - lastSyncedAt >= localSyncIntervalForTask(task)
+      })
+      if (dueTargets.length === 0) return
+      for (const { task } of dueTargets) {
+        lastLocalSyncByTaskId.set(task.id, now)
+      }
       syncing = true
       try {
-        await Promise.all(targets.map(({ sourceId, task }) => (
+        await Promise.all(dueTargets.map(({ sourceId, task }) => (
           fetch('/api/codex/sync-node', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -118,13 +144,13 @@ export function useMemoAiTasks() {
       }
     }
 
-    void syncTargets()
+    if (hasRunningLocalSyncTarget) void syncTargets()
     const intervalId = window.setInterval(() => void syncTargets(), localSyncIntervalMs)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [bySourceId, fetchInitial])
+  }, [bySourceId, fetchInitial, hasRunningLocalSyncTarget, localSyncTargetKey, localSyncTargets])
 
   useEffect(() => {
     const supabase = createClient()

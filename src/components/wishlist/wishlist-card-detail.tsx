@@ -88,7 +88,6 @@ interface WishlistCardDetailProps {
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
   onCalendarAdd: (item: IdealGoalWithItems) => Promise<void>
   onSaved?: () => void
-  isPersisting?: boolean
   tagOptions: string[]
   projects?: Project[]
   tagColors?: Record<string, string>
@@ -776,7 +775,6 @@ export function WishlistCardDetail({
   onUpdate,
   onCalendarAdd,
   onSaved,
-  isPersisting = false,
   tagOptions,
   projects = [],
   tagColors = {},
@@ -1899,12 +1897,6 @@ export function WishlistCardDetail({
           )}
 
           <div className="space-y-2">
-            {isPersisting && (
-              <div className="flex min-h-[32px] items-center justify-center gap-2 rounded-md border bg-muted/30 px-3 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                作成中
-              </div>
-            )}
             <Button
               onClick={handleSaveMemo}
               disabled={isSavingMemo || !draftTitle.trim()}

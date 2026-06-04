@@ -115,15 +115,12 @@ vi.mock('./wishlist-card-detail', () => ({
   WishlistCardDetail: ({
     item,
     open,
-    isPersisting,
   }: {
     item: IdealGoalWithItems | null
     open: boolean
-    isPersisting?: boolean
   }) => open && item ? (
     <div data-testid="memo-detail">
       <span>{item.title}</span>
-      {isPersisting && <span>作成中</span>}
     </div>
   ) : null,
 }))
@@ -526,7 +523,7 @@ describe('WishlistView calendar D&D', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('memo-detail')).toHaveTextContent('新しいメモ')
-      expect(screen.getByTestId('memo-detail')).toHaveTextContent('作成中')
+      expect(screen.getByTestId('memo-detail')).not.toHaveTextContent('作成中')
     })
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',

@@ -629,7 +629,6 @@ export function WishlistView({
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
-  const [creatingMemoIds, setCreatingMemoIds] = useState<Set<string>>(new Set())
   const [showMindmapDialog, setShowMindmapDialog] = useState(false)
   const [activeMobileColumn, setActiveMobileColumn] = useState<ColumnKey>("unsorted")
   const [isMobileMemoLayout, setIsMobileMemoLayout] = useState(false)
@@ -1140,7 +1139,6 @@ export function WishlistView({
     } else {
       creatingMemoIdsRef.current.delete(id)
     }
-    setCreatingMemoIds(new Set(creatingMemoIdsRef.current))
   }, [])
 
   const waitForMemoPersistence = useCallback(async (id: string) => {
@@ -2707,7 +2705,6 @@ export function WishlistView({
         onUpdate={handleUpdate}
         onCalendarAdd={async item => { await handleCalendarAdd(item) }}
         onSaved={() => setDetailOpen(false)}
-        isPersisting={selectedItem ? creatingMemoIds.has(selectedItem.id) : false}
         tagOptions={allTags}
         projects={projects}
         tagColors={tagColors}

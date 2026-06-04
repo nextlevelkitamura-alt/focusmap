@@ -48,7 +48,7 @@ function createMemoItem(overrides: Partial<IdealGoalWithItems> = {}): IdealGoalW
   } as IdealGoalWithItems
 }
 
-function DetailHarness({ isPersisting = false }: { isPersisting?: boolean } = {}) {
+function DetailHarness() {
   const [item, setItem] = useState<IdealGoalWithItems>(createMemoItem())
 
   return (
@@ -64,7 +64,6 @@ function DetailHarness({ isPersisting = false }: { isPersisting?: boolean } = {}
         }) as IdealGoalWithItems)
       }}
       onCalendarAdd={vi.fn()}
-      isPersisting={isPersisting}
       tagOptions={['仕事', 'アイデア']}
     />
   )
@@ -118,10 +117,10 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
   })
 
-  test('メモ作成中でも保存ボタンを塞がない', async () => {
-    render(<DetailHarness isPersisting />)
+  test('メモ作成状態を表示せず保存ボタンを塞がない', async () => {
+    render(<DetailHarness />)
 
-    expect(await screen.findByText('作成中')).toBeInTheDocument()
+    expect(screen.queryByText('作成中')).not.toBeInTheDocument()
     const saveButton = screen.getByRole('button', { name: /メモを保存/ })
     expect(saveButton).toBeEnabled()
   })
