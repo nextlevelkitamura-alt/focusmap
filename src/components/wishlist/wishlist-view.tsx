@@ -2067,23 +2067,23 @@ export function WishlistView({
             <h1 className="text-base font-semibold leading-tight">メモ</h1>
             <p className="hidden truncate text-xs text-muted-foreground sm:block">雑な入力を整理</p>
           </div>
+          {visibleAiTaskIds.length > 0 && (
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={checkVisibleAiProgress}
-            disabled={isCheckingVisibleAi || visibleAiTaskIds.length === 0}
+            disabled={isCheckingVisibleAi}
             className="min-h-[40px] shrink-0 gap-1.5 px-3"
             title="表示中メモのAI状況をまとめて更新"
           >
             <RefreshCw className={cn("h-4 w-4", isCheckingVisibleAi && "animate-spin")} />
             <span className="hidden sm:inline">AI状況</span>
-            {visibleAiTaskIds.length > 0 && (
-              <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
-                {visibleAiTaskIds.length}
-              </span>
-            )}
+            <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
+              {visibleAiTaskIds.length}
+            </span>
           </Button>
+          )}
           {onToggleCalendarSplit && (
             <Button
               type="button"
@@ -2143,7 +2143,11 @@ export function WishlistView({
           <textarea
             value={intakeText}
             onChange={e => setIntakeText(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAnalyze() }}
+            onKeyDown={e => {
+              if (e.nativeEvent.isComposing) return
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { handleAnalyze(); return }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleQuickAdd() }
+            }}
             placeholder="音声またはテキストで入力"
             rows={1}
             className="min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
@@ -2241,7 +2245,7 @@ export function WishlistView({
         </>
         )}
         {isMobileMemoLayout && !linkedMemoFocus && (
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:hidden">
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {MOBILE_COLUMN_ORDER.map(column => {
               const section = mobileSections[column]
               const active = activeMobileColumn === column
