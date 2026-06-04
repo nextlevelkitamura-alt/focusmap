@@ -447,7 +447,7 @@ function buildOptimisticMemoItem({
     description: description || null,
     cover_image_url: null,
     cover_image_path: null,
-    category: "アイデア",
+    category: null,
     color: "#6366f1",
     status: "memo",
     display_order: 0,
@@ -463,7 +463,7 @@ function buildOptimisticMemoItem({
     google_event_id: typeof overrides.google_event_id === "string" ? overrides.google_event_id : null,
     is_completed: typeof overrides.is_completed === "boolean" ? overrides.is_completed : false,
     is_today: typeof overrides.is_today === "boolean" ? overrides.is_today : false,
-    tags: ["アイデア"],
+    tags: [],
     memo_status: memoStatus,
     ai_source_payload: overrides.ai_source_payload ?? null,
     created_at: now,
@@ -1718,15 +1718,23 @@ export function WishlistView({
         setIntakeError(data.error || "整理に失敗しました")
         return
       }
-      const suggestedCategory = typeof data.suggestion?.category === "string" && allTags.includes(data.suggestion.category)
-        ? data.suggestion.category
-        : ""
+      const suggestedCategory = ""
       setSuggestion({
         ...data.suggestion,
         project_id: selectedProjectId,
         category: suggestedCategory,
         tags: [],
-        tag_suggestions: allTags,
+        tag_suggestions: [
+          ...new Set([
+            ...(
+              typeof data.suggestion?.category === "string" && data.suggestion.category.trim()
+                ? [data.suggestion.category.trim()]
+                : []
+            ),
+            ...(Array.isArray(data.suggestion?.tags) ? data.suggestion.tags.filter((tag: unknown): tag is string => typeof tag === "string" && tag.trim().length > 0) : []),
+            ...allTags,
+          ]),
+        ],
       })
       setSuggestionOpen(true)
     } finally {
@@ -1765,7 +1773,7 @@ export function WishlistView({
       const item = await createWishlistMemo({
         title: suggestion.title,
         project_id: suggestion.project_id ?? selectedProjectId,
-        category: suggestion.category,
+        category: suggestion.category || null,
         tags: suggestion.tags,
         description: suggestion.description,
         time_candidates: suggestion.time_candidates,

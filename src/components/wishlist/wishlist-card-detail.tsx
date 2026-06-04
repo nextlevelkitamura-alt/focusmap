@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Network, Plus, Search, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
+import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Mic, Network, Plus, Search, Sparkles, Square, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
 import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,8 +14,10 @@ import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from 
 import Link from "next/link"
 import { Settings as SettingsIcon } from "lucide-react"
 import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
+import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { UserCalendar } from "@/hooks/useCalendars"
 
 const QUICK_MINUTES = [5, 15, 30, 60, 120]
@@ -816,6 +818,7 @@ export function WishlistCardDetail({
   const [elapsedSecs, setElapsedSecs] = useState(0)
   const [selectedCalendarId, setSelectedCalendarId] = useState("primary")
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthStart(new Date()))
+  const [isGeneratingTitle, setIsGeneratingTitle] = useState(false)
   const sentAtRef = useRef<number | null>(null)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -846,6 +849,20 @@ export function WishlistCardDetail({
   const draftSourceIdRef = useRef<string | null>(null)
   const pendingImageUrlsRef = useRef<Set<string>>(new Set())
   const isMobile = useIsMobile()
+
+  const handleMemoVoiceTranscribed = useCallback((text: string) => {
+    setDraftDescription(prev => [prev.trim(), text.trim()].filter(Boolean).join("\n"))
+  }, [])
+
+  const {
+    isRecording: isMemoRecording,
+    isTranscribing: isMemoTranscribing,
+    error: memoVoiceError,
+    permissionState: memoVoicePermissionState,
+    analyserRef: memoVoiceAnalyserRef,
+    startRecording: startMemoRecording,
+    stopRecording: stopMemoRecording,
+  } = useVoiceRecorder(handleMemoVoiceTranscribed)
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
   const selectedTags = useMemo(() => {
@@ -1155,20 +1172,48 @@ export function WishlistCardDetail({
     await update({ duration_minutes: minutes })
   }
 
-  const handleGenerateTitle = () => {
+  const handleGenerateTitle = async () => {
     const body = draftDescription.trim()
     if (!body) {
       setSaveError("見出しを生成するにはメモ本文を入力してください")
       return
     }
-    const firstSentence = body
-      .replace(/\s+/g, " ")
-      .split(/[。.!！?？\n]/)
-      .find(part => part.trim().length > 0)
-      ?.trim()
-    const generated = (firstSentence || body).slice(0, 32)
-    setDraftTitle(generated)
     setSaveError(null)
+    setIsGeneratingTitle(true)
+    try {
+      const res = await fetch("/api/ai/generate-memo-heading", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          detail: body,
+          currentHeading: draftTitle.trim(),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "見出し生成に失敗しました")
+      }
+      const generated = typeof data.heading === "string" ? data.heading.trim() : ""
+      if (!generated) throw new Error("見出し生成に失敗しました")
+      setDraftTitle(generated)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "見出し生成に失敗しました")
+    } finally {
+      setIsGeneratingTitle(false)
+    }
+  }
+
+  const handleMemoVoiceToggle = async () => {
+    if (isMemoTranscribing) return
+    if (isMemoRecording) {
+      stopMemoRecording()
+      return
+    }
+    await startMemoRecording()
+  }
+
+  const handleOpenMicrophoneSettings = async () => {
+    await fetch("/api/system/microphone-settings", { method: "POST" }).catch(() => null)
   }
 
   const handleAddCalendar = async () => {
@@ -1866,15 +1911,6 @@ export function WishlistCardDetail({
               <div className="flex items-center justify-between gap-2">
                 <Label>メモ</Label>
                 <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleGenerateTitle}
-                    className="h-8 gap-1.5 px-2 text-xs"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    見出し生成
-                  </Button>
                   {!isMobile && (
                     <Button
                       type="button"
@@ -1889,19 +1925,81 @@ export function WishlistCardDetail({
                   )}
                 </div>
               </div>
-              <textarea
-                value={draftDescription}
-                onChange={e => setDraftDescription(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault()
-                    handleSaveMemo()
-                  }
-                }}
-                rows={5}
-                placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
-                className="h-32 w-full resize-none overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring md:h-40"
-              />
+              <div className="relative">
+                <textarea
+                  value={draftDescription}
+                  onChange={e => setDraftDescription(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault()
+                      handleSaveMemo()
+                    }
+                  }}
+                  rows={5}
+                  placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
+                  className="h-32 w-full resize-none overflow-y-auto rounded-md border border-input bg-background px-3 pb-12 pt-2 text-sm outline-none focus:ring-2 focus:ring-ring md:h-40"
+                />
+                <div className="absolute bottom-2 right-2 flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant={isMemoRecording ? "destructive" : "outline"}
+                    size="icon"
+                    onClick={() => void handleMemoVoiceToggle()}
+                    disabled={isMemoTranscribing}
+                    className="h-9 w-9 rounded-md bg-background/95 shadow-sm"
+                    aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                    title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                  >
+                    {isMemoTranscribing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : isMemoRecording ? (
+                      <Square className="h-4 w-4" />
+                    ) : (
+                      <Mic className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleGenerateTitle()}
+                    disabled={isGeneratingTitle || !draftDescription.trim()}
+                    className="h-9 gap-1.5 rounded-md bg-background/95 px-2.5 text-xs shadow-sm"
+                    aria-label="本文から見出し生成"
+                    title="本文から見出し生成"
+                  >
+                    {isGeneratingTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    見出し生成
+                  </Button>
+                </div>
+              </div>
+              {(isMemoRecording || isMemoTranscribing || memoVoiceError) && (
+                <div className="flex min-h-8 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
+                  {isMemoRecording && (
+                    <>
+                      <span className="font-medium text-destructive">録音中</span>
+                      <VoiceWaveform analyserRef={memoVoiceAnalyserRef} height={20} barCount={20} />
+                    </>
+                  )}
+                  {isMemoTranscribing && (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>文字起こし中...</span>
+                    </>
+                  )}
+                  {memoVoiceError && <span className="min-w-0 flex-1 text-destructive">{memoVoiceError}</span>}
+                  {memoVoicePermissionState === "denied" && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleOpenMicrophoneSettings}
+                      className="h-8 gap-1 text-xs"
+                    >
+                      <SettingsIcon className="h-3.5 w-3.5" /> 設定を開く
+                    </Button>
+                  )}
+                </div>
+              )}
               {draftDescription && (
                 <div className="max-h-24 overflow-y-auto rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
                   {linkify(draftDescription)}
@@ -2020,7 +2118,7 @@ export function WishlistCardDetail({
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-foreground">画像を追加</div>
                         <p className="text-xs leading-4">
-                          フォルダー選択 / ドラッグ&ドロップ
+                          {isMobile ? "写真を選択 / 撮影" : "フォルダー選択 / ドラッグ&ドロップ"}
                         </p>
                       </div>
                     </button>

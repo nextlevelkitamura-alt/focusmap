@@ -201,8 +201,11 @@ export default function App() {
               style={styles.webView}
               applicationNameForUserAgent="FocusmapIOS"
               allowsBackForwardNavigationGestures
+              allowsInlineMediaPlayback
               domStorageEnabled
               javaScriptEnabled
+              mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
+              mediaPlaybackRequiresUserAction={false}
               pullToRefreshEnabled={false}
               setSupportMultipleWindows={false}
               sharedCookiesEnabled

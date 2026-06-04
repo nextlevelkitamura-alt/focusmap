@@ -14,8 +14,17 @@
       "buildNumber": "1",
       "supportsTablet": false,
       "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
         "CFBundleDisplayName": "Focusmap",
+        "CFBundleDevelopmentRegion": "ja",
+        "CFBundleLocalizations": [
+          "ja"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "メモに写真を添付するためにカメラを使用します。",
+        "NSMicrophoneUsageDescription": "音声入力でメモ本文を作成するためにマイクを使用します。",
+        "NSPhotoLibraryAddUsageDescription": "メモに添付した画像を写真ライブラリへ保存するために使用します。",
+        "NSPhotoLibraryUsageDescription": "メモに添付する画像を写真ライブラリから選択するために使用します。",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
