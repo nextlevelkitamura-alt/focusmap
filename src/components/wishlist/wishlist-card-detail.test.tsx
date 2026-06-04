@@ -72,6 +72,10 @@ function DetailHarness() {
 describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    })
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ attachments: [] }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -93,5 +97,103 @@ describe('WishlistCardDetail', () => {
       expect(screen.getByDisplayValue('Draft title')).toBeInTheDocument()
       expect(screen.getByDisplayValue('Draft body')).toBeInTheDocument()
     })
+  })
+
+  test('画像エリアでフォルダー選択・ドラッグ&ドロップ・クリップボード貼り付け導線を表示する', async () => {
+    render(<DetailHarness />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+
+    expect(screen.getByText('画像を追加')).toBeInTheDocument()
+    expect(screen.getByText('クリックしてフォルダーから選択、またはドラッグ&ドロップ')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
+  })
+
+  test('画像をドロップすると添付APIへアップロードする', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          attachment: {
+            id: 'image-1',
+            file_name: 'memo.png',
+            file_url: 'https://example.com/memo.png',
+            file_type: 'image/png',
+            file_size: 4,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+
+    const dropZone = screen.getByText('画像を追加').closest('button')
+    expect(dropZone).toBeTruthy()
+    fireEvent.drop(dropZone!, {
+      dataTransfer: {
+        files: [new File(['data'], 'memo.png', { type: 'image/png' })],
+      },
+    })
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/wishlist/memo-1/attachments',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(await screen.findByAltText('memo.png')).toBeInTheDocument()
+  })
+
+  test('クリップボード画像を貼り付けると添付APIへアップロードする', async () => {
+    const clipboardRead = vi.fn(async () => [{
+      types: ['image/png'],
+      getType: vi.fn(async () => new Blob(['data'], { type: 'image/png' })),
+    }])
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { read: clipboardRead },
+    })
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          attachment: {
+            id: 'image-clipboard',
+            file_name: 'clipboard.png',
+            file_url: 'https://example.com/clipboard.png',
+            file_type: 'image/png',
+            file_size: 4,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ }))
+
+    await waitFor(() => {
+      expect(clipboardRead).toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/wishlist/memo-1/attachments',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(await screen.findByAltText('clipboard.png')).toBeInTheDocument()
   })
 })

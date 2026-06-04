@@ -17,6 +17,12 @@ import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
+const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
+  "image/gif": "gif",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+}
 
 type StructuredMemoItem = {
   id: string
@@ -181,6 +187,13 @@ function combineDateTime(dateValue: string, timeValue: string) {
   const date = new Date(year, month - 1, day, hour, minute)
   if (Number.isNaN(date.getTime())) return null
   return date.toISOString()
+}
+
+function buildClipboardImageFile(blob: Blob, index: number) {
+  const normalizedType = blob.type || "image/png"
+  const extension = CLIPBOARD_IMAGE_EXTENSION_BY_TYPE[normalizedType] ?? normalizedType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") ?? "png"
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+  return new File([blob], `clipboard-image-${timestamp}-${index + 1}.${extension}`, { type: normalizedType })
 }
 
 function getActiveMindmapLink(item: StructuredMemoItem) {
@@ -750,6 +763,8 @@ export function WishlistCardDetail({
   const sentAtRef = useRef<number | null>(null)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [isPastingClipboardImage, setIsPastingClipboardImage] = useState(false)
+  const [isImageDragActive, setIsImageDragActive] = useState(false)
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
@@ -1280,13 +1295,58 @@ export function WishlistCardDetail({
       }
       if (uploaded.length > 0) {
         setImages(prev => [...prev, ...uploaded])
-        setActiveDetailPanel(null)
+        setActiveDetailPanel("images")
       }
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "画像の保存に失敗しました")
     } finally {
       setIsUploadingImage(false)
+    }
+  }
+
+  const handleImageDrop = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsImageDragActive(false)
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) void uploadImages(files)
+  }
+
+  const handleImageDragOver = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "copy"
+    if (!isImageDragActive) setIsImageDragActive(true)
+  }
+
+  const handlePasteClipboardImage = async () => {
+    if (typeof navigator === "undefined") return
+    const clipboard = navigator.clipboard as (Clipboard & { read?: () => Promise<ClipboardItem[]> }) | undefined
+    if (!clipboard?.read) {
+      setSaveError("このブラウザではクリップボード画像の読み取りに対応していません。画像ファイルを選択してください")
+      return
+    }
+
+    setIsPastingClipboardImage(true)
+    setSaveError(null)
+    try {
+      const clipboardItems = await clipboard.read()
+      const files: File[] = []
+      for (const clipboardItem of clipboardItems) {
+        const imageType = clipboardItem.types.find(type => type.startsWith("image/"))
+        if (!imageType) continue
+        const blob = await clipboardItem.getType(imageType)
+        files.push(buildClipboardImageFile(blob, files.length))
+      }
+      if (files.length === 0) {
+        setSaveError("クリップボードに画像がありません")
+        return
+      }
+      await uploadImages(files)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "クリップボード画像の貼り付けに失敗しました")
+    } finally {
+      setIsPastingClipboardImage(false)
     }
   }
 
@@ -1536,16 +1596,42 @@ export function WishlistCardDetail({
               )}
 
               {activeDetailPanel === "images" && (
-                <div className="rounded-md border bg-background p-3">
+                <div className="space-y-3 rounded-md border bg-background p-3">
                   <button
                     type="button"
+                    disabled={isUploadingImage || isPastingClipboardImage}
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingImage}
-                    className="flex min-h-[64px] w-full items-center justify-center gap-2 rounded-md border border-dashed text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-60"
+                    onDragOver={handleImageDragOver}
+                    onDragEnter={handleImageDragOver}
+                    onDragLeave={() => setIsImageDragActive(false)}
+                    onDrop={handleImageDrop}
+                    className={cn(
+                      "flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition-colors",
+                      "bg-muted/10 text-muted-foreground hover:border-primary/60 hover:bg-primary/5 hover:text-foreground",
+                      isImageDragActive && "border-primary/80 bg-primary/10 text-foreground ring-2 ring-primary/20",
+                      (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
+                    )}
                   >
-                    {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                    画像を追加
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-background/80">
+                      {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-sm font-semibold text-foreground">画像を追加</div>
+                      <p className="text-xs leading-5">
+                        クリックしてフォルダーから選択、またはドラッグ&ドロップ
+                      </p>
+                    </div>
                   </button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isUploadingImage || isPastingClipboardImage}
+                    onClick={() => void handlePasteClipboardImage()}
+                    className="min-h-10 w-full gap-2 border-emerald-500/40 text-sm text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15"
+                  >
+                    {isPastingClipboardImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                    クリップボード画像を貼り付け
+                  </Button>
                   <input
                     ref={fileInputRef}
                     type="file"
