@@ -48,7 +48,7 @@ function createMemoItem(overrides: Partial<IdealGoalWithItems> = {}): IdealGoalW
   } as IdealGoalWithItems
 }
 
-function DetailHarness() {
+function DetailHarness({ isPersisting = false }: { isPersisting?: boolean } = {}) {
   const [item, setItem] = useState<IdealGoalWithItems>(createMemoItem())
 
   return (
@@ -64,6 +64,7 @@ function DetailHarness() {
         }) as IdealGoalWithItems)
       }}
       onCalendarAdd={vi.fn()}
+      isPersisting={isPersisting}
       tagOptions={['仕事', 'アイデア']}
     />
   )
@@ -115,6 +116,14 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByText('画像を追加')).toBeInTheDocument()
     expect(screen.getByText('フォルダー選択 / ドラッグ&ドロップ')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
+  })
+
+  test('メモ作成中でも保存ボタンを塞がない', async () => {
+    render(<DetailHarness isPersisting />)
+
+    expect(await screen.findByText('作成中')).toBeInTheDocument()
+    const saveButton = screen.getByRole('button', { name: /メモを保存/ })
+    expect(saveButton).toBeEnabled()
   })
 
   test('画像をドロップすると添付APIへアップロードする', async () => {

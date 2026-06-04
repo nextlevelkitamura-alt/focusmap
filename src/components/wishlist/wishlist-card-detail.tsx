@@ -1875,14 +1875,22 @@ export function WishlistCardDetail({
             </div>
           )}
 
-          <Button
-            onClick={handleSaveMemo}
-            disabled={isPersisting || isSavingMemo || !draftTitle.trim()}
-            className="w-full min-h-[44px]"
-          >
-            {isPersisting || isSavingMemo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
-            {isPersisting ? "メモを作成中..." : "メモを保存"}
-          </Button>
+          <div className="space-y-2">
+            {isPersisting && (
+              <div className="flex min-h-[32px] items-center justify-center gap-2 rounded-md border bg-muted/30 px-3 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                作成中
+              </div>
+            )}
+            <Button
+              onClick={handleSaveMemo}
+              disabled={isSavingMemo || !draftTitle.trim()}
+              className="w-full min-h-[44px]"
+            >
+              {isSavingMemo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+              {isSavingMemo ? "保存中..." : "メモを保存"}
+            </Button>
+          </div>
 
             </div>
 
