@@ -519,6 +519,50 @@ function buildMemoCreatePayload(item: MemoItem): Record<string, unknown> {
   }
 }
 
+function isRetryableRequestError(error: unknown) {
+  if (!(error instanceof Error)) return false
+  if (error.name === "AbortError") return true
+  return /Failed to fetch|NetworkError|Load failed/i.test(error.message)
+}
+
+async function createWishlistMemo(payload: Record<string, unknown>) {
+  const maxRetries = 2
+  const baseDelayMs = 300
+  let attempt = 0
+
+  while (attempt <= maxRetries) {
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "メモの作成に失敗しました")
+      }
+      if (!data.item) {
+        throw new Error("作成結果を取得できませんでした")
+      }
+
+      return data.item as MemoItem
+    } catch (err) {
+      if (attempt < maxRetries && isRetryableRequestError(err)) {
+        await new Promise(resolve => {
+          const delayMs = baseDelayMs * Math.pow(2, attempt)
+          window.setTimeout(resolve, delayMs)
+        })
+        attempt += 1
+        continue
+      }
+      throw err
+    }
+  }
+
+  throw new Error("メモの作成に失敗しました")
+}
+
 export function WishlistView({
   projects = [],
   spaces = [],
@@ -1165,20 +1209,9 @@ export function WishlistView({
   }, [linkedMemoFocus])
 
   const restoreMemoItem = useCallback(async (item: MemoItem) => {
-    const res = await fetch("/api/wishlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildMemoCreatePayload(item)),
-    })
-    const data = await res.json()
-    if (!res.ok || data.error) {
-      throw new Error(data.error || "メモの復元に失敗しました")
-    }
-    if (!data.item) {
-      throw new Error("復元結果を取得できませんでした")
-    }
+    const itemFromServer = await createWishlistMemo(buildMemoCreatePayload(item))
     invalidateWishlistItemsCache()
-    return data.item as MemoItem
+    return itemFromServer
   }, [])
 
   const removeMemoItemFromServer = useCallback(async (id: string) => {
@@ -1337,19 +1370,7 @@ export function WishlistView({
     setTagFilter("all")
     setDetailOpen(true)
     try {
-      const res = await fetch("/api/wishlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildMemoCreatePayload(draftItem)),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "メモの作成に失敗しました")
-      }
-      if (!data.item) {
-        throw new Error("作成結果を取得できませんでした")
-      }
-      const item = data.item as MemoItem
+      const item = await createWishlistMemo(buildMemoCreatePayload(draftItem))
       const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
       pendingCreateUpdatesRef.current.delete(draftItem.id)
       const nextItem = pendingUpdates
@@ -1421,19 +1442,7 @@ export function WishlistView({
     setSelectedItem(draftItem)
     setDetailOpen(true)
     try {
-      const res = await fetch("/api/wishlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildMemoCreatePayload(draftItem)),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "メモの追加に失敗しました")
-      }
-      if (!data.item) {
-        throw new Error("追加結果を取得できませんでした")
-      }
-      const item = data.item as MemoItem
+      const item = await createWishlistMemo(buildMemoCreatePayload(draftItem))
       const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
       pendingCreateUpdatesRef.current.delete(draftItem.id)
       const nextItem = pendingUpdates
@@ -1536,32 +1545,20 @@ export function WishlistView({
       ? getMobileColumnCreateOverrides(mobileTargetColumn, baseAiSourcePayload)
       : {}
     try {
-      const res = await fetch("/api/wishlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: suggestion.title,
-          project_id: suggestion.project_id ?? selectedProjectId,
-          category: suggestion.category,
-          tags: suggestion.tags,
-          description: suggestion.description,
-          time_candidates: suggestion.time_candidates,
-          subtask_suggestions: suggestion.subtask_suggestions,
-          scheduled_at: scheduledAt,
-          duration_minutes: durationMinutes,
-          memo_status: scheduledAt ? "time_candidates" : "unsorted",
-          ai_source_payload: baseAiSourcePayload,
-          ...mobileColumnOverrides,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "メモの保存に失敗しました")
-      }
-      if (!data.item) {
-        throw new Error("保存結果を取得できませんでした")
-      }
-      const item = data.item as MemoItem
+      const item = await createWishlistMemo({
+        title: suggestion.title,
+        project_id: suggestion.project_id ?? selectedProjectId,
+        category: suggestion.category,
+        tags: suggestion.tags,
+        description: suggestion.description,
+        time_candidates: suggestion.time_candidates,
+        subtask_suggestions: suggestion.subtask_suggestions,
+        scheduled_at: scheduledAt,
+        duration_minutes: durationMinutes,
+        memo_status: scheduledAt ? "time_candidates" : "unsorted",
+        ai_source_payload: baseAiSourcePayload,
+        ...mobileColumnOverrides,
+      }) as MemoItem
       invalidateWishlistItemsCache()
       setItems(prev => [item, ...prev])
       setTagFilter("all")

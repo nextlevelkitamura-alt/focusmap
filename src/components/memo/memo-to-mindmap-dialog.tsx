@@ -67,6 +67,50 @@ const KIND_LABEL: Record<MindmapDraftTriageItem["kind"], string> = {
   task: "タスク",
 }
 
+function isRetryableRequestError(error: unknown) {
+  if (!(error instanceof Error)) return false
+  if (error.name === "AbortError") return true
+  return /Failed to fetch|NetworkError|Load failed/i.test(error.message)
+}
+
+async function createWishlistMemo(payload: Record<string, unknown>) {
+  const maxRetries = 2
+  const baseDelayMs = 300
+  let attempt = 0
+
+  while (attempt <= maxRetries) {
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "会話ログの保存に失敗しました")
+      }
+      const id = data?.item?.id
+      if (typeof id !== "string") {
+        throw new Error("保存した会話ログのIDを取得できませんでした")
+      }
+      return id
+    } catch (err) {
+      if (attempt < maxRetries && isRetryableRequestError(err)) {
+        await new Promise(resolve => {
+          const delayMs = baseDelayMs * Math.pow(2, attempt)
+          window.setTimeout(resolve, delayMs)
+        })
+        attempt += 1
+        continue
+      }
+      throw err
+    }
+  }
+
+  throw new Error("会話ログの保存に失敗しました")
+}
+
 function ensureKindPrefix(item: Pick<MindmapDraftTriageItem, "kind" | "title">) {
   const title = item.title.trim()
   if (/^(方針|決定|論点|タスク)[:：]\s*/.test(title)) return title
@@ -186,26 +230,18 @@ export function MemoToMindmapDialog({
     }
     if (createdConversationMemoId) return createdConversationMemoId
 
-    const res = await fetch("/api/wishlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: buildConversationLogTitle(text),
-        description: text,
-        project_id: target !== NEW_PROJECT ? target : defaultProjectId,
-        status: "memo",
-        memo_status: "unsorted",
-        ai_source_payload: {
-          input_type: "conversation_log",
-          original_length: text.length,
-          imported_at: new Date().toISOString(),
-        },
-      }),
+    const id = await createWishlistMemo({
+      title: buildConversationLogTitle(text),
+      description: text,
+      project_id: target !== NEW_PROJECT ? target : defaultProjectId,
+      status: "memo",
+      memo_status: "unsorted",
+      ai_source_payload: {
+        input_type: "conversation_log",
+        original_length: text.length,
+        imported_at: new Date().toISOString(),
+      },
     })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data?.error || "会話ログの保存に失敗しました")
-    const id = data?.item?.id
-    if (typeof id !== "string") throw new Error("保存した会話ログのIDを取得できませんでした")
     setCreatedConversationMemoId(id)
     return id
   }, [conversationLog, createdConversationMemoId, target, defaultProjectId])

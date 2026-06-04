@@ -176,6 +176,50 @@ function isWritableCalendar(accessLevel: string | null | undefined) {
   return accessLevel === "owner" || accessLevel === "writer"
 }
 
+function isRetryableRequestError(error: unknown) {
+  if (!(error instanceof Error)) return false
+  if (error.name === "AbortError") return true
+  return /Failed to fetch|NetworkError|Load failed/i.test(error.message)
+}
+
+async function createWishlistMemo(payload: Record<string, unknown>) {
+  const maxRetries = 2
+  const baseDelayMs = 300
+  let attempt = 0
+
+  while (attempt <= maxRetries) {
+    try {
+      const res = await fetch("/api/wishlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "メモの作成に失敗しました")
+      }
+      if (!data.item) {
+        throw new Error("作成結果を取得できませんでした")
+      }
+
+      return data.item as MemoItem
+    } catch (err) {
+      if (attempt < maxRetries && isRetryableRequestError(err)) {
+        await new Promise(resolve => {
+          const delayMs = baseDelayMs * Math.pow(2, attempt)
+          window.setTimeout(resolve, delayMs)
+        })
+        attempt += 1
+        continue
+      }
+      throw err
+    }
+  }
+
+  throw new Error("メモの作成に失敗しました")
+}
+
 function readScheduledMemoPayload(event: DragEvent<HTMLElement>): ScheduledMemoDragPayload | null {
   const raw = event.dataTransfer.getData(SCHEDULED_MEMO_DRAG_MIME)
   if (raw) {
@@ -629,28 +673,16 @@ export function TodayMemoBoard({
     setIsCreatingMemo(true)
     setError(null)
     try {
-      const res = await fetch("/api/wishlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          project_id: selectedProjectId,
-          description,
-          category: "アイデア",
-          tags: ["アイデア"],
-          memo_status: "unsorted",
-          is_today: true,
-          duration_minutes: 30,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "メモの作成に失敗しました")
-      }
-      if (!data.item) {
-        throw new Error("作成結果を取得できませんでした")
-      }
-      const item = data.item as MemoItem
+      const item = await createWishlistMemo({
+        title,
+        project_id: selectedProjectId,
+        description,
+        category: "アイデア",
+        tags: ["アイデア"],
+        memo_status: "unsorted",
+        is_today: true,
+        duration_minutes: 30,
+      }) as MemoItem
       invalidateWishlistItemsCache()
       setItems(curr => curr.some(existing => existing.id === item.id) ? curr : [item, ...curr])
       setCreateDialogOpen(false)
