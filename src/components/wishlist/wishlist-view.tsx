@@ -1795,11 +1795,11 @@ export function WishlistView({
     }
   }
 
-  const handleCalendarAdd = useCallback(async (item: MemoItem) => {
+  const handleCalendarAdd = useCallback(async (item: MemoItem, calendarIdOverride?: string) => {
     const optimisticEventId = `optimistic-wishlist-${item.id}`
     const startTime = item.scheduled_at ? new Date(item.scheduled_at) : null
     const durationMinutes = item.duration_minutes ?? 60
-    const calendarId = targetCalendarId
+    const calendarId = calendarIdOverride ?? targetCalendarId
 
     if (startTime && !Number.isNaN(startTime.getTime())) {
       if (item.google_event_id) {
@@ -2958,10 +2958,11 @@ export function WishlistView({
         open={detailOpen}
         onOpenChange={setDetailOpen}
         onUpdate={handleUpdate}
-        onCalendarAdd={async item => { await handleCalendarAdd(item) }}
+        onCalendarAdd={async (item, calendarId) => { await handleCalendarAdd(item, calendarId) }}
         onSaved={() => setDetailOpen(false)}
         tagOptions={allTags}
         projects={projects}
+        calendars={calendars}
         tagColors={tagColors}
         onLaunchCodex={launchCodexForMemo}
         onCopyCodexPrompt={copyCodexPromptForMemo}

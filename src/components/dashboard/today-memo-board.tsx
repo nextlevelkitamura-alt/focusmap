@@ -778,12 +778,14 @@ export function TodayMemoBoard({
     }
   }, [items, selectedMemoId])
 
-  const handleCalendarAdd = useCallback(async (item: MemoItem) => {
+  const handleCalendarAdd = useCallback(async (item: MemoItem, calendarIdOverride?: string) => {
     const optimisticEventId = `optimistic-today-memo-${item.id}`
     const startTime = item.scheduled_at ? new Date(item.scheduled_at) : null
     const durationMinutes = item.duration_minutes ?? 60
-    const calendarId = targetCalendar?.google_calendar_id ?? "primary"
-    const calendarColor = targetCalendar?.background_color ?? "#F59E0B"
+    const calendarId = calendarIdOverride ?? targetCalendar?.google_calendar_id ?? "primary"
+    const calendarColor = calendars.find(calendar => calendar.google_calendar_id === calendarId)?.background_color
+      ?? targetCalendar?.background_color
+      ?? "#F59E0B"
 
     if (startTime && !Number.isNaN(startTime.getTime())) {
       if (item.google_event_id) {
@@ -844,7 +846,7 @@ export function TodayMemoBoard({
       setError(e instanceof Error ? e.message : "カレンダー追加に失敗しました")
       throw e
     }
-  }, [handleUpdate, targetCalendar])
+  }, [calendars, handleUpdate, targetCalendar])
 
   const handleUnscheduleMemo = useCallback(async (item: MemoItem, calendarIdOverride?: string) => {
     const prev = items
@@ -1293,12 +1295,13 @@ export function TodayMemoBoard({
         onUpdate={async (id, updates) => {
           await handleUpdate(id, updates as Partial<MemoItem>)
         }}
-        onCalendarAdd={async item => {
-          await handleCalendarAdd(item as MemoItem)
+        onCalendarAdd={async (item, calendarId) => {
+          await handleCalendarAdd(item as MemoItem, calendarId)
         }}
         onSaved={() => setSelectedMemoId(null)}
         tagOptions={tagOptions}
         projects={projects}
+        calendars={calendars}
         onMemoChanged={() => {
           invalidateWishlistItemsCache()
           void fetchItems()

@@ -1,11 +1,13 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Calendar, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Minus, Network, Plus, Search, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
+import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Network, Plus, Search, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
 import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
+import { Calendar as DateCalendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
@@ -15,8 +17,11 @@ import { Settings as SettingsIcon } from "lucide-react"
 import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
+import type { UserCalendar } from "@/hooks/useCalendars"
 
-const QUICK_MINUTES = [30, 45, 60, 90]
+const QUICK_MINUTES = [5, 15, 30, 60, 120]
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
+const MINUTE_OPTIONS = [0, 15, 30, 45]
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
@@ -86,10 +91,11 @@ interface WishlistCardDetailProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onUpdate: (id: string, updates: Record<string, unknown>) => Promise<void>
-  onCalendarAdd: (item: IdealGoalWithItems) => Promise<void>
+  onCalendarAdd: (item: IdealGoalWithItems, calendarId?: string) => Promise<void>
   onSaved?: () => void
   tagOptions: string[]
   projects?: Project[]
+  calendars?: UserCalendar[]
   tagColors?: Record<string, string>
   onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
   onLaunchCodex?: (item: IdealGoalWithItems) => Promise<void>
@@ -149,50 +155,36 @@ function formatTimeValue(value: string | null | undefined) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
 }
 
-function buildDateOptions(selectedValue: string) {
-  const formatter = new Intl.DateTimeFormat("ja-JP", {
+function formatLocalDateValue(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-")
+}
+
+function formatDateTriggerLabel(value: string) {
+  if (!value) return "未設定"
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat("ja-JP", {
     month: "numeric",
     day: "numeric",
     weekday: "short",
-  })
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const options = Array.from({ length: 21 }, (_, index) => {
-    const date = new Date(today)
-    date.setDate(today.getDate() + index)
-    const value = [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, "0"),
-      String(date.getDate()).padStart(2, "0"),
-    ].join("-")
-    const prefix = index === 0 ? "今日" : index === 1 ? "明日" : index === 2 ? "明後日" : ""
-    return {
-      value,
-      label: prefix ? `${prefix} ${formatter.format(date)}` : formatter.format(date),
-    }
-  })
-  if (selectedValue && !options.some(option => option.value === selectedValue)) {
-    const date = new Date(`${selectedValue}T00:00:00`)
-    options.unshift({
-      value: selectedValue,
-      label: Number.isNaN(date.getTime()) ? selectedValue : formatter.format(date),
-    })
-  }
-  return options
+  }).format(date)
 }
 
-function buildTimeOptions(selectedValue: string) {
-  const options = Array.from({ length: 96 }, (_, index) => {
-    const minutes = index * 15
-    const hour = Math.floor(minutes / 60)
-    const minute = minutes % 60
-    const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
-    return { value, label: value }
-  })
-  if (selectedValue && !options.some(option => option.value === selectedValue)) {
-    options.unshift({ value: selectedValue, label: selectedValue })
+function formatDurationLabel(minutes: number | null | undefined) {
+  if (!minutes) return "未設定"
+  if (minutes >= 60) {
+    const hours = minutes / 60
+    return Number.isInteger(hours) ? `${hours}時間` : `${minutes}分`
   }
-  return options
+  return `${minutes}分`
+}
+
+function formatTimePart(value: number) {
+  return String(value).padStart(2, "0")
 }
 
 function combineDateTime(dateValue: string, timeValue: string) {
@@ -777,6 +769,7 @@ export function WishlistCardDetail({
   onSaved,
   tagOptions,
   projects = [],
+  calendars = [],
   tagColors = {},
   onLaunchClaude,
   onLaunchCodex,
@@ -794,9 +787,9 @@ export function WishlistCardDetail({
   const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
   const [launchExecutor, setLaunchExecutor] = useState<'claude' | 'codex' | 'codex_app' | null>(null)
   const [isCodexPanelOpen, setIsCodexPanelOpen] = useState(false)
-  const [activeDetailPanel, setActiveDetailPanel] = useState<"tags" | "images" | null>(null)
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [elapsedSecs, setElapsedSecs] = useState(0)
+  const [selectedCalendarId, setSelectedCalendarId] = useState("primary")
   const sentAtRef = useRef<number | null>(null)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -822,6 +815,8 @@ export function WishlistCardDetail({
   const [placementByItemId, setPlacementByItemId] = useState<Record<string, PlacementState>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imagePasteTargetRef = useRef<HTMLDivElement>(null)
+  const sheetScrollRef = useRef<HTMLDivElement>(null)
+  const sheetTouchStartYRef = useRef<number | null>(null)
   const draftSourceIdRef = useRef<string | null>(null)
   const pendingImageUrlsRef = useRef<Set<string>>(new Set())
   const isMobile = useIsMobile()
@@ -842,6 +837,24 @@ export function WishlistCardDetail({
   const tagSuggestions = useMemo(() => {
     return categoryOptions.filter(tag => !selectedTags.includes(tag))
   }, [categoryOptions, selectedTags])
+  const calendarOptions = useMemo(() => {
+    const writable = calendars.filter(calendar => (
+      calendar.google_calendar_id &&
+      (calendar.access_level === "owner" || calendar.access_level === "writer")
+    ))
+    const selectedWritable = writable.filter(calendar => calendar.selected)
+    const source = selectedWritable.length > 0 ? selectedWritable : writable.length > 0 ? writable : calendars
+    const options = source
+      .filter(calendar => calendar.google_calendar_id)
+      .map(calendar => ({
+        id: calendar.google_calendar_id,
+        name: calendar.name || (calendar.is_primary ? "Google" : calendar.google_calendar_id),
+        color: calendar.background_color ?? calendar.color ?? "#3F51B5",
+        primary: calendar.is_primary,
+      }))
+    if (options.length > 0) return options
+    return [{ id: "primary", name: "Google", color: "#3F51B5", primary: true }]
+  }, [calendars])
 
   const releasePendingImage = useCallback((image: PendingMemoImage) => {
     const previewUrl = image.file_url
@@ -983,13 +996,21 @@ export function WishlistCardDetail({
     setDraftTitle(itemTitle)
     setDraftDescription(itemDescription)
     setSaveError(null)
-    setActiveDetailPanel(null)
     setIsCodexPanelOpen(false)
     setPendingImages(prev => {
       prev.forEach(releasePendingImage)
       return []
     })
   }, [itemId, itemTitle, itemDescription, open, releasePendingImage])
+
+  useEffect(() => {
+    if (!open) return
+    setSelectedCalendarId(prev => (
+      prev && calendarOptions.some(calendar => calendar.id === prev)
+        ? prev
+        : calendarOptions[0]?.id ?? "primary"
+    ))
+  }, [calendarOptions, open])
 
   useEffect(() => {
     const pendingImageUrls = pendingImageUrlsRef.current
@@ -1059,19 +1080,18 @@ export function WishlistCardDetail({
 
   const dateValue = formatDateValue(item.scheduled_at)
   const timeValue = formatTimeValue(item.scheduled_at)
-  const dateOptions = buildDateOptions(dateValue)
-  const timeOptions = buildTimeOptions(timeValue)
   const showStructureTools = false
 
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
   const selectedProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
   const selectedProjectColor = selectedProject ? normalizeColor(selectedProject.color_theme, DEFAULT_PROJECT_COLOR) : DEFAULT_PROJECT_COLOR
   const displayedImages: Array<MemoImage | PendingMemoImage> = [...pendingImages, ...images]
-
-  const changeDuration = async (delta: number) => {
-    const current = item.duration_minutes ?? 60
-    await update({ duration_minutes: Math.max(15, current + delta) })
-  }
+  const scheduledDate = item.scheduled_at ? new Date(item.scheduled_at) : undefined
+  const validScheduledDate = scheduledDate && !Number.isNaN(scheduledDate.getTime()) ? scheduledDate : undefined
+  const selectedHour = timeValue ? Number(timeValue.slice(0, 2)) : 9
+  const selectedMinute = timeValue ? Number(timeValue.slice(3, 5)) : 0
+  const selectedCalendar = calendarOptions.find(calendar => calendar.id === selectedCalendarId) ?? calendarOptions[0]
+  const canAddCalendar = Boolean(item.scheduled_at && item.duration_minutes && selectedCalendar?.id)
 
   const handleScheduleChange = async (nextDateValue: string, nextTimeValue: string) => {
     const scheduledAt = combineDateTime(nextDateValue, nextTimeValue)
@@ -1081,15 +1101,52 @@ export function WishlistCardDetail({
     })
   }
 
+  const handleDateSelect = async (date: Date | undefined) => {
+    if (!date) return
+    await handleScheduleChange(formatLocalDateValue(date), timeValue || "09:00")
+  }
+
+  const handleTimeSelect = async (hour: number, minute: number) => {
+    const nextDateValue = dateValue || formatLocalDateValue(new Date())
+    await handleScheduleChange(nextDateValue, `${formatTimePart(hour)}:${formatTimePart(minute)}`)
+  }
+
+  const handleCustomDuration = async () => {
+    const value = window.prompt("所要時間を分で入力してください", String(item.duration_minutes ?? 60))
+    if (value == null) return
+    const minutes = Number.parseInt(value, 10)
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      setSaveError("所要時間は分単位の数字で入力してください")
+      return
+    }
+    setSaveError(null)
+    await update({ duration_minutes: minutes })
+  }
+
+  const handleGenerateTitle = () => {
+    const body = draftDescription.trim()
+    if (!body) {
+      setSaveError("見出しを生成するにはメモ本文を入力してください")
+      return
+    }
+    const firstSentence = body
+      .replace(/\s+/g, " ")
+      .split(/[。.!！?？\n]/)
+      .find(part => part.trim().length > 0)
+      ?.trim()
+    const generated = (firstSentence || body).slice(0, 32)
+    setDraftTitle(generated)
+    setSaveError(null)
+  }
+
   const handleAddCalendar = async () => {
-    if (!item.scheduled_at || !item.duration_minutes) {
+    if (!item.scheduled_at || !item.duration_minutes || !selectedCalendar?.id) {
       alert("日時と所要時間を入力してからカレンダーに追加してください。")
       return
     }
-    if (!window.confirm("このメモをGoogleカレンダーに登録しますか？")) return
     setIsAddingCalendar(true)
     try {
-      await onCalendarAdd(item)
+      await onCalendarAdd(item, selectedCalendar.id)
       await update({ memo_status: "scheduled" })
     } finally {
       setIsAddingCalendar(false)
@@ -1339,7 +1396,6 @@ export function WishlistCardDetail({
     } else {
       await update({ tags: [...tags, tag] })
     }
-    setActiveDetailPanel(null)
   }
 
   const handleAddTag = async () => {
@@ -1363,7 +1419,6 @@ export function WishlistCardDetail({
     const pendingUploads = createPendingImages(imageFiles)
     const pendingIds = new Set(pendingUploads.map(image => image.id))
     setPendingImages(prev => [...pendingUploads, ...prev])
-    setActiveDetailPanel("images")
     setIsUploadingImage(true)
     setSaveError(null)
     try {
@@ -1489,6 +1544,23 @@ export function WishlistCardDetail({
     }
   }
 
+  const handleSheetTouchStart = (event: React.TouchEvent<HTMLElement>) => {
+    if (!isMobile) return
+    sheetTouchStartYRef.current = event.touches[0]?.clientY ?? null
+  }
+
+  const handleSheetTouchEnd = (event: React.TouchEvent<HTMLElement>) => {
+    if (!isMobile) return
+    const startY = sheetTouchStartYRef.current
+    sheetTouchStartYRef.current = null
+    if (startY == null) return
+    const endY = event.changedTouches[0]?.clientY ?? startY
+    const scrollTop = sheetScrollRef.current?.scrollTop ?? 0
+    if (endY - startY > 110 && scrollTop <= 2) {
+      onOpenChange(false)
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -1503,6 +1575,8 @@ export function WishlistCardDetail({
               ]
             : "w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1280px,calc(100vw-32px))] sm:px-6"
         )}
+        onTouchStart={handleSheetTouchStart}
+        onTouchEnd={handleSheetTouchEnd}
       >
         {isMobile && (
           <div className="flex justify-center pb-0.5 pt-1.5">
@@ -1514,13 +1588,15 @@ export function WishlistCardDetail({
           <SheetTitle className={cn("text-left", isMobile && "pr-12 text-base text-neutral-50")}>メモを編集</SheetTitle>
         </SheetHeader>
 
-        <div className={cn(
+        <div
+          ref={sheetScrollRef}
+          className={cn(
           isMobile
-            ? "min-h-0 flex-1 overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]"
+            ? "min-h-0 flex-1 overflow-y-auto px-4 pb-0"
             : "grid gap-4 pb-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)] xl:items-start"
         )}>
-          <div className={cn("min-w-0", isMobile ? "space-y-3" : "space-y-4")}>
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2">
+          <div className={cn("min-w-0", isMobile ? "flex flex-col gap-3" : "contents")}>
+          <div className="order-0 grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2 xl:col-start-1 xl:row-start-1">
             <label className="min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
               <Input
@@ -1554,85 +1630,186 @@ export function WishlistCardDetail({
               </label>
             </div>
 
-            <div className="space-y-2 rounded-lg border bg-background/40 p-3">
+            <div className="order-4 space-y-3 rounded-lg border bg-background/40 p-3 xl:col-start-2 xl:row-start-1">
               <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1">
+                <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">日付</span>
-                  <div className="relative flex min-h-[44px] items-center rounded-md border bg-background px-2">
-                    <Calendar className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <select
-                      value={dateValue}
-                      onChange={e => handleScheduleChange(e.target.value, timeValue || "09:00")}
-                      className="h-10 min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm outline-none"
-                      aria-label="日付"
-                    >
-                      <option value="">未設定</option>
-                      {dateOptions.map(option => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2 h-4 w-4 text-muted-foreground" />
-                  </div>
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground">時刻</span>
-                  <div className="relative flex min-h-[44px] items-center rounded-md border bg-background px-2">
-                    <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <select
-                      value={timeValue}
-                      onChange={e => handleScheduleChange(dateValue, e.target.value)}
-                      disabled={!dateValue}
-                      className="h-10 min-w-0 flex-1 appearance-none bg-transparent pr-6 text-sm outline-none disabled:text-muted-foreground"
-                      aria-label="時刻"
-                    >
-                      <option value="">未設定</option>
-                      {timeOptions.map(option => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2 h-4 w-4 text-muted-foreground" />
-                  </div>
-                </label>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="icon" onClick={() => changeDuration(-15)} className="min-h-[44px] min-w-[44px]">
-                  <Minus className="h-4 w-4" />
-                </Button>
-                <div className="flex min-h-[44px] min-w-20 items-center justify-center rounded-md border bg-background text-sm font-medium">
-                  {item.duration_minutes ?? 60}分
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className={cn("min-w-0 flex-1 truncate", !dateValue && "text-muted-foreground")}>
+                          {formatDateTriggerLabel(dateValue)}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-[min(21rem,calc(100vw-2rem))] p-2">
+                      <DateCalendar
+                        mode="single"
+                        selected={validScheduledDate}
+                        onSelect={date => void handleDateSelect(date)}
+                        className="p-0"
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
-                <Button variant="outline" size="icon" onClick={() => changeDuration(15)} className="min-h-[44px] min-w-[44px]">
-                  <Plus className="h-4 w-4" />
-                </Button>
-                <div className="grid min-w-0 flex-1 basis-full grid-cols-4 gap-1 sm:basis-auto">
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">時刻</span>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+                      >
+                        <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className={cn("min-w-0 flex-1 truncate", !timeValue && "text-muted-foreground")}>
+                          {timeValue || "未設定"}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] p-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="max-h-44 overflow-y-auto rounded-md border bg-background/70 p-1">
+                          {HOUR_OPTIONS.map(hour => (
+                            <button
+                              key={hour}
+                              type="button"
+                              onClick={() => void handleTimeSelect(hour, selectedMinute)}
+                              className={cn(
+                                "flex h-9 w-full items-center justify-center rounded text-sm tabular-nums transition-colors",
+                                hour === selectedHour ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                              )}
+                            >
+                              {formatTimePart(hour)}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="max-h-44 overflow-y-auto rounded-md border bg-background/70 p-1">
+                          {MINUTE_OPTIONS.map(minute => (
+                            <button
+                              key={minute}
+                              type="button"
+                              onClick={() => void handleTimeSelect(selectedHour, minute)}
+                              className={cn(
+                                "flex h-9 w-full items-center justify-center rounded text-sm tabular-nums transition-colors",
+                                minute === selectedMinute ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                              )}
+                            >
+                              {formatTimePart(minute)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">所要時間</span>
+                  <span className="text-xs text-muted-foreground">{formatDurationLabel(item.duration_minutes)}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
                   {QUICK_MINUTES.map(minutes => (
                     <button
                       key={minutes}
                       type="button"
                       onClick={() => update({ duration_minutes: minutes })}
                       className={cn(
-                        "min-h-9 rounded-md border px-2 text-xs transition-colors",
-                        item.duration_minutes === minutes ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                        "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
+                        item.duration_minutes === minutes ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      {minutes}分
+                      {formatDurationLabel(minutes)}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => void handleCustomDuration()}
+                    className={cn(
+                      "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
+                      item.duration_minutes && !QUICK_MINUTES.includes(item.duration_minutes) ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    カスタム
+                  </button>
                 </div>
               </div>
-              <Button
-                onClick={handleAddCalendar}
-                disabled={isAddingCalendar || !item.scheduled_at || !item.duration_minutes}
-                variant={item.google_event_id ? "outline" : "default"}
-                className="w-full min-h-[44px]"
-              >
-                {isAddingCalendar ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Calendar className="mr-2 h-4 w-4" />}
-                {item.google_event_id ? "カレンダー登録済み" : "カレンダーに入れる"}
-              </Button>
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex min-h-[42px] min-w-0 items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+                    >
+                      <span
+                        className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{selectedCalendar?.name ?? "Google"}</span>
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[min(18rem,calc(100vw-2rem))] p-1.5">
+                    {calendarOptions.map(calendar => (
+                      <button
+                        key={calendar.id}
+                        type="button"
+                        onClick={() => setSelectedCalendarId(calendar.id)}
+                        className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                      >
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: calendar.color }} />
+                        <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
+                        {calendar.primary && <span className="text-[10px] text-muted-foreground">主</span>}
+                        {calendar.id === selectedCalendarId && <Check className="h-4 w-4 text-primary" />}
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  onClick={handleAddCalendar}
+                  disabled={isAddingCalendar || !canAddCalendar}
+                  variant={item.google_event_id ? "outline" : "default"}
+                  className="min-h-[42px] shrink-0 px-3"
+                >
+                  {isAddingCalendar ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarIcon className="mr-1.5 h-4 w-4" />}
+                  {item.google_event_id ? "登録済み" : "予定を追加"}
+                </Button>
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <Label>メモ</Label>
+            <div className="order-1 space-y-1 xl:col-start-1 xl:row-start-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>メモ</Label>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleGenerateTitle}
+                    className="h-8 gap-1.5 px-2 text-xs"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    見出し生成
+                  </Button>
+                  {!isMobile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => void navigator.clipboard?.writeText(draftDescription)}
+                      className="h-8 gap-1.5 px-2 text-xs text-muted-foreground"
+                      disabled={!draftDescription.trim()}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      コピー
+                    </Button>
+                  )}
+                </div>
+              </div>
               <textarea
                 value={draftDescription}
                 onChange={e => setDraftDescription(e.target.value)}
@@ -1642,86 +1819,29 @@ export function WishlistCardDetail({
                     handleSaveMemo()
                   }
                 }}
-                rows={6}
+                rows={5}
                 placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
-                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                className="h-32 w-full resize-none overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring md:h-40"
               />
               {draftDescription && (
-                <div className="rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
+                <div className="max-h-24 overflow-y-auto rounded-md bg-muted/40 p-2 text-xs leading-5 text-muted-foreground">
                   {linkify(draftDescription)}
                 </div>
               )}
             </div>
 
-            <div className="space-y-2 rounded-lg border bg-background/40 p-3">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveDetailPanel(panel => panel === "tags" ? null : "tags")}
-                  className={cn(
-                    "flex min-h-[48px] items-center justify-between rounded-md border px-3 text-left text-sm transition-colors",
-                    activeDetailPanel === "tags" ? "border-primary bg-primary/10 text-foreground" : "bg-background text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <span className="font-medium">タグ</span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{selectedTags.length}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveDetailPanel(panel => panel === "images" ? null : "images")}
-                  className={cn(
-                    "flex min-h-[48px] items-center justify-between rounded-md border px-3 text-left text-sm transition-colors",
-                    activeDetailPanel === "images" ? "border-primary bg-primary/10 text-foreground" : "bg-background text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <span className="font-medium">画像</span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{displayedImages.length}</span>
-                </button>
+            <div className="order-2 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-1 xl:row-start-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="flex items-center gap-1.5">
+                  <ImagePlus className="h-4 w-4" />
+                  画像
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{displayedImages.length}</span>
+                </Label>
+                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-8 gap-1.5 px-2 text-xs">
+                  <Plus className="h-3.5 w-3.5" />
+                  追加
+                </Button>
               </div>
-
-              {activeDetailPanel === "tags" && (
-                <div className="space-y-3 rounded-md border bg-background p-3">
-                  <div className="flex gap-2">
-                    <Input
-                      value={tagText}
-                      onChange={e => setTagText(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          void handleAddTag()
-                        }
-                      }}
-                      placeholder="タグを追加"
-                      className="h-11"
-                    />
-                    <Button variant="outline" onClick={() => void handleAddTag()} className="h-11 shrink-0">追加</Button>
-                  </div>
-                  {tagSuggestions.length > 0 && (
-                    <div className="grid grid-cols-2 gap-2">
-                      {tagSuggestions.map(tag => {
-                        const color = getTagColor(tag, tagColors)
-                        return (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => void addTagValue(tag)}
-                            className="min-h-[44px] rounded-md border px-3 text-left text-sm font-medium"
-                            style={{
-                              borderColor: colorToRgba(color, 0.45),
-                              backgroundColor: colorToRgba(color, 0.1),
-                              color,
-                            }}
-                          >
-                            {tag}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeDetailPanel === "images" && (
                 <div
                   ref={imagePasteTargetRef}
                   tabIndex={-1}
@@ -1799,7 +1919,7 @@ export function WishlistCardDetail({
                       })}
                     </div>
                   )}
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className={cn("grid gap-2", !isMobile && "sm:grid-cols-2")}>
                     <button
                       type="button"
                       disabled={isUploadingImage || isPastingClipboardImage}
@@ -1825,26 +1945,28 @@ export function WishlistCardDetail({
                         </p>
                       </div>
                     </button>
-                    <button
-                      type="button"
-                      disabled={isUploadingImage || isPastingClipboardImage}
-                      onClick={() => void handlePasteClipboardImage()}
-                      className={cn(
-                        "flex min-h-[68px] cursor-pointer items-center justify-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors",
-                        "border-emerald-500/35 bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15",
-                        (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
-                      )}
-                    >
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-500/35 bg-background/80">
-                        {isPastingClipboardImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold">クリップボード画像を貼り付け</div>
-                        <p className="text-xs leading-4 text-emerald-700/80 dark:text-emerald-300/80">
-                          クリック / Cmd+V
-                        </p>
-                      </div>
-                    </button>
+                    {!isMobile && (
+                      <button
+                        type="button"
+                        disabled={isUploadingImage || isPastingClipboardImage}
+                        onClick={() => void handlePasteClipboardImage()}
+                        className={cn(
+                          "flex min-h-[68px] cursor-pointer items-center justify-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors",
+                          "border-emerald-500/35 bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15",
+                          (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
+                        )}
+                      >
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-500/35 bg-background/80">
+                          {isPastingClipboardImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold">クリップボード画像を貼り付け</div>
+                          <p className="text-xs leading-4 text-emerald-700/80 dark:text-emerald-300/80">
+                            クリック / Cmd+V
+                          </p>
+                        </div>
+                      </button>
+                    )}
                   </div>
                   {imagePasteNotice && (
                     <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs leading-5 text-emerald-700 dark:text-emerald-300">
@@ -1863,8 +1985,62 @@ export function WishlistCardDetail({
                     }}
                   />
                 </div>
-              )}
+            </div>
 
+            <div className="order-5 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-2 xl:row-start-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="flex items-center gap-1.5">
+                  タグ
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{selectedTags.length}</span>
+                </Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" aria-label="タグを追加" className="h-8 gap-1.5 px-2 text-xs">
+                      <Plus className="h-3.5 w-3.5" />
+                      追加
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] space-y-3 p-3">
+                    <div className="flex gap-2">
+                      <Input
+                        value={tagText}
+                        onChange={e => setTagText(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            void handleAddTag()
+                          }
+                        }}
+                        placeholder="新規タグ"
+                        className="h-10"
+                      />
+                      <Button variant="outline" onClick={() => void handleAddTag()} className="h-10 shrink-0 px-3">追加</Button>
+                    </div>
+                    {tagSuggestions.length > 0 && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {tagSuggestions.map(tag => {
+                          const color = getTagColor(tag, tagColors)
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => void addTagValue(tag)}
+                              className="min-h-[40px] rounded-md border px-3 text-left text-sm font-medium"
+                              style={{
+                                borderColor: colorToRgba(color, 0.45),
+                                backgroundColor: colorToRgba(color, 0.1),
+                                color,
+                              }}
+                            >
+                              {tag}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              </div>
               {selectedTags.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {selectedTags.map(tag => {
@@ -1887,16 +2063,18 @@ export function WishlistCardDetail({
                   })}
                 </div>
               )}
-
             </div>
 
           {saveError && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div className="order-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-start-1">
               {saveError}
             </div>
           )}
 
-          <div className="space-y-2">
+          <div className={cn(
+            "order-7 space-y-2 xl:col-start-1",
+            isMobile && "sticky bottom-0 z-20 -mx-4 border-t border-neutral-800 bg-neutral-950/95 px-4 py-3 backdrop-blur",
+          )}>
             <Button
               onClick={handleSaveMemo}
               disabled={isSavingMemo || !draftTitle.trim()}
@@ -1909,7 +2087,7 @@ export function WishlistCardDetail({
 
             </div>
 
-            <div className={cn("min-w-0", isMobile ? "mt-3 space-y-3" : "space-y-4 xl:sticky xl:top-0")}>
+            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:sticky xl:top-0 xl:col-start-2 xl:row-start-3")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">

@@ -98,7 +98,7 @@ describe('WishlistCardDetail', () => {
 
     fireEvent.change(titleInput, { target: { value: 'Draft title' } })
     fireEvent.change(bodyInput, { target: { value: 'Draft body' } })
-    fireEvent.click(screen.getByRole('button', { name: /タグ/ }))
+    fireEvent.click(screen.getByRole('button', { name: /タグを追加/ }))
     fireEvent.click(screen.getByRole('button', { name: '仕事' }))
 
     await waitFor(() => {
@@ -110,9 +110,7 @@ describe('WishlistCardDetail', () => {
   test('画像エリアでフォルダー選択・ドラッグ&ドロップ・クリップボード貼り付け導線を表示する', async () => {
     render(<DetailHarness />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
-
-    expect(screen.getByText('画像を追加')).toBeInTheDocument()
+    expect(await screen.findByText('画像を追加')).toBeInTheDocument()
     expect(screen.getByText('フォルダー選択 / ドラッグ&ドロップ')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
   })
@@ -149,9 +147,8 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
 
-    const dropZone = screen.getByText('画像を追加').closest('button')
+    const dropZone = (await screen.findByText('画像を追加')).closest('button')
     expect(dropZone).toBeTruthy()
     fireEvent.drop(dropZone!, {
       dataTransfer: {
@@ -195,9 +192,8 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
 
-    const dropZone = screen.getByText('画像を追加').closest('button')
+    const dropZone = (await screen.findByText('画像を追加')).closest('button')
     expect(dropZone).toBeTruthy()
     fireEvent.drop(dropZone!, {
       dataTransfer: {
@@ -248,7 +244,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
     expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle('削除'))
@@ -297,7 +292,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
     expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle('削除'))
@@ -345,7 +339,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
     fireEvent.click(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ }))
 
     await waitFor(() => {
@@ -382,7 +375,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
     fireEvent.paste(screen.getByTestId('memo-image-paste-target'), {
       clipboardData: {
         files: [new File(['data'], 'pasted-event.png', { type: 'image/png' })],
