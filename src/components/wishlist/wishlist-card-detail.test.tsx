@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { IdealGoalWithItems } from '@/types/database'
 import { WishlistCardDetail } from './wishlist-card-detail'
@@ -76,6 +76,14 @@ describe('WishlistCardDetail', () => {
       configurable: true,
       value: undefined,
     })
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:memo-image-preview'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ attachments: [] }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -105,7 +113,7 @@ describe('WishlistCardDetail', () => {
     fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
 
     expect(screen.getByText('画像を追加')).toBeInTheDocument()
-    expect(screen.getByText('クリックしてフォルダーから選択、またはドラッグ&ドロップ')).toBeInTheDocument()
+    expect(screen.getByText('フォルダー選択 / ドラッグ&ドロップ')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
   })
 
@@ -150,6 +158,151 @@ describe('WishlistCardDetail', () => {
       )
     })
     expect(await screen.findByAltText('memo.png')).toBeInTheDocument()
+  })
+
+  test('アップロード完了前に薄いローカルプレビューを表示する', async () => {
+    let resolveUpload: (() => void) | null = null
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>(resolve => {
+          resolveUpload = () => resolve(new Response(JSON.stringify({
+            attachment: {
+              id: 'image-slow',
+              file_name: 'slow.png',
+              file_url: 'https://example.com/slow.png',
+              file_type: 'image/png',
+              file_size: 4,
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }))
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+
+    const dropZone = screen.getByText('画像を追加').closest('button')
+    expect(dropZone).toBeTruthy()
+    fireEvent.drop(dropZone!, {
+      dataTransfer: {
+        files: [new File(['data'], 'slow.png', { type: 'image/png' })],
+      },
+    })
+
+    expect(await screen.findByAltText('slow.png')).toBeInTheDocument()
+    expect(screen.getByTestId('pending-memo-image')).toHaveClass('opacity-45')
+    expect(screen.getByText('保存中')).toBeInTheDocument()
+
+    resolveUpload?.()
+    await waitFor(() => {
+      expect(screen.queryByText('保存中')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('pending-memo-image')).not.toBeInTheDocument()
+    })
+    expect(await screen.findByAltText('slow.png')).toBeInTheDocument()
+  })
+
+  test('画像削除はDELETE完了前にサムネイルを消す', async () => {
+    let resolveDelete: (() => void) | null = null
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/wishlist/memo-1/attachments/image-existing' && init?.method === 'DELETE') {
+        return new Promise<Response>(resolve => {
+          resolveDelete = () => resolve(new Response(null, { status: 204 }))
+        })
+      }
+      if (url === '/api/wishlist/memo-1/attachments') {
+        return new Response(JSON.stringify({
+          attachments: [{
+            id: 'image-existing',
+            file_name: 'existing.png',
+            file_url: 'https://example.com/existing.png',
+            file_type: 'image/png',
+            file_size: 4,
+          }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+    expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('削除'))
+
+    await waitFor(() => {
+      expect(screen.queryByAltText('existing.png')).not.toBeInTheDocument()
+    })
+    expect(fetchMock).toHaveBeenCalledWith('/api/wishlist/memo-1/attachments/image-existing', { method: 'DELETE' })
+    await act(async () => {
+      resolveDelete?.()
+      await Promise.resolve()
+    })
+  })
+
+  test('画像削除に失敗したらサムネイルを戻す', async () => {
+    let resolveDelete: (() => void) | null = null
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/wishlist/memo-1/attachments/image-existing' && init?.method === 'DELETE') {
+        return new Promise<Response>(resolve => {
+          resolveDelete = () => resolve(new Response(JSON.stringify({ error: 'delete failed' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }))
+        })
+      }
+      if (url === '/api/wishlist/memo-1/attachments') {
+        return new Response(JSON.stringify({
+          attachments: [{
+            id: 'image-existing',
+            file_name: 'existing.png',
+            file_url: 'https://example.com/existing.png',
+            file_type: 'image/png',
+            file_size: 4,
+          }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+    expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('削除'))
+    await waitFor(() => {
+      expect(screen.queryByAltText('existing.png')).not.toBeInTheDocument()
+    })
+
+    await act(async () => {
+      resolveDelete?.()
+      await Promise.resolve()
+    })
+    expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
+    expect(screen.getByText('画像の削除に失敗しました')).toBeInTheDocument()
   })
 
   test('クリップボード画像を貼り付けると添付APIへアップロードする', async () => {

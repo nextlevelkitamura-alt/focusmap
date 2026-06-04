@@ -76,6 +76,10 @@ interface MemoImage {
   file_size: number
 }
 
+type PendingMemoImage = MemoImage & {
+  is_pending: true
+}
+
 interface WishlistCardDetailProps {
   item: IdealGoalWithItems | null
   open: boolean
@@ -212,6 +216,10 @@ function getImageFilesFromClipboardData(clipboardData: DataTransfer | null | und
     seen.add(key)
     return true
   })
+}
+
+function createPendingImageId(file: File, index: number) {
+  return `pending-${Date.now()}-${index}-${file.name}`
 }
 
 function getActiveMindmapLink(item: StructuredMemoItem) {
@@ -791,6 +799,7 @@ export function WishlistCardDetail({
   const [newSubItem, setNewSubItem] = useState("")
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
+  const [pendingImages, setPendingImages] = useState<PendingMemoImage[]>([])
   const [structuredItems, setStructuredItems] = useState<StructuredMemoItem[]>([])
   const [isLoadingStructure, setIsLoadingStructure] = useState(false)
   const [isStructuringMemo, setIsStructuringMemo] = useState(false)
@@ -803,6 +812,7 @@ export function WishlistCardDetail({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imagePasteTargetRef = useRef<HTMLDivElement>(null)
   const draftSourceIdRef = useRef<string | null>(null)
+  const pendingImageUrlsRef = useRef<Set<string>>(new Set())
   const isMobile = useIsMobile()
 
   const tags = useMemo(() => item?.tags ?? [], [item?.tags])
@@ -821,6 +831,32 @@ export function WishlistCardDetail({
   const tagSuggestions = useMemo(() => {
     return categoryOptions.filter(tag => !selectedTags.includes(tag))
   }, [categoryOptions, selectedTags])
+
+  const releasePendingImage = useCallback((image: PendingMemoImage) => {
+    const previewUrl = image.file_url
+    if (!previewUrl || !pendingImageUrlsRef.current.has(previewUrl)) return
+    if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(previewUrl)
+    }
+    pendingImageUrlsRef.current.delete(previewUrl)
+  }, [])
+
+  const createPendingImages = useCallback((files: File[]) => {
+    return files.map((file, index): PendingMemoImage => {
+      const previewUrl = typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : ""
+      if (previewUrl) pendingImageUrlsRef.current.add(previewUrl)
+      return {
+        id: createPendingImageId(file, index),
+        file_name: file.name,
+        file_url: previewUrl,
+        file_type: file.type,
+        file_size: file.size,
+        is_pending: true,
+      }
+    })
+  }, [])
 
   const loadImages = useCallback(async () => {
     if (!item?.id || !open) return
@@ -938,7 +974,23 @@ export function WishlistCardDetail({
     setSaveError(null)
     setActiveDetailPanel(null)
     setIsCodexPanelOpen(false)
-  }, [itemId, itemTitle, itemDescription, open])
+    setPendingImages(prev => {
+      prev.forEach(releasePendingImage)
+      return []
+    })
+  }, [itemId, itemTitle, itemDescription, open, releasePendingImage])
+
+  useEffect(() => {
+    const pendingImageUrls = pendingImageUrlsRef.current
+    return () => {
+      pendingImageUrls.forEach(previewUrl => {
+        if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(previewUrl)
+        }
+      })
+      pendingImageUrls.clear()
+    }
+  }, [])
 
   useEffect(() => {
     loadImages()
@@ -1003,6 +1055,7 @@ export function WishlistCardDetail({
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
   const selectedProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
   const selectedProjectColor = selectedProject ? normalizeColor(selectedProject.color_theme, DEFAULT_PROJECT_COLOR) : DEFAULT_PROJECT_COLOR
+  const displayedImages: Array<MemoImage | PendingMemoImage> = [...pendingImages, ...images]
 
   const changeDuration = async (delta: number) => {
     const current = item.duration_minutes ?? 60
@@ -1296,11 +1349,15 @@ export function WishlistCardDetail({
       setSaveError("画像ファイルを選択してください")
       return
     }
+    const pendingUploads = createPendingImages(imageFiles)
+    const pendingIds = new Set(pendingUploads.map(image => image.id))
+    setPendingImages(prev => [...pendingUploads, ...prev])
+    setActiveDetailPanel("images")
     setIsUploadingImage(true)
     setSaveError(null)
     try {
-      const uploaded: MemoImage[] = []
-      for (const file of imageFiles) {
+      for (const [index, file] of imageFiles.entries()) {
+        const pendingImage = pendingUploads[index]
         const formData = new FormData()
         formData.append("file", file)
         const res = await fetch(`/api/wishlist/${item.id}/attachments`, {
@@ -1311,15 +1368,20 @@ export function WishlistCardDetail({
         if (!res.ok || data.error) {
           throw new Error(data.error || "画像の保存に失敗しました")
         }
-        if (data.attachment) uploaded.push(data.attachment as MemoImage)
-      }
-      if (uploaded.length > 0) {
-        setImages(prev => [...prev, ...uploaded])
-        setActiveDetailPanel("images")
+        if (!data.attachment) {
+          throw new Error("画像の保存結果を取得できませんでした")
+        }
+        setImages(prev => [...prev, data.attachment as MemoImage])
+        if (pendingImage) {
+          releasePendingImage(pendingImage)
+          setPendingImages(prev => prev.filter(image => image.id !== pendingImage.id))
+        }
         setImagePasteNotice(null)
       }
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch (err) {
+      pendingUploads.forEach(releasePendingImage)
+      setPendingImages(prev => prev.filter(image => !pendingIds.has(image.id)))
       setSaveError(err instanceof Error ? err.message : "画像の保存に失敗しました")
     } finally {
       setIsUploadingImage(false)
@@ -1384,13 +1446,22 @@ export function WishlistCardDetail({
     }
   }
 
-  const handleImageDelete = async (imageId: string) => {
-    setDeletingImageId(imageId)
+  const handleImageDelete = async (imageToDelete: MemoImage) => {
+    const previousIndex = images.findIndex(image => image.id === imageToDelete.id)
+    setDeletingImageId(imageToDelete.id)
+    setSaveError(null)
+    setImages(prev => prev.filter(image => image.id !== imageToDelete.id))
     try {
-      const res = await fetch(`/api/wishlist/${item.id}/attachments/${imageId}`, { method: "DELETE" })
+      const res = await fetch(`/api/wishlist/${item.id}/attachments/${imageToDelete.id}`, { method: "DELETE" })
       if (!res.ok) throw new Error("画像の削除に失敗しました")
-      setImages(prev => prev.filter(image => image.id !== imageId))
     } catch (err) {
+      setImages(prev => {
+        if (prev.some(image => image.id === imageToDelete.id)) return prev
+        const next = [...prev]
+        const restoreIndex = previousIndex >= 0 ? Math.min(previousIndex, next.length) : next.length
+        next.splice(restoreIndex, 0, imageToDelete)
+        return next
+      })
       setSaveError(err instanceof Error ? err.message : "画像の削除に失敗しました")
     } finally {
       setDeletingImageId(null)
@@ -1583,7 +1654,7 @@ export function WishlistCardDetail({
                   )}
                 >
                   <span className="font-medium">画像</span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{images.length}</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{displayedImages.length}</span>
                 </button>
               </div>
 
@@ -1637,7 +1708,77 @@ export function WishlistCardDetail({
                   onPaste={handleImagePaste}
                   className="space-y-3 rounded-md border bg-background p-3 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35"
                 >
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  {displayedImages.length > 0 && (
+                    <div className="-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3">
+                      {displayedImages.map(image => {
+                        const isPending = "is_pending" in image
+                        return (
+                          <div
+                            key={image.id}
+                            data-testid={isPending ? "pending-memo-image" : undefined}
+                            className={cn(
+                              "relative w-24 shrink-0 overflow-hidden rounded-md border bg-muted/20 transition-opacity",
+                              isPending && "opacity-45",
+                            )}
+                          >
+                            {isPending ? (
+                              <div className="block">
+                                {image.file_url ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={image.file_url} alt={image.file_name} className="h-20 w-24 object-cover" />
+                                ) : (
+                                  <div className="flex h-20 w-24 items-center justify-center bg-muted/30">
+                                    <ImagePlus className="h-5 w-5 text-muted-foreground" />
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <a
+                                href={image.file_url}
+                                download={image.file_name}
+                                target="_blank"
+                                rel="noreferrer"
+                                onDoubleClick={e => e.currentTarget.click()}
+                                title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={image.file_url} alt={image.file_name} className="h-20 w-24 object-cover" />
+                              </a>
+                            )}
+                            {isPending ? (
+                              <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-background/80 px-1 py-1 text-[11px] font-medium text-muted-foreground backdrop-blur">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                保存中
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-0.5 px-1 py-0.5">
+                                <a
+                                  href={image.file_url}
+                                  download={image.file_name}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="rounded p-1 text-muted-foreground hover:text-foreground"
+                                  title="保存"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => handleImageDelete(image)}
+                                  disabled={deletingImageId === image.id}
+                                  className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-60"
+                                  title="削除"
+                                >
+                                  {deletingImageId === image.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <button
                       type="button"
                       disabled={isUploadingImage || isPastingClipboardImage}
@@ -1647,19 +1788,19 @@ export function WishlistCardDetail({
                       onDragLeave={() => setIsImageDragActive(false)}
                       onDrop={handleImageDrop}
                       className={cn(
-                        "flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition-colors",
+                        "flex min-h-[68px] cursor-pointer items-center justify-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left transition-colors",
                         "bg-muted/10 text-muted-foreground hover:border-primary/60 hover:bg-primary/5 hover:text-foreground",
                         isImageDragActive && "border-primary/80 bg-primary/10 text-foreground ring-2 ring-primary/20",
                         (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
                       )}
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-background/80">
-                        {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-background/80">
+                        {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0">
                         <div className="text-sm font-semibold text-foreground">画像を追加</div>
-                        <p className="text-xs leading-5">
-                          クリックしてフォルダーから選択、またはドラッグ&ドロップ
+                        <p className="text-xs leading-4">
+                          フォルダー選択 / ドラッグ&ドロップ
                         </p>
                       </div>
                     </button>
@@ -1668,18 +1809,18 @@ export function WishlistCardDetail({
                       disabled={isUploadingImage || isPastingClipboardImage}
                       onClick={() => void handlePasteClipboardImage()}
                       className={cn(
-                        "flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border px-4 py-5 text-center transition-colors",
+                        "flex min-h-[68px] cursor-pointer items-center justify-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors",
                         "border-emerald-500/35 bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15",
                         (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
                       )}
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/35 bg-background/80">
-                        {isPastingClipboardImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <Copy className="h-5 w-5" />}
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-500/35 bg-background/80">
+                        {isPastingClipboardImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
                       </div>
-                      <div className="space-y-1">
+                      <div className="min-w-0">
                         <div className="text-sm font-semibold">クリップボード画像を貼り付け</div>
-                        <p className="text-xs leading-5 text-emerald-700/80 dark:text-emerald-300/80">
-                          画像をコピー済みならクリック、またはこのまま Cmd+V
+                        <p className="text-xs leading-4 text-emerald-700/80 dark:text-emerald-300/80">
+                          クリック / Cmd+V
                         </p>
                       </div>
                     </button>
@@ -1726,46 +1867,6 @@ export function WishlistCardDetail({
                 </div>
               )}
 
-              {images.length > 0 && (
-                <div className="-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3">
-                  {images.map(image => (
-                    <div key={image.id} className="w-24 shrink-0 overflow-hidden rounded-md border bg-muted/20">
-                      <a
-                        href={image.file_url}
-                        download={image.file_name}
-                        target="_blank"
-                        rel="noreferrer"
-                        onDoubleClick={e => e.currentTarget.click()}
-                        title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={image.file_url} alt={image.file_name} className="h-20 w-24 object-cover" />
-                      </a>
-                      <div className="flex items-center justify-end gap-0.5 px-1 py-0.5">
-                        <a
-                          href={image.file_url}
-                          download={image.file_name}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded p-1 text-muted-foreground hover:text-foreground"
-                          title="保存"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => handleImageDelete(image.id)}
-                          disabled={deletingImageId === image.id}
-                          className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-60"
-                          title="削除"
-                        >
-                          {deletingImageId === image.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
           {saveError && (
