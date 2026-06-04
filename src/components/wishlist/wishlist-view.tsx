@@ -1,7 +1,18 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react"
-import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd"
+import {
+  DragDropContext,
+  Droppable,
+  Draggable,
+  useKeyboardSensor,
+  useMouseSensor,
+  type DropResult,
+  type FluidDragActions,
+  type PreDragActions,
+  type Sensor,
+  type SensorAPI,
+} from "@hello-pangea/dnd"
 import { LINKED_TASK_STATUS_EVENT, TODAY_DURATION_DEFAULT, WISHLIST_REFRESH_EVENT } from "@/lib/calendar-constants"
 import { Calendar, Check, ChevronDown, Clock, Loader2, Mic, MoreHorizontal, Network, Plus, RefreshCw, Settings, Sparkles, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -134,6 +145,144 @@ const SHOW_MEMO_MINDMAP_ENTRY = false
 const POSTGRES_INTEGER_MIN = -2147483648
 const POSTGRES_INTEGER_MAX = 2147483647
 const CREATE_MEMO_TIMEOUT_MS = 15_000
+const MEMO_TOUCH_DRAG_DELAY_MS = 420
+const MEMO_TOUCH_SCROLL_CANCEL_PX = 10
+const MEMO_HORIZONTAL_COLUMN_DRAG_PX = 76
+
+type DragPoint = { x: number; y: number }
+type DelayedTouchPhase =
+  | { type: "IDLE" }
+  | { type: "PENDING"; actions: PreDragActions; point: DragPoint; timerId: number }
+  | { type: "DRAGGING"; actions: FluidDragActions; hasMoved: boolean }
+
+const idleTouchPhase: DelayedTouchPhase = { type: "IDLE" }
+
+function getTouchPoint(event: TouchEvent): DragPoint | null {
+  const touch = event.touches[0] ?? event.changedTouches[0]
+  return touch ? { x: touch.clientX, y: touch.clientY } : null
+}
+
+function useDelayedMemoTouchSensor(api: SensorAPI) {
+  const phaseRef = useRef<DelayedTouchPhase>(idleTouchPhase)
+  const unbindRef = useRef<(() => void) | null>(null)
+
+  const unbind = useCallback(() => {
+    unbindRef.current?.()
+    unbindRef.current = null
+  }, [])
+
+  const stop = useCallback(() => {
+    const phase = phaseRef.current
+    if (phase.type === "PENDING") {
+      window.clearTimeout(phase.timerId)
+    }
+    phaseRef.current = idleTouchPhase
+    unbind()
+  }, [unbind])
+
+  const cancel = useCallback(() => {
+    const phase = phaseRef.current
+    if (phase.type === "PENDING") phase.actions.abort()
+    if (phase.type === "DRAGGING") phase.actions.cancel({ shouldBlockNextClick: true })
+    stop()
+  }, [stop])
+
+  const startDragging = useCallback((actions: PreDragActions, point: DragPoint) => {
+    const dragActions = actions.fluidLift(point)
+    phaseRef.current = { type: "DRAGGING", actions: dragActions, hasMoved: false }
+  }, [])
+
+  const bindMoveEvents = useCallback(() => {
+    const onTouchMove = (event: TouchEvent) => {
+      const phase = phaseRef.current
+      const point = getTouchPoint(event)
+      if (!point || phase.type === "IDLE") return
+
+      if (phase.type === "PENDING") {
+        const dx = Math.abs(point.x - phase.point.x)
+        const dy = Math.abs(point.y - phase.point.y)
+        if (Math.max(dx, dy) >= MEMO_TOUCH_SCROLL_CANCEL_PX) {
+          phase.actions.abort()
+          stop()
+        }
+        return
+      }
+
+      event.preventDefault()
+      phase.hasMoved = true
+      phase.actions.move(point)
+    }
+
+    const onTouchEnd = (event: TouchEvent) => {
+      const phase = phaseRef.current
+      if (phase.type === "PENDING") {
+        phase.actions.abort()
+        stop()
+        return
+      }
+      if (phase.type !== "DRAGGING") return
+
+      event.preventDefault()
+      phase.actions.drop({ shouldBlockNextClick: true })
+      stop()
+    }
+
+    const onTouchCancel = (event: TouchEvent) => {
+      if (phaseRef.current.type === "DRAGGING") event.preventDefault()
+      cancel()
+    }
+
+    const onContextMenu = (event: Event) => {
+      if (phaseRef.current.type !== "IDLE") event.preventDefault()
+    }
+
+    window.addEventListener("touchmove", onTouchMove, { passive: false })
+    window.addEventListener("touchend", onTouchEnd, { passive: false })
+    window.addEventListener("touchcancel", onTouchCancel, { passive: false })
+    window.addEventListener("contextmenu", onContextMenu)
+
+    unbindRef.current = () => {
+      window.removeEventListener("touchmove", onTouchMove)
+      window.removeEventListener("touchend", onTouchEnd)
+      window.removeEventListener("touchcancel", onTouchCancel)
+      window.removeEventListener("contextmenu", onContextMenu)
+    }
+  }, [cancel, stop])
+
+  useEffect(() => {
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.defaultPrevented || event.touches.length !== 1 || phaseRef.current.type !== "IDLE") return
+
+      const draggableId = api.findClosestDraggableId(event)
+      if (!draggableId) return
+
+      const actions = api.tryGetLock(draggableId, cancel, { sourceEvent: event })
+      if (!actions) return
+
+      const point = getTouchPoint(event)
+      if (!point) {
+        actions.abort()
+        return
+      }
+
+      unbind()
+      const timerId = window.setTimeout(() => {
+        const phase = phaseRef.current
+        if (phase.type !== "PENDING") return
+        startDragging(phase.actions, phase.point)
+      }, MEMO_TOUCH_DRAG_DELAY_MS)
+
+      phaseRef.current = { type: "PENDING", actions, point, timerId }
+      bindMoveEvents()
+    }
+
+    window.addEventListener("touchstart", onTouchStart, { capture: true, passive: false })
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart, { capture: true })
+      cancel()
+    }
+  }, [api, bindMoveEvents, cancel, startDragging, unbind])
+}
 
 function isPostgresInteger(value: unknown): value is number {
   return (
@@ -641,6 +790,9 @@ export function WishlistView({
     error: string | null
   } | null>(null)
   const mobileColumnsRef = useRef<HTMLDivElement>(null)
+  const latestDragPointRef = useRef<DragPoint | null>(null)
+  const pointerStartPointRef = useRef<DragPoint | null>(null)
+  const memoColumnDragRef = useRef<{ startPoint: DragPoint | null } | null>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const creatingMemoIdsRef = useRef(new Set<string>())
@@ -650,6 +802,7 @@ export function WishlistView({
   const { calendars } = useCalendars()
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const { pushAction } = useUndoRedo()
+  const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
 
   const openCodexHandoff = useCallback(async (prompt: string, repoPath: string | null) => {
     if (canUseLocalCodexOpenApi() && !isLikelyMobileDevice()) {
@@ -809,6 +962,43 @@ export function WishlistView({
     update()
     query.addEventListener("change", update)
     return () => query.removeEventListener("change", update)
+  }, [])
+
+  useEffect(() => {
+    const setTouchPoint = (event: TouchEvent) => {
+      const point = getTouchPoint(event)
+      if (!point) return
+      latestDragPointRef.current = point
+    }
+    const setTouchStartPoint = (event: TouchEvent) => {
+      const point = getTouchPoint(event)
+      if (!point) return
+      pointerStartPointRef.current = point
+      latestDragPointRef.current = point
+    }
+    const setMousePoint = (event: MouseEvent) => {
+      latestDragPointRef.current = { x: event.clientX, y: event.clientY }
+    }
+    const setMouseStartPoint = (event: MouseEvent) => {
+      const point = { x: event.clientX, y: event.clientY }
+      pointerStartPointRef.current = point
+      latestDragPointRef.current = point
+    }
+
+    window.addEventListener("touchstart", setTouchStartPoint, { capture: true, passive: true })
+    window.addEventListener("touchmove", setTouchPoint, { capture: true, passive: true })
+    window.addEventListener("touchend", setTouchPoint, { capture: true, passive: true })
+    window.addEventListener("mousedown", setMouseStartPoint, { capture: true })
+    window.addEventListener("mousemove", setMousePoint, { capture: true })
+    window.addEventListener("mouseup", setMousePoint, { capture: true })
+    return () => {
+      window.removeEventListener("touchstart", setTouchStartPoint, { capture: true })
+      window.removeEventListener("touchmove", setTouchPoint, { capture: true })
+      window.removeEventListener("touchend", setTouchPoint, { capture: true })
+      window.removeEventListener("mousedown", setMouseStartPoint, { capture: true })
+      window.removeEventListener("mousemove", setMousePoint, { capture: true })
+      window.removeEventListener("mouseup", setMousePoint, { capture: true })
+    }
   }, [])
 
   const handleMobileColumnsScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
@@ -1914,42 +2104,34 @@ export function WishlistView({
 
   // D&D: ドロップしたカラムキー（droppableId）からカラム遷移を判定し、更新を投げる
   const itemById = useMemo(() => new Map(items.map(item => [item.id, item])), [items])
-  const handleDragEnd = useCallback(async (result: DropResult) => {
-    if (!result.destination) return
-    const { source, destination, draggableId } = result
-    if (source.droppableId === destination.droppableId) return // 同一カラム内は何もしない
-
-    const item = itemById.get(draggableId)
-    if (!item) return
-    const to = destination.droppableId as ColumnKey
-
+  const applyColumnMove = useCallback(async (item: MemoItem, to: ColumnKey, from: ColumnKey): Promise<boolean> => {
     // 「予定済み」へのドロップは時刻設定が必要なので、詳細シートを開いて促す
     if (to === "scheduled") {
       setIntakeError("予定済みにするには時刻を設定してください。詳細を開きました。")
       openDetail(item)
-      return
+      return false
     }
     if (to === "mapped") {
       setIntakeError("マップ追加済みへ入れるには、メモを選択してマップ化してください。")
-      return
+      return false
     }
 
     let updates: Partial<MemoItem> | null = null
     if (to === "today") {
       // unsorted/scheduled/completed → today: is_today=true、completedからの復活は完了解除
-      updates = source.droppableId === "completed"
+      updates = from === "completed"
         ? { is_completed: false, memo_status: "unsorted", is_today: true }
         : { is_today: true }
     } else if (to === "unsorted") {
       // today → unsorted: 確認ダイアログで、未予定へ戻すか別日に予定し直すかを選ぶ
-      if (source.droppableId === "today") {
+      if (from === "today") {
         openTodayRemovalDialog(item)
-        return
+        return false
       }
       // scheduled → unsorted: Google カレンダー予定も含めて予定情報を解除
-      if (source.droppableId === "scheduled") {
+      if (from === "scheduled") {
         await handleUnscheduleMemo(item)
-        return
+        return true
       }
       // completed → unsorted: 完了解除し、予定情報も残さない
       updates = {
@@ -1965,8 +2147,66 @@ export function WishlistView({
 
     if (updates) {
       await handleUpdate(item.id, updates as Record<string, unknown>)
+      return true
     }
-  }, [handleUnscheduleMemo, itemById, handleUpdate, openDetail, openTodayRemovalDialog])
+    return false
+  }, [handleUnscheduleMemo, handleUpdate, openDetail, openTodayRemovalDialog])
+
+  const getHorizontalDragTargetColumn = useCallback((sourceColumn: ColumnKey): ColumnKey | null => {
+    if (!isMobileMemoLayout || linkedMemoFocus) return null
+
+    const gesture = memoColumnDragRef.current
+    const startPoint = gesture?.startPoint
+    const latestPoint = latestDragPointRef.current
+    if (!startPoint || !latestPoint) return null
+
+    const dx = latestPoint.x - startPoint.x
+    const dy = latestPoint.y - startPoint.y
+    const absX = Math.abs(dx)
+    const absY = Math.abs(dy)
+    if (absX < MEMO_HORIZONTAL_COLUMN_DRAG_PX || absX < absY * 1.15) return null
+
+    const currentIndex = MOBILE_COLUMN_ORDER.indexOf(sourceColumn)
+    if (currentIndex < 0) return null
+
+    const columnWidth = mobileColumnsRef.current?.clientWidth ?? 0
+    const stepWidth = Math.max(MEMO_HORIZONTAL_COLUMN_DRAG_PX, columnWidth > 0 ? columnWidth * 0.55 : 180)
+    const steps = Math.max(1, Math.round(absX / stepWidth))
+    const direction = dx < 0 ? 1 : -1
+    const targetIndex = Math.max(0, Math.min(MOBILE_COLUMN_ORDER.length - 1, currentIndex + direction * steps))
+    const target = MOBILE_COLUMN_ORDER[targetIndex]
+    return target && target !== sourceColumn ? target : null
+  }, [isMobileMemoLayout, linkedMemoFocus])
+
+  const handleDragStart = useCallback(() => {
+    memoColumnDragRef.current = {
+      startPoint: pointerStartPointRef.current ? { ...pointerStartPointRef.current } : latestDragPointRef.current ? { ...latestDragPointRef.current } : null,
+    }
+  }, [])
+
+  const handleDragEnd = useCallback(async (result: DropResult) => {
+    const { source, destination, draggableId } = result
+    const sourceColumn = source.droppableId as ColumnKey
+
+    try {
+      const item = itemById.get(draggableId)
+      if (!item) return
+
+      const destinationColumn = destination?.droppableId as ColumnKey | undefined
+      if (destinationColumn && destinationColumn !== sourceColumn) {
+        await applyColumnMove(item, destinationColumn, sourceColumn)
+        return
+      }
+
+      const horizontalTarget = getHorizontalDragTargetColumn(sourceColumn)
+      if (!horizontalTarget) return
+
+      const moved = await applyColumnMove(item, horizontalTarget, sourceColumn)
+      if (moved) scrollToMobileColumn(horizontalTarget)
+    } finally {
+      memoColumnDragRef.current = null
+    }
+  }, [applyColumnMove, getHorizontalDragTargetColumn, itemById, scrollToMobileColumn])
 
   if (isLoading) {
     return (
@@ -2506,7 +2746,12 @@ export function WishlistView({
                 </div>
               )}
               {filteredItems.length > 0 && (
-                <DragDropContext onDragEnd={handleDragEnd}>
+                <DragDropContext
+                  enableDefaultSensors={false}
+                  sensors={memoDndSensors}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                >
                   <MemoSection
                     columnKey="unsorted"
                     title="関連メモ"
@@ -2530,7 +2775,12 @@ export function WishlistView({
               )}
             </div>
           ) : isMobileMemoLayout ? (
-            <DragDropContext onDragEnd={handleDragEnd}>
+            <DragDropContext
+              enableDefaultSensors={false}
+              sensors={memoDndSensors}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
               <div
                 ref={mobileColumnsRef}
                 onScroll={handleMobileColumnsScroll}
@@ -2572,7 +2822,12 @@ export function WishlistView({
               </div>
             </DragDropContext>
           ) : (
-            <DragDropContext onDragEnd={handleDragEnd}>
+            <DragDropContext
+              enableDefaultSensors={false}
+              sensors={memoDndSensors}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
             <div className="mx-auto w-full overflow-x-auto pb-2">
               <div
                 className={cn(

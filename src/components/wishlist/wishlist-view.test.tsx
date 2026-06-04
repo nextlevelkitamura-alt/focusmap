@@ -19,6 +19,8 @@ vi.mock('@hello-pangea/dnd', async () => {
   return {
     DragDropContext: ({ children }: { children: import('react').ReactNode }) =>
       React.createElement('div', null, children),
+    useKeyboardSensor: () => undefined,
+    useMouseSensor: () => undefined,
     Droppable: ({
       children,
     }: {
