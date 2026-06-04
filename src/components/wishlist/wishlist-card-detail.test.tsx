@@ -175,6 +175,29 @@ describe('WishlistCardDetail', () => {
     })
   })
 
+  test('時刻ホイールはタッチスクロールで表示を即時更新して停止位置を保存する', async () => {
+    render(<DetailHarness />)
+
+    const timeField = await screen.findByText('時刻')
+    const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
+    fireEvent.click(timeTrigger)
+
+    const hourColumn = (await screen.findByText('時')).parentElement as HTMLDivElement
+    fireEvent.touchStart(hourColumn, { touches: [{ clientY: 100 }] })
+    fireEvent.touchMove(hourColumn, { touches: [{ clientY: 12 }] })
+    expect(hourColumn.scrollTop).toBe(88)
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+    })
+
+    fireEvent.touchEnd(hourColumn, { changedTouches: [{ clientY: 12 }] })
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+    })
+  })
+
   test('時刻ホイールはネイティブスクロール中にも表示を即時更新する', async () => {
     render(<DetailHarness />)
 

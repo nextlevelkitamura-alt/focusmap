@@ -31,6 +31,8 @@ type DragState = {
   moved: boolean
 }
 
+type TouchDragState = Omit<DragState, "pointerId">
+
 function clampIndex(index: number, length: number) {
   if (length <= 0) return 0
   return Math.max(0, Math.min(index, length - 1))
@@ -40,6 +42,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
   const optionsRef = useRef(options)
 
   const dragRef = useRef<DragState | null>(null)
+  const touchDragRef = useRef<TouchDragState | null>(null)
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dragIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const frameRef = useRef<number | null>(null)
@@ -94,7 +97,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
   }, [])
 
   const scheduleCommit = useCallback((container: HTMLDivElement) => {
-    if (dragRef.current || isMomentumActiveRef.current) return
+    if (dragRef.current || touchDragRef.current || isMomentumActiveRef.current) return
     clearScrollTimer()
     scrollTimerRef.current = window.setTimeout(() => {
       scrollTimerRef.current = null
@@ -141,6 +144,25 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
     frameRef.current = window.requestAnimationFrame(step)
   }, [commitNearest, previewNearest, stopMomentum])
 
+  const finishTouchDrag = useCallback((container: HTMLDivElement) => {
+    const drag = touchDragRef.current
+    if (!drag) return
+
+    touchDragRef.current = null
+    clearDragIdleTimer()
+
+    if (!drag.moved) {
+      scheduleCommit(container)
+      return
+    }
+
+    ignoreNextClickRef.current = true
+    startMomentum(container, drag.velocity)
+    window.setTimeout(() => {
+      ignoreNextClickRef.current = false
+    }, 80)
+  }, [clearDragIdleTimer, scheduleCommit, startMomentum])
+
   const finishDrag = useCallback((container: HTMLDivElement, pointerId?: number) => {
     const drag = dragRef.current
     if (!drag || (pointerId !== undefined && drag.pointerId !== pointerId)) return
@@ -179,20 +201,72 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
 
   const onTouchStart = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
     event.stopPropagation()
+    if (dragRef.current) return
+
+    const touch = event.touches[0]
+    if (!touch) {
+      beginNativeScroll(event.currentTarget)
+      return
+    }
+
     beginNativeScroll(event.currentTarget)
+    touchDragRef.current = {
+      startY: touch.clientY,
+      startScrollTop: event.currentTarget.scrollTop,
+      lastY: touch.clientY,
+      lastAt: performance.now(),
+      velocity: 0,
+      moved: false,
+    }
   }, [beginNativeScroll])
 
   const onTouchMove = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
     event.stopPropagation()
+    if (dragRef.current) return
+
     hasUserInteractedRef.current = true
-    previewNearest(event.currentTarget)
-  }, [previewNearest])
+    const drag = touchDragRef.current
+    const touch = event.touches[0]
+    if (!drag || !touch) {
+      previewNearest(event.currentTarget)
+      return
+    }
+
+    const totalDelta = drag.startY - touch.clientY
+    if (Math.abs(totalDelta) < 2) return
+
+    event.preventDefault()
+
+    const now = performance.now()
+    const dt = Math.max(8, now - drag.lastAt)
+    const stepDelta = drag.lastY - touch.clientY
+    drag.velocity = stepDelta / dt
+    drag.lastY = touch.clientY
+    drag.lastAt = now
+    drag.moved = true
+    ignoreNextClickRef.current = true
+
+    const container = event.currentTarget
+    container.scrollTop = drag.startScrollTop + totalDelta
+    previewNearest(container)
+
+    clearDragIdleTimer()
+    dragIdleTimerRef.current = window.setTimeout(() => {
+      finishTouchDrag(container)
+    }, 140)
+  }, [clearDragIdleTimer, finishTouchDrag, previewNearest])
 
   const onTouchEnd = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
     event.stopPropagation()
+    if (dragRef.current) return
+    if (touchDragRef.current) {
+      if (touchDragRef.current.moved) event.preventDefault()
+      finishTouchDrag(event.currentTarget)
+      return
+    }
     if (!hasUserInteractedRef.current) return
     scheduleCommit(event.currentTarget)
-  }, [scheduleCommit])
+  }, [finishTouchDrag, scheduleCommit])
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.stopPropagation()
@@ -202,6 +276,7 @@ export function useMomentumWheel<T>(options: UseMomentumWheelOptions<T>) {
     clearScrollTimer()
     clearDragIdleTimer()
     hasUserInteractedRef.current = true
+    touchDragRef.current = null
     dragRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
