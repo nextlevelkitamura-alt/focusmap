@@ -133,6 +133,7 @@ const SHOW_MEMO_TAG_FILTER_ENTRY = false
 const SHOW_MEMO_MINDMAP_ENTRY = false
 const POSTGRES_INTEGER_MIN = -2147483648
 const POSTGRES_INTEGER_MAX = 2147483647
+const CREATE_MEMO_TIMEOUT_MS = 15_000
 
 function isPostgresInteger(value: unknown): value is number {
   return (
@@ -525,6 +526,16 @@ function isRetryableRequestError(error: unknown) {
   return /Failed to fetch|NetworkError|Load failed/i.test(error.message)
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
 async function createWishlistMemo(payload: Record<string, unknown>) {
   const maxRetries = 2
   const baseDelayMs = 300
@@ -532,11 +543,11 @@ async function createWishlistMemo(payload: Record<string, unknown>) {
 
   while (attempt <= maxRetries) {
     try {
-      const res = await fetch("/api/wishlist", {
+      const res = await fetchWithTimeout("/api/wishlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      })
+      }, CREATE_MEMO_TIMEOUT_MS)
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok || data.error) {
@@ -634,6 +645,7 @@ export function WishlistView({
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const creatingMemoIdsRef = useRef(new Set<string>())
+  const creatingMemoPromisesRef = useRef(new Map<string, Promise<void>>())
   const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { calendars } = useCalendars()
@@ -1131,6 +1143,11 @@ export function WishlistView({
     setCreatingMemoIds(new Set(creatingMemoIdsRef.current))
   }, [])
 
+  const waitForMemoPersistence = useCallback(async (id: string) => {
+    const pendingCreate = creatingMemoPromisesRef.current.get(id)
+    if (pendingCreate) await pendingCreate
+  }, [])
+
   const patchMemoItem = useCallback(async (id: string, updates: Record<string, unknown>) => {
     const res = await fetch(`/api/wishlist/${id}`, {
       method: "PATCH",
@@ -1369,8 +1386,12 @@ export function WishlistView({
     setSelectedItem(draftItem)
     setTagFilter("all")
     setDetailOpen(true)
+    const createRequest = createWishlistMemo(buildMemoCreatePayload(draftItem))
+    const trackedCreateRequest = createRequest.then(() => undefined)
+    void trackedCreateRequest.catch(() => undefined)
+    creatingMemoPromisesRef.current.set(draftItem.id, trackedCreateRequest)
     try {
-      const item = await createWishlistMemo(buildMemoCreatePayload(draftItem))
+      const item = await createRequest
       const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
       pendingCreateUpdatesRef.current.delete(draftItem.id)
       const nextItem = pendingUpdates
@@ -1414,6 +1435,8 @@ export function WishlistView({
       setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
       setDetailOpen(false)
       setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
+    } finally {
+      creatingMemoPromisesRef.current.delete(draftItem.id)
     }
   }
 
@@ -1441,8 +1464,12 @@ export function WishlistView({
     setTagFilter("all")
     setSelectedItem(draftItem)
     setDetailOpen(true)
+    const createRequest = createWishlistMemo(buildMemoCreatePayload(draftItem))
+    const trackedCreateRequest = createRequest.then(() => undefined)
+    void trackedCreateRequest.catch(() => undefined)
+    creatingMemoPromisesRef.current.set(draftItem.id, trackedCreateRequest)
     try {
-      const item = await createWishlistMemo(buildMemoCreatePayload(draftItem))
+      const item = await createRequest
       const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
       pendingCreateUpdatesRef.current.delete(draftItem.id)
       const nextItem = pendingUpdates
@@ -1482,6 +1509,8 @@ export function WishlistView({
       setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
       setDetailOpen(false)
       setIntakeError(err instanceof Error ? err.message : "メモの追加に失敗しました")
+    } finally {
+      creatingMemoPromisesRef.current.delete(draftItem.id)
     }
   }
 
@@ -2684,6 +2713,7 @@ export function WishlistView({
         tagColors={tagColors}
         onLaunchCodex={launchCodexForMemo}
         onCopyCodexPrompt={copyCodexPromptForMemo}
+        onReadyForAttachments={waitForMemoPersistence}
         onMemoChanged={fetchItems}
       />
 

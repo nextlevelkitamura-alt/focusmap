@@ -40,6 +40,28 @@ function toPostgresInteger(value: unknown): number | null {
     : null
 }
 
+async function fetchExistingWishlistItem(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  id: unknown,
+) {
+  if (typeof id !== 'string' || id.length === 0) return null
+  const { data, error } = await supabase
+    .from('ideal_goals')
+    .select('*, ideal_items(*)')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .single()
+
+  if (error || !data) return null
+  const [withMetadata] = await withMindmapLinkMetadata(supabase, userId, [data as WishlistRow])
+  return withMetadata ?? data
+}
+
+function isDuplicateKeyError(error: { code?: string; message?: string } | null | undefined) {
+  return error?.code === '23505' || /duplicate key/i.test(error?.message ?? '')
+}
+
 async function fetchExistingTaskIds(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
@@ -270,6 +292,9 @@ export async function POST(request: NextRequest) {
   const trimmedTitle = typeof title === 'string' ? title.trim() : ''
   if (!trimmedTitle) return NextResponse.json({ error: 'タイトルは必須です' }, { status: 400 })
 
+  const existingItem = await fetchExistingWishlistItem(supabase, user.id, id)
+  if (existingItem) return NextResponse.json({ item: existingItem }, { status: 200 })
+
   if (project_id) {
     const { error: projectError } = await supabase
       .from('projects')
@@ -329,6 +354,11 @@ export async function POST(request: NextRequest) {
 
   let savedItem = data
   if (error) {
+    if (isDuplicateKeyError(error)) {
+      const existing = await fetchExistingWishlistItem(supabase, user.id, id)
+      if (existing) return NextResponse.json({ item: existing }, { status: 200 })
+    }
+
     const canRetryWithoutAiPayload =
       error.message.includes('ai_source_payload') ||
       error.message.includes("Could not find the 'ai_source_payload' column")
@@ -345,6 +375,10 @@ export async function POST(request: NextRequest) {
       .select('*, ideal_items(*)')
       .single()
 
+    if (isDuplicateKeyError(retry.error)) {
+      const existing = await fetchExistingWishlistItem(supabase, user.id, id)
+      if (existing) return NextResponse.json({ item: existing }, { status: 200 })
+    }
     if (retry.error) return NextResponse.json({ error: retry.error.message }, { status: 500 })
     savedItem = retry.data
   }

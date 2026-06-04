@@ -17,6 +17,7 @@ import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
 
 const QUICK_MINUTES = [30, 45, 60, 90]
+const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
@@ -94,6 +95,7 @@ interface WishlistCardDetailProps {
   onLaunchClaude?: (item: IdealGoalWithItems) => Promise<void>
   onLaunchCodex?: (item: IdealGoalWithItems) => Promise<void>
   onCopyCodexPrompt?: (item: IdealGoalWithItems) => Promise<void>
+  onReadyForAttachments?: (id: string) => Promise<void>
   /** Codex.app を Mac で起動（codex:// URL 経由）。スマホからも呼べる */
   onLaunchCodexApp?: (item: IdealGoalWithItems) => Promise<void>
   /** GLM対話のツールがメモを更新/新規作成したとき呼ばれる（一覧リフレッシュ用）*/
@@ -118,6 +120,16 @@ function linkify(text: string) {
     }
     return <span key={`${part}-${index}`}>{part}</span>
   })
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 }
 
 function formatDateValue(value: string | null | undefined) {
@@ -771,6 +783,7 @@ export function WishlistCardDetail({
   onLaunchClaude,
   onLaunchCodex,
   onCopyCodexPrompt,
+  onReadyForAttachments,
   onLaunchCodexApp,
   onMemoChanged,
 }: WishlistCardDetailProps) {
@@ -1356,14 +1369,14 @@ export function WishlistCardDetail({
     setIsUploadingImage(true)
     setSaveError(null)
     try {
-      for (const [index, file] of imageFiles.entries()) {
-        const pendingImage = pendingUploads[index]
+      await onReadyForAttachments?.(item.id)
+      const uploaded = await Promise.allSettled(imageFiles.map(async file => {
         const formData = new FormData()
         formData.append("file", file)
-        const res = await fetch(`/api/wishlist/${item.id}/attachments`, {
+        const res = await fetchWithTimeout(`/api/wishlist/${item.id}/attachments`, {
           method: "POST",
           body: formData,
-        })
+        }, IMAGE_UPLOAD_TIMEOUT_MS)
         const data = await res.json()
         if (!res.ok || data.error) {
           throw new Error(data.error || "画像の保存に失敗しました")
@@ -1371,12 +1384,22 @@ export function WishlistCardDetail({
         if (!data.attachment) {
           throw new Error("画像の保存結果を取得できませんでした")
         }
-        setImages(prev => [...prev, data.attachment as MemoImage])
-        if (pendingImage) {
-          releasePendingImage(pendingImage)
-          setPendingImages(prev => prev.filter(image => image.id !== pendingImage.id))
-        }
+        return data.attachment as MemoImage
+      }))
+
+      const succeeded = uploaded
+        .filter((result): result is PromiseFulfilledResult<MemoImage> => result.status === "fulfilled")
+      const failed = uploaded.filter(result => result.status === "rejected")
+
+      for (const pendingImage of pendingUploads) releasePendingImage(pendingImage)
+      setPendingImages(prev => prev.filter(image => !pendingIds.has(image.id)))
+      if (succeeded.length > 0) {
+        setImages(prev => [...prev, ...succeeded.map(result => result.value)])
         setImagePasteNotice(null)
+      }
+      if (failed.length > 0) {
+        const firstError = failed[0].reason
+        throw new Error(firstError instanceof Error ? firstError.message : "一部の画像の保存に失敗しました")
       }
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch (err) {
