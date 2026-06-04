@@ -26,6 +26,20 @@ type StructuredMindmapLink = {
   created_at: string | null
 }
 
+const POSTGRES_INTEGER_MIN = -2147483648
+const POSTGRES_INTEGER_MAX = 2147483647
+
+function toPostgresInteger(value: unknown): number | null {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= POSTGRES_INTEGER_MIN &&
+    value <= POSTGRES_INTEGER_MAX
+  )
+    ? value
+    : null
+}
+
 async function fetchExistingTaskIds(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
@@ -274,6 +288,7 @@ export async function POST(request: NextRequest) {
     .select('id', { count: 'exact', head: true })
     .eq('user_id', user.id)
     .in('status', ['wishlist', 'memo'])
+  const nextDisplayOrder = (count ?? 0) + 1
 
   const insertPayload: Record<string, unknown> = {
     user_id: user.id,
@@ -291,7 +306,7 @@ export async function POST(request: NextRequest) {
     ai_source_payload: ai_source_payload ?? null,
     status: status ?? 'memo',
     color: color ?? '#6366f1',
-    display_order: typeof display_order === 'number' ? display_order : (count ?? 0) + 1,
+    display_order: toPostgresInteger(display_order) ?? nextDisplayOrder,
     duration_months: duration_months ?? null,
     start_date: start_date ?? null,
     target_date: target_date ?? null,
@@ -374,7 +389,7 @@ export async function POST(request: NextRequest) {
         is_done: item.is_done ?? false,
         linked_task_id: item.linked_task_id ?? null,
         linked_habit_id: item.linked_habit_id ?? null,
-        display_order: item.display_order ?? index,
+        display_order: toPostgresInteger(item.display_order) ?? index,
         description: item.description ?? null,
         scheduled_date: item.scheduled_date ?? null,
         reference_url: item.reference_url ?? null,

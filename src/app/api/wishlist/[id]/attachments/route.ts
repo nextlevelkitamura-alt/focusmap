@@ -5,6 +5,10 @@ const BUCKET = 'ideal-attachments'
 const MAX_FILE_SIZE = 20 * 1024 * 1024
 const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365
 
+function createStorageToken() {
+  return new Date().toISOString().replace(/[:.]/g, '-')
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -59,9 +63,9 @@ export async function POST(
   if (!file.type.startsWith('image/')) return NextResponse.json({ error: '画像ファイルを選択してください' }, { status: 400 })
   if (file.size > MAX_FILE_SIZE) return NextResponse.json({ error: '画像は20MB以下にしてください' }, { status: 400 })
 
-  const timestamp = Date.now()
+  const storageToken = createStorageToken()
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-  const storagePath = `${user.id}/${id}/memo_${timestamp}_${safeName}`
+  const storagePath = `${user.id}/${id}/memo_${storageToken}_${safeName}`
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)

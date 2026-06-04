@@ -131,6 +131,17 @@ const COLUMN_LABEL: Record<ColumnKey, string> = {
 const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "mapped", "scheduled", "completed"]
 const SHOW_MEMO_TAG_FILTER_ENTRY = false
 const SHOW_MEMO_MINDMAP_ENTRY = false
+const POSTGRES_INTEGER_MIN = -2147483648
+const POSTGRES_INTEGER_MAX = 2147483647
+
+function isPostgresInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= POSTGRES_INTEGER_MIN &&
+    value <= POSTGRES_INTEGER_MAX
+  )
+}
 
 function createClientMemoId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -289,7 +300,7 @@ function buildOptimisticMemoItem({
     category: "アイデア",
     color: "#6366f1",
     status: "memo",
-    display_order: Date.now(),
+    display_order: 0,
     duration_months: null,
     start_date: null,
     target_date: null,
@@ -494,8 +505,13 @@ function buildMemoUpdatePayload(item: MemoItem): Record<string, unknown> {
 }
 
 function buildMemoCreatePayload(item: MemoItem): Record<string, unknown> {
+  const payload = buildMemoUpdatePayload(item)
+  if (item.user_id === "local" || !isPostgresInteger(payload.display_order)) {
+    delete payload.display_order
+  }
+
   return {
-    ...buildMemoUpdatePayload(item),
+    ...payload,
     id: item.id,
     created_at: item.created_at,
     updated_at: item.updated_at,

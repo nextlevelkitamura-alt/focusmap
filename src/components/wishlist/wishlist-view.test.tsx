@@ -483,11 +483,13 @@ describe('WishlistView calendar D&D', () => {
         requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
       )
       expect(createCall).toBeDefined()
-      expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
+      const createBody = JSON.parse(createCall?.[1]?.body as string)
+      expect(createBody).toMatchObject({
         title: 'あ',
         project_id: 'project-1',
         memo_status: 'unsorted',
       })
+      expect(createBody).not.toHaveProperty('display_order')
     })
   })
 
@@ -529,6 +531,10 @@ describe('WishlistView calendar D&D', () => {
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
     )).toBe(true)
+    const createCall = fetchMock.mock.calls.find(([input, init]) =>
+      requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
+    )
+    expect(JSON.parse(createCall?.[1]?.body as string)).not.toHaveProperty('display_order')
   })
 
   test('スマホ表示では選択中カラムに合わせて追加メモの保存先を変える', async () => {
@@ -572,12 +578,14 @@ describe('WishlistView calendar D&D', () => {
         requestUrl(input) === '/api/wishlist' && init?.method === 'POST',
       )
       expect(createCall).toBeDefined()
-      expect(JSON.parse(createCall?.[1]?.body as string)).toMatchObject({
+      const createBody = JSON.parse(createCall?.[1]?.body as string)
+      expect(createBody).toMatchObject({
         title: '新しいメモ',
         memo_status: 'unsorted',
         is_today: true,
         is_completed: false,
       })
+      expect(createBody).not.toHaveProperty('display_order')
     })
   })
 })
