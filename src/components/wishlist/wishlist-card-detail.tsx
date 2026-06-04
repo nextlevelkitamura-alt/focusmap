@@ -196,6 +196,24 @@ function buildClipboardImageFile(blob: Blob, index: number) {
   return new File([blob], `clipboard-image-${timestamp}-${index + 1}.${extension}`, { type: normalizedType })
 }
 
+function getImageFilesFromClipboardData(clipboardData: DataTransfer | null | undefined) {
+  if (!clipboardData) return []
+
+  const files = Array.from(clipboardData.files ?? []).filter(file => file.type.startsWith("image/"))
+  const itemFiles = Array.from(clipboardData.items ?? [])
+    .filter(item => item.kind === "file" && item.type.startsWith("image/"))
+    .map(item => item.getAsFile())
+    .filter((file): file is File => file instanceof File)
+
+  const seen = new Set<string>()
+  return [...files, ...itemFiles].filter(file => {
+    const key = `${file.name}:${file.type}:${file.size}:${file.lastModified}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function getActiveMindmapLink(item: StructuredMemoItem) {
   return item.memo_node_links?.find(link => link.link_type === "mindmap_node" && link.status === "active") ?? null
 }
@@ -765,6 +783,7 @@ export function WishlistCardDetail({
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [isPastingClipboardImage, setIsPastingClipboardImage] = useState(false)
   const [isImageDragActive, setIsImageDragActive] = useState(false)
+  const [imagePasteNotice, setImagePasteNotice] = useState<string | null>(null)
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
@@ -782,6 +801,7 @@ export function WishlistCardDetail({
   const [researchPrompts, setResearchPrompts] = useState<Record<string, string>>({})
   const [placementByItemId, setPlacementByItemId] = useState<Record<string, PlacementState>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const imagePasteTargetRef = useRef<HTMLDivElement>(null)
   const draftSourceIdRef = useRef<string | null>(null)
   const isMobile = useIsMobile()
 
@@ -1296,6 +1316,7 @@ export function WishlistCardDetail({
       if (uploaded.length > 0) {
         setImages(prev => [...prev, ...uploaded])
         setActiveDetailPanel("images")
+        setImagePasteNotice(null)
       }
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch (err) {
@@ -1313,6 +1334,15 @@ export function WishlistCardDetail({
     if (files.length > 0) void uploadImages(files)
   }
 
+  const handleImagePaste = (event: React.ClipboardEvent<HTMLElement>) => {
+    const imageFiles = getImageFilesFromClipboardData(event.clipboardData)
+    if (imageFiles.length === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    setImagePasteNotice(null)
+    void uploadImages(imageFiles)
+  }
+
   const handleImageDragOver = (event: React.DragEvent<HTMLElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = "copy"
@@ -1321,9 +1351,11 @@ export function WishlistCardDetail({
 
   const handlePasteClipboardImage = async () => {
     if (typeof navigator === "undefined") return
+    setImagePasteNotice(null)
     const clipboard = navigator.clipboard as (Clipboard & { read?: () => Promise<ClipboardItem[]> }) | undefined
     if (!clipboard?.read) {
-      setSaveError("このブラウザではクリップボード画像の読み取りに対応していません。画像ファイルを選択してください")
+      setImagePasteNotice("画像をコピーした状態で、このまま Cmd+V すると貼り付けできます")
+      imagePasteTargetRef.current?.focus()
       return
     }
 
@@ -1339,12 +1371,14 @@ export function WishlistCardDetail({
         files.push(buildClipboardImageFile(blob, files.length))
       }
       if (files.length === 0) {
-        setSaveError("クリップボードに画像がありません")
+        setImagePasteNotice("クリップボードに画像が見つかりません。画像をコピーしてから Cmd+V してください")
+        imagePasteTargetRef.current?.focus()
         return
       }
       await uploadImages(files)
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "クリップボード画像の貼り付けに失敗しました")
+    } catch {
+      setImagePasteNotice("Arcが直接読み取りを許可しない場合があります。このまま Cmd+V してください")
+      imagePasteTargetRef.current?.focus()
     } finally {
       setIsPastingClipboardImage(false)
     }
@@ -1596,42 +1630,65 @@ export function WishlistCardDetail({
               )}
 
               {activeDetailPanel === "images" && (
-                <div className="space-y-3 rounded-md border bg-background p-3">
-                  <button
-                    type="button"
-                    disabled={isUploadingImage || isPastingClipboardImage}
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={handleImageDragOver}
-                    onDragEnter={handleImageDragOver}
-                    onDragLeave={() => setIsImageDragActive(false)}
-                    onDrop={handleImageDrop}
-                    className={cn(
-                      "flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition-colors",
-                      "bg-muted/10 text-muted-foreground hover:border-primary/60 hover:bg-primary/5 hover:text-foreground",
-                      isImageDragActive && "border-primary/80 bg-primary/10 text-foreground ring-2 ring-primary/20",
-                      (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
-                    )}
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-background/80">
-                      {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+                <div
+                  ref={imagePasteTargetRef}
+                  tabIndex={-1}
+                  data-testid="memo-image-paste-target"
+                  onPaste={handleImagePaste}
+                  className="space-y-3 rounded-md border bg-background p-3 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35"
+                >
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      disabled={isUploadingImage || isPastingClipboardImage}
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={handleImageDragOver}
+                      onDragEnter={handleImageDragOver}
+                      onDragLeave={() => setIsImageDragActive(false)}
+                      onDrop={handleImageDrop}
+                      className={cn(
+                        "flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition-colors",
+                        "bg-muted/10 text-muted-foreground hover:border-primary/60 hover:bg-primary/5 hover:text-foreground",
+                        isImageDragActive && "border-primary/80 bg-primary/10 text-foreground ring-2 ring-primary/20",
+                        (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
+                      )}
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-background/80">
+                        {isUploadingImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-foreground">画像を追加</div>
+                        <p className="text-xs leading-5">
+                          クリックしてフォルダーから選択、またはドラッグ&ドロップ
+                        </p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isUploadingImage || isPastingClipboardImage}
+                      onClick={() => void handlePasteClipboardImage()}
+                      className={cn(
+                        "flex min-h-[132px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border px-4 py-5 text-center transition-colors",
+                        "border-emerald-500/35 bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15",
+                        (isUploadingImage || isPastingClipboardImage) && "cursor-wait opacity-70",
+                      )}
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/35 bg-background/80">
+                        {isPastingClipboardImage ? <Loader2 className="h-5 w-5 animate-spin" /> : <Copy className="h-5 w-5" />}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold">クリップボード画像を貼り付け</div>
+                        <p className="text-xs leading-5 text-emerald-700/80 dark:text-emerald-300/80">
+                          画像をコピー済みならクリック、またはこのまま Cmd+V
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+                  {imagePasteNotice && (
+                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs leading-5 text-emerald-700 dark:text-emerald-300">
+                      {imagePasteNotice}
                     </div>
-                    <div className="space-y-1">
-                      <div className="text-sm font-semibold text-foreground">画像を追加</div>
-                      <p className="text-xs leading-5">
-                        クリックしてフォルダーから選択、またはドラッグ&ドロップ
-                      </p>
-                    </div>
-                  </button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isUploadingImage || isPastingClipboardImage}
-                    onClick={() => void handlePasteClipboardImage()}
-                    className="min-h-10 w-full gap-2 border-emerald-500/40 text-sm text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15"
-                  >
-                    {isPastingClipboardImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
-                    クリップボード画像を貼り付け
-                  </Button>
+                  )}
                   <input
                     ref={fileInputRef}
                     type="file"

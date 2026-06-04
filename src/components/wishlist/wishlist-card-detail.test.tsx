@@ -196,4 +196,45 @@ describe('WishlistCardDetail', () => {
     })
     expect(await screen.findByAltText('clipboard.png')).toBeInTheDocument()
   })
+
+  test('画像タブ内でCmd+Vするとクリップボード画像をアップロードする', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          attachment: {
+            id: 'image-paste-event',
+            file_name: 'pasted-event.png',
+            file_url: 'https://example.com/pasted-event.png',
+            file_type: 'image/png',
+            file_size: 4,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.click(await screen.findByRole('button', { name: /画像/ }))
+    fireEvent.paste(screen.getByTestId('memo-image-paste-target'), {
+      clipboardData: {
+        files: [new File(['data'], 'pasted-event.png', { type: 'image/png' })],
+        items: [],
+      },
+    })
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/wishlist/memo-1/attachments',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(await screen.findByAltText('pasted-event.png')).toBeInTheDocument()
+  })
 })
