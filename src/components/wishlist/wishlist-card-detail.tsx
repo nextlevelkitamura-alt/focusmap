@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Network, Plus, Search, Sparkles, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
 import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
-import { Calendar as DateCalendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -21,7 +20,8 @@ import type { UserCalendar } from "@/hooks/useCalendars"
 
 const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
-const MINUTE_OPTIONS = [0, 15, 30, 45]
+const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
+const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
@@ -185,6 +185,31 @@ function formatDurationLabel(minutes: number | null | undefined) {
 
 function formatTimePart(value: number) {
   return String(value).padStart(2, "0")
+}
+
+function getMonthStart(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1)
+}
+
+function addMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1)
+}
+
+function buildCalendarGrid(month: Date) {
+  const start = getMonthStart(month)
+  const gridStart = new Date(start)
+  gridStart.setDate(start.getDate() - start.getDay())
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart)
+    date.setDate(gridStart.getDate() + index)
+    return {
+      date,
+      value: formatLocalDateValue(date),
+      inMonth: date.getMonth() === month.getMonth(),
+      isToday: formatLocalDateValue(date) === formatLocalDateValue(new Date()),
+    }
+  })
 }
 
 function combineDateTime(dateValue: string, timeValue: string) {
@@ -790,6 +815,7 @@ export function WishlistCardDetail({
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [elapsedSecs, setElapsedSecs] = useState(0)
   const [selectedCalendarId, setSelectedCalendarId] = useState("primary")
+  const [calendarMonth, setCalendarMonth] = useState(() => getMonthStart(new Date()))
   const sentAtRef = useRef<number | null>(null)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -984,6 +1010,7 @@ export function WishlistCardDetail({
   const itemId = item?.id ?? null
   const itemTitle = item?.title ?? ""
   const itemDescription = item?.description ?? ""
+  const itemScheduledAt = item?.scheduled_at ?? null
 
   useEffect(() => {
     if (!open || !itemId) {
@@ -995,13 +1022,15 @@ export function WishlistCardDetail({
     draftSourceIdRef.current = itemId
     setDraftTitle(itemTitle)
     setDraftDescription(itemDescription)
+    const scheduled = itemScheduledAt ? new Date(itemScheduledAt) : null
+    setCalendarMonth(getMonthStart(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : new Date()))
     setSaveError(null)
     setIsCodexPanelOpen(false)
     setPendingImages(prev => {
       prev.forEach(releasePendingImage)
       return []
     })
-  }, [itemId, itemTitle, itemDescription, open, releasePendingImage])
+  }, [itemId, itemTitle, itemDescription, itemScheduledAt, open, releasePendingImage])
 
   useEffect(() => {
     if (!open) return
@@ -1086,8 +1115,11 @@ export function WishlistCardDetail({
   const selectedProject = item.project_id ? projects.find(project => project.id === item.project_id) : null
   const selectedProjectColor = selectedProject ? normalizeColor(selectedProject.color_theme, DEFAULT_PROJECT_COLOR) : DEFAULT_PROJECT_COLOR
   const displayedImages: Array<MemoImage | PendingMemoImage> = [...pendingImages, ...images]
-  const scheduledDate = item.scheduled_at ? new Date(item.scheduled_at) : undefined
-  const validScheduledDate = scheduledDate && !Number.isNaN(scheduledDate.getTime()) ? scheduledDate : undefined
+  const calendarDays = buildCalendarGrid(calendarMonth)
+  const calendarMonthLabel = new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "long",
+  }).format(calendarMonth)
   const selectedHour = timeValue ? Number(timeValue.slice(0, 2)) : 9
   const selectedMinute = timeValue ? Number(timeValue.slice(3, 5)) : 0
   const selectedCalendar = calendarOptions.find(calendar => calendar.id === selectedCalendarId) ?? calendarOptions[0]
@@ -1575,6 +1607,9 @@ export function WishlistCardDetail({
               ]
             : "w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1280px,calc(100vw-32px))] sm:px-6"
         )}
+        onOpenAutoFocus={event => {
+          event.preventDefault()
+        }}
         onTouchStart={handleSheetTouchStart}
         onTouchEnd={handleSheetTouchEnd}
       >
@@ -1647,13 +1682,51 @@ export function WishlistCardDetail({
                         <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
                       </button>
                     </PopoverTrigger>
-                    <PopoverContent align="start" className="w-[min(21rem,calc(100vw-2rem))] p-2">
-                      <DateCalendar
-                        mode="single"
-                        selected={validScheduledDate}
-                        onSelect={date => void handleDateSelect(date)}
-                        className="p-0"
-                      />
+                    <PopoverContent
+                      side={isMobile ? "top" : "bottom"}
+                      align="start"
+                      className="w-[min(20rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setCalendarMonth(month => addMonths(month, -1))}
+                            className="flex h-8 min-w-10 items-center justify-center rounded-md border border-neutral-800 text-xs text-neutral-300 hover:bg-neutral-900"
+                          >
+                            前
+                          </button>
+                          <div className="text-sm font-semibold">{calendarMonthLabel}</div>
+                          <button
+                            type="button"
+                            onClick={() => setCalendarMonth(month => addMonths(month, 1))}
+                            className="flex h-8 min-w-10 items-center justify-center rounded-md border border-neutral-800 text-xs text-neutral-300 hover:bg-neutral-900"
+                          >
+                            次
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-neutral-500">
+                          {WEEKDAY_LABELS.map(day => <div key={day}>{day}</div>)}
+                        </div>
+                        <div className="grid grid-cols-7 gap-1">
+                          {calendarDays.map(day => (
+                            <button
+                              key={day.value}
+                              type="button"
+                              onClick={() => void handleDateSelect(day.date)}
+                              className={cn(
+                                "flex h-9 items-center justify-center rounded-md text-sm tabular-nums transition-colors",
+                                !day.inMonth && "text-neutral-700",
+                                day.inMonth && "text-neutral-300 hover:bg-neutral-900",
+                                day.isToday && "border border-neutral-700",
+                                dateValue === day.value && "border-primary bg-primary text-primary-foreground hover:bg-primary",
+                              )}
+                            >
+                              {day.date.getDate()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -1672,32 +1745,38 @@ export function WishlistCardDetail({
                         <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
                       </button>
                     </PopoverTrigger>
-                    <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] p-3">
+                    <PopoverContent
+                      side={isMobile ? "top" : "bottom"}
+                      align="end"
+                      className="w-[min(18rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
+                    >
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="max-h-44 overflow-y-auto rounded-md border bg-background/70 p-1">
+                        <div className="max-h-56 snap-y overflow-y-auto rounded-md border border-neutral-800 bg-neutral-950 p-1">
+                          <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">時</div>
                           {HOUR_OPTIONS.map(hour => (
                             <button
                               key={hour}
                               type="button"
                               onClick={() => void handleTimeSelect(hour, selectedMinute)}
                               className={cn(
-                                "flex h-9 w-full items-center justify-center rounded text-sm tabular-nums transition-colors",
-                                hour === selectedHour ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                "flex h-10 w-full snap-center items-center justify-center rounded text-base tabular-nums transition-colors",
+                                hour === selectedHour ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                               )}
                             >
                               {formatTimePart(hour)}
                             </button>
                           ))}
                         </div>
-                        <div className="max-h-44 overflow-y-auto rounded-md border bg-background/70 p-1">
+                        <div className="max-h-56 snap-y overflow-y-auto rounded-md border border-neutral-800 bg-neutral-950 p-1">
+                          <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">分</div>
                           {MINUTE_OPTIONS.map(minute => (
                             <button
                               key={minute}
                               type="button"
                               onClick={() => void handleTimeSelect(selectedHour, minute)}
                               className={cn(
-                                "flex h-9 w-full items-center justify-center rounded text-sm tabular-nums transition-colors",
-                                minute === selectedMinute ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                "flex h-10 w-full snap-center items-center justify-center rounded text-base tabular-nums transition-colors",
+                                minute === selectedMinute ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                               )}
                             >
                               {formatTimePart(minute)}
@@ -1837,7 +1916,7 @@ export function WishlistCardDetail({
                   画像
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{displayedImages.length}</span>
                 </Label>
-                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-8 gap-1.5 px-2 text-xs">
+                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className={cn("h-8 gap-1.5 px-2 text-xs", isMobile && "hidden")}>
                   <Plus className="h-3.5 w-3.5" />
                   追加
                 </Button>
