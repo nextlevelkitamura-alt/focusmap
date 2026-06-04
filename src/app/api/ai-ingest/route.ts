@@ -4,12 +4,13 @@ import { chatCompletion } from '@/lib/ai-client'
 import { generateText } from 'ai'
 import { google } from '@ai-sdk/google'
 import { DEFAULT_GEMINI_MODEL, resolveGeminiModel } from '@/lib/ai/providers'
+import { normalizeAiIngestTitle, preserveMemoInputBody } from '@/lib/memo-ai-generation'
 
 const MEMO_TAGS = ['仕事', '生活', '学習', '健康', '人間関係', 'お金'] as const
 
 const SYSTEM_PROMPT = `Focusmapのメモ整理。JSONのみ返す。
 schema={"title":string,"category":string,"tags":string[],"description":string,"scheduled_at":string|null,"duration_minutes":number}
-制約: titleは30字以内。descriptionはURLを消さず原文ベースで最大120字。categoryは必ず 仕事/生活/学習/健康/人間関係/お金 のどれか1つ。tagsは必ず空配列[]。ミクロな固有タグ（料理名、買い物品、作業名など）は作らない。duration_minutesは5/15/30/60/90/120の近い値。日時が明確な時だけscheduled_atをISO文字列にする。
+制約: titleは14〜22字、長くても22字以内。長い見出しの6〜7割くらいまで短くし、作業や目的の核だけを残す。descriptionは本文保存には使わないため空文字でよい。本文を要約・削除・短縮しない。categoryは必ず 仕事/生活/学習/健康/人間関係/お金 のどれか1つ。tagsは必ず空配列[]。ミクロな固有タグ（料理名、買い物品、作業名など）は作らない。duration_minutesは5/15/30/60/90/120の近い値。日時が明確な時だけscheduled_atをISO文字列にする。
 現在日時: ${new Date().toISOString()}`
 
 function normalizeMemoModel(model: string) {
@@ -94,13 +95,12 @@ function normalizeSuggestion(parsed: unknown, fallbackText: string): Required<Om
   if (Array.isArray(parsed)) {
     const items = parsed.filter(item => item && typeof item === 'object') as MemoSuggestionDraft[]
     const titles = items.map(item => item.title).filter(Boolean) as string[]
-    const descriptions = items.map(item => item.description || item.title).filter(Boolean) as string[]
     return {
-      title: titles.slice(0, 2).join(' / ').slice(0, 30) || fallbackText.slice(0, 30) || '新しいメモ',
+      title: normalizeAiIngestTitle(titles.slice(0, 2).join(' / '), fallbackText),
       category: normalizeMemoCategory(items.find(item => item.category)?.category, fallbackText),
       tags: [],
       memo_status: 'unsorted',
-      description: descriptions.join('。').slice(0, 120) || fallbackText,
+      description: preserveMemoInputBody(fallbackText),
       scheduled_at: items.find(item => item.scheduled_at)?.scheduled_at ?? null,
       duration_minutes: items.reduce((sum, item) => sum + (Number(item.duration_minutes) || 0), 0) || 60,
       time_candidates: [],
@@ -111,11 +111,11 @@ function normalizeSuggestion(parsed: unknown, fallbackText: string): Required<Om
   }
   const item = parsed as MemoSuggestionDraft
   return {
-    title: (item.title || fallbackText.slice(0, 30) || '新しいメモ').slice(0, 30),
+    title: normalizeAiIngestTitle(item.title, fallbackText),
     category: normalizeMemoCategory(item.category, fallbackText),
     tags: [],
     memo_status: item.memo_status || 'unsorted',
-    description: item.description || fallbackText,
+    description: preserveMemoInputBody(fallbackText),
     scheduled_at: item.scheduled_at ?? null,
     duration_minutes: Number(item.duration_minutes) || 60,
     time_candidates: Array.isArray(item.time_candidates) ? item.time_candidates : [],
@@ -170,7 +170,8 @@ export async function POST(request: NextRequest) {
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json() as { text?: string; model?: string }
-  if (!body.text?.trim()) return NextResponse.json({ error: 'text は必須です' }, { status: 400 })
+  const inputText = preserveMemoInputBody(body.text ?? '')
+  if (!inputText) return NextResponse.json({ error: 'text は必須です' }, { status: 400 })
 
   try {
     if (
@@ -196,19 +197,19 @@ export async function POST(request: NextRequest) {
 
     const raw = await completeMemoJson([
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: body.text.slice(0, 1200) },
+      { role: 'user', content: inputText.slice(0, 1200) },
     ], modelUsed)
 
-    const suggestion = normalizeSuggestion(extractJson(raw), body.text)
+    const suggestion = normalizeSuggestion(extractJson(raw), inputText)
 
     return NextResponse.json({
       model: modelUsed,
       suggestion: {
         title: suggestion.title,
-        category: normalizeMemoCategory(suggestion.category, body.text),
+        category: normalizeMemoCategory(suggestion.category, inputText),
         tags: [],
         memo_status: suggestion.time_candidates?.length ? 'time_candidates' : (suggestion.memo_status || 'unsorted'),
-        description: suggestion.description || body.text,
+        description: inputText,
         scheduled_at: suggestion.scheduled_at ?? null,
         duration_minutes: suggestion.duration_minutes ?? 60,
         time_candidates: suggestion.scheduled_at ? [{
