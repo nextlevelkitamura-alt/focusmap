@@ -1,6 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Mic, Network, Plus, Search, Sparkles, Square, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
 import QRCode from "react-qr-code"
 import { Button } from "@/components/ui/button"
@@ -17,6 +23,7 @@ import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
+import { useMomentumWheel } from "@/hooks/useMomentumWheel"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { UserCalendar } from "@/hooks/useCalendars"
 
@@ -25,7 +32,9 @@ const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
 const TIME_WHEEL_COLUMN_CLASS =
-  "max-h-64 overflow-y-auto overscroll-contain scroll-smooth rounded-md border border-neutral-800 bg-neutral-950 p-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+  "max-h-64 touch-none select-none overflow-y-auto overscroll-contain scroll-smooth rounded-md border border-neutral-800 bg-neutral-950 p-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+const DATE_POPOVER_APPROX_HEIGHT = 340
+const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
@@ -214,6 +223,45 @@ function buildCalendarGrid(month: Date) {
       isToday: formatLocalDateValue(date) === formatLocalDateValue(new Date()),
     }
   })
+}
+
+function getCenteredWheelIndex(
+  container: HTMLDivElement,
+  values: readonly number[],
+  refs: Array<HTMLButtonElement | null>,
+) {
+  const containerRect = container.getBoundingClientRect()
+
+  if (containerRect.height > 0) {
+    const centerY = containerRect.top + containerRect.height / 2
+    let closestIndex = 0
+    let closestDistance = Number.POSITIVE_INFINITY
+
+    values.forEach((value, index) => {
+      const node = refs[value]
+      if (!node) return
+      const rect = node.getBoundingClientRect()
+      if (rect.height <= 0) return
+      const distance = Math.abs(rect.top + rect.height / 2 - centerY)
+      if (distance < closestDistance) {
+        closestDistance = distance
+        closestIndex = index
+      }
+    })
+
+    return closestIndex
+  }
+
+  const firstOption = refs[values[0]]
+  const secondOption = refs[values[1]]
+  const measuredHeight = secondOption && firstOption
+    ? secondOption.getBoundingClientRect().top - firstOption.getBoundingClientRect().top
+    : 0
+  const itemHeight = measuredHeight > 0 ? measuredHeight : (firstOption?.offsetHeight || 44)
+  const firstOffset = firstOption?.offsetTop ?? 0
+  const viewportCenter = container.scrollTop + (container.clientHeight > 0 ? container.clientHeight / 2 : 0)
+  const rawIndex = Math.round((viewportCenter - firstOffset - itemHeight / 2) / itemHeight)
+  return Math.max(0, Math.min(rawIndex, values.length - 1))
 }
 
 function combineDateTime(dateValue: string, timeValue: string) {
@@ -822,6 +870,7 @@ export function WishlistCardDetail({
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthStart(new Date()))
   const [isDatePopoverOpen, setIsDatePopoverOpen] = useState(false)
   const [isTimePopoverOpen, setIsTimePopoverOpen] = useState(false)
+  const [previewTimeValue, setPreviewTimeValue] = useState<string | null>(null)
   const [isCalendarPopoverOpen, setIsCalendarPopoverOpen] = useState(false)
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false)
   const sentAtRef = useRef<number | null>(null)
@@ -851,8 +900,13 @@ export function WishlistCardDetail({
   const imagePasteTargetRef = useRef<HTMLDivElement>(null)
   const sheetScrollRef = useRef<HTMLDivElement>(null)
   const sheetTouchStartYRef = useRef<number | null>(null)
+  const hourWheelRef = useRef<HTMLDivElement>(null)
+  const minuteWheelRef = useRef<HTMLDivElement>(null)
   const hourOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const minuteOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const previewTimePartsRef = useRef<{ hour: number; minute: number } | null>(null)
+  const dateTriggerRef = useRef<HTMLButtonElement>(null)
+  const timeTriggerRef = useRef<HTMLButtonElement>(null)
   const draftSourceIdRef = useRef<string | null>(null)
   const lastSubmittedDraftRef = useRef({ title: "", description: "" })
   const pendingImageUrlsRef = useRef<Set<string>>(new Set())
@@ -1041,6 +1095,31 @@ export function WishlistCardDetail({
   const currentHour = currentTimeValue ? Number(currentTimeValue.slice(0, 2)) : 9
   const currentMinute = currentTimeValue ? Number(currentTimeValue.slice(3, 5)) : 0
 
+  const getPreviewTimeParts = useCallback(() => {
+    return previewTimePartsRef.current ?? { hour: currentHour, minute: currentMinute }
+  }, [currentHour, currentMinute])
+
+  const setPreviewTimeParts = useCallback((hour: number, minute: number) => {
+    previewTimePartsRef.current = { hour, minute }
+    setPreviewTimeValue(`${formatTimePart(hour)}:${formatTimePart(minute)}`)
+  }, [])
+
+  const previewHourValue = useCallback((hour: number) => {
+    const { minute } = getPreviewTimeParts()
+    setPreviewTimeParts(hour, minute)
+  }, [getPreviewTimeParts, setPreviewTimeParts])
+
+  const previewMinuteValue = useCallback((minute: number) => {
+    const { hour } = getPreviewTimeParts()
+    setPreviewTimeParts(hour, minute)
+  }, [getPreviewTimeParts, setPreviewTimeParts])
+
+  useEffect(() => {
+    if (!previewTimeValue || currentTimeValue !== previewTimeValue) return
+    previewTimePartsRef.current = null
+    setPreviewTimeValue(null)
+  }, [currentTimeValue, previewTimeValue])
+
   useEffect(() => {
     if (!open || !itemId) {
       draftSourceIdRef.current = null
@@ -1054,6 +1133,8 @@ export function WishlistCardDetail({
     lastSubmittedDraftRef.current = { title: itemTitle.trim(), description: itemDescription.trim() }
     const scheduled = itemScheduledAt ? new Date(itemScheduledAt) : null
     setCalendarMonth(getMonthStart(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : new Date()))
+    previewTimePartsRef.current = null
+    setPreviewTimeValue(null)
     setIsDatePopoverOpen(false)
     setIsTimePopoverOpen(false)
     setIsCalendarPopoverOpen(false)
@@ -1195,10 +1276,90 @@ export function WishlistCardDetail({
     return () => clearInterval(id)
   }, [launchStep])
 
+  const commitTimeValue = useCallback((hour: number, minute: number) => {
+    const nextDateValue = currentDateValue || formatLocalDateValue(new Date())
+    if (!itemId) return
+    if (nextDateValue === currentDateValue && hour === currentHour && minute === currentMinute) return
+    const scheduledAt = combineDateTime(nextDateValue, `${formatTimePart(hour)}:${formatTimePart(minute)}`)
+    setSaveError(null)
+    void onUpdate(itemId, {
+      scheduled_at: scheduledAt,
+      memo_status: scheduledAt ? "time_candidates" : item?.memo_status,
+    }).catch(err => {
+      previewTimePartsRef.current = null
+      setPreviewTimeValue(null)
+      setSaveError(err instanceof Error ? err.message : "時刻の保存に失敗しました")
+    })
+  }, [currentDateValue, currentHour, currentMinute, item?.memo_status, itemId, onUpdate])
+
+  const commitHourValue = useCallback((hour: number) => {
+    const { minute } = getPreviewTimeParts()
+    setPreviewTimeParts(hour, minute)
+    commitTimeValue(hour, minute)
+  }, [commitTimeValue, getPreviewTimeParts, setPreviewTimeParts])
+
+  const commitMinuteValue = useCallback((minute: number) => {
+    const { hour } = getPreviewTimeParts()
+    setPreviewTimeParts(hour, minute)
+    commitTimeValue(hour, minute)
+  }, [commitTimeValue, getPreviewTimeParts, setPreviewTimeParts])
+
+  const getHourWheelIndex = useCallback((container: HTMLDivElement) => {
+    return getCenteredWheelIndex(container, HOUR_OPTIONS, hourOptionRefs.current)
+  }, [])
+
+  const getMinuteWheelIndex = useCallback((container: HTMLDivElement) => {
+    return getCenteredWheelIndex(container, MINUTE_OPTIONS, minuteOptionRefs.current)
+  }, [])
+
+  const scrollHourWheelToIndex = useCallback((_container: HTMLDivElement, index: number, behavior: "auto" | "smooth") => {
+    const node = hourOptionRefs.current[HOUR_OPTIONS[index]]
+    if (typeof node?.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "center", behavior })
+      return
+    }
+    if (typeof _container.scrollTo === "function") {
+      _container.scrollTo({ top: index * 44, behavior })
+    } else {
+      _container.scrollTop = index * 44
+    }
+  }, [])
+
+  const scrollMinuteWheelToIndex = useCallback((_container: HTMLDivElement, index: number, behavior: "auto" | "smooth") => {
+    const node = minuteOptionRefs.current[MINUTE_OPTIONS[index]]
+    if (typeof node?.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "center", behavior })
+      return
+    }
+    if (typeof _container.scrollTo === "function") {
+      _container.scrollTo({ top: index * 44, behavior })
+    } else {
+      _container.scrollTop = index * 44
+    }
+  }, [])
+
+  const hourWheel = useMomentumWheel({
+    values: HOUR_OPTIONS,
+    getIndex: getHourWheelIndex,
+    scrollToIndex: scrollHourWheelToIndex,
+    onPreview: previewHourValue,
+    onChange: commitHourValue,
+    scrollEndDelay: 120,
+  })
+
+  const minuteWheel = useMomentumWheel({
+    values: MINUTE_OPTIONS,
+    getIndex: getMinuteWheelIndex,
+    scrollToIndex: scrollMinuteWheelToIndex,
+    onPreview: previewMinuteValue,
+    onChange: commitMinuteValue,
+    scrollEndDelay: 120,
+  })
+
   if (!item) return null
 
   const dateValue = currentDateValue
-  const timeValue = currentTimeValue
+  const timeValue = previewTimeValue ?? currentTimeValue
   const showStructureTools = false
 
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
@@ -1210,8 +1371,8 @@ export function WishlistCardDetail({
     year: "numeric",
     month: "long",
   }).format(calendarMonth)
-  const selectedHour = currentHour
-  const selectedMinute = currentMinute
+  const selectedHour = previewTimeValue ? Number(previewTimeValue.slice(0, 2)) : currentHour
+  const selectedMinute = previewTimeValue ? Number(previewTimeValue.slice(3, 5)) : currentMinute
   const selectedCalendar = calendarOptions.find(calendar => calendar.id === selectedCalendarId) ?? calendarOptions[0]
   const canAddCalendar = Boolean(item.scheduled_at && item.duration_minutes && selectedCalendar?.id)
 
@@ -1229,9 +1390,39 @@ export function WishlistCardDetail({
     await handleScheduleChange(formatLocalDateValue(date), timeValue || "09:00")
   }
 
-  const handleTimeSelect = async (hour: number, minute: number) => {
-    const nextDateValue = dateValue || formatLocalDateValue(new Date())
-    await handleScheduleChange(nextDateValue, `${formatTimePart(hour)}:${formatTimePart(minute)}`)
+  const scrollScheduleTriggerIntoView = (trigger: HTMLButtonElement | null, expectedPopoverHeight: number) => {
+    if (!isMobile || !trigger) return
+    window.requestAnimationFrame(() => {
+      const triggerRect = trigger.getBoundingClientRect()
+      const availableBelow = window.innerHeight - triggerRect.bottom - 12
+      if (availableBelow >= expectedPopoverHeight) return
+
+      const scroller = sheetScrollRef.current
+      if (!scroller) {
+        if (typeof trigger.scrollIntoView === "function") {
+          trigger.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" })
+        }
+        return
+      }
+
+      const scrollerRect = scroller.getBoundingClientRect()
+      const targetTopInScroller = Math.max(24, scroller.clientHeight * 0.28)
+      const nextScrollTop = scroller.scrollTop + triggerRect.top - scrollerRect.top - targetTopInScroller
+      scroller.scrollTo({
+        top: Math.max(0, nextScrollTop),
+        behavior: "auto",
+      })
+    })
+  }
+
+  const handleDatePopoverOpenChange = (nextOpen: boolean) => {
+    setIsDatePopoverOpen(nextOpen)
+    if (nextOpen) scrollScheduleTriggerIntoView(dateTriggerRef.current, DATE_POPOVER_APPROX_HEIGHT)
+  }
+
+  const handleTimePopoverOpenChange = (nextOpen: boolean) => {
+    setIsTimePopoverOpen(nextOpen)
+    if (nextOpen) scrollScheduleTriggerIntoView(timeTriggerRef.current, TIME_POPOVER_APPROX_HEIGHT)
   }
 
   const handleCalendarSelect = (calendarId: string) => {
@@ -1780,9 +1971,10 @@ export function WishlistCardDetail({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">日付</span>
-                  <Popover open={isDatePopoverOpen} onOpenChange={setIsDatePopoverOpen}>
+                  <Popover open={isDatePopoverOpen} onOpenChange={handleDatePopoverOpenChange}>
                     <PopoverTrigger asChild>
                       <button
+                        ref={dateTriggerRef}
                         type="button"
                         className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
                       >
@@ -1797,6 +1989,8 @@ export function WishlistCardDetail({
                       side="bottom"
                       align="start"
                       sideOffset={8}
+                      avoidCollisions={false}
+                      data-testid="memo-date-popover"
                       className="w-[min(20rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
                     >
                       <div className="space-y-3">
@@ -1844,9 +2038,10 @@ export function WishlistCardDetail({
                 </div>
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">時刻</span>
-                  <Popover open={isTimePopoverOpen} onOpenChange={setIsTimePopoverOpen}>
+                  <Popover open={isTimePopoverOpen} onOpenChange={handleTimePopoverOpenChange}>
                     <PopoverTrigger asChild>
                       <button
+                        ref={timeTriggerRef}
                         type="button"
                         className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
                       >
@@ -1862,14 +2057,25 @@ export function WishlistCardDetail({
                       align="end"
                       sideOffset={8}
                       avoidCollisions={false}
+                      data-testid="memo-time-popover"
                       className="w-[min(18rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
                     >
                       <div className="grid grid-cols-2 gap-2">
                         <div
+                          ref={hourWheelRef}
                           className={TIME_WHEEL_COLUMN_CLASS}
-                          onTouchStart={event => event.stopPropagation()}
-                          onTouchEnd={event => event.stopPropagation()}
-                          onWheel={event => event.stopPropagation()}
+                          data-time-wheel-column="hour"
+                          onTouchStart={hourWheel.onTouchStart}
+                          onTouchMove={hourWheel.onTouchMove}
+                          onTouchEnd={hourWheel.onTouchEnd}
+                          onTouchCancel={hourWheel.onTouchCancel}
+                          onWheel={hourWheel.onWheel}
+                          onScroll={hourWheel.onScroll}
+                          onPointerDown={hourWheel.onPointerDown}
+                          onPointerMove={hourWheel.onPointerMove}
+                          onPointerUp={hourWheel.onPointerUp}
+                          onPointerCancel={hourWheel.onPointerCancel}
+                          onLostPointerCapture={hourWheel.onLostPointerCapture}
                         >
                           <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">時</div>
                           {HOUR_OPTIONS.map(hour => (
@@ -1877,22 +2083,34 @@ export function WishlistCardDetail({
                               key={hour}
                               ref={node => { hourOptionRefs.current[hour] = node }}
                               type="button"
-                              onClick={() => void handleTimeSelect(hour, selectedMinute)}
+                              onClick={() => hourWheel.selectIndex(hourWheelRef.current, hour)}
                               aria-pressed={hour === selectedHour}
                               className={cn(
                                 "flex h-11 w-full items-center justify-center rounded text-base tabular-nums transition-colors touch-manipulation",
                                 hour === selectedHour ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                               )}
+                              data-time-wheel-option="hour"
+                              data-time-wheel-value={hour}
                             >
                               {formatTimePart(hour)}
                             </button>
                           ))}
                         </div>
                         <div
+                          ref={minuteWheelRef}
                           className={TIME_WHEEL_COLUMN_CLASS}
-                          onTouchStart={event => event.stopPropagation()}
-                          onTouchEnd={event => event.stopPropagation()}
-                          onWheel={event => event.stopPropagation()}
+                          data-time-wheel-column="minute"
+                          onTouchStart={minuteWheel.onTouchStart}
+                          onTouchMove={minuteWheel.onTouchMove}
+                          onTouchEnd={minuteWheel.onTouchEnd}
+                          onTouchCancel={minuteWheel.onTouchCancel}
+                          onWheel={minuteWheel.onWheel}
+                          onScroll={minuteWheel.onScroll}
+                          onPointerDown={minuteWheel.onPointerDown}
+                          onPointerMove={minuteWheel.onPointerMove}
+                          onPointerUp={minuteWheel.onPointerUp}
+                          onPointerCancel={minuteWheel.onPointerCancel}
+                          onLostPointerCapture={minuteWheel.onLostPointerCapture}
                         >
                           <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">分</div>
                           {MINUTE_OPTIONS.map(minute => (
@@ -1900,12 +2118,14 @@ export function WishlistCardDetail({
                               key={minute}
                               ref={node => { minuteOptionRefs.current[minute] = node }}
                               type="button"
-                              onClick={() => void handleTimeSelect(selectedHour, minute)}
+                              onClick={() => minuteWheel.selectIndex(minuteWheelRef.current, minute)}
                               aria-pressed={minute === selectedMinute}
                               className={cn(
                                 "flex h-11 w-full items-center justify-center rounded text-base tabular-nums transition-colors touch-manipulation",
                                 minute === selectedMinute ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                               )}
+                              data-time-wheel-option="minute"
+                              data-time-wheel-value={minute}
                             >
                               {formatTimePart(minute)}
                             </button>

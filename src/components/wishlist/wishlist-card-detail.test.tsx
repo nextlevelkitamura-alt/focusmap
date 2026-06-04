@@ -129,6 +129,7 @@ describe('WishlistCardDetail', () => {
     const dateTrigger = within(dateField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
     fireEvent.click(dateTrigger)
 
+    expect(await screen.findByTestId('memo-date-popover')).toHaveAttribute('data-side', 'bottom')
     expect(await screen.findByRole('button', { name: '前' })).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: /^1$/ })[0])
 
@@ -147,7 +148,54 @@ describe('WishlistCardDetail', () => {
     const hourColumn = (await screen.findByText('時')).parentElement
     expect(hourColumn).toHaveClass('scroll-smooth')
     expect(hourColumn).toHaveClass('overscroll-contain')
+    expect(hourColumn).toHaveClass('touch-none')
     expect(hourColumn).not.toHaveClass('snap-y')
+  })
+
+  test('時刻ホイールはドラッグ中に表示を即時更新して停止位置を保存する', async () => {
+    render(<DetailHarness />)
+
+    const timeField = await screen.findByText('時刻')
+    const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
+    fireEvent.click(timeTrigger)
+
+    const hourColumn = (await screen.findByText('時')).parentElement as HTMLDivElement
+    fireEvent.pointerDown(hourColumn, { pointerId: 1, pointerType: 'touch', clientY: 100 })
+    fireEvent.pointerMove(hourColumn, { pointerId: 1, pointerType: 'touch', clientY: 12 })
+    expect(hourColumn.scrollTop).toBe(88)
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+    })
+
+    fireEvent.pointerUp(hourColumn, { pointerId: 1, pointerType: 'touch', clientY: 12 })
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+    })
+  })
+
+  test('時刻ホイールはネイティブスクロール中にも表示を即時更新する', async () => {
+    render(<DetailHarness />)
+
+    const timeField = await screen.findByText('時刻')
+    const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
+    fireEvent.click(timeTrigger)
+
+    const hourColumn = (await screen.findByText('時')).parentElement as HTMLDivElement
+    fireEvent.touchStart(hourColumn)
+    hourColumn.scrollTop = 88
+    fireEvent.scroll(hourColumn)
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+    })
+
+    fireEvent.touchEnd(hourColumn)
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+    })
   })
 
   test('画像をドロップすると添付APIへアップロードする', async () => {

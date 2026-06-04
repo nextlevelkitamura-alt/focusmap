@@ -9,6 +9,7 @@ import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
+import { useMomentumWheel } from "@/hooks/useMomentumWheel"
 
 interface DateTimePickerProps {
     date: Date | undefined
@@ -51,9 +52,6 @@ function TimeWheel({
     const hourScrollRef = React.useRef<HTMLDivElement>(null)
     const minuteScrollRef = React.useRef<HTMLDivElement>(null)
     const isInitialMount = React.useRef(true)
-    const hourTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-    const minuteTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-    const isSnapping = React.useRef(false)
 
     const scrollToIndex = React.useCallback((container: HTMLDivElement | null, index: number, smooth: boolean) => {
         if (!container) return
@@ -64,18 +62,43 @@ function TimeWheel({
         })
     }, [])
 
+    const getWheelIndex = React.useCallback((container: HTMLDivElement) => {
+        return Math.round(container.scrollTop / ITEM_HEIGHT)
+    }, [])
+
+    const scrollWheelToIndex = React.useCallback((container: HTMLDivElement, index: number, behavior: "auto" | "smooth") => {
+        container.scrollTo({
+            top: index * ITEM_HEIGHT,
+            behavior,
+        })
+    }, [])
+
+    const hourWheel = useMomentumWheel({
+        values: hours,
+        getIndex: getWheelIndex,
+        scrollToIndex: scrollWheelToIndex,
+        onPreview: (value) => onTimeChange("hour", value),
+        onChange: (value) => onTimeChange("hour", value),
+    })
+
+    const minuteWheel = useMomentumWheel({
+        values: minutes,
+        getIndex: getWheelIndex,
+        scrollToIndex: scrollWheelToIndex,
+        onPreview: (value) => onTimeChange("minute", value),
+        onChange: (value) => onTimeChange("minute", value),
+    })
+
     const handleItemSelect = React.useCallback((
         type: "hour" | "minute",
-        value: number,
         index: number
     ) => {
         if (type === "hour") {
-            scrollToIndex(hourScrollRef.current, index, true)
+            hourWheel.selectIndex(hourScrollRef.current, index)
         } else {
-            scrollToIndex(minuteScrollRef.current, index, true)
+            minuteWheel.selectIndex(minuteScrollRef.current, index)
         }
-        onTimeChange(type, value)
-    }, [onTimeChange, scrollToIndex])
+    }, [hourWheel, minuteWheel])
 
     React.useEffect(() => {
         if (selectedDate && isInitialMount.current) {
@@ -88,34 +111,6 @@ function TimeWheel({
             isInitialMount.current = false
         }
     }, [selectedDate, scrollToIndex])
-
-    // スクロール終了検出 → スナップ＋自動選択
-    const handleScrollEnd = React.useCallback((
-        container: HTMLDivElement,
-        type: "hour" | "minute",
-        values: number[],
-        timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
-    ) => {
-        if (timerRef.current) clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => {
-            if (isSnapping.current) return
-            const scrollTop = container.scrollTop
-            const snappedIndex = Math.round(scrollTop / ITEM_HEIGHT)
-            const clampedIndex = Math.max(0, Math.min(snappedIndex, values.length - 1))
-            const value = values[clampedIndex]
-
-            // スナップアニメーション
-            isSnapping.current = true
-            container.scrollTo({
-                top: clampedIndex * ITEM_HEIGHT,
-                behavior: 'smooth',
-            })
-            setTimeout(() => { isSnapping.current = false }, 200)
-
-            // 値を自動確定
-            onTimeChange(type, value)
-        }, 80)
-    }, [onTimeChange])
 
     const paddingY = Math.floor(VISIBLE_HEIGHT / 2 - ITEM_HEIGHT / 2)
 
@@ -153,14 +148,19 @@ function TimeWheel({
                     {/* Hours */}
                     <div
                         ref={hourScrollRef}
-                        className="h-full flex-1 overflow-y-scroll overscroll-contain no-scrollbar"
+                        className="h-full flex-1 touch-none select-none overflow-y-scroll overscroll-contain no-scrollbar"
                         style={{ WebkitOverflowScrolling: 'touch' }}
-                        onTouchMove={(e) => e.stopPropagation()}
-                        onScroll={() => {
-                            if (hourScrollRef.current) {
-                                handleScrollEnd(hourScrollRef.current, "hour", hours, hourTimerRef)
-                            }
-                        }}
+                        onPointerDown={hourWheel.onPointerDown}
+                        onPointerMove={hourWheel.onPointerMove}
+                        onPointerUp={hourWheel.onPointerUp}
+                        onPointerCancel={hourWheel.onPointerCancel}
+                        onLostPointerCapture={hourWheel.onLostPointerCapture}
+                        onTouchStart={hourWheel.onTouchStart}
+                        onTouchMove={hourWheel.onTouchMove}
+                        onTouchEnd={hourWheel.onTouchEnd}
+                        onTouchCancel={hourWheel.onTouchCancel}
+                        onWheel={hourWheel.onWheel}
+                        onScroll={hourWheel.onScroll}
                     >
                         <div className="flex flex-col items-center" style={{ paddingTop: paddingY, paddingBottom: paddingY }}>
                             {hours.map((h) => {
@@ -175,7 +175,7 @@ function TimeWheel({
                                                 : "text-muted-foreground"
                                         )}
                                         style={{ height: ITEM_HEIGHT }}
-                                        onClick={() => handleItemSelect("hour", h, h)}
+                                        onClick={() => handleItemSelect("hour", h)}
                                     >
                                         {h.toString().padStart(2, "0")}
                                     </div>
@@ -189,14 +189,19 @@ function TimeWheel({
                     {/* Minutes */}
                     <div
                         ref={minuteScrollRef}
-                        className="h-full flex-1 overflow-y-scroll overscroll-contain no-scrollbar"
+                        className="h-full flex-1 touch-none select-none overflow-y-scroll overscroll-contain no-scrollbar"
                         style={{ WebkitOverflowScrolling: 'touch' }}
-                        onTouchMove={(e) => e.stopPropagation()}
-                        onScroll={() => {
-                            if (minuteScrollRef.current) {
-                                handleScrollEnd(minuteScrollRef.current, "minute", minutes, minuteTimerRef)
-                            }
-                        }}
+                        onPointerDown={minuteWheel.onPointerDown}
+                        onPointerMove={minuteWheel.onPointerMove}
+                        onPointerUp={minuteWheel.onPointerUp}
+                        onPointerCancel={minuteWheel.onPointerCancel}
+                        onLostPointerCapture={minuteWheel.onLostPointerCapture}
+                        onTouchStart={minuteWheel.onTouchStart}
+                        onTouchMove={minuteWheel.onTouchMove}
+                        onTouchEnd={minuteWheel.onTouchEnd}
+                        onTouchCancel={minuteWheel.onTouchCancel}
+                        onWheel={minuteWheel.onWheel}
+                        onScroll={minuteWheel.onScroll}
                     >
                         <div className="flex flex-col items-center" style={{ paddingTop: paddingY, paddingBottom: paddingY }}>
                             {minutes.map((m, idx) => {
@@ -212,7 +217,7 @@ function TimeWheel({
                                                 : "text-muted-foreground"
                                         )}
                                         style={{ height: ITEM_HEIGHT }}
-                                        onClick={() => handleItemSelect("minute", m, idx)}
+                                        onClick={() => handleItemSelect("minute", idx)}
                                     >
                                         {m.toString().padStart(2, "0")}
                                     </div>
