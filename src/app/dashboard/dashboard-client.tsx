@@ -1282,7 +1282,6 @@ export function DashboardClient({
                             onReorderTask={reorderTask}
                             onOpenLinkedMemos={openMindmapLinkedMemos}
                             refreshFromServer={refreshFromServer}
-                            onCalendarEventCreated={handleCalendarEventCreated}
                         />
                     </div>
                 )}

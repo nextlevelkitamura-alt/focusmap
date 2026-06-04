@@ -1,18 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { MessageCircle, Network, Plus, Sparkles, X } from "lucide-react"
-import { AiChatPanel } from "@/components/ai/ai-chat-panel"
+import { useCallback, useState } from "react"
+import { Loader2, Network, Sparkles } from "lucide-react"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
+import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { cn } from "@/lib/utils"
+import { fetchWishlistItems } from "@/lib/wishlist-cache"
 import type { Project, Space, Task } from "@/types/database"
 import type { Note } from "@/types/note"
 
@@ -21,7 +15,7 @@ interface MobileAiMapViewProps {
   spaces: Space[]
   selectedProjectId: string | null
   selectedSpaceId: string | null
-  onSelectProject: (id: string) => void
+  onSelectProject: (id: string | null) => void
   onSelectSpace: (id: string | null) => void
   selectedProject: Project | null | undefined
   groups: Task[]
@@ -35,7 +29,6 @@ interface MobileAiMapViewProps {
   onReorderTask?: (taskId: string, referenceTaskId: string, position: 'above' | 'below') => Promise<void>
   onOpenLinkedMemos?: (taskId: string) => void
   refreshFromServer: () => Promise<void>
-  onCalendarEventCreated?: (eventData?: { id: string; title: string; scheduled_at: string; estimated_time: number; calendar_id?: string | null }) => void
 }
 
 export function getSelectableMindmapNotes({
@@ -85,162 +78,103 @@ export function MobileAiMapView({
   onReorderTask,
   onOpenLinkedMemos,
   refreshFromServer,
-  onCalendarEventCreated,
 }: MobileAiMapViewProps) {
-  const [isChatOpen, setIsChatOpen] = useState(false)
-  const [isMemoPickerOpen, setIsMemoPickerOpen] = useState(false)
-  const [notes, setNotes] = useState<Note[]>([])
-  const [isLoadingNotes, setIsLoadingNotes] = useState(false)
-  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set())
+  const [organizeMemoIds, setOrganizeMemoIds] = useState<string[]>([])
+  const [organizeMemoProjects, setOrganizeMemoProjects] = useState<Record<string, string | null>>({})
+  const [isLoadingOrganizeMemos, setIsLoadingOrganizeMemos] = useState(false)
+  const [organizeError, setOrganizeError] = useState<string | null>(null)
   const [isMindmapDialogOpen, setIsMindmapDialogOpen] = useState(false)
-  const [focusEditNodeId, setFocusEditNodeId] = useState<string | null>(null)
-
-  const loadNotes = useCallback(async () => {
-    setIsLoadingNotes(true)
-    try {
-      const params = new URLSearchParams({ status: "pending", limit: "100" })
-      if (selectedProjectId) params.set("project_id", selectedProjectId)
-      const res = await fetch(`/api/notes?${params.toString()}`)
-      if (!res.ok) throw new Error("Failed to load notes")
-      const data = await res.json()
-      setNotes(Array.isArray(data.notes) ? data.notes : [])
-    } catch (error) {
-      console.error("[MobileAiMapView] Failed to load notes:", error)
-      setNotes([])
-    } finally {
-      setIsLoadingNotes(false)
-    }
-  }, [selectedProjectId])
-
-  useEffect(() => {
-    if (isMemoPickerOpen) void loadNotes()
-  }, [isMemoPickerOpen, loadNotes])
-
-  const selectableNotes = useMemo(() => {
-    return getSelectableMindmapNotes({
-      notes,
-      projects,
-      selectedProjectId,
-      selectedSpaceId,
-    })
-  }, [notes, projects, selectedProjectId, selectedSpaceId])
-
-  useEffect(() => {
-    const visibleIds = new Set(selectableNotes.map(note => note.id))
-    setSelectedNoteIds(prev => {
-      const next = new Set([...prev].filter(id => visibleIds.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [selectableNotes])
 
   const defaultProjectId = selectedProject?.id ?? null
-  const selectedSpaceTitle = useMemo(
-    () => spaces.find(space => space.id === selectedSpaceId)?.title ?? null,
-    [spaces, selectedSpaceId],
-  )
-  const scopeLabel = selectedProject?.title
-    ? `${selectedProject.title} の未整理メモ`
-    : selectedSpaceTitle
-      ? `${selectedSpaceTitle} の未整理メモ`
-      : "未整理メモ"
-  const projectTitleById = useMemo(
-    () => new Map(projects.map(project => [project.id, project.title])),
-    [projects],
-  )
 
-  const toggleNote = useCallback((noteId: string) => {
-    setSelectedNoteIds(prev => {
-      const next = new Set(prev)
-      if (next.has(noteId)) next.delete(noteId)
-      else next.add(noteId)
-      return next
-    })
-  }, [])
+  const handleOpenMindmapDialog = useCallback(async () => {
+    if (!selectedProjectId || isLoadingOrganizeMemos) return
 
-  const handleOpenMindmapDialog = useCallback(() => {
-    if (selectedNoteIds.size === 0) return
-    setIsMemoPickerOpen(false)
-    setIsMindmapDialogOpen(true)
-  }, [selectedNoteIds])
+    setIsLoadingOrganizeMemos(true)
+    setOrganizeError(null)
+    try {
+      const items = await fetchWishlistItems({
+        spaceId: selectedSpaceId,
+        projectId: selectedProjectId,
+        force: true,
+      })
+      const candidates = items
+        .filter(item =>
+          !item.is_completed &&
+          !item.google_event_id &&
+          (item.memo_status ?? "unsorted") === "unsorted",
+        )
+        .slice(0, 50)
+      setOrganizeMemoIds(candidates.map(item => item.id))
+      setOrganizeMemoProjects(
+        Object.fromEntries(candidates.map(item => [item.id, item.project_id ?? null])),
+      )
+      setIsMindmapDialogOpen(true)
+    } catch (error) {
+      setOrganizeError(error instanceof Error ? error.message : "メモの取得に失敗しました")
+    } finally {
+      setIsLoadingOrganizeMemos(false)
+    }
+  }, [isLoadingOrganizeMemos, selectedProjectId, selectedSpaceId])
 
   const handleMindmapSuccess = useCallback(async (projectId: string) => {
     onSelectProject(projectId)
-    setSelectedNoteIds(new Set())
+    setOrganizeMemoIds([])
+    setOrganizeMemoProjects({})
     setIsMindmapDialogOpen(false)
     await refreshFromServer()
   }, [onSelectProject, refreshFromServer])
 
-  const handleCreateRoot = useCallback(async () => {
-    if (typeof document !== "undefined") {
-      const keyboardAnchor = document.querySelector<HTMLInputElement>('[data-testid="mobile-keyboard-anchor"]')
-      if (keyboardAnchor) {
-        keyboardAnchor.value = ""
-        keyboardAnchor.focus({ preventScroll: true })
-      }
-    }
-    const newTask = await onCreateGroup?.("")
-    if (newTask?.id) setFocusEditNodeId(newTask.id)
-    await refreshFromServer()
-  }, [onCreateGroup, refreshFromServer])
-
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <div className="z-10 shrink-0 border-b bg-background/95 px-3 py-2 backdrop-blur">
-        <div className="grid grid-cols-[minmax(5.75rem,0.95fr)_minmax(6.25rem,1.1fr)_auto_auto_auto] gap-1.5">
-          <select
-            value={selectedSpaceId ?? ""}
-            onChange={(event) => onSelectSpace(event.target.value || null)}
-            className="min-h-11 min-w-0 rounded-md border bg-background px-3 py-2 text-sm font-medium"
-            aria-label="スペースを選択"
-          >
-            <option value="">全体</option>
-            {spaces.map(space => (
-              <option key={space.id} value={space.id}>{space.title}</option>
-            ))}
-          </select>
-          <select
-            value={selectedProjectId || ""}
-            onChange={(event) => onSelectProject(event.target.value)}
-            className="min-h-11 min-w-0 rounded-md border bg-background px-3 py-2 text-sm font-medium"
-            aria-label="プロジェクトを選択"
-          >
-            {projects.map(project => (
-              <option key={project.id} value={project.id}>{project.title}</option>
-            ))}
-          </select>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <h1 className="shrink-0 text-lg font-semibold leading-none tracking-normal">マップ</h1>
+            <SpaceProjectSwitcher
+              spaces={spaces}
+              projects={projects}
+              selectedSpaceId={selectedSpaceId}
+              selectedProjectId={selectedProjectId}
+              onSelectSpace={onSelectSpace}
+              onSelectProject={onSelectProject}
+              showAllProjectsOption={false}
+              variant="memoHeaderCompact"
+              className="ml-6"
+            />
+          </div>
           <Button
             type="button"
             size="icon"
             variant="outline"
-            className="h-10 w-10 shrink-0"
-            onClick={handleCreateRoot}
-            aria-label="ルートノードを追加"
-            title="ルートノードを追加"
+            className="h-11 w-11 shrink-0 rounded-md"
+            onClick={() => { void handleOpenMindmapDialog() }}
+            disabled={!selectedProjectId || isLoadingOrganizeMemos}
+            aria-label="AIでメモからマップを作成"
+            title="AIでメモからマップを作成"
           >
-            <Plus className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="h-10 w-10 shrink-0"
-            onClick={() => setIsMemoPickerOpen(true)}
-            aria-label="メモからマップ整理"
-            title="メモからマップ整理"
-          >
-            <Network className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            className="h-10 w-10 shrink-0"
-            onClick={() => setIsChatOpen(true)}
-            aria-label="AIアシスタントを開く"
-            title="AIアシスタントを開く"
-          >
-            <MessageCircle className="h-4 w-4" />
+            {isLoadingOrganizeMemos ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <span className="relative inline-flex h-5 w-5 items-center justify-center">
+                <Network className="h-4 w-4" />
+                <Sparkles className="absolute -right-1 -top-1 h-2.5 w-2.5 text-primary" />
+              </span>
+            )}
           </Button>
         </div>
+        {organizeError && (
+          <div className="mt-2 flex min-h-8 items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+            <span className="min-w-0 flex-1 truncate">{organizeError}</span>
+            <button
+              type="button"
+              onClick={() => setOrganizeError(null)}
+              className="shrink-0 rounded px-2 py-1 hover:bg-destructive/10"
+            >
+              閉じる
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -258,7 +192,6 @@ export function MobileAiMapView({
             onReorderTask={onReorderTask}
             onOpenLinkedMemos={onOpenLinkedMemos}
             projects={projects}
-            focusEditNodeId={focusEditNodeId}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
@@ -267,99 +200,19 @@ export function MobileAiMapView({
         )}
       </div>
 
-      <Dialog open={isMemoPickerOpen} onOpenChange={setIsMemoPickerOpen}>
-        <DialogContent className="max-h-[86dvh] max-w-[94vw] overflow-hidden p-0">
-          <DialogHeader className="border-b px-4 py-3">
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-primary" />
-              メモからマップ整理
-            </DialogTitle>
-            <div className="text-xs text-muted-foreground">{scopeLabel}</div>
-          </DialogHeader>
-          <div className="max-h-[58dvh] overflow-y-auto px-3 py-2">
-            {isLoadingNotes ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">読み込み中...</div>
-            ) : selectableNotes.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">整理できるメモがありません</div>
-            ) : (
-              <div className="space-y-2">
-                {selectableNotes.map(note => {
-                  const checked = selectedNoteIds.has(note.id)
-                  const preview = note.content.trim().replace(/\s+/g, " ")
-                  const projectTitle = note.project_id ? projectTitleById.get(note.project_id) : null
-                  return (
-                    <label
-                      key={note.id}
-                      className={cn(
-                        "flex w-full cursor-pointer gap-2 rounded-md border p-3 text-left transition-colors",
-                        checked ? "border-primary bg-primary/10" : "border-border bg-background active:bg-muted",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleNote(note.id)}
-                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-muted-foreground/40 accent-primary"
-                        aria-label={`${preview || "無題メモ"}を選択`}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{preview || "無題メモ"}</span>
-                        <span className="mt-1 block text-[11px] text-muted-foreground">
-                          {projectTitle ? `未整理・${projectTitle}` : "未整理"}
-                        </span>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-2 border-t p-3">
-            <Button type="button" variant="outline" onClick={() => setIsMemoPickerOpen(false)}>
-              閉じる
-            </Button>
-            <Button type="button" disabled={selectedNoteIds.size === 0} onClick={handleOpenMindmapDialog}>
-              整理する
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <MemoToMindmapDialog
         open={isMindmapDialogOpen}
-        noteIds={Array.from(selectedNoteIds)}
-        source="notes"
-        projects={projects}
-        spaces={spaces}
+        noteIds={organizeMemoIds}
+        noteProjects={organizeMemoProjects}
+        source="wishlist"
+        projects={projects.map(project => ({ id: project.id, title: project.title }))}
+        spaces={spaces.map(space => ({ id: space.id, title: space.title }))}
         defaultSpaceId={selectedSpaceId}
         defaultProjectId={defaultProjectId}
         onClose={() => setIsMindmapDialogOpen(false)}
         onSuccess={handleMindmapSuccess}
+        allowTextImport
       />
-
-      {isChatOpen && (
-        <div className="fixed inset-0 z-[90] bg-background md:hidden">
-          <div className="flex h-full flex-col">
-            <div className="flex h-12 shrink-0 items-center justify-between border-b px-3">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Sparkles className="h-4 w-4" />
-                AIアシスタント
-              </div>
-              <button type="button" className="rounded-md p-2 active:bg-muted" onClick={() => setIsChatOpen(false)}>
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1">
-              <AiChatPanel
-                mode="fullscreen"
-                activeProjectId={selectedProjectId}
-                onMindmapUpdated={refreshFromServer}
-                onCalendarEventCreated={onCalendarEventCreated}
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
