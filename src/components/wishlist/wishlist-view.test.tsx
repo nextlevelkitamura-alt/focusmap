@@ -112,7 +112,20 @@ vi.mock('@/components/memo/note-claude-runner', () => ({
 }))
 
 vi.mock('./wishlist-card-detail', () => ({
-  WishlistCardDetail: () => null,
+  WishlistCardDetail: ({
+    item,
+    open,
+    isPersisting,
+  }: {
+    item: IdealGoalWithItems | null
+    open: boolean
+    isPersisting?: boolean
+  }) => open && item ? (
+    <div data-testid="memo-detail">
+      <span>{item.title}</span>
+      {isPersisting && <span>作成中</span>}
+    </div>
+  ) : null,
 }))
 
 function createMemoItem(overrides: Partial<IdealGoalWithItems> = {}): IdealGoalWithItems {
@@ -476,6 +489,46 @@ describe('WishlistView calendar D&D', () => {
         memo_status: 'unsorted',
       })
     })
+  })
+
+  test('入力なしの追加ボタンはAPI完了前に新規メモ編集を開く', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+
+    const fetchMock = vi.fn<Window['fetch']>((async (input, init) => {
+      const url = requestUrl(input)
+      if (url.startsWith('/api/wishlist') && init?.method === 'POST') {
+        return new Promise<Response>(() => undefined)
+      }
+      if (url.startsWith('/api/wishlist')) return Promise.resolve(jsonResponse({ items: [] }))
+      if (url === '/api/ai/context') return Promise.resolve(jsonResponse({ preferences: {} }))
+      return Promise.resolve(jsonResponse({}))
+    }) as Window['fetch'])
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WishlistView selectedProjectId="project-1" />)
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /追加/ })[0]).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getAllByRole('button', { name: /追加/ })[0])
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memo-detail')).toHaveTextContent('新しいメモ')
+      expect(screen.getByTestId('memo-detail')).toHaveTextContent('作成中')
+    })
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
+    )).toBe(true)
   })
 
   test('スマホ表示では選択中カラムに合わせて追加メモの保存先を変える', async () => {

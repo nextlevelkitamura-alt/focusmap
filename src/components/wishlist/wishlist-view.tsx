@@ -132,6 +132,18 @@ const MOBILE_COLUMN_ORDER: ColumnKey[] = ["unsorted", "today", "mapped", "schedu
 const SHOW_MEMO_TAG_FILTER_ENTRY = false
 const SHOW_MEMO_MINDMAP_ENTRY = false
 
+function createClientMemoId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID()
+  }
+
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, char => {
+    const value = Math.floor(Math.random() * 16)
+    const digit = char === "x" ? value : (value & 0x3) | 0x8
+    return digit.toString(16)
+  })
+}
+
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -249,6 +261,54 @@ function getMobileColumnCreateOverrides(column: ColumnKey, payload?: unknown): R
     scheduled_at: null,
     google_event_id: null,
   }
+}
+
+function buildOptimisticMemoItem({
+  id,
+  title,
+  projectId,
+  description,
+  overrides,
+}: {
+  id: string
+  title: string
+  projectId?: string | null
+  description: string
+  overrides: Record<string, unknown>
+}): MemoItem {
+  const now = new Date().toISOString()
+  const memoStatus = typeof overrides.memo_status === "string" ? overrides.memo_status : "unsorted"
+  return {
+    id,
+    user_id: "local",
+    title,
+    project_id: projectId ?? null,
+    description: description || null,
+    cover_image_url: null,
+    cover_image_path: null,
+    category: "アイデア",
+    color: "#6366f1",
+    status: "memo",
+    display_order: Date.now(),
+    duration_months: null,
+    start_date: null,
+    target_date: null,
+    total_daily_minutes: 0,
+    cost_total: null,
+    cost_monthly: null,
+    ai_summary: null,
+    scheduled_at: typeof overrides.scheduled_at === "string" ? overrides.scheduled_at : null,
+    duration_minutes: typeof overrides.duration_minutes === "number" ? overrides.duration_minutes : null,
+    google_event_id: typeof overrides.google_event_id === "string" ? overrides.google_event_id : null,
+    is_completed: typeof overrides.is_completed === "boolean" ? overrides.is_completed : false,
+    is_today: typeof overrides.is_today === "boolean" ? overrides.is_today : false,
+    tags: ["アイデア"],
+    memo_status: memoStatus,
+    ai_source_payload: overrides.ai_source_payload ?? null,
+    created_at: now,
+    updated_at: now,
+    ideal_items: [],
+  } as MemoItem
 }
 
 function getCompletionUpdate(updates: Record<string, unknown>): boolean | null {
@@ -498,6 +558,7 @@ export function WishlistView({
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
+  const [creatingMemoIds, setCreatingMemoIds] = useState<Set<string>>(new Set())
   const [showMindmapDialog, setShowMindmapDialog] = useState(false)
   const [activeMobileColumn, setActiveMobileColumn] = useState<ColumnKey>("unsorted")
   const [isMobileMemoLayout, setIsMobileMemoLayout] = useState(false)
@@ -512,6 +573,8 @@ export function WishlistView({
   const mobileColumnsRef = useRef<HTMLDivElement>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
+  const creatingMemoIdsRef = useRef(new Set<string>())
+  const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { calendars } = useCalendars()
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
@@ -999,6 +1062,15 @@ export function WishlistView({
     return tracked
   }, [])
 
+  const setMemoCreating = useCallback((id: string, creating: boolean) => {
+    if (creating) {
+      creatingMemoIdsRef.current.add(id)
+    } else {
+      creatingMemoIdsRef.current.delete(id)
+    }
+    setCreatingMemoIds(new Set(creatingMemoIdsRef.current))
+  }, [])
+
   const patchMemoItem = useCallback(async (id: string, updates: Record<string, unknown>) => {
     const res = await fetch(`/api/wishlist/${id}`, {
       method: "PATCH",
@@ -1104,6 +1176,20 @@ export function WishlistView({
 
   const handleUpdate = useCallback(async (id: string, updates: Record<string, unknown>) => {
     if (Object.keys(updates).length > 0) {
+      if (creatingMemoIdsRef.current.has(id)) {
+        const currentPending = pendingCreateUpdatesRef.current.get(id) ?? {}
+        pendingCreateUpdatesRef.current.set(id, { ...currentPending, ...updates })
+        const optimisticUpdate = (item: MemoItem): MemoItem => ({
+          ...item,
+          ...updates,
+          updated_at: new Date().toISOString(),
+        })
+        setItems(prev => prev.map(existing => existing.id === id ? optimisticUpdate(existing) : existing))
+        setSelectedItem(prev => prev?.id === id ? optimisticUpdate(prev) : prev)
+        setIntakeError(null)
+        return
+      }
+
       const previousItem = items.find(item => item.id === id) ?? null
       const updateVersion = (itemUpdateVersions.current.get(id) ?? 0) + 1
       itemUpdateVersions.current.set(id, updateVersion)
@@ -1221,19 +1307,24 @@ export function WishlistView({
     const mobileColumnOverrides = isMobileMemoLayout
       ? getMobileColumnCreateOverrides(activeMobileColumn)
       : {}
+    const draftItem = buildOptimisticMemoItem({
+      id: createClientMemoId(),
+      title: "新しいメモ",
+      projectId: selectedProjectId,
+      description: "",
+      overrides: mobileColumnOverrides,
+    })
+    setMemoCreating(draftItem.id, true)
+    invalidateWishlistItemsCache()
+    setItems(prev => [draftItem, ...prev])
+    setSelectedItem(draftItem)
+    setTagFilter("all")
+    setDetailOpen(true)
     try {
       const res = await fetch("/api/wishlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: "新しいメモ",
-          project_id: selectedProjectId,
-          description: "",
-          category: "アイデア",
-          tags: ["アイデア"],
-          memo_status: "unsorted",
-          ...mobileColumnOverrides,
-        }),
+        body: JSON.stringify(buildMemoCreatePayload(draftItem)),
       })
       const data = await res.json()
       if (!res.ok || data.error) {
@@ -1243,23 +1334,36 @@ export function WishlistView({
         throw new Error("作成結果を取得できませんでした")
       }
       const item = data.item as MemoItem
+      const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
+      pendingCreateUpdatesRef.current.delete(draftItem.id)
+      const nextItem = pendingUpdates
+        ? { ...item, ...pendingUpdates, updated_at: new Date().toISOString() } as MemoItem
+        : item
       invalidateWishlistItemsCache()
-      setItems(prev => [item, ...prev])
-      setSelectedItem(item)
-      setTagFilter("all")
+      setItems(prev => prev.map(existing => existing.id === draftItem.id ? nextItem : existing))
+      setSelectedItem(prev => prev?.id === draftItem.id ? nextItem : prev)
+      setMemoCreating(draftItem.id, false)
+      if (pendingUpdates && Object.keys(pendingUpdates).length > 0) {
+        try {
+          const patched = await patchMemoItem(draftItem.id, pendingUpdates)
+          setItems(prev => prev.map(existing => existing.id === draftItem.id ? patched : existing))
+          setSelectedItem(prev => prev?.id === draftItem.id ? patched : prev)
+        } catch (err) {
+          setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
+        }
+      }
       await refreshTags()
-      setDetailOpen(true)
       pushAction({
-        description: `「${item.title}」を追加`,
+        description: `「${nextItem.title}」を追加`,
         undo: async () => {
-          setItems(prev => prev.filter(existing => existing.id !== item.id))
-          setSelectedItem(prev => prev?.id === item.id ? null : prev)
+          setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
+          setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
           setDetailOpen(false)
-          await removeMemoItemFromServer(item.id)
+          await removeMemoItemFromServer(draftItem.id)
           await refreshTags()
         },
         redo: async () => {
-          const restored = await restoreMemoItem(item)
+          const restored = await restoreMemoItem(nextItem)
           setItems(prev => prev.some(existing => existing.id === restored.id) ? prev : [restored, ...prev])
           setSelectedItem(restored)
           setDetailOpen(true)
@@ -1267,6 +1371,11 @@ export function WishlistView({
         },
       })
     } catch (err) {
+      pendingCreateUpdatesRef.current.delete(draftItem.id)
+      setMemoCreating(draftItem.id, false)
+      setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
+      setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
+      setDetailOpen(false)
       setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
     }
   }
@@ -1280,20 +1389,26 @@ export function WishlistView({
     const mobileColumnOverrides = isMobileMemoLayout
       ? getMobileColumnCreateOverrides(activeMobileColumn)
       : {}
+    const draftItem = buildOptimisticMemoItem({
+      id: createClientMemoId(),
+      title,
+      projectId: selectedProjectId,
+      description,
+      overrides: mobileColumnOverrides,
+    })
     setIntakeError(null)
+    setMemoCreating(draftItem.id, true)
+    invalidateWishlistItemsCache()
+    setItems(prev => [draftItem, ...prev])
+    setIntakeText("")
+    setTagFilter("all")
+    setSelectedItem(draftItem)
+    setDetailOpen(true)
     try {
       const res = await fetch("/api/wishlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          project_id: selectedProjectId,
-          description,
-          category: "アイデア",
-          tags: ["アイデア"],
-          memo_status: "unsorted",
-          ...mobileColumnOverrides,
-        }),
+        body: JSON.stringify(buildMemoCreatePayload(draftItem)),
       })
       const data = await res.json()
       if (!res.ok || data.error) {
@@ -1303,27 +1418,44 @@ export function WishlistView({
         throw new Error("追加結果を取得できませんでした")
       }
       const item = data.item as MemoItem
+      const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
+      pendingCreateUpdatesRef.current.delete(draftItem.id)
+      const nextItem = pendingUpdates
+        ? { ...item, ...pendingUpdates, updated_at: new Date().toISOString() } as MemoItem
+        : item
       invalidateWishlistItemsCache()
-      setItems(prev => [item, ...prev])
-      setIntakeText("")
-      setTagFilter("all")
-      setSelectedItem(item)
-      setDetailOpen(true)
+      setItems(prev => prev.map(existing => existing.id === draftItem.id ? nextItem : existing))
+      setSelectedItem(prev => prev?.id === draftItem.id ? nextItem : prev)
+      setMemoCreating(draftItem.id, false)
+      if (pendingUpdates && Object.keys(pendingUpdates).length > 0) {
+        try {
+          const patched = await patchMemoItem(draftItem.id, pendingUpdates)
+          setItems(prev => prev.map(existing => existing.id === draftItem.id ? patched : existing))
+          setSelectedItem(prev => prev?.id === draftItem.id ? patched : prev)
+        } catch (err) {
+          setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
+        }
+      }
       await refreshTags()
       pushAction({
-        description: `「${item.title}」を追加`,
+        description: `「${nextItem.title}」を追加`,
         undo: async () => {
-          setItems(prev => prev.filter(existing => existing.id !== item.id))
-          await removeMemoItemFromServer(item.id)
+          setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
+          await removeMemoItemFromServer(draftItem.id)
           await refreshTags()
         },
         redo: async () => {
-          const restored = await restoreMemoItem(item)
+          const restored = await restoreMemoItem(nextItem)
           setItems(prev => prev.some(existing => existing.id === restored.id) ? prev : [restored, ...prev])
           await refreshTags()
         },
       })
     } catch (err) {
+      pendingCreateUpdatesRef.current.delete(draftItem.id)
+      setMemoCreating(draftItem.id, false)
+      setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
+      setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
+      setDetailOpen(false)
       setIntakeError(err instanceof Error ? err.message : "メモの追加に失敗しました")
     }
   }
@@ -2533,6 +2665,7 @@ export function WishlistView({
         onUpdate={handleUpdate}
         onCalendarAdd={async item => { await handleCalendarAdd(item) }}
         onSaved={() => setDetailOpen(false)}
+        isPersisting={selectedItem ? creatingMemoIds.has(selectedItem.id) : false}
         tagOptions={allTags}
         projects={projects}
         tagColors={tagColors}
