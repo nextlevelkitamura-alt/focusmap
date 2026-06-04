@@ -669,6 +669,41 @@ function buildMemoCreatePayload(item: MemoItem): Record<string, unknown> {
   }
 }
 
+function deriveDraftMemoTitle(description: string) {
+  return description
+    .replace(/\s+/g, " ")
+    .split(/[。.!！?？\n]/)
+    .find(part => part.trim().length > 0)
+    ?.trim()
+    .slice(0, 80) || "無題"
+}
+
+function hasPersistableDraftMemoContent(item: MemoItem) {
+  return Boolean(
+    item.title.trim() ||
+    item.description?.trim() ||
+    item.category?.trim() ||
+    (item.tags ?? []).some(tag => tag.trim()) ||
+    item.scheduled_at ||
+    item.google_event_id ||
+    item.cover_image_url ||
+    item.cover_image_path,
+  )
+}
+
+function normalizeDraftMemoForCreate(item: MemoItem, force = false): MemoItem | null {
+  const description = item.description?.trim() ?? ""
+  const title = item.title.trim() || (description ? deriveDraftMemoTitle(description) : "")
+  if (!force && !hasPersistableDraftMemoContent({ ...item, title, description })) return null
+  return {
+    ...item,
+    title: title || "無題",
+    description: description || null,
+    category: item.category?.trim() || null,
+    tags: Array.from(new Set((item.tags ?? []).map(tag => tag.trim()).filter(Boolean))),
+  }
+}
+
 function isRetryableRequestError(error: unknown) {
   if (!(error instanceof Error)) return false
   if (error.name === "AbortError") return true
@@ -1331,11 +1366,6 @@ export function WishlistView({
     }
   }, [])
 
-  const waitForMemoPersistence = useCallback(async (id: string) => {
-    const pendingCreate = creatingMemoPromisesRef.current.get(id)
-    if (pendingCreate) await pendingCreate
-  }, [])
-
   const patchMemoItem = useCallback(async (id: string, updates: Record<string, unknown>) => {
     const res = await fetch(`/api/wishlist/${id}`, {
       method: "PATCH",
@@ -1352,6 +1382,76 @@ export function WishlistView({
     invalidateWishlistItemsCache()
     return data.item as MemoItem
   }, [])
+
+  const createDraftMemoIfNeeded = useCallback(async (draftItem: MemoItem, options: { force?: boolean } = {}) => {
+    const existingCreate = creatingMemoPromisesRef.current.get(draftItem.id)
+    if (existingCreate) {
+      await existingCreate
+      return
+    }
+
+    const itemToCreate = normalizeDraftMemoForCreate(draftItem, options.force ?? false)
+    if (!itemToCreate) return
+
+    const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? {}
+    pendingCreateUpdatesRef.current.set(draftItem.id, {
+      ...pendingUpdates,
+      title: itemToCreate.title,
+      description: itemToCreate.description,
+      category: itemToCreate.category,
+      tags: itemToCreate.tags,
+    })
+
+    const createRequest = createWishlistMemo(buildMemoCreatePayload(itemToCreate))
+    const trackedCreateRequest = createRequest.then(() => undefined)
+    void trackedCreateRequest.catch(() => undefined)
+    creatingMemoPromisesRef.current.set(draftItem.id, trackedCreateRequest)
+
+    try {
+      const item = await createRequest
+      const updatesAfterCreate = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
+      pendingCreateUpdatesRef.current.delete(draftItem.id)
+      const nextItem = updatesAfterCreate
+        ? { ...item, ...updatesAfterCreate, updated_at: new Date().toISOString() } as MemoItem
+        : item
+      invalidateWishlistItemsCache()
+      setItems(prev => prev.map(existing => existing.id === draftItem.id ? nextItem : existing))
+      setSelectedItem(prev => prev?.id === draftItem.id ? nextItem : prev)
+      setMemoCreating(draftItem.id, false)
+
+      if (updatesAfterCreate && Object.keys(updatesAfterCreate).length > 0) {
+        try {
+          const patched = await patchMemoItem(draftItem.id, updatesAfterCreate)
+          setItems(prev => prev.map(existing => existing.id === draftItem.id ? patched : existing))
+          setSelectedItem(prev => prev?.id === draftItem.id ? patched : prev)
+        } catch (err) {
+          setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
+        }
+      }
+
+      await refreshTags()
+    } catch (err) {
+      pendingCreateUpdatesRef.current.delete(draftItem.id)
+      setMemoCreating(draftItem.id, false)
+      setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
+      setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
+      setDetailOpen(false)
+      setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
+    } finally {
+      creatingMemoPromisesRef.current.delete(draftItem.id)
+    }
+  }, [patchMemoItem, refreshTags, setMemoCreating])
+
+  const waitForMemoPersistence = useCallback(async (id: string) => {
+    const pendingCreate = creatingMemoPromisesRef.current.get(id)
+    if (pendingCreate) {
+      await pendingCreate
+      return
+    }
+    if (!creatingMemoIdsRef.current.has(id)) return
+    const draftItem = selectedItem?.id === id ? selectedItem : items.find(item => item.id === id) ?? null
+    if (draftItem) await createDraftMemoIfNeeded(draftItem, { force: true })
+  }, [createDraftMemoIfNeeded, items, selectedItem])
 
   const getLinkedTaskIdsForMemo = useCallback((item: MemoItem | null) => {
     if (!item) return []
@@ -1438,9 +1538,14 @@ export function WishlistView({
           ...updates,
           updated_at: new Date().toISOString(),
         })
+        const currentDraft = selectedItem?.id === id ? selectedItem : items.find(item => item.id === id) ?? null
+        const nextDraft = currentDraft ? optimisticUpdate(currentDraft) : null
         setItems(prev => prev.map(existing => existing.id === id ? optimisticUpdate(existing) : existing))
         setSelectedItem(prev => prev?.id === id ? optimisticUpdate(prev) : prev)
         setIntakeError(null)
+        if (nextDraft) {
+          await createDraftMemoIfNeeded(nextDraft)
+        }
         return
       }
 
@@ -1505,7 +1610,7 @@ export function WishlistView({
       return
     }
     await fetchItems()
-  }, [enqueueItemSave, fetchItems, items, patchMemoItem, pushAction, refreshTags, selectedItem, syncLinkedTaskCompletion])
+  }, [createDraftMemoIfNeeded, enqueueItemSave, fetchItems, items, patchMemoItem, pushAction, refreshTags, selectedItem, syncLinkedTaskCompletion])
 
   const handleDelete = useCallback(async (id: string) => {
     const deletedItem = items.find(item => item.id === id)
@@ -1563,7 +1668,7 @@ export function WishlistView({
       : {}
     const draftItem = buildOptimisticMemoItem({
       id: createClientMemoId(),
-      title: "新しいメモ",
+      title: "",
       projectId: selectedProjectId,
       description: "",
       overrides: mobileColumnOverrides,
@@ -1574,58 +1679,6 @@ export function WishlistView({
     setSelectedItem(draftItem)
     setTagFilter("all")
     setDetailOpen(true)
-    const createRequest = createWishlistMemo(buildMemoCreatePayload(draftItem))
-    const trackedCreateRequest = createRequest.then(() => undefined)
-    void trackedCreateRequest.catch(() => undefined)
-    creatingMemoPromisesRef.current.set(draftItem.id, trackedCreateRequest)
-    try {
-      const item = await createRequest
-      const pendingUpdates = pendingCreateUpdatesRef.current.get(draftItem.id) ?? null
-      pendingCreateUpdatesRef.current.delete(draftItem.id)
-      const nextItem = pendingUpdates
-        ? { ...item, ...pendingUpdates, updated_at: new Date().toISOString() } as MemoItem
-        : item
-      invalidateWishlistItemsCache()
-      setItems(prev => prev.map(existing => existing.id === draftItem.id ? nextItem : existing))
-      setSelectedItem(prev => prev?.id === draftItem.id ? nextItem : prev)
-      setMemoCreating(draftItem.id, false)
-      if (pendingUpdates && Object.keys(pendingUpdates).length > 0) {
-        try {
-          const patched = await patchMemoItem(draftItem.id, pendingUpdates)
-          setItems(prev => prev.map(existing => existing.id === draftItem.id ? patched : existing))
-          setSelectedItem(prev => prev?.id === draftItem.id ? patched : prev)
-        } catch (err) {
-          setIntakeError(err instanceof Error ? err.message : "メモの更新に失敗しました")
-        }
-      }
-      await refreshTags()
-      pushAction({
-        description: `「${nextItem.title}」を追加`,
-        undo: async () => {
-          setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
-          setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
-          setDetailOpen(false)
-          await removeMemoItemFromServer(draftItem.id)
-          await refreshTags()
-        },
-        redo: async () => {
-          const restored = await restoreMemoItem(nextItem)
-          setItems(prev => prev.some(existing => existing.id === restored.id) ? prev : [restored, ...prev])
-          setSelectedItem(restored)
-          setDetailOpen(true)
-          await refreshTags()
-        },
-      })
-    } catch (err) {
-      pendingCreateUpdatesRef.current.delete(draftItem.id)
-      setMemoCreating(draftItem.id, false)
-      setItems(prev => prev.filter(existing => existing.id !== draftItem.id))
-      setSelectedItem(prev => prev?.id === draftItem.id ? null : prev)
-      setDetailOpen(false)
-      setIntakeError(err instanceof Error ? err.message : "メモの作成に失敗しました")
-    } finally {
-      creatingMemoPromisesRef.current.delete(draftItem.id)
-    }
   }
 
   const handleQuickAdd = async () => {
@@ -2048,6 +2101,36 @@ export function WishlistView({
     setSelectedItem(item)
     setDetailOpen(true)
   }, [])
+
+  const handleDetailOpenChange = useCallback((open: boolean) => {
+    if (open) {
+      setDetailOpen(true)
+      return
+    }
+
+    const item = selectedItem
+    if (item && creatingMemoIdsRef.current.has(item.id)) {
+      const pendingUpdates = pendingCreateUpdatesRef.current.get(item.id) ?? {}
+      const draftCandidate = { ...item, ...pendingUpdates } as MemoItem
+      const hasPendingCreate = creatingMemoPromisesRef.current.has(item.id)
+      const canPersist = normalizeDraftMemoForCreate(draftCandidate) !== null
+
+      if (!hasPendingCreate && !canPersist) {
+        pendingCreateUpdatesRef.current.delete(item.id)
+        setMemoCreating(item.id, false)
+        setItems(prev => prev.filter(existing => existing.id !== item.id))
+        setSelectedItem(null)
+        setDetailOpen(false)
+        return
+      }
+
+      if (!hasPendingCreate) {
+        void createDraftMemoIfNeeded(draftCandidate)
+      }
+    }
+
+    setDetailOpen(false)
+  }, [createDraftMemoIfNeeded, selectedItem, setMemoCreating])
 
   useEffect(() => {
     if (!mindmapMemoFocus) return
@@ -2964,10 +3047,10 @@ export function WishlistView({
       <WishlistCardDetail
         item={selectedItem}
         open={detailOpen}
-        onOpenChange={setDetailOpen}
+        onOpenChange={handleDetailOpenChange}
         onUpdate={handleUpdate}
         onCalendarAdd={async (item, calendarId) => { await handleCalendarAdd(item, calendarId) }}
-        onSaved={() => setDetailOpen(false)}
+        onSaved={() => handleDetailOpenChange(false)}
         tagOptions={allTags}
         projects={projects}
         calendars={calendars}

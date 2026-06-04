@@ -117,12 +117,15 @@ vi.mock('./wishlist-card-detail', () => ({
   WishlistCardDetail: ({
     item,
     open,
+    onOpenChange,
   }: {
     item: IdealGoalWithItems | null
     open: boolean
+    onOpenChange: (open: boolean) => void
   }) => open && item ? (
     <div data-testid="memo-detail">
       <span>{item.title}</span>
+      <button type="button" onClick={() => onOpenChange(false)}>閉じる</button>
     </div>
   ) : null,
 }))
@@ -492,7 +495,7 @@ describe('WishlistView calendar D&D', () => {
     })
   })
 
-  test('入力なしの追加ボタンはAPI完了前に新規メモ編集を開く', async () => {
+  test('入力なしの追加ボタンは空の未保存メモ編集だけを開く', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
       matches: false,
       media: query,
@@ -524,16 +527,17 @@ describe('WishlistView calendar D&D', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /追加/ })[0])
 
     await waitFor(() => {
-      expect(screen.getByTestId('memo-detail')).toHaveTextContent('新しいメモ')
+      expect(screen.getByTestId('memo-detail')).not.toHaveTextContent('新しいメモ')
       expect(screen.getByTestId('memo-detail')).not.toHaveTextContent('作成中')
+    })
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('memo-detail')).not.toBeInTheDocument()
     })
     expect(fetchMock.mock.calls.some(([input, init]) =>
       requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
-    )).toBe(true)
-    const createCall = fetchMock.mock.calls.find(([input, init]) =>
-      requestUrl(input).startsWith('/api/wishlist') && init?.method === 'POST',
-    )
-    expect(JSON.parse(createCall?.[1]?.body as string)).not.toHaveProperty('display_order')
+    )).toBe(false)
   })
 
   test('スマホ表示では選択中カラムに合わせて追加メモの保存先を変える', async () => {

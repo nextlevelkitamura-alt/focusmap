@@ -115,12 +115,11 @@ describe('WishlistCardDetail', () => {
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
   })
 
-  test('メモ作成状態を表示せず保存ボタンを塞がない', async () => {
+  test('メモ作成状態と手動保存ボタンを表示しない', async () => {
     render(<DetailHarness />)
 
     expect(screen.queryByText('作成中')).not.toBeInTheDocument()
-    const saveButton = screen.getByRole('button', { name: /メモを保存/ })
-    expect(saveButton).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /メモを保存/ })).not.toBeInTheDocument()
   })
 
   test('画像をドロップすると添付APIへアップロードする', async () => {
