@@ -24,6 +24,8 @@ const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
+const TIME_WHEEL_COLUMN_CLASS =
+  "max-h-64 overflow-y-auto overscroll-contain scroll-smooth rounded-md border border-neutral-800 bg-neutral-950 p-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
@@ -818,6 +820,9 @@ export function WishlistCardDetail({
   const [elapsedSecs, setElapsedSecs] = useState(0)
   const [selectedCalendarId, setSelectedCalendarId] = useState("primary")
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthStart(new Date()))
+  const [isDatePopoverOpen, setIsDatePopoverOpen] = useState(false)
+  const [isTimePopoverOpen, setIsTimePopoverOpen] = useState(false)
+  const [isCalendarPopoverOpen, setIsCalendarPopoverOpen] = useState(false)
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false)
   const sentAtRef = useRef<number | null>(null)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
@@ -846,6 +851,8 @@ export function WishlistCardDetail({
   const imagePasteTargetRef = useRef<HTMLDivElement>(null)
   const sheetScrollRef = useRef<HTMLDivElement>(null)
   const sheetTouchStartYRef = useRef<number | null>(null)
+  const hourOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const minuteOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const draftSourceIdRef = useRef<string | null>(null)
   const lastSubmittedDraftRef = useRef({ title: "", description: "" })
   const pendingImageUrlsRef = useRef<Set<string>>(new Set())
@@ -1029,6 +1036,10 @@ export function WishlistCardDetail({
   const itemTitle = item?.title ?? ""
   const itemDescription = item?.description ?? ""
   const itemScheduledAt = item?.scheduled_at ?? null
+  const currentDateValue = formatDateValue(itemScheduledAt)
+  const currentTimeValue = formatTimeValue(itemScheduledAt)
+  const currentHour = currentTimeValue ? Number(currentTimeValue.slice(0, 2)) : 9
+  const currentMinute = currentTimeValue ? Number(currentTimeValue.slice(3, 5)) : 0
 
   useEffect(() => {
     if (!open || !itemId) {
@@ -1043,6 +1054,9 @@ export function WishlistCardDetail({
     lastSubmittedDraftRef.current = { title: itemTitle.trim(), description: itemDescription.trim() }
     const scheduled = itemScheduledAt ? new Date(itemScheduledAt) : null
     setCalendarMonth(getMonthStart(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : new Date()))
+    setIsDatePopoverOpen(false)
+    setIsTimePopoverOpen(false)
+    setIsCalendarPopoverOpen(false)
     setSaveError(null)
     setIsCodexPanelOpen(false)
     setPendingImages(prev => {
@@ -1096,6 +1110,26 @@ export function WishlistCardDetail({
         : calendarOptions[0]?.id ?? "primary"
     ))
   }, [calendarOptions, open])
+
+  useEffect(() => {
+    if (!isTimePopoverOpen) return
+    const scrollSelectedOptions = () => {
+      const hourOption = hourOptionRefs.current[currentHour]
+      const minuteOption = minuteOptionRefs.current[currentMinute]
+      if (typeof hourOption?.scrollIntoView === "function") {
+        hourOption.scrollIntoView({ block: "center" })
+      }
+      if (typeof minuteOption?.scrollIntoView === "function") {
+        minuteOption.scrollIntoView({ block: "center" })
+      }
+    }
+    if (typeof window.requestAnimationFrame === "function" && typeof window.cancelAnimationFrame === "function") {
+      const frameId = window.requestAnimationFrame(scrollSelectedOptions)
+      return () => window.cancelAnimationFrame(frameId)
+    }
+    const timeoutId = window.setTimeout(scrollSelectedOptions, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [currentHour, currentMinute, isTimePopoverOpen])
 
   useEffect(() => {
     const pendingImageUrls = pendingImageUrlsRef.current
@@ -1163,8 +1197,8 @@ export function WishlistCardDetail({
 
   if (!item) return null
 
-  const dateValue = formatDateValue(item.scheduled_at)
-  const timeValue = formatTimeValue(item.scheduled_at)
+  const dateValue = currentDateValue
+  const timeValue = currentTimeValue
   const showStructureTools = false
 
   const update = (updates: Record<string, unknown>) => onUpdate(item.id, updates)
@@ -1176,8 +1210,8 @@ export function WishlistCardDetail({
     year: "numeric",
     month: "long",
   }).format(calendarMonth)
-  const selectedHour = timeValue ? Number(timeValue.slice(0, 2)) : 9
-  const selectedMinute = timeValue ? Number(timeValue.slice(3, 5)) : 0
+  const selectedHour = currentHour
+  const selectedMinute = currentMinute
   const selectedCalendar = calendarOptions.find(calendar => calendar.id === selectedCalendarId) ?? calendarOptions[0]
   const canAddCalendar = Boolean(item.scheduled_at && item.duration_minutes && selectedCalendar?.id)
 
@@ -1191,12 +1225,18 @@ export function WishlistCardDetail({
 
   const handleDateSelect = async (date: Date | undefined) => {
     if (!date) return
+    setIsDatePopoverOpen(false)
     await handleScheduleChange(formatLocalDateValue(date), timeValue || "09:00")
   }
 
   const handleTimeSelect = async (hour: number, minute: number) => {
     const nextDateValue = dateValue || formatLocalDateValue(new Date())
     await handleScheduleChange(nextDateValue, `${formatTimePart(hour)}:${formatTimePart(minute)}`)
+  }
+
+  const handleCalendarSelect = (calendarId: string) => {
+    setSelectedCalendarId(calendarId)
+    setIsCalendarPopoverOpen(false)
   }
 
   const handleCustomDuration = async () => {
@@ -1740,7 +1780,7 @@ export function WishlistCardDetail({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">日付</span>
-                  <Popover>
+                  <Popover open={isDatePopoverOpen} onOpenChange={setIsDatePopoverOpen}>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
@@ -1754,8 +1794,9 @@ export function WishlistCardDetail({
                       </button>
                     </PopoverTrigger>
                     <PopoverContent
-                      side={isMobile ? "top" : "bottom"}
+                      side="bottom"
                       align="start"
+                      sideOffset={8}
                       className="w-[min(20rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
                     >
                       <div className="space-y-3">
@@ -1803,7 +1844,7 @@ export function WishlistCardDetail({
                 </div>
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">時刻</span>
-                  <Popover>
+                  <Popover open={isTimePopoverOpen} onOpenChange={setIsTimePopoverOpen}>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
@@ -1817,20 +1858,29 @@ export function WishlistCardDetail({
                       </button>
                     </PopoverTrigger>
                     <PopoverContent
-                      side={isMobile ? "top" : "bottom"}
+                      side="bottom"
                       align="end"
+                      sideOffset={8}
+                      avoidCollisions={false}
                       className="w-[min(18rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
                     >
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="max-h-56 snap-y overflow-y-auto rounded-md border border-neutral-800 bg-neutral-950 p-1">
+                        <div
+                          className={TIME_WHEEL_COLUMN_CLASS}
+                          onTouchStart={event => event.stopPropagation()}
+                          onTouchEnd={event => event.stopPropagation()}
+                          onWheel={event => event.stopPropagation()}
+                        >
                           <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">時</div>
                           {HOUR_OPTIONS.map(hour => (
                             <button
                               key={hour}
+                              ref={node => { hourOptionRefs.current[hour] = node }}
                               type="button"
                               onClick={() => void handleTimeSelect(hour, selectedMinute)}
+                              aria-pressed={hour === selectedHour}
                               className={cn(
-                                "flex h-10 w-full snap-center items-center justify-center rounded text-base tabular-nums transition-colors",
+                                "flex h-11 w-full items-center justify-center rounded text-base tabular-nums transition-colors touch-manipulation",
                                 hour === selectedHour ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                               )}
                             >
@@ -1838,15 +1888,22 @@ export function WishlistCardDetail({
                             </button>
                           ))}
                         </div>
-                        <div className="max-h-56 snap-y overflow-y-auto rounded-md border border-neutral-800 bg-neutral-950 p-1">
+                        <div
+                          className={TIME_WHEEL_COLUMN_CLASS}
+                          onTouchStart={event => event.stopPropagation()}
+                          onTouchEnd={event => event.stopPropagation()}
+                          onWheel={event => event.stopPropagation()}
+                        >
                           <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">分</div>
                           {MINUTE_OPTIONS.map(minute => (
                             <button
                               key={minute}
+                              ref={node => { minuteOptionRefs.current[minute] = node }}
                               type="button"
                               onClick={() => void handleTimeSelect(selectedHour, minute)}
+                              aria-pressed={minute === selectedMinute}
                               className={cn(
-                                "flex h-10 w-full snap-center items-center justify-center rounded text-base tabular-nums transition-colors",
+                                "flex h-11 w-full items-center justify-center rounded text-base tabular-nums transition-colors touch-manipulation",
                                 minute === selectedMinute ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                               )}
                             >
@@ -1891,7 +1948,7 @@ export function WishlistCardDetail({
                 </div>
               </div>
               <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <Popover>
+                <Popover open={isCalendarPopoverOpen} onOpenChange={setIsCalendarPopoverOpen}>
                   <PopoverTrigger asChild>
                     <button
                       type="button"
@@ -1910,7 +1967,7 @@ export function WishlistCardDetail({
                       <button
                         key={calendar.id}
                         type="button"
-                        onClick={() => setSelectedCalendarId(calendar.id)}
+                        onClick={() => handleCalendarSelect(calendar.id)}
                         className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
                       >
                         <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: calendar.color }} />

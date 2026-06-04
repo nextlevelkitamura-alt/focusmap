@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { IdealGoalWithItems } from '@/types/database'
 import { WishlistCardDetail } from './wishlist-card-detail'
@@ -120,6 +120,34 @@ describe('WishlistCardDetail', () => {
 
     expect(screen.queryByText('作成中')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /メモを保存/ })).not.toBeInTheDocument()
+  })
+
+  test('日付を選択するとカレンダーPopoverを閉じる', async () => {
+    render(<DetailHarness />)
+
+    const dateField = await screen.findByText('日付')
+    const dateTrigger = within(dateField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
+    fireEvent.click(dateTrigger)
+
+    expect(await screen.findByRole('button', { name: '前' })).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: /^1$/ })[0])
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '前' })).not.toBeInTheDocument()
+    })
+  })
+
+  test('時刻Popoverはスムーズスクロール向けのホイールにする', async () => {
+    render(<DetailHarness />)
+
+    const timeField = await screen.findByText('時刻')
+    const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
+    fireEvent.click(timeTrigger)
+
+    const hourColumn = (await screen.findByText('時')).parentElement
+    expect(hourColumn).toHaveClass('scroll-smooth')
+    expect(hourColumn).toHaveClass('overscroll-contain')
+    expect(hourColumn).not.toHaveClass('snap-y')
   })
 
   test('画像をドロップすると添付APIへアップロードする', async () => {
