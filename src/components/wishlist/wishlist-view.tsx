@@ -7,6 +7,7 @@ import {
   Draggable,
   useKeyboardSensor,
   useMouseSensor,
+  type DragStart,
   type DropResult,
   type FluidDragActions,
   type PreDragActions,
@@ -148,8 +149,19 @@ const CREATE_MEMO_TIMEOUT_MS = 15_000
 const MEMO_TOUCH_DRAG_DELAY_MS = 420
 const MEMO_TOUCH_SCROLL_CANCEL_PX = 10
 const MEMO_HORIZONTAL_COLUMN_DRAG_PX = 76
+const MEMO_COLUMN_AUTO_MOVE_HOLD_MS = 320
+const MEMO_COLUMN_AUTO_MOVE_EDGE_PX = 72
 
 type DragPoint = { x: number; y: number }
+type MemoColumnDragState = {
+  startPoint: DragPoint | null
+  sourceColumn: ColumnKey | null
+  autoTargetColumn: ColumnKey | null
+}
+type ColumnAutoMoveTimer = {
+  target: ColumnKey
+  timerId: ReturnType<typeof setTimeout>
+}
 type DelayedTouchPhase =
   | { type: "IDLE" }
   | { type: "PENDING"; actions: PreDragActions; point: DragPoint; timerId: number }
@@ -827,7 +839,8 @@ export function WishlistView({
   const mobileColumnsRef = useRef<HTMLDivElement>(null)
   const latestDragPointRef = useRef<DragPoint | null>(null)
   const pointerStartPointRef = useRef<DragPoint | null>(null)
-  const memoColumnDragRef = useRef<{ startPoint: DragPoint | null } | null>(null)
+  const memoColumnDragRef = useRef<MemoColumnDragState | null>(null)
+  const columnAutoMoveTimerRef = useRef<ColumnAutoMoveTimer | null>(null)
   const itemSaveQueues = useRef(new Map<string, Promise<void>>())
   const itemUpdateVersions = useRef(new Map<string, number>())
   const creatingMemoIdsRef = useRef(new Set<string>())
@@ -960,23 +973,6 @@ export function WishlistView({
     throw new Error("クリップボードコピー失敗。手動でコピーしてください")
   }, [buildMemoCodexHandoffText])
 
-  // 一覧カードの Codex ボタン: Codex Web を新規タブで開く + メモ/画像URLをクリップボードへ
-  const openInCodexWebForMemo = useCallback(async (item: MemoItem) => {
-    const clip = await buildMemoCodexHandoffText(item)
-    let copied = false
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(clip)
-        copied = true
-      }
-    } catch {
-      copied = false
-    }
-    window.open("https://chatgpt.com/codex", "_blank", "noopener,noreferrer")
-    if (!copied) {
-      throw new Error("クリップボードコピー失敗。手動でコピーしてください")
-    }
-  }, [buildMemoCodexHandoffText])
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)
   }, [])
@@ -1058,6 +1054,13 @@ export function WishlistView({
     } else {
       target.scrollLeft = left
     }
+  }, [])
+
+  const clearColumnAutoMoveTimer = useCallback(() => {
+    const timer = columnAutoMoveTimerRef.current
+    if (!timer) return
+    window.clearTimeout(timer.timerId)
+    columnAutoMoveTimerRef.current = null
   }, [])
 
   useEffect(() => {
@@ -1990,14 +1993,6 @@ export function WishlistView({
     })
   }, [])
 
-  const handleToggleTodayFromCard = useCallback(async (item: MemoItem, isTodayColumn: boolean) => {
-    if (isTodayColumn) {
-      openTodayRemovalDialog(item)
-      return
-    }
-    await handleUpdate(item.id, { is_today: true })
-  }, [handleUpdate, openTodayRemovalDialog])
-
   const handleUnscheduleMemo = useCallback(async (item: MemoItem) => {
     const previousItem = item
     const previousSelectedItem = selectedItem?.id === item.id ? selectedItem : null
@@ -2263,21 +2258,90 @@ export function WishlistView({
     const columnWidth = mobileColumnsRef.current?.clientWidth ?? 0
     const stepWidth = Math.max(MEMO_HORIZONTAL_COLUMN_DRAG_PX, columnWidth > 0 ? columnWidth * 0.55 : 180)
     const steps = Math.max(1, Math.round(absX / stepWidth))
-    const direction = dx < 0 ? 1 : -1
+    const direction = dx > 0 ? 1 : -1
     const targetIndex = Math.max(0, Math.min(MOBILE_COLUMN_ORDER.length - 1, currentIndex + direction * steps))
     const target = MOBILE_COLUMN_ORDER[targetIndex]
     return target && target !== sourceColumn ? target : null
   }, [isMobileMemoLayout, linkedMemoFocus])
 
-  const handleDragStart = useCallback(() => {
+  const getColumnAutoMoveTarget = useCallback((): ColumnKey | null => {
+    if (!isMobileMemoLayout || linkedMemoFocus) return null
+    const gesture = memoColumnDragRef.current
+    const sourceColumn = gesture?.sourceColumn
+    const latestPoint = latestDragPointRef.current
+    if (!gesture || !sourceColumn || !latestPoint) return null
+
+    const target = mobileColumnsRef.current
+    if (target) {
+      const rect = target.getBoundingClientRect()
+      const currentColumn = gesture.autoTargetColumn ?? activeMobileColumn ?? sourceColumn
+      const currentIndex = MOBILE_COLUMN_ORDER.indexOf(currentColumn)
+      if (currentIndex >= 0) {
+        if (latestPoint.x >= rect.right - MEMO_COLUMN_AUTO_MOVE_EDGE_PX) {
+          const nextColumn = MOBILE_COLUMN_ORDER[Math.min(MOBILE_COLUMN_ORDER.length - 1, currentIndex + 1)] ?? null
+          return nextColumn && nextColumn !== currentColumn ? nextColumn : null
+        }
+        if (latestPoint.x <= rect.left + MEMO_COLUMN_AUTO_MOVE_EDGE_PX) {
+          const previousColumn = MOBILE_COLUMN_ORDER[Math.max(0, currentIndex - 1)] ?? null
+          return previousColumn && previousColumn !== currentColumn ? previousColumn : null
+        }
+      }
+    }
+
+    return getHorizontalDragTargetColumn(sourceColumn)
+  }, [activeMobileColumn, getHorizontalDragTargetColumn, isMobileMemoLayout, linkedMemoFocus])
+
+  const scheduleColumnAutoMove = useCallback((target: ColumnKey | null) => {
+    const gesture = memoColumnDragRef.current
+    if (!gesture || !target || target === gesture.autoTargetColumn) {
+      clearColumnAutoMoveTimer()
+      return
+    }
+
+    const activeTimer = columnAutoMoveTimerRef.current
+    if (activeTimer?.target === target) return
+
+    clearColumnAutoMoveTimer()
+    columnAutoMoveTimerRef.current = {
+      target,
+      timerId: window.setTimeout(() => {
+        columnAutoMoveTimerRef.current = null
+        const currentGesture = memoColumnDragRef.current
+        if (!currentGesture) return
+        currentGesture.autoTargetColumn = target
+        currentGesture.startPoint = latestDragPointRef.current ? { ...latestDragPointRef.current } : currentGesture.startPoint
+        scrollToMobileColumn(target)
+      }, MEMO_COLUMN_AUTO_MOVE_HOLD_MS),
+    }
+  }, [clearColumnAutoMoveTimer, scrollToMobileColumn])
+
+  useEffect(() => {
+    const handlePointerMove = () => {
+      scheduleColumnAutoMove(getColumnAutoMoveTarget())
+    }
+
+    window.addEventListener("touchmove", handlePointerMove, { capture: true, passive: true })
+    window.addEventListener("mousemove", handlePointerMove, { capture: true })
+    return () => {
+      window.removeEventListener("touchmove", handlePointerMove, { capture: true })
+      window.removeEventListener("mousemove", handlePointerMove, { capture: true })
+      clearColumnAutoMoveTimer()
+    }
+  }, [clearColumnAutoMoveTimer, getColumnAutoMoveTarget, scheduleColumnAutoMove])
+
+  const handleDragStart = useCallback((start: DragStart) => {
+    clearColumnAutoMoveTimer()
     memoColumnDragRef.current = {
       startPoint: pointerStartPointRef.current ? { ...pointerStartPointRef.current } : latestDragPointRef.current ? { ...latestDragPointRef.current } : null,
+      sourceColumn: start.source.droppableId as ColumnKey,
+      autoTargetColumn: null,
     }
-  }, [])
+  }, [clearColumnAutoMoveTimer])
 
   const handleDragEnd = useCallback(async (result: DropResult) => {
     const { source, destination, draggableId } = result
     const sourceColumn = source.droppableId as ColumnKey
+    const autoTargetColumn = memoColumnDragRef.current?.autoTargetColumn ?? null
 
     try {
       const item = itemById.get(draggableId)
@@ -2289,15 +2353,18 @@ export function WishlistView({
         return
       }
 
-      const horizontalTarget = getHorizontalDragTargetColumn(sourceColumn)
+      const horizontalTarget = autoTargetColumn && autoTargetColumn !== sourceColumn
+        ? autoTargetColumn
+        : getHorizontalDragTargetColumn(sourceColumn)
       if (!horizontalTarget) return
 
       const moved = await applyColumnMove(item, horizontalTarget, sourceColumn)
       if (moved) scrollToMobileColumn(horizontalTarget)
     } finally {
+      clearColumnAutoMoveTimer()
       memoColumnDragRef.current = null
     }
-  }, [applyColumnMove, getHorizontalDragTargetColumn, itemById, scrollToMobileColumn])
+  }, [applyColumnMove, clearColumnAutoMoveTimer, getHorizontalDragTargetColumn, itemById, scrollToMobileColumn])
 
   if (isLoading) {
     return (
@@ -2854,9 +2921,6 @@ export function WishlistView({
                     onOpen={openDetail}
                     projectById={projectById}
                     tagColors={tagColors}
-                    getAiTask={getMemoAiTask}
-                    onOpenCodex={openInCodexWebForMemo}
-                    onToggleToday={handleToggleTodayFromCard}
                     nativeMemoDrag={isCalendarSplitVisible}
                     selectMode={selectMode}
                     selectedMemoIds={selectedMemoIds}
@@ -2898,9 +2962,6 @@ export function WishlistView({
                           onOpen={openDetail}
                           projectById={projectById}
                           tagColors={tagColors}
-                          getAiTask={getMemoAiTask}
-                          onOpenCodex={openInCodexWebForMemo}
-                          onToggleToday={handleToggleTodayFromCard}
                           nativeMemoDrag={(column === "unsorted" || column === "today") && isCalendarSplitVisible}
                           selectMode={selectMode}
                           selectedMemoIds={selectedMemoIds}
@@ -2939,9 +3000,6 @@ export function WishlistView({
                   onOpen={openDetail}
                   projectById={projectById}
                   tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={isCalendarSplitVisible}
                   className={unscheduledItems.length >= 2 ? "md:col-span-2" : undefined}
                   listClassName={unscheduledItems.length >= 2 ? "sm:grid-cols-2" : undefined}
@@ -2960,9 +3018,6 @@ export function WishlistView({
                   onOpen={openDetail}
                   projectById={projectById}
                   tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={isCalendarSplitVisible}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -2979,9 +3034,6 @@ export function WishlistView({
                   onOpen={openDetail}
                   projectById={projectById}
                   tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -2998,9 +3050,6 @@ export function WishlistView({
                   onOpen={openDetail}
                   projectById={projectById}
                   tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -3017,9 +3066,6 @@ export function WishlistView({
                   onOpen={openDetail}
                   projectById={projectById}
                   tagColors={tagColors}
-                  getAiTask={getMemoAiTask}
-                  onOpenCodex={openInCodexWebForMemo}
-                  onToggleToday={handleToggleTodayFromCard}
                   nativeMemoDrag={false}
                   selectMode={selectMode}
                   selectedMemoIds={selectedMemoIds}
@@ -3276,9 +3322,6 @@ function MemoSection({
   tagColors,
   className,
   listClassName,
-  getAiTask,
-  onOpenCodex,
-  onToggleToday,
   nativeMemoDrag = false,
   selectMode = false,
   selectedMemoIds,
@@ -3296,9 +3339,6 @@ function MemoSection({
   tagColors: Record<string, string>
   className?: string
   listClassName?: string
-  getAiTask: (sourceId: string) => import("@/types/ai-task").AiTask | null
-  onOpenCodex: (item: MemoItem) => Promise<void>
-  onToggleToday: (item: MemoItem, isTodayColumn: boolean) => Promise<void>
   nativeMemoDrag?: boolean
   selectMode?: boolean
   selectedMemoIds?: Set<string>
@@ -3346,9 +3386,6 @@ function MemoSection({
                           onClick={() => selectMode ? onToggleSelect?.(item.id) : onOpen(item)}
                           project={item.project_id ? projectById.get(item.project_id) ?? null : null}
                           tagColors={tagColors}
-                          aiTask={getAiTask(item.id)}
-                          onOpenCodex={() => onOpenCodex(item)}
-                          onToggleToday={onToggleToday}
                           nativeMemoDrag={nativeMemoDrag}
                         />
                         {selectMode && (

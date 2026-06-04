@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { WishlistCard } from './wishlist-card'
-import type { IdealGoalWithItems } from '@/types/database'
+import type { IdealGoalWithItems, Project } from '@/types/database'
 import { MEMO_DRAG_MIME, TODAY_DURATION_DEFAULT } from '@/lib/calendar-constants'
 
 function createMemoItem(overrides: Partial<IdealGoalWithItems> = {}): IdealGoalWithItems {
@@ -28,6 +28,24 @@ function createMemoItem(overrides: Partial<IdealGoalWithItems> = {}): IdealGoalW
     ideal_items: [],
     ...overrides,
   } as IdealGoalWithItems
+}
+
+function createProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 'project-1',
+    user_id: 'user-1',
+    space_id: 'space-1',
+    title: '転職',
+    description: '',
+    purpose: null,
+    category_tag: null,
+    priority: 0,
+    status: 'active',
+    color_theme: '#3b82f6',
+    repo_path: null,
+    created_at: new Date().toISOString(),
+    ...overrides,
+  } as Project
 }
 
 describe('WishlistCard', () => {
@@ -97,31 +115,27 @@ describe('WishlistCard', () => {
     expect(confirmSpy).not.toHaveBeenCalled()
   })
 
-  test('今日に予定済みのカードは今日する解除として扱う', async () => {
-    const onToggleToday = vi.fn().mockResolvedValue(undefined)
-    const scheduledAt = new Date()
-    scheduledAt.setHours(18, 30, 0, 0)
-    const item = createMemoItem({
-      scheduled_at: scheduledAt.toISOString(),
-      memo_status: 'scheduled',
-      is_today: false,
-    })
-
+  test('プロジェクトは左上、タグは見出し下に1回だけ表示し、チェックボックスを右上に置く', () => {
     render(
       <WishlistCard
-        item={item}
+        item={createMemoItem({ category: 'アイデア', tags: ['アイデア', '採用'] })}
         onUpdate={vi.fn()}
         onDelete={vi.fn()}
         onClick={vi.fn()}
-        onToggleToday={onToggleToday}
+        project={createProject()}
       />
     )
 
-    fireEvent.click(screen.getByTitle('今日するリストから外す'))
+    expect(screen.getByText('転職')).toBeInTheDocument()
+    expect(screen.getAllByText('アイデア')).toHaveLength(1)
+    expect(screen.getByText('採用')).toBeInTheDocument()
 
-    await waitFor(() => {
-      expect(onToggleToday).toHaveBeenCalledWith(item, true)
-    })
+    const checkButton = screen.getByTitle('完了にする')
+    expect(checkButton).toHaveClass('absolute')
+    expect(checkButton).toHaveClass('right-2')
+    expect(checkButton).toHaveClass('top-2')
+    expect(screen.queryByTitle('今日するリストに追加')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('今日するリストから外す')).not.toBeInTheDocument()
   })
 
   test('nativeMemoDrag=true の未完了カードはカレンダーD&D payloadを設定する', () => {

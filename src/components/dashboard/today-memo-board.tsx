@@ -890,15 +890,6 @@ export function TodayMemoBoard({
     }
   }, [calendars, items, setMemoPending, targetCalendar])
 
-  const handleToggleToday = useCallback(async (item: MemoItem, isTodayColumn: boolean) => {
-    if (!isTodayColumn) {
-      await handleUpdate(item.id, { is_today: true } as Partial<MemoItem>)
-      return
-    }
-
-    await handleUnscheduleMemo(item)
-  }, [handleUnscheduleMemo, handleUpdate])
-
   const isScheduledMemoDragEvent = useCallback((event: DragEvent<HTMLElement>) => {
     return Array.from(event.dataTransfer.types).includes(SCHEDULED_MEMO_DRAG_MIME)
       || !!window.__focusmapScheduledMemoDrag
@@ -1193,7 +1184,7 @@ export function TodayMemoBoard({
                   <div className="flex min-h-[36vh] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
                     <p>{COLUMN_EMPTY_TEXT[column]}</p>
                     {column === "today" && (
-                      <p className="max-w-xs text-xs">メモ画面で Sun ボタンを押すか、メモを今日カラムにドラッグしてください。</p>
+                      <p className="max-w-xs text-xs">メモ画面でメモを今日カラムにドラッグしてください。</p>
                     )}
                   </div>
                 ) : (
@@ -1216,7 +1207,6 @@ export function TodayMemoBoard({
                             onDelete={handleDelete}
                             onClick={() => setSelectedMemoId(item.id)}
                             project={item.project_id ? projectById.get(item.project_id) ?? null : null}
-                            onToggleToday={handleToggleToday}
                             nativeMemoDrag={canNativeDragColumn(column)}
                           />
                           {isPending && (

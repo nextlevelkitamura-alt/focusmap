@@ -1,13 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { Calendar, Check, Clock, GripVertical, Sun, Trash2 } from "lucide-react"
+import { Calendar, Check, Clock, GripVertical, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { IdealGoalWithItems, Project } from "@/types/database"
 import { cn } from "@/lib/utils"
 import { colorToRgba, DEFAULT_PROJECT_COLOR, getTagColor, normalizeColor } from "@/lib/color-utils"
-import type { AiTask } from "@/types/ai-task"
-import { NoteClaudeRunnerButton, NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { MEMO_DRAG_MIME, TODAY_DURATION_DEFAULT, TODAY_DURATION_PRESETS } from "@/lib/calendar-constants"
 
 // グローバル: dragover ハンドラは dataTransfer の中身を読めないため、
@@ -33,11 +31,8 @@ interface WishlistCardProps {
   tagColors?: Record<string, string>
   draggable?: boolean
   onDragStart?: () => void
-  aiTask?: AiTask | null
-  onOpenCodex?: () => Promise<void>
   // Today タブで native HTML5 D&D を有効化（カレンダー上に配置するため）
   nativeMemoDrag?: boolean
-  onToggleToday?: (item: MemoItem, isTodayColumn: boolean) => Promise<void>
 }
 
 function formatDateTime(value: string | null): string | null {
@@ -63,10 +58,7 @@ export function WishlistCard({
   tagColors = {},
   draggable,
   onDragStart,
-  aiTask = null,
-  onOpenCodex,
   nativeMemoDrag = false,
-  onToggleToday,
 }: WishlistCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const isScheduled = !!item.google_event_id || !!item.scheduled_at || item.memo_status === "scheduled"
@@ -78,7 +70,12 @@ export function WishlistCard({
   const firstUrl = extractFirstUrl(item.description)
   const projectColor = project ? normalizeColor(project.color_theme, DEFAULT_PROJECT_COLOR) : null
   const accentColor = projectColor ?? (isScheduled ? "#3b82f6" : undefined)
-  const primaryTag = item.category || tags[0] || null
+  const displayTags = Array.from(new Set(
+    [item.category, ...tags]
+      .map(tag => tag?.trim())
+      .filter((tag): tag is string => !!tag),
+  ))
+  const hasTopBadges = !!project || isScheduled
 
   const handleCheck = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -89,15 +86,6 @@ export function WishlistCard({
       // 完了化したら「今日する」も外す
       ...(next ? { is_today: false } : {}),
     } as Partial<MemoItem>)
-  }
-
-  const handleToggleToday = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (onToggleToday) {
-      await onToggleToday(item, isTodayColumn)
-      return
-    }
-    await onUpdate(item.id, { is_today: !isToday } as Partial<MemoItem>)
   }
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -179,49 +167,76 @@ export function WishlistCard({
         boxShadow: `inset 0 0 0 9999px ${colorToRgba(accentColor, 0.035)}`,
       } : undefined}
     >
+      <button
+        type="button"
+        onPointerDown={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        onClick={handleCheck}
+        className={cn(
+          "absolute right-2 top-2 z-10 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+          isCompleted && "text-foreground",
+        )}
+        style={accentColor ? { color: accentColor } : undefined}
+        title={isCompleted ? "完了済み" : "完了にする"}
+        aria-label={isCompleted ? "完了済み" : "完了にする"}
+        aria-pressed={isCompleted}
+      >
+        {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}
+      </button>
+
       <div className="flex items-start gap-2">
         {draggable && (
           <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground opacity-70" />
         )}
-        <div className="min-w-0 flex-1">
-          <div className="mb-2 flex flex-wrap gap-1">
-            {isScheduled && (
-              <span
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px]"
-                style={{
-                  backgroundColor: colorToRgba(accentColor ?? "#3b82f6", 0.14),
-                  color: accentColor ?? "#60a5fa",
-                }}
-              >
-                <Calendar className="h-3 w-3" /> 予定済み
-              </span>
-            )}
-            {primaryTag && (
-              <span
-                className="rounded px-1.5 py-0.5 text-[11px]"
-                style={{
-                  backgroundColor: colorToRgba(getTagColor(primaryTag, tagColors), 0.14),
-                  color: getTagColor(primaryTag, tagColors),
-                }}
-              >
-                {primaryTag}
-              </span>
-            )}
-            {project && (
-              <span
-                className="rounded px-1.5 py-0.5 text-[11px]"
-                style={{
-                  backgroundColor: colorToRgba(projectColor ?? DEFAULT_PROJECT_COLOR, 0.14),
-                  color: projectColor ?? DEFAULT_PROJECT_COLOR,
-                }}
-              >
-                {project.title}
-              </span>
-            )}
-          </div>
+        <div className="min-w-0 flex-1 pr-11">
+          {hasTopBadges && (
+            <div className="mb-2 flex flex-wrap gap-1">
+              {project && (
+                <span
+                  className="rounded px-1.5 py-0.5 text-[11px]"
+                  style={{
+                    backgroundColor: colorToRgba(projectColor ?? DEFAULT_PROJECT_COLOR, 0.14),
+                    color: projectColor ?? DEFAULT_PROJECT_COLOR,
+                  }}
+                >
+                  {project.title}
+                </span>
+              )}
+              {isScheduled && (
+                <span
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px]"
+                  style={{
+                    backgroundColor: colorToRgba(accentColor ?? "#3b82f6", 0.14),
+                    color: accentColor ?? "#60a5fa",
+                  }}
+                >
+                  <Calendar className="h-3 w-3" /> 予定済み
+                </span>
+              )}
+            </div>
+          )}
           <p className={cn("line-clamp-2 break-words text-sm font-semibold leading-snug", isCompleted && "line-through text-muted-foreground")}>
             {item.title}
           </p>
+          {displayTags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {displayTags.slice(0, 4).map(tag => {
+                const tagColor = getTagColor(tag, tagColors)
+                return (
+                  <span
+                    key={tag}
+                    className="rounded px-1.5 py-0.5 text-[11px]"
+                    style={{
+                      backgroundColor: colorToRgba(tagColor, 0.14),
+                      color: tagColor,
+                    }}
+                  >
+                    {tag}
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -233,24 +248,6 @@ export function WishlistCard({
 
       {firstUrl && (
         <p className="mt-1 truncate text-xs text-blue-400 underline underline-offset-2">{firstUrl}</p>
-      )}
-
-      {tags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {tags.slice(0, 4).map(tag => (
-            <span
-              key={tag}
-              className="rounded border px-1.5 py-0.5 text-[11px]"
-              style={{
-                borderColor: colorToRgba(getTagColor(tag, tagColors), 0.55),
-                backgroundColor: colorToRgba(getTagColor(tag, tagColors), 0.08),
-                color: getTagColor(tag, tagColors),
-              }}
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -298,76 +295,19 @@ export function WishlistCard({
         </div>
       )}
 
-      <div className="mt-2 flex min-w-0 items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
-        <div className="flex min-w-0 items-center gap-1">
-          <button
-            type="button"
-            onPointerDown={e => e.stopPropagation()}
-            onMouseDown={e => e.stopPropagation()}
-            onClick={handleCheck}
-            className={cn(
-              "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground",
-              isCompleted && "text-foreground",
-            )}
-            style={accentColor ? { color: accentColor } : undefined}
-            title={isCompleted ? "完了済み" : "完了にする"}
-          >
-            {isCompleted ? <Check className="h-5 w-5" /> : <span className="h-5 w-5 rounded border-2 border-current" />}
-          </button>
-          <button
-            type="button"
-            onPointerDown={e => e.stopPropagation()}
-            onMouseDown={e => e.stopPropagation()}
-            onClick={handleToggleToday}
-            className={cn(
-              "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md transition-colors",
-              isTodayColumn
-                ? "bg-amber-500/15 text-amber-600 dark:text-amber-300 hover:bg-amber-500/25"
-                : "text-muted-foreground hover:text-amber-600",
-            )}
-            title={isTodayColumn ? "今日するリストから外す" : "今日するリストに追加"}
-            aria-label={isTodayColumn ? "今日するリストから外す" : "今日するリストに追加"}
-            aria-pressed={isTodayColumn}
-          >
-            <Sun className={cn("h-5 w-5", isTodayColumn && "fill-amber-400/30")} />
-          </button>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {onOpenCodex && (
-            <div className="flex items-center" onClick={e => e.stopPropagation()}>
-              <NoteClaudeRunnerButton
-                noteId={item.id}
-                noteContent={item.description ?? item.title}
-                projectId={item.project_id}
-                repoPath={project?.repo_path ?? null}
-                latestTask={aiTask}
-                onOpenCodex={onOpenCodex}
-              />
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
-            onClick={handleDelete}
-            disabled={isDeleting}
-            title="削除"
-            aria-label="削除"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
+      <div className="mt-2 flex justify-end" onClick={e => e.stopPropagation()}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="min-h-[44px] min-w-[44px] text-muted-foreground hover:text-destructive"
+          onClick={handleDelete}
+          disabled={isDeleting}
+          title="削除"
+          aria-label="削除"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
       </div>
-
-      {onOpenCodex && aiTask && (
-        <div className="min-w-0" onClick={e => e.stopPropagation()}>
-          <NoteClaudeRunnerPanel
-            latestTask={aiTask}
-            isProjectAssigned={!!item.project_id}
-            isRepoConfigured={!!project?.repo_path}
-          />
-        </div>
-      )}
     </div>
   )
 }
