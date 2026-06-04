@@ -44,10 +44,20 @@
 ### Scope 3: モバイル（main直接）
 - 3-1. ステータスチップ列の横スクロール解消（折返し or タブ化、44px維持）
 
-### Scope 4: Codex送信の高速化（**feat/codex-fast-dispatch ブランチ**・要検証）
-- 4-1. schedule時の毎回 `spawn` を廃止 → 常駐 Codex app-server(7878) へ**直接投入**する経路
-- 4-2. 失敗時のみ task-runner フォールバック
-- 4-3. 状態表示の明確化（登録済み / 接続中 / 送信済み / 完了待ち）
+### Scope 4: Codex送信の高速化（**feat/codex-fast-dispatch ブランチ**・要実機検証）
+
+**現状（確認済み）**: `src/app/api/ai-tasks/schedule/route.ts` の `requestImmediateCodexAppDispatch()` が、タスク登録ごとに `spawn('tsx scripts/task-runner.ts --task-id <id> --fast')` を detached 起動する。`spawn` 自体はノンブロッキング（API応答は待たない）だが、**体感遅延の実体は spawn 後の `tsx` 起動コスト + task-runner の DB読込→Codex app-server接続→送信のリードタイム**。Codex app-server は `127.0.0.1:7878` で常駐 LISTEN 済み（即応答可能）。
+
+**実装前の必須確認**: `scripts/task-runner.ts`（1200行超）を精読し、(a) Codex app-server への接続プロトコル (b) 結果の ai_tasks への書き戻し (c) `--fast` の意味 を把握する。理解前に route.ts を書き換えない。
+
+- 4-1.（推奨・低リスク案）task-runner を**常駐デーモン化**し、新タスクは HTTP/IPC で通知（spawn廃止）。task-runner のロジックを再利用するので壊れにくい。
+- 4-1'.（高速・高リスク案）route.ts から直接 Codex app-server(7878) へ投入。task-runner のプロトコル/結果同期を route 側に再実装する必要があり、壊すと送信が全滅。
+- 4-2. どちらの案でも**失敗時は従来の task-runner spawn にフォールバック**（後退防止）。
+- 4-3. **実機検証必須**: 実際にメモを Codex へ送り ①送信が速くなったか ②結果が ai_tasks に正しく書き戻るか ③失敗時フォールバックが働くか を確認。検証できる環境（メモ＋repo_path＋Codex.app稼働）で行う。
+
+### Scope 5: Codex状態表示の明確化（低リスク・main直接可）
+- 5-1. `route.ts` の `result.message`/`steps` と `wishlist-card-detail.tsx`（状態表示・1650行付近）を、**登録済み→接続中→送信済み→完了待ち** の段階表示に統一
+- 5-2. ボタン文言（「Codexで実行」「自動送信」）と押下後表示（「キューに追加」「起動待ち」）の不一致を解消し、実際に送られたか分かるようにする
 
 ## 5. 受け入れ条件
 - メモ追加が **1アクション**（入力→追加）で完了、AI整理は副次
@@ -63,3 +73,14 @@
 ## 7. 進め方
 - Plan（本書）→ 実装（Scope1-3 はこのまま main、Scope4 はブランチ）→ 各段階で検証＆**範囲ごとにコミット（混ぜない）**
 - 自動コミット(`auto:`)は粒度を壊すため、実装中は範囲ごとに手動コミットを優先
+
+## 8. 進捗（2026-06-04 時点）
+- ✅ Scope 1-1: 旧 `memo-view.tsx` 削除（-1430行デッドコード, commit `1277747`）
+- ✅ Scope 1-3: メモ空状態のツールバー整理（AI状況ボタンは実行中AIタスクがある時のみ表示, commit `f6aba14`）
+- ✅ Scope 2: 追加ファースト（コード上既に実装済み 1903c80 を確認 + desktop も Enter=追加 に統一, commit `f6aba14`）
+- ✅ Scope 3: モバイルのステータスチップ横スクロールバー非表示（commit `f6aba14`）
+- ⛔️ Scope 1-2「リストビュー削除」: **取り下げ**（ユーザーが「いる」と判断）
+- ⏳ Scope 4（Codex高速化）: 未着手。実機検証必須のため別セッションで慎重に。本番pushはローカル/実機確認後。
+- ⏳ Scope 5（Codex状態表示）: 未着手。低リスクだが効果確認に実画面が要る。
+- 検証: `npm run build` ✅ / `tsc --noEmit` ✅ / 実画面はユーザーの手元ブラウザで確認予定（kimi-webbridgeはfocusmapの常時ポーリングでnavigate不可のため使えず）
+- UI分(Scope1-3)は **ローカル実画面確認 → OKなら push（本番デプロイ）** の方針
