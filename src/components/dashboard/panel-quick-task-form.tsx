@@ -70,12 +70,12 @@ export function PanelQuickTaskForm(props: PanelQuickTaskFormProps) {
 
     const titleInputRef = useRef<HTMLInputElement>(null)
 
-    // Auto-focus when opened
+    // Avoid popping the mobile keyboard just because the sheet opened.
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && variant !== 'bottom-sheet') {
             setTimeout(() => titleInputRef.current?.focus(), 100)
         }
-    }, [isOpen])
+    }, [isOpen, variant])
 
     useEffect(() => {
         if (!isOpen) return

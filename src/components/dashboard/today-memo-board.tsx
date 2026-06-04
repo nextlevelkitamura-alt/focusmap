@@ -1228,7 +1228,10 @@ export function TodayMemoBoard({
         </div>
       </div>
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent
+          className="sm:max-w-md"
+          onOpenAutoFocus={event => event.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>今日するメモを追加</DialogTitle>
             <DialogDescription>
@@ -1246,7 +1249,6 @@ export function TodayMemoBoard({
                 }
               }}
               placeholder="メモのタイトル"
-              autoFocus
             />
             <textarea
               value={createDescription}

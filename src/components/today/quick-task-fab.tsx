@@ -104,8 +104,6 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
     const [subtasks, setSubtasks] = useState<string[]>([])
     const [subtaskInput, setSubtaskInput] = useState("")
 
-    const titleInputRef = useRef<HTMLInputElement>(null)
-
     useEffect(() => {
         if (!externalOpen) return
 
@@ -118,12 +116,6 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
 
         return () => window.clearTimeout(timer)
     }, [externalOpen, initialScheduledAt, initialEstimatedTime, defaultCalendarId])
-
-    useEffect(() => {
-        if (isOpen) {
-            setTimeout(() => titleInputRef.current?.focus(), 300)
-        }
-    }, [isOpen])
 
     const closeSheet = useCallback(() => {
         setIsOpen(false)
@@ -242,6 +234,7 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
             <Sheet open={isOpen} onOpenChange={(open) => { if (!open) { closeSheet(); resetForm() } else setIsOpen(true) }}>
                 <SheetContent
                     side="bottom"
+                    onOpenAutoFocus={event => event.preventDefault()}
                     className={cn(
                         "h-[88dvh] max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
                         "shadow-[0_-18px_48px_rgba(0,0,0,0.55)]",
@@ -265,7 +258,6 @@ export function QuickTaskFab({ calendars, onCreateTask, externalOpen, onExternal
                             <div>
                                 <label className="mb-0.5 block text-[11px] font-medium text-neutral-400">タイトル</label>
                                 <Input
-                                    ref={titleInputRef}
                                     placeholder="例: SNS投稿を作る"
                                     value={title}
                                     onChange={(e) => setTitle(e.target.value)}

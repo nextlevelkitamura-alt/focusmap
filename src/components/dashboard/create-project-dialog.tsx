@@ -144,7 +144,10 @@ export function ProjectFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !busy && onClose()}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-w-md">
+      <DialogContent
+        className="w-[calc(100vw-1rem)] max-w-md"
+        onOpenAutoFocus={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Icon className="h-4 w-4 text-primary" />
@@ -156,7 +159,6 @@ export function ProjectFormDialog({
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">プロジェクト名</label>
             <input
-              autoFocus={mode === "edit"}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => {

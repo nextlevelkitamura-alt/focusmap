@@ -55,7 +55,10 @@ export function SpaceCreateDialog({ open, onClose, onCreate }: SpaceCreateDialog
 
   return (
     <Dialog open={open} onOpenChange={v => !v && handleClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-w-sm"
+        onOpenAutoFocus={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>新しいスペース</DialogTitle>
         </DialogHeader>
@@ -64,7 +67,6 @@ export function SpaceCreateDialog({ open, onClose, onCreate }: SpaceCreateDialog
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">名前</label>
             <input
-              autoFocus
               value={title}
               onChange={e => setTitle(e.target.value)}
               onKeyDown={e => {
