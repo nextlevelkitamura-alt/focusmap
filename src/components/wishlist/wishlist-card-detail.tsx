@@ -23,7 +23,6 @@ import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
-import { useMomentumWheel } from "@/hooks/useMomentumWheel"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { UserCalendar } from "@/hooks/useCalendars"
 
@@ -31,8 +30,8 @@ const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => minute)
 const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"]
-const TIME_WHEEL_COLUMN_CLASS =
-  "max-h-64 touch-none select-none overflow-y-auto overscroll-contain scroll-smooth rounded-md border border-neutral-800 bg-neutral-950 p-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+const IOS_TIME_WHEEL_ITEM_HEIGHT = 44
+const IOS_TIME_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
 const DATE_POPOVER_APPROX_HEIGHT = 340
 const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
@@ -225,45 +224,6 @@ function buildCalendarGrid(month: Date) {
   })
 }
 
-function getCenteredWheelIndex(
-  container: HTMLDivElement,
-  values: readonly number[],
-  refs: Array<HTMLButtonElement | null>,
-) {
-  const containerRect = container.getBoundingClientRect()
-
-  if (containerRect.height > 0) {
-    const centerY = containerRect.top + containerRect.height / 2
-    let closestIndex = 0
-    let closestDistance = Number.POSITIVE_INFINITY
-
-    values.forEach((value, index) => {
-      const node = refs[value]
-      if (!node) return
-      const rect = node.getBoundingClientRect()
-      if (rect.height <= 0) return
-      const distance = Math.abs(rect.top + rect.height / 2 - centerY)
-      if (distance < closestDistance) {
-        closestDistance = distance
-        closestIndex = index
-      }
-    })
-
-    return closestIndex
-  }
-
-  const firstOption = refs[values[0]]
-  const secondOption = refs[values[1]]
-  const measuredHeight = secondOption && firstOption
-    ? secondOption.getBoundingClientRect().top - firstOption.getBoundingClientRect().top
-    : 0
-  const itemHeight = measuredHeight > 0 ? measuredHeight : (firstOption?.offsetHeight || 44)
-  const firstOffset = firstOption?.offsetTop ?? 0
-  const viewportCenter = container.scrollTop + (container.clientHeight > 0 ? container.clientHeight / 2 : 0)
-  const rawIndex = Math.round((viewportCenter - firstOffset - itemHeight / 2) / itemHeight)
-  return Math.max(0, Math.min(rawIndex, values.length - 1))
-}
-
 function combineDateTime(dateValue: string, timeValue: string) {
   if (!dateValue) return null
   const [year, month, day] = dateValue.split("-").map(Number)
@@ -328,6 +288,287 @@ function getActionClassName(actionType: "execution" | "research" | "decision") {
     case "decision": return "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
     default: return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
   }
+}
+
+function moduloIndex(index: number, length: number) {
+  if (length <= 0) return 0
+  return ((index % length) + length) % length
+}
+
+function nearestWheelIndex(currentVirtualIndex: number, targetIndex: number, length: number) {
+  if (length <= 0) return 0
+  const base = Math.round((currentVirtualIndex - targetIndex) / length) * length + targetIndex
+  const previous = base - length
+  const next = base + length
+  return [previous, base, next].reduce((nearest, candidate) => (
+    Math.abs(candidate - currentVirtualIndex) < Math.abs(nearest - currentVirtualIndex) ? candidate : nearest
+  ), base)
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+type IosTimeWheelColumnProps = {
+  label: string
+  values: readonly number[]
+  value: number
+  onPreview: (value: number) => void
+  onCommit: (value: number) => void
+}
+
+type TimeWheelDragState = {
+  baseVirtualIndex: number
+  startY: number
+  lastY: number
+  lastAt: number
+  velocity: number
+  moved: boolean
+}
+
+function IosTimeWheelColumn({
+  label,
+  values,
+  value,
+  onPreview,
+  onCommit,
+}: IosTimeWheelColumnProps) {
+  const wheelRef = useRef<HTMLDivElement>(null)
+  const selectedIndex = Math.max(0, values.indexOf(value))
+  const [virtualIndex, setVirtualIndex] = useState(selectedIndex)
+  const [isDragging, setIsDragging] = useState(false)
+  const [isSettling, setIsSettling] = useState(false)
+  const virtualIndexRef = useRef(virtualIndex)
+  const previewIndexRef = useRef(selectedIndex)
+  const dragRef = useRef<TimeWheelDragState | null>(null)
+  const activePointerIdRef = useRef<number | null>(null)
+  const ignoreClickUntilRef = useRef(0)
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearSettleTimer = useCallback(() => {
+    if (!settleTimerRef.current) return
+    window.clearTimeout(settleTimerRef.current)
+    settleTimerRef.current = null
+  }, [])
+
+  const updateVirtualIndex = useCallback((nextVirtualIndex: number) => {
+    if (values.length === 0) return
+
+    virtualIndexRef.current = nextVirtualIndex
+    setVirtualIndex(nextVirtualIndex)
+
+    const nextIndex = moduloIndex(Math.round(nextVirtualIndex), values.length)
+    if (previewIndexRef.current === nextIndex) return
+    previewIndexRef.current = nextIndex
+    onPreview(values[nextIndex])
+  }, [onPreview, values])
+
+  const settleToIndex = useCallback((absoluteIndex: number, commit: boolean) => {
+    if (values.length === 0) return
+
+    const nextIndex = moduloIndex(absoluteIndex, values.length)
+    previewIndexRef.current = nextIndex
+    virtualIndexRef.current = absoluteIndex
+    setVirtualIndex(absoluteIndex)
+    onPreview(values[nextIndex])
+    if (commit) onCommit(values[nextIndex])
+
+    setIsSettling(true)
+    clearSettleTimer()
+    settleTimerRef.current = window.setTimeout(() => {
+      settleTimerRef.current = null
+      setIsSettling(false)
+    }, 190)
+  }, [clearSettleTimer, onCommit, onPreview, values])
+
+  const finishDrag = useCallback(() => {
+    const drag = dragRef.current
+    if (!drag || values.length === 0) return
+
+    dragRef.current = null
+    activePointerIdRef.current = null
+    setIsDragging(false)
+
+    if (!drag.moved) return
+
+    const projectedItems = clampNumber((drag.velocity * 180) / IOS_TIME_WHEEL_ITEM_HEIGHT, -7, 7)
+    const targetIndex = Math.round(virtualIndexRef.current + projectedItems)
+
+    ignoreClickUntilRef.current = Date.now() + 160
+    settleToIndex(targetIndex, true)
+  }, [settleToIndex, values.length])
+
+  const startDrag = useCallback((clientY: number) => {
+    clearSettleTimer()
+    setIsDragging(true)
+    setIsSettling(false)
+    dragRef.current = {
+      baseVirtualIndex: virtualIndexRef.current,
+      startY: clientY,
+      lastY: clientY,
+      lastAt: performance.now(),
+      velocity: 0,
+      moved: false,
+    }
+  }, [clearSettleTimer])
+
+  const moveDrag = useCallback((clientY: number) => {
+    const drag = dragRef.current
+    if (!drag) return
+
+    const totalDelta = drag.startY - clientY
+    const now = performance.now()
+    const dt = Math.max(8, now - drag.lastAt)
+    const stepDelta = drag.lastY - clientY
+
+    drag.velocity = stepDelta / dt
+    drag.lastY = clientY
+    drag.lastAt = now
+    if (Math.abs(totalDelta) >= 2) drag.moved = true
+
+    updateVirtualIndex(drag.baseVirtualIndex + totalDelta / IOS_TIME_WHEEL_ITEM_HEIGHT)
+  }, [updateVirtualIndex])
+
+  const handleOptionClick = useCallback((absoluteIndex: number) => {
+    if (Date.now() < ignoreClickUntilRef.current) return
+    const targetIndex = nearestWheelIndex(virtualIndexRef.current, moduloIndex(absoluteIndex, values.length), values.length)
+    settleToIndex(targetIndex, true)
+  }, [settleToIndex, values.length])
+
+  useEffect(() => {
+    previewIndexRef.current = selectedIndex
+    if (dragRef.current) return
+    const nextVirtualIndex = nearestWheelIndex(virtualIndexRef.current, selectedIndex, values.length)
+    virtualIndexRef.current = nextVirtualIndex
+    setVirtualIndex(nextVirtualIndex)
+  }, [selectedIndex, values.length])
+
+  useEffect(() => {
+    const node = wheelRef.current
+    if (!node) return
+
+    const handleTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      if (!touch) return
+      event.stopPropagation()
+      startDrag(touch.clientY)
+    }
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      if (!touch || !dragRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      moveDrag(touch.clientY)
+    }
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      const drag = dragRef.current
+      if (!drag) return
+      if (drag.moved) event.preventDefault()
+      event.stopPropagation()
+      finishDrag()
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.pointerType === "touch") return
+      if (event.pointerType === "mouse" && event.button !== 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      activePointerIdRef.current = event.pointerId
+      node.setPointerCapture?.(event.pointerId)
+      startDrag(event.clientY)
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (activePointerIdRef.current !== event.pointerId || !dragRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      moveDrag(event.clientY)
+    }
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (activePointerIdRef.current !== event.pointerId || !dragRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      node.releasePointerCapture?.(event.pointerId)
+      finishDrag()
+    }
+
+    node.addEventListener("touchstart", handleTouchStart, { passive: false })
+    node.addEventListener("touchmove", handleTouchMove, { passive: false })
+    node.addEventListener("touchend", handleTouchEnd, { passive: false })
+    node.addEventListener("touchcancel", handleTouchEnd, { passive: false })
+    node.addEventListener("pointerdown", handlePointerDown)
+    node.addEventListener("pointermove", handlePointerMove)
+    node.addEventListener("pointerup", handlePointerEnd)
+    node.addEventListener("pointercancel", handlePointerEnd)
+
+    return () => {
+      node.removeEventListener("touchstart", handleTouchStart)
+      node.removeEventListener("touchmove", handleTouchMove)
+      node.removeEventListener("touchend", handleTouchEnd)
+      node.removeEventListener("touchcancel", handleTouchEnd)
+      node.removeEventListener("pointerdown", handlePointerDown)
+      node.removeEventListener("pointermove", handlePointerMove)
+      node.removeEventListener("pointerup", handlePointerEnd)
+      node.removeEventListener("pointercancel", handlePointerEnd)
+    }
+  }, [finishDrag, moveDrag, startDrag])
+
+  useEffect(() => {
+    return () => clearSettleTimer()
+  }, [clearSettleTimer])
+
+  const roundedVirtualIndex = Math.round(virtualIndex)
+  const currentIndex = moduloIndex(roundedVirtualIndex, values.length)
+
+  return (
+    <div
+      ref={wheelRef}
+      className="relative h-full min-w-0 touch-none select-none overflow-hidden [touch-action:none]"
+      data-time-wheel-column={label === "時" ? "hour" : "minute"}
+      aria-label={label}
+      role="listbox"
+      aria-activedescendant={`${label}-${values[currentIndex]}`}
+    >
+      {IOS_TIME_WHEEL_OFFSETS.map(offset => {
+        const absoluteIndex = roundedVirtualIndex + offset
+        const optionIndex = moduloIndex(absoluteIndex, values.length)
+        const optionValue = values[optionIndex]
+        const relativeOffset = absoluteIndex - virtualIndex
+        const distance = Math.abs(relativeOffset)
+        const isCurrent = optionIndex === currentIndex
+        const opacity = distance > 2.85 ? 0.08 : Math.max(0.18, 1 - distance * 0.34)
+        const scale = 1 - Math.min(distance * 0.075, 0.22)
+        const y = relativeOffset * IOS_TIME_WHEEL_ITEM_HEIGHT
+
+        return (
+          <button
+            key={`${label}-${absoluteIndex}`}
+            id={`${label}-${optionValue}`}
+            type="button"
+            role="option"
+            aria-selected={isCurrent}
+            data-time-wheel-option={label === "時" ? "hour" : "minute"}
+            data-time-wheel-value={optionValue}
+            onClick={() => handleOptionClick(absoluteIndex)}
+            className={cn(
+              "absolute inset-x-1 top-1/2 flex h-11 -translate-y-1/2 items-center justify-center rounded-xl text-[22px] font-semibold leading-none tabular-nums tracking-normal outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/60",
+              isCurrent ? "text-neutral-50" : "text-neutral-500",
+            )}
+            style={{
+              opacity,
+              transform: `translate3d(0, ${y}px, 0) translateY(-50%) scale(${scale})`,
+              transition: isDragging ? "none" : isSettling ? "transform 190ms cubic-bezier(.2,.85,.2,1), opacity 190ms ease" : "color 120ms ease",
+            }}
+          >
+            {formatTimePart(optionValue)}
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 function getStatusLabel(status: string) {
@@ -900,10 +1141,6 @@ export function WishlistCardDetail({
   const imagePasteTargetRef = useRef<HTMLDivElement>(null)
   const sheetScrollRef = useRef<HTMLDivElement>(null)
   const sheetTouchStartYRef = useRef<number | null>(null)
-  const hourWheelRef = useRef<HTMLDivElement>(null)
-  const minuteWheelRef = useRef<HTMLDivElement>(null)
-  const hourOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const minuteOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const previewTimePartsRef = useRef<{ hour: number; minute: number } | null>(null)
   const dateTriggerRef = useRef<HTMLButtonElement>(null)
   const timeTriggerRef = useRef<HTMLButtonElement>(null)
@@ -1193,26 +1430,6 @@ export function WishlistCardDetail({
   }, [calendarOptions, open])
 
   useEffect(() => {
-    if (!isTimePopoverOpen) return
-    const scrollSelectedOptions = () => {
-      const hourOption = hourOptionRefs.current[currentHour]
-      const minuteOption = minuteOptionRefs.current[currentMinute]
-      if (typeof hourOption?.scrollIntoView === "function") {
-        hourOption.scrollIntoView({ block: "center" })
-      }
-      if (typeof minuteOption?.scrollIntoView === "function") {
-        minuteOption.scrollIntoView({ block: "center" })
-      }
-    }
-    if (typeof window.requestAnimationFrame === "function" && typeof window.cancelAnimationFrame === "function") {
-      const frameId = window.requestAnimationFrame(scrollSelectedOptions)
-      return () => window.cancelAnimationFrame(frameId)
-    }
-    const timeoutId = window.setTimeout(scrollSelectedOptions, 0)
-    return () => window.clearTimeout(timeoutId)
-  }, [currentHour, currentMinute, isTimePopoverOpen])
-
-  useEffect(() => {
     const pendingImageUrls = pendingImageUrlsRef.current
     return () => {
       pendingImageUrls.forEach(previewUrl => {
@@ -1303,58 +1520,6 @@ export function WishlistCardDetail({
     setPreviewTimeParts(hour, minute)
     commitTimeValue(hour, minute)
   }, [commitTimeValue, getPreviewTimeParts, setPreviewTimeParts])
-
-  const getHourWheelIndex = useCallback((container: HTMLDivElement) => {
-    return getCenteredWheelIndex(container, HOUR_OPTIONS, hourOptionRefs.current)
-  }, [])
-
-  const getMinuteWheelIndex = useCallback((container: HTMLDivElement) => {
-    return getCenteredWheelIndex(container, MINUTE_OPTIONS, minuteOptionRefs.current)
-  }, [])
-
-  const scrollHourWheelToIndex = useCallback((_container: HTMLDivElement, index: number, behavior: "auto" | "smooth") => {
-    const node = hourOptionRefs.current[HOUR_OPTIONS[index]]
-    if (typeof node?.scrollIntoView === "function") {
-      node.scrollIntoView({ block: "center", behavior })
-      return
-    }
-    if (typeof _container.scrollTo === "function") {
-      _container.scrollTo({ top: index * 44, behavior })
-    } else {
-      _container.scrollTop = index * 44
-    }
-  }, [])
-
-  const scrollMinuteWheelToIndex = useCallback((_container: HTMLDivElement, index: number, behavior: "auto" | "smooth") => {
-    const node = minuteOptionRefs.current[MINUTE_OPTIONS[index]]
-    if (typeof node?.scrollIntoView === "function") {
-      node.scrollIntoView({ block: "center", behavior })
-      return
-    }
-    if (typeof _container.scrollTo === "function") {
-      _container.scrollTo({ top: index * 44, behavior })
-    } else {
-      _container.scrollTop = index * 44
-    }
-  }, [])
-
-  const hourWheel = useMomentumWheel({
-    values: HOUR_OPTIONS,
-    getIndex: getHourWheelIndex,
-    scrollToIndex: scrollHourWheelToIndex,
-    onPreview: previewHourValue,
-    onChange: commitHourValue,
-    scrollEndDelay: 120,
-  })
-
-  const minuteWheel = useMomentumWheel({
-    values: MINUTE_OPTIONS,
-    getIndex: getMinuteWheelIndex,
-    scrollToIndex: scrollMinuteWheelToIndex,
-    onPreview: previewMinuteValue,
-    onChange: commitMinuteValue,
-    scrollEndDelay: 120,
-  })
 
   if (!item) return null
 
@@ -2058,78 +2223,33 @@ export function WishlistCardDetail({
                       sideOffset={8}
                       avoidCollisions={false}
                       data-testid="memo-time-popover"
-                      className="w-[min(18rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
+                      className="w-[min(19rem,calc(100vw-2rem))] rounded-[22px] border-neutral-700/40 bg-[#2f2f2f]/95 p-2 text-neutral-100 shadow-[0_18px_52px_rgba(0,0,0,0.45)] backdrop-blur-xl"
                     >
-                      <div className="grid grid-cols-2 gap-2">
-                        <div
-                          ref={hourWheelRef}
-                          className={TIME_WHEEL_COLUMN_CLASS}
-                          data-time-wheel-column="hour"
-                          onTouchStart={hourWheel.onTouchStart}
-                          onTouchMove={hourWheel.onTouchMove}
-                          onTouchEnd={hourWheel.onTouchEnd}
-                          onTouchCancel={hourWheel.onTouchCancel}
-                          onWheel={hourWheel.onWheel}
-                          onScroll={hourWheel.onScroll}
-                          onPointerDown={hourWheel.onPointerDown}
-                          onPointerMove={hourWheel.onPointerMove}
-                          onPointerUp={hourWheel.onPointerUp}
-                          onPointerCancel={hourWheel.onPointerCancel}
-                          onLostPointerCapture={hourWheel.onLostPointerCapture}
-                        >
-                          <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">時</div>
-                          {HOUR_OPTIONS.map(hour => (
-                            <button
-                              key={hour}
-                              ref={node => { hourOptionRefs.current[hour] = node }}
-                              type="button"
-                              onClick={() => hourWheel.selectIndex(hourWheelRef.current, hour)}
-                              aria-pressed={hour === selectedHour}
-                              className={cn(
-                                "flex h-11 w-full items-center justify-center rounded text-base tabular-nums transition-colors touch-manipulation",
-                                hour === selectedHour ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
-                              )}
-                              data-time-wheel-option="hour"
-                              data-time-wheel-value={hour}
-                            >
-                              {formatTimePart(hour)}
-                            </button>
-                          ))}
+                      <div data-testid="ios-time-wheel-picker" className="relative overflow-hidden rounded-[18px] bg-[#383838]/90">
+                        <div className="grid grid-cols-2 border-b border-white/5 px-3 pt-2 text-center text-[11px] font-semibold text-neutral-500">
+                          <div>時</div>
+                          <div>分</div>
                         </div>
-                        <div
-                          ref={minuteWheelRef}
-                          className={TIME_WHEEL_COLUMN_CLASS}
-                          data-time-wheel-column="minute"
-                          onTouchStart={minuteWheel.onTouchStart}
-                          onTouchMove={minuteWheel.onTouchMove}
-                          onTouchEnd={minuteWheel.onTouchEnd}
-                          onTouchCancel={minuteWheel.onTouchCancel}
-                          onWheel={minuteWheel.onWheel}
-                          onScroll={minuteWheel.onScroll}
-                          onPointerDown={minuteWheel.onPointerDown}
-                          onPointerMove={minuteWheel.onPointerMove}
-                          onPointerUp={minuteWheel.onPointerUp}
-                          onPointerCancel={minuteWheel.onPointerCancel}
-                          onLostPointerCapture={minuteWheel.onLostPointerCapture}
-                        >
-                          <div className="px-2 pb-1 text-center text-[11px] text-neutral-500">分</div>
-                          {MINUTE_OPTIONS.map(minute => (
-                            <button
-                              key={minute}
-                              ref={node => { minuteOptionRefs.current[minute] = node }}
-                              type="button"
-                              onClick={() => minuteWheel.selectIndex(minuteWheelRef.current, minute)}
-                              aria-pressed={minute === selectedMinute}
-                              className={cn(
-                                "flex h-11 w-full items-center justify-center rounded text-base tabular-nums transition-colors touch-manipulation",
-                                minute === selectedMinute ? "bg-primary text-primary-foreground" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
-                              )}
-                              data-time-wheel-option="minute"
-                              data-time-wheel-value={minute}
-                            >
-                              {formatTimePart(minute)}
-                            </button>
-                          ))}
+                        <div className="relative h-[220px]">
+                          <div className="pointer-events-none absolute left-4 right-4 top-1/2 z-10 h-11 -translate-y-1/2 rounded-xl bg-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.06),inset_0_-1px_0_rgba(0,0,0,0.22)]" />
+                          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-16 bg-gradient-to-b from-[#383838] via-[#383838]/90 to-transparent" />
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-16 bg-gradient-to-t from-[#383838] via-[#383838]/90 to-transparent" />
+                          <div className="relative z-30 grid h-full grid-cols-2 px-3">
+                            <IosTimeWheelColumn
+                              label="時"
+                              values={HOUR_OPTIONS}
+                              value={selectedHour}
+                              onPreview={previewHourValue}
+                              onCommit={commitHourValue}
+                            />
+                            <IosTimeWheelColumn
+                              label="分"
+                              values={MINUTE_OPTIONS}
+                              value={selectedMinute}
+                              onPreview={previewMinuteValue}
+                              onCommit={commitMinuteValue}
+                            />
+                          </div>
                         </div>
                       </div>
                     </PopoverContent>

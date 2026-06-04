@@ -138,86 +138,64 @@ describe('WishlistCardDetail', () => {
     })
   })
 
-  test('時刻Popoverはスムーズスクロール向けのホイールにする', async () => {
+  test('時刻PopoverはiPhone風の中央ハイライトホイールにする', async () => {
     render(<DetailHarness />)
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
     fireEvent.click(timeTrigger)
 
-    const hourColumn = (await screen.findByText('時')).parentElement
-    expect(hourColumn).toHaveClass('scroll-smooth')
-    expect(hourColumn).toHaveClass('overscroll-contain')
+    const picker = await screen.findByTestId('ios-time-wheel-picker')
+    expect(picker).toHaveClass('rounded-[18px]')
+
+    const hourColumn = screen.getByRole('listbox', { name: '時' })
     expect(hourColumn).toHaveClass('touch-none')
-    expect(hourColumn).not.toHaveClass('snap-y')
+    expect(hourColumn).not.toHaveClass('overflow-y-auto')
   })
 
-  test('時刻ホイールはドラッグ中に表示を即時更新して停止位置を保存する', async () => {
+  test('時刻ホイールはマウスドラッグ中に表示を即時更新する', async () => {
     render(<DetailHarness />)
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
     fireEvent.click(timeTrigger)
 
-    const hourColumn = (await screen.findByText('時')).parentElement as HTMLDivElement
-    fireEvent.pointerDown(hourColumn, { pointerId: 1, pointerType: 'touch', clientY: 100 })
-    fireEvent.pointerMove(hourColumn, { pointerId: 1, pointerType: 'touch', clientY: 12 })
-    expect(hourColumn.scrollTop).toBe(88)
+    const hourColumn = screen.getByRole('listbox', { name: '時' })
+    fireEvent.pointerDown(hourColumn, { pointerId: 1, pointerType: 'mouse', button: 0, clientY: 100 })
+    fireEvent.pointerMove(hourColumn, { pointerId: 1, pointerType: 'mouse', clientY: 12 })
 
     await waitFor(() => {
-      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
-    })
-
-    fireEvent.pointerUp(hourColumn, { pointerId: 1, pointerType: 'touch', clientY: 12 })
-
-    await waitFor(() => {
-      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /11:00/ })).toBeInTheDocument()
     })
   })
 
-  test('時刻ホイールはタッチスクロールで表示を即時更新して停止位置を保存する', async () => {
+  test('時刻ホイールはタッチドラッグで表示を即時更新する', async () => {
     render(<DetailHarness />)
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
     fireEvent.click(timeTrigger)
 
-    const hourColumn = (await screen.findByText('時')).parentElement as HTMLDivElement
+    const hourColumn = screen.getByRole('listbox', { name: '時' })
     fireEvent.touchStart(hourColumn, { touches: [{ clientY: 100 }] })
     fireEvent.touchMove(hourColumn, { touches: [{ clientY: 12 }] })
-    expect(hourColumn.scrollTop).toBe(88)
 
     await waitFor(() => {
-      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
-    })
-
-    fireEvent.touchEnd(hourColumn, { changedTouches: [{ clientY: 12 }] })
-
-    await waitFor(() => {
-      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /11:00/ })).toBeInTheDocument()
     })
   })
 
-  test('時刻ホイールはネイティブスクロール中にも表示を即時更新する', async () => {
+  test('時刻ホイールはタップ選択でも値を保存する', async () => {
     render(<DetailHarness />)
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
     fireEvent.click(timeTrigger)
 
-    const hourColumn = (await screen.findByText('時')).parentElement as HTMLDivElement
-    fireEvent.touchStart(hourColumn)
-    hourColumn.scrollTop = 88
-    fireEvent.scroll(hourColumn)
+    fireEvent.click(screen.getByRole('option', { name: '11' }))
 
     await waitFor(() => {
-      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
-    })
-
-    fireEvent.touchEnd(hourColumn)
-
-    await waitFor(() => {
-      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /02:00/ })).toBeInTheDocument()
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /11:00/ })).toBeInTheDocument()
     })
   })
 
