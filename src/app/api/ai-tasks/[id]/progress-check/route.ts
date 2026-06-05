@@ -11,8 +11,14 @@ import {
   progressObservationPayload,
   type AiTaskProgressTask,
 } from "@/lib/ai-task-progress"
+import { isTursoConfigured } from "@/lib/turso/client"
+import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from "@/lib/turso/codex-monitoring"
 
 export const runtime = "nodejs"
+
+function tursoObservationsPrimaryEnabled() {
+  return process.env.FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY === "1"
+}
 
 function firstBalancedJson(source: string) {
   const start = source.search(/\{/)
@@ -212,14 +218,71 @@ export async function POST(
   }
 
   const observation = progressObservationPayload(progress, evidence)
-  const { error: observationError } = await supabase
-    .from("ai_task_observations")
-    .insert({
-      task_id: id,
-      user_id: user.id,
-      source: "progress_check",
-      ...observation,
-    })
+  const updatedStatus = typeof updates.status === "string" ? updates.status : taskRecord.status
+  let tursoObservationSaved = false
+  if (isTursoConfigured()) {
+    try {
+      const progressId = `progress-check:${id}:${progress.checked_at}`
+      await upsertTursoAiTask({
+        id,
+        user_id: user.id,
+        status: updatedStatus,
+        executor: typeof taskRecord.executor === "string" ? taskRecord.executor : null,
+        codex_thread_id: typeof taskRecord.codex_thread_id === "string" ? taskRecord.codex_thread_id : null,
+        current_step: progress.current_step,
+        progress_percent: progress.progress_percent,
+        summary: progress.summary,
+        error_message: typeof taskRecord.error === "string" ? taskRecord.error : null,
+        created_at: typeof taskRecord.created_at === "string" ? taskRecord.created_at : null,
+        started_at: typeof taskRecord.started_at === "string" ? taskRecord.started_at : null,
+        completed_at: typeof taskRecord.completed_at === "string" ? taskRecord.completed_at : null,
+        updated_at: progress.checked_at,
+      })
+      await insertTaskProgress({
+        id: progressId,
+        task_id: id,
+        user_id: user.id,
+        phase: `progress_check:${progress.state}`,
+        message: progress.current_step || progress.summary,
+        progress_json: {
+          source: "progress_check",
+          progress,
+          observation,
+          judge_error: judgeError,
+        },
+        created_at: progress.checked_at,
+      })
+      await insertTaskEvent({
+        id: `progress-check-event:${id}:${progress.checked_at}`,
+        task_id: id,
+        user_id: user.id,
+        event_type: updatedStatus === taskRecord.status ? "progress_check" : `status:${updatedStatus}`,
+        payload_json: {
+          source: "progress_check",
+          previous_status: taskRecord.status,
+          status: updatedStatus,
+          state: progress.state,
+          confidence: progress.confidence,
+        },
+        created_at: progress.checked_at,
+      })
+      tursoObservationSaved = true
+    } catch (tursoError) {
+      console.error("[ai-tasks/progress-check turso]", tursoError)
+    }
+  }
+
+  const shouldSkipSupabaseObservation = tursoObservationSaved && tursoObservationsPrimaryEnabled()
+  const { error: observationError } = shouldSkipSupabaseObservation
+    ? { error: null }
+    : await supabase
+        .from("ai_task_observations")
+        .insert({
+          task_id: id,
+          user_id: user.id,
+          source: "progress_check",
+          ...observation,
+        })
 
   if (observationError) {
     // Migration may not be applied yet. The latest summary is already persisted
@@ -231,8 +294,9 @@ export async function POST(
     task: updated,
     progress_summary: progress,
     evidence,
-    updated_status: typeof updates.status === "string" ? updates.status : taskRecord.status,
+    updated_status: updatedStatus,
     judge_error: judgeError,
-    observation_saved: !observationError,
+    observation_saved: !observationError || tursoObservationSaved,
+    observation_source: shouldSkipSupabaseObservation ? "turso" : tursoObservationSaved ? "turso_and_supabase" : "supabase",
   })
 }

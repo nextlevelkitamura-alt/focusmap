@@ -353,6 +353,33 @@ npm run codex-monitoring:backfill -- --days 30 --apply
 
 2026-06-05の初回投入は直近30日だけに限定し、`ai_tasks` 79件、progress 82件、events 79件をTurso側で検証した。再dry-runでは同じprogress/eventsが既存行として検出されるため、再実行しても履歴が重複しない。
 
+### 無料枠化ロードマップ
+
+Supabase Free / Turso Free / R2 Freeを前提に、データの役割を分けて進める。
+
+```text
+Supabase: Auth、spaces/projects/tasks/notes/wishlistの正本、Google OAuth token、共有権限
+Turso: Codex監視、runner/agent状態、表示用snapshot、短期イベント履歴、カレンダーcache
+R2: 新規スクショpreview/thumbnail、新規メモ添付画像、AI生成画像
+```
+
+優先順:
+
+- P0: Codex監視をTurso主導にする。`ai_task_progress` / `ai_task_events` / `runner_heartbeats` / screenshot metadataはTursoを正にする。
+- P1: activity/observation履歴のSupabase insertを止める。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY=1` と `FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY=1` をCloud Runに入れると、Turso保存成功後はSupabaseの `ai_task_activity_messages` / `ai_task_observations` への履歴insertを省略する。`ai_tasks.result.progress_summary` は互換表示のため当面Supabaseに残す。
+- P2: runner/agent command queueをTurso中心へ移す。claim/command/heartbeatの短周期APIはSupabase token lookupとDB writeを最小化し、Supabase側は互換fallbackだけにする。
+- P3: Today / AI実行タイムライン / runner状態のread modelをTursoへ作る。Web/iPhoneはsnapshot APIでTursoを読み、Supabase本体の一覧selectを減らす。
+- P4: 新規画像添付をR2へ切り替える。既存Supabase Storage画像は読み取り互換で残し、過去画像の一括移行は容量が無料枠を圧迫し始めた時だけdry-run付きで行う。
+- P5: Google Calendar event cacheをTursoへ置く。OAuth tokenと設定はSupabaseに残し、日/週/月表示用の取得済み予定snapshotだけTursoで読む。
+
+無料枠維持の禁止事項:
+
+- Supabaseの広域Realtime購読を戻さない。
+- `select('*')` を短周期APIへ戻さない。
+- Supabase StorageへスクショやAI生成画像を追加しない。
+- iPhone/ブラウザバックグラウンドで常時pollingしない。
+- Tursoに権限境界を委譲しない。Turso読み書きは必ずAPI側でJWT由来 `user_id` / `space_id` を検証する。
+
 ### Phase 3: スクショmetadataとR2 preview試験導入
 
 - [x] `screenshots` metadataをTursoへ保存する。

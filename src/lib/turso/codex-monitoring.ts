@@ -250,6 +250,35 @@ export async function upsertTursoAiTask(input: {
   })
 }
 
+export async function ensureTursoAiTaskStub(input: {
+  id: string
+  user_id: string
+  space_id?: string | null
+  status?: string | null
+  title?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}) {
+  const timestamp = input.updated_at ?? input.created_at ?? nowIso()
+  await getTursoClient().execute({
+    sql: `
+      INSERT OR IGNORE INTO ai_tasks (
+        id, user_id, space_id, title, status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      input.id,
+      input.user_id,
+      input.space_id ?? null,
+      input.title ?? null,
+      input.status ?? 'pending',
+      input.created_at ?? timestamp,
+      timestamp,
+    ],
+  })
+}
+
 export async function seedTursoTaskFromSupabase(
   supabase: SupabaseClient,
   taskId: string,
@@ -312,6 +341,7 @@ export async function getTursoTaskForAuth(taskId: string, options: TaskAccessOpt
 }
 
 export async function insertTaskProgress(input: {
+  id?: string | null
   task_id: string
   user_id: string
   phase?: string | null
@@ -319,12 +349,19 @@ export async function insertTaskProgress(input: {
   progress_json?: unknown
   created_at?: string | null
 }) {
-  const id = crypto.randomUUID()
+  const id = input.id ?? crypto.randomUUID()
   const createdAt = input.created_at ?? nowIso()
   await getTursoClient().execute({
     sql: `
       INSERT INTO ai_task_progress (id, task_id, user_id, phase, message, progress_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        task_id = excluded.task_id,
+        user_id = excluded.user_id,
+        phase = excluded.phase,
+        message = excluded.message,
+        progress_json = excluded.progress_json,
+        created_at = excluded.created_at
     `,
     args: [
       id,
@@ -340,18 +377,25 @@ export async function insertTaskProgress(input: {
 }
 
 export async function insertTaskEvent(input: {
+  id?: string | null
   task_id: string
   user_id: string
   event_type: string
   payload_json?: unknown
   created_at?: string | null
 }) {
-  const id = crypto.randomUUID()
+  const id = input.id ?? crypto.randomUUID()
   const createdAt = input.created_at ?? nowIso()
   await getTursoClient().execute({
     sql: `
       INSERT INTO ai_task_events (id, task_id, user_id, event_type, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        task_id = excluded.task_id,
+        user_id = excluded.user_id,
+        event_type = excluded.event_type,
+        payload_json = excluded.payload_json,
+        created_at = excluded.created_at
     `,
     args: [id, input.task_id, input.user_id, input.event_type, jsonOrNull(input.payload_json), createdAt],
   })
