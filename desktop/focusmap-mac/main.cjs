@@ -78,18 +78,15 @@ const APP_ICON_PATH = app.isPackaged
   ? path.join(process.resourcesPath, 'icon.icns')
   : path.join(__dirname, 'assets', 'icon.png');
 const FALLBACK_APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
-const LOG_LIMIT = 160;
 const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'oauth2.googleapis.com']);
 const CHILD_PATH = `${os.homedir()}/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`;
 
 let mainWindow = null;
-let statusWindow = null;
 const managedProcesses = {
   next: null,
   agent: null,
   codex: null,
 };
-const processLogs = [];
 const hasSingleInstance = app.requestSingleInstanceLock();
 let lastExternalAuthUrl = '';
 let lastExternalAuthAt = 0;
@@ -123,9 +120,6 @@ function setDockIcon() {
 
 function log(scope, message) {
   const line = `[${new Date().toLocaleTimeString('ja-JP', { hour12: false })}] ${scope}: ${message}`;
-  processLogs.push(line);
-  if (processLogs.length > LOG_LIMIT) processLogs.splice(0, processLogs.length - LOG_LIMIT);
-  statusWindow?.webContents.send('focusmap-desktop:log', line);
 
   try {
     const logDir = path.join(os.homedir(), '.focusmap', 'logs');
@@ -168,24 +162,10 @@ function isChildRunning(child) {
   return Boolean(child && child.exitCode === null && !child.killed);
 }
 
-function isMac() {
-  return process.platform === 'darwin';
-}
-
 function commandExists(command) {
   return new Promise((resolve) => {
     execFile('/usr/bin/env', ['which', command], { timeout: 3000 }, (error) => {
       resolve(!error);
-    });
-  });
-}
-
-function launchctlHas(label) {
-  if (!isMac()) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    execFile('launchctl', ['list'], { timeout: 3000 }, (error, stdout) => {
-      if (error) return resolve(false);
-      resolve(stdout.includes(label));
     });
   });
 }
@@ -223,11 +203,6 @@ function httpRequest(url, timeoutMs = 1000, headers = {}) {
     });
     req.once('error', () => resolve({ statusCode: 0, body: '' }));
   });
-}
-
-async function httpReady(url, timeoutMs = 1000) {
-  const response = await httpRequest(url, timeoutMs);
-  return response.statusCode < 500 && response.statusCode !== 404 && response.statusCode > 0;
 }
 
 function healthUrl() {
@@ -495,15 +470,6 @@ function prepareAgentConfigPath() {
   return runtimePath;
 }
 
-async function waitForHttp(url, timeoutMs = 60_000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await httpReady(url, 1200)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 800));
-  }
-  return false;
-}
-
 async function desktopHealthReady(timeoutMs = 1200) {
   const response = await httpRequest(healthUrl(), timeoutMs, {
     'x-focusmap-desktop-token': DESKTOP_HEALTH_TOKEN,
@@ -701,15 +667,6 @@ async function startAgent() {
   return { ok: true, message: 'agentを起動しました' };
 }
 
-function stopManagedProcess(name) {
-  const child = managedProcesses[name];
-  if (!isChildRunning(child)) return { ok: true, message: `${name}はこのMacアプリからは起動していません` };
-  child.kill('SIGTERM');
-  managedProcesses[name] = null;
-  log(name, 'stop requested');
-  return { ok: true, message: `${name}を停止しました` };
-}
-
 async function startCodexServer() {
   if (await tcpReady('127.0.0.1', 7878)) {
     return { ok: true, message: 'Codex app-serverは起動済みです' };
@@ -735,37 +692,6 @@ async function startCodexServer() {
   attachProcessLifecycle('codex', child, 'codex');
   log('codex', 'starting codex app-server on ws://127.0.0.1:7878');
   return { ok: true, message: 'Codex app-serverを起動しました' };
-}
-
-async function collectStatus() {
-  const [appReady, codexCli, codexServerReady, agentLaunchd, codexLaunchd] = await Promise.all([
-    httpReady(healthUrl(), 700),
-    commandExists('codex'),
-    tcpReady('127.0.0.1', 7878),
-    launchctlHas('com.focusmap-official.agent'),
-    launchctlHas('com.focusmap-official.codex-app-server'),
-  ]);
-  const configReady = fs.existsSync(CONFIG_PATH);
-  const codexAppInstalled = fs.existsSync(CODEX_APP_BIN);
-  return {
-    appOrigin: APP_ORIGIN,
-    agentApiUrl: preferredAgentApiUrl(),
-    repoRoot: REPO_ROOT,
-    webAuthOrigin: WEB_AUTH_ORIGIN,
-    configPath: CONFIG_PATH,
-    configReady,
-    googleOAuthReady: hasGoogleOAuthConfig(),
-    nextReady: appReady,
-    nextManaged: isChildRunning(managedProcesses.next),
-    agentManaged: isChildRunning(managedProcesses.agent),
-    agentLaunchd,
-    codexAppInstalled,
-    codexCliInstalled: codexCli,
-    codexServerReady,
-    codexManaged: isChildRunning(managedProcesses.codex),
-    codexLaunchd,
-    logs: processLogs.slice(-80),
-  };
 }
 
 async function consumeExternalAuthSession(_event, nonce, originInput) {
@@ -853,35 +779,10 @@ async function createMainWindow() {
       await loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html'), {
         query: { error: message },
       });
+      focusWindow(mainWindow);
     }
-    createStatusWindow();
-  }
-}
-
-function createStatusWindow() {
-  if (statusWindow && !statusWindow.isDestroyed()) {
-    statusWindow.focus();
     return;
   }
-  statusWindow = new BrowserWindow({
-    width: 520,
-    height: 620,
-    title: 'Focusmap 接続状態',
-    resizable: true,
-    icon: appIconPath(),
-    backgroundColor: '#0a0a0a',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      partition: 'persist:focusmap-desktop',
-    },
-  });
-  statusWindow.loadFile(path.join(__dirname, 'status.html'));
-  statusWindow.on('closed', () => {
-    statusWindow = null;
-  });
 }
 
 function buildMenu() {
@@ -889,7 +790,6 @@ function buildMenu() {
     {
       label: 'Focusmap',
       submenu: [
-        { label: '接続状態を開く', click: createStatusWindow },
         {
           label: 'Focusmapを開く',
           click: () => {
@@ -918,18 +818,12 @@ if (!hasSingleInstance) {
 }
 
 app.on('second-instance', () => {
-  if (focusAndRetryMainWindow() || focusWindow(statusWindow)) return;
+  if (focusAndRetryMainWindow()) return;
   createMainWindow().catch((error) => {
     log('app', error instanceof Error ? error.message : String(error));
-    createStatusWindow();
   });
 });
 
-ipcMain.handle('focusmap-desktop:getStatus', collectStatus);
-ipcMain.handle('focusmap-desktop:startAgent', startAgent);
-ipcMain.handle('focusmap-desktop:stopAgent', () => stopManagedProcess('agent'));
-ipcMain.handle('focusmap-desktop:startCodexServer', startCodexServer);
-ipcMain.handle('focusmap-desktop:stopCodexServer', () => stopManagedProcess('codex'));
 ipcMain.handle('focusmap-desktop:openMain', () => {
   createMainWindow();
   return true;
