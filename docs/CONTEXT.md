@@ -135,6 +135,12 @@ Goals → Projects → TaskGroups → Tasks
 
 このセクションは、チャット履歴がなくても実装意図を復元できるようにするための現行仕様メモ。主要なUI・同期方式・データフローを変えた場合は、実装と同じコミットで更新する。
 
+### AIエージェント並列作業ポリシー
+
+- 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は、Codex では `.agents/skills/parallel-work-planner/SKILL.md`、Claude Code では `CLAUDE.md` の「AIエージェント並列作業」を入口にする。詳細な判断基準は `docs/agent-workflow/parallelization.md`、worktree安全策は `docs/agent-workflow/worktree_strategy.md`、各チャット用プロンプト雛形は `docs/agent-workflow/prompt_templates.md` を正とする。
+- 並列化判断はタスク量・見積時間だけで行わず、同じファイルを触る可能性、UI/backend等の責務分離、API contract / DB schema / shared types / auth / error format の未確定、generated files / lockfile / migration の衝突、統合コスト、失敗worktreeを破棄できるかを見て提案する。
+- UI と backend を並列で進める場合は、まず Planner が `API_CONTRACT.md` / `UI_ACCEPTANCE.md` / `TEST_PLAN.md` / `OWNERSHIP.md` 相当を作り、Frontend / Backend / Integration / Review に分ける。worktree は統括側が branch/status/uncommitted changes/base/責務/allowed files/merge順を確認してから提案し、force push、`git reset --hard`、`git clean -fd`、本番DB操作、secret/token表示編集、GCP/GCS削除停止、未承認の大規模削除、意図しないlockfile更新、unrelated refactorは禁止する。
+
 ### ダッシュボードナビゲーション
 
 - デスクトップ上部タブとモバイル下部ナビの通常導線は `Todo` / `メモ` / `マップ` / `チャット` / `設定` を基本にする。`マップ` は通常タブとして残し、メモ由来の `マップ追加済み` 判定も裏側に残す。
