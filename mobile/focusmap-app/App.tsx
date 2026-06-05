@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
+  type AppStateStatus,
   Linking,
   Pressable,
   SafeAreaView,
@@ -14,6 +16,42 @@ import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react
 
 const DEFAULT_FOCUSMAP_URL = "https://focusmap-official.com/dashboard";
 const EXTERNAL_AUTH_HOSTS = new Set(["accounts.google.com", "oauth2.googleapis.com"]);
+const STARTUP_OVERLAY_MAX_MS = 1200;
+const CONTENT_READY_SCRIPT = `
+(() => {
+  if (window.__focusmapNativeReadyInstalled) return true;
+  window.__focusmapNativeReadyInstalled = true;
+  const postReady = () => {
+    try {
+      window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "focusmap:web-content-ready" }));
+    } catch {}
+  };
+  const hasContent = () => document.body && document.body.children && document.body.children.length > 0;
+  const check = () => {
+    if (hasContent()) {
+      requestAnimationFrame(postReady);
+      return;
+    }
+    setTimeout(check, 80);
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", check, { once: true });
+  } else {
+    check();
+  }
+  return true;
+})();
+`;
+const APP_RESUME_SCRIPT = `
+(() => {
+  try {
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new CustomEvent("focusmap:native-app-resume"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  } catch {}
+  return true;
+})();
+`;
 
 function buildFocusmapUrl() {
   const configuredUrl = process.env.EXPO_PUBLIC_FOCUSMAP_URL?.trim() || DEFAULT_FOCUSMAP_URL;
@@ -91,11 +129,22 @@ function ErrorFallback({
 
 export default function App() {
   const webViewRef = useRef<WebView>(null);
+  const hasPresentedWebContentRef = useRef(false);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [focusmapUrl] = useState(buildFocusmapUrl);
   const [webViewUrl, setWebViewUrl] = useState(focusmapUrl);
   const [loadProgress, setLoadProgress] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [hasPresentedWebContent, setHasPresentedWebContent] = useState(false);
+  const [hasDismissedStartupOverlay, setHasDismissedStartupOverlay] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
+
+  const markWebContentPresented = useCallback(() => {
+    hasPresentedWebContentRef.current = true;
+    setHasPresentedWebContent(true);
+    setHasDismissedStartupOverlay(true);
+    setInitialLoading(false);
+  }, []);
 
   const buildInternalUrl = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
     const base = new URL(focusmapUrl);
@@ -112,6 +161,9 @@ export default function App() {
   const navigateInsideApp = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
     setError(null);
     setInitialLoading(true);
+    if (!hasPresentedWebContentRef.current) {
+      setHasDismissedStartupOverlay(false);
+    }
     setLoadProgress(0);
     setWebViewUrl(buildInternalUrl(pathOrUrl, params));
   }, [buildInternalUrl]);
@@ -162,6 +214,10 @@ export default function App() {
   const handleWebViewMessage = (event: WebViewMessageEvent) => {
     try {
       const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string };
+      if (payload.type === "focusmap:web-content-ready") {
+        markWebContentPresented();
+        return;
+      }
       if (payload.type === "focusmap:openExternal" && payload.url) {
         openExternalUrl(payload.url);
       }
@@ -173,15 +229,43 @@ export default function App() {
   const handleReload = () => {
     setError(null);
     setInitialLoading(true);
+    if (!hasPresentedWebContentRef.current) {
+      setHasDismissedStartupOverlay(false);
+    }
     setLoadProgress(0);
     webViewRef.current?.reload();
   };
+
+  useEffect(() => {
+    if (!initialLoading || hasPresentedWebContent || hasDismissedStartupOverlay) return;
+
+    const handle = setTimeout(() => {
+      setHasDismissedStartupOverlay(true);
+    }, STARTUP_OVERLAY_MAX_MS);
+
+    return () => clearTimeout(handle);
+  }, [hasDismissedStartupOverlay, hasPresentedWebContent, initialLoading]);
 
   useEffect(() => {
     Linking.getInitialURL().then(handleDeepLink).catch(() => undefined);
     const subscription = Linking.addEventListener("url", ({ url }) => handleDeepLink(url));
     return () => subscription.remove();
   }, [handleDeepLink]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if ((previousState === "inactive" || previousState === "background") && nextState === "active") {
+        webViewRef.current?.injectJavaScript(APP_RESUME_SCRIPT);
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  const showLoadingOverlay = initialLoading && !hasPresentedWebContent && !hasDismissedStartupOverlay;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -204,6 +288,9 @@ export default function App() {
               allowsInlineMediaPlayback
               domStorageEnabled
               javaScriptEnabled
+              cacheEnabled
+              cacheMode="LOAD_DEFAULT"
+              injectedJavaScriptBeforeContentLoaded={CONTENT_READY_SCRIPT}
               mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
               mediaPlaybackRequiresUserAction={false}
               pullToRefreshEnabled={false}
@@ -215,17 +302,27 @@ export default function App() {
               onLoadStart={() => {
                 setError(null);
                 setInitialLoading(true);
+                if (!hasPresentedWebContentRef.current) {
+                  setHasDismissedStartupOverlay(false);
+                }
               }}
               onLoadProgress={({ nativeEvent }) => setLoadProgress(nativeEvent.progress)}
-              onLoadEnd={() => setInitialLoading(false)}
+              onLoadEnd={markWebContentPresented}
+              onContentProcessDidTerminate={() => {
+                setInitialLoading(true);
+                webViewRef.current?.reload();
+              }}
               onError={({ nativeEvent }) => {
-                setError({
-                  title: "Focusmapを読み込めません",
-                  detail: nativeEvent.description || "通信環境を確認して、もう一度読み込んでください。",
-                });
+                setInitialLoading(false);
+                if (!hasPresentedWebContentRef.current) {
+                  setError({
+                    title: "Focusmapを読み込めません",
+                    detail: nativeEvent.description || "通信環境を確認して、もう一度読み込んでください。",
+                  });
+                }
               }}
               onHttpError={({ nativeEvent }) => {
-                if (nativeEvent.statusCode >= 500) {
+                if (nativeEvent.statusCode >= 500 && !hasPresentedWebContentRef.current) {
                   setError({
                     title: "サーバーが応答しません",
                     detail: `HTTP ${nativeEvent.statusCode} が返りました。少し待ってから再読み込みしてください。`,
@@ -238,7 +335,7 @@ export default function App() {
                 <View style={[styles.progressFill, { width: `${Math.max(loadProgress, 0.08) * 100}%` }]} />
               </View>
             )}
-            {initialLoading && (
+            {showLoadingOverlay && (
               <View pointerEvents="none" style={styles.loadingOverlay}>
                 <View style={styles.loadingPanel}>
                   <View style={styles.logoMark}>
