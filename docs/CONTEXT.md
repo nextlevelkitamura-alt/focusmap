@@ -232,6 +232,7 @@ Goals → Projects → TaskGroups → Tasks
 
 - Mac版は、FocusmapのUIをSwiftUI等で作り直さない。既存のNext.js/React UIをElectronのBrowserWindow内で表示し、ブラウザではできないローカル機能だけをElectronメインプロセス側へ寄せる。
 - 開発・自分用起動は `npm run mac:dev`。起動直後は軽量なローディング画面付きのメインウィンドウを先に開き、その後非同期で `http://127.0.0.1:3001/dashboard?desktop=1&source=mac` に遷移する。3001にFocusmapがいなければ、その時点で `next dev -p 3001` を自動起動し、待機中にユーザーへ画面を返す。ブラウザ版 `npm run dev` と分けるため、Macアプリ用には `npm run dev:desktop` を使う。
+- Macアプリ開発時は `127.0.0.1:3001` を正規のローカルオリジンとして扱う。Next dev server の `_next/*` chunk 読み込みが `allowedDevOrigins` でブロックされると、マップなど遅延読み込みビューへの切替時に Electron 画面が `Application error` になるため、`next.config.ts` の `allowedDevOrigins` には `127.0.0.1` / `::1` を含める。
 - Dock/FinderからMacアプリを起動した場合、開発起動では3001がすでに接続受付中なら `/api/desktop/health` の完了を待たず先に `/dashboard?desktop=1&source=mac` へ遷移し、ヘルス確認は裏で続ける。パッケージ版ではMacアプリが起動したNextだけを正とし、`FOCUSMAP_DESKTOP_HEALTH_TOKEN` を `/api/desktop/health` で照合する。3001を別プロジェクトや古いNextが握っている場合は、そのWebを誤って表示せず、接続状態画面に「3001番を使っている古いNext/別プロジェクトを終了」と出す。ローディング画面で止まっている既存インスタンスへDockクリック/二重起動/activateが来た場合も、ウィンドウを前面化して同じ再試行を走らせる。起動ログは `~/.focusmap/logs/desktop-app.log` にも保存する。
 - Dockアイコンの設定は起動を妨げない。`Resources/icon.icns` の読み込みに失敗した場合はASAR内の `assets/icon.png` を試し、それでも失敗した場合はログだけ残してウィンドウ生成とダッシュボード遷移を継続する。
 - 配布/パッケージ版をFinderやDockから起動した場合、macOSのPATHには `node` が無いことがあるため、同梱Next standaloneやagent CLIは `node` コマンドに依存しない。パッケージ版ではElectron本体を `ELECTRON_RUN_AS_NODE=1` でNode実行モードにして子プロセスを起動する。子プロセスのspawn失敗はメインプロセス例外にせず、接続状態ログに出す。
