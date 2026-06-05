@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { Loader2, Network, Sparkles } from "lucide-react"
+import { Loader2, Sparkles } from "lucide-react"
 import { MobileMindMap } from "@/components/mobile/mobile-mind-map"
 import { MemoToMindmapDialog } from "@/components/memo/memo-to-mindmap-dialog"
 import { SpaceProjectSwitcher } from "@/components/dashboard/space-project-switcher"
@@ -156,10 +156,7 @@ export function MobileAiMapView({
             {isLoadingOrganizeMemos ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <span className="relative inline-flex h-5 w-5 items-center justify-center">
-                <Network className="h-4 w-4" />
-                <Sparkles className="absolute -right-1 -top-1 h-2.5 w-2.5 text-primary" />
-              </span>
+              <Sparkles className="h-5 w-5" />
             )}
           </Button>
         </div>
