@@ -13,6 +13,7 @@ import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
+import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
 const waitForTaskStateFlush = () => new Promise<void>(resolve => {
@@ -234,6 +235,26 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             setIsRefreshingTaskProgressSnapshot(false);
         }
     }, [refreshTaskProgressSnapshot]);
+    const taskProgressFallbackTasks = useMemo(() => {
+        if (taskProgressFixtureEnabled) return [];
+        const fallbackTasks: TaskProgressSnapshotTask[] = [];
+        for (const [sourceId, aiTask] of aiTasksBySourceId.entries()) {
+            const sourceTask = allTasksByIdForCodex.get(sourceId);
+            if (!sourceTask) continue;
+            const fallbackTask = aiTaskToTaskProgressFallback(aiTask, {
+                id: sourceId,
+                title: sourceTask.title,
+            });
+            if (fallbackTask) fallbackTasks.push(fallbackTask);
+        }
+        return fallbackTasks;
+    }, [aiTasksBySourceId, allTasksByIdForCodex, taskProgressFixtureEnabled]);
+    const taskProgressDisplayTasks = useMemo(() => {
+        const merged = new Map<string, TaskProgressSnapshotTask>();
+        for (const task of taskProgressFallbackTasks) merged.set(task.id, task);
+        for (const task of taskProgressTasks) merged.set(task.id, task);
+        return Array.from(merged.values());
+    }, [taskProgressFallbackTasks, taskProgressTasks]);
     const [isRefreshingCodexTasks, setIsRefreshingCodexTasks] = useState(false);
     const handleRefreshCodexTasks = useCallback(async () => {
         setIsRefreshingCodexTasks(true);
@@ -264,8 +285,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     }, [allTasksByIdForCodex, getAiTaskBySourceId]);
     const taskProgressByNodeId = useMemo(() => {
         const result: Record<string, TaskProgressSnapshotTask> = {};
-        const snapshotByAiTaskId = new Map(taskProgressTasks.map(task => [task.id, task]));
-        for (const progressTask of taskProgressTasks) {
+        const snapshotByAiTaskId = new Map(taskProgressDisplayTasks.map(task => [task.id, task]));
+        for (const progressTask of taskProgressDisplayTasks) {
             if (progressTask.source_type === 'mindmap' && progressTask.source_id && allTasksByIdForCodex.has(progressTask.source_id)) {
                 result[progressTask.source_id] = progressTask;
             }
@@ -277,11 +298,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             if (progressTask) result[task.id] = progressTask;
         }
         return result;
-    }, [allTasksByIdForCodex, getAiTaskBySourceId, taskProgressTasks]);
+    }, [allTasksByIdForCodex, getAiTaskBySourceId, taskProgressDisplayTasks]);
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null;
-        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressTasks.find(task => task.id === taskProgressPanelTaskId) ?? null;
-    }, [getTaskProgressById, taskProgressPanelTaskId, taskProgressTasks]);
+        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ?? null;
+    }, [getTaskProgressById, taskProgressDisplayTasks, taskProgressPanelTaskId]);
     const handleOpenTaskProgress = useCallback((task: TaskProgressSnapshotTask) => {
         setTaskProgressPanelTaskId(task.id);
     }, []);
@@ -1387,7 +1408,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     />
                 </div>
                 <TaskProgressKanban
-                    tasks={taskProgressTasks}
+                    tasks={taskProgressDisplayTasks}
                     sourceTasksById={allTasksByIdForCodex}
                     isMobile={isNarrow}
                     isLoading={isTaskProgressSnapshotLoading}

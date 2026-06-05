@@ -6,6 +6,7 @@ import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
 import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
+import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
 import type { AiTask } from "@/types/ai-task"
@@ -133,6 +134,26 @@ export function MobileMindMap({
             setIsRefreshingTaskProgressSnapshot(false)
         }
     }, [refreshTaskProgressSnapshot])
+    const taskProgressFallbackTasks = useMemo(() => {
+        if (taskProgressFixtureEnabled) return []
+        const fallbackTasks: TaskProgressSnapshotTask[] = []
+        for (const [sourceId, aiTask] of bySourceId.entries()) {
+            const sourceTask = taskMap.get(sourceId)
+            if (!sourceTask) continue
+            const fallbackTask = aiTaskToTaskProgressFallback(aiTask, {
+                id: sourceId,
+                title: sourceTask.title,
+            })
+            if (fallbackTask) fallbackTasks.push(fallbackTask)
+        }
+        return fallbackTasks
+    }, [bySourceId, taskMap, taskProgressFixtureEnabled])
+    const taskProgressDisplayTasks = useMemo(() => {
+        const merged = new Map<string, TaskProgressSnapshotTask>()
+        for (const task of taskProgressFallbackTasks) merged.set(task.id, task)
+        for (const task of taskProgressTasks) merged.set(task.id, task)
+        return Array.from(merged.values())
+    }, [taskProgressFallbackTasks, taskProgressTasks])
 
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {}
@@ -155,8 +176,8 @@ export function MobileMindMap({
 
     const taskProgressByNodeId = useMemo(() => {
         const result: Record<string, TaskProgressSnapshotTask> = {}
-        const snapshotByAiTaskId = new Map(taskProgressTasks.map(task => [task.id, task]))
-        for (const progressTask of taskProgressTasks) {
+        const snapshotByAiTaskId = new Map(taskProgressDisplayTasks.map(task => [task.id, task]))
+        for (const progressTask of taskProgressDisplayTasks) {
             if (progressTask.source_type === "mindmap" && progressTask.source_id && taskMap.has(progressTask.source_id)) {
                 result[progressTask.source_id] = progressTask
             }
@@ -168,12 +189,12 @@ export function MobileMindMap({
             if (progressTask) result[task.id] = progressTask
         }
         return result
-    }, [allMindMapTasks, getBySourceId, taskMap, taskProgressTasks])
+    }, [allMindMapTasks, getBySourceId, taskMap, taskProgressDisplayTasks])
 
     const taskProgressPanelTask = useMemo(() => {
         if (!taskProgressPanelTaskId) return null
-        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressTasks.find(task => task.id === taskProgressPanelTaskId) ?? null
-    }, [getTaskProgressById, taskProgressPanelTaskId, taskProgressTasks])
+        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressDisplayTasks.find(task => task.id === taskProgressPanelTaskId) ?? null
+    }, [getTaskProgressById, taskProgressDisplayTasks, taskProgressPanelTaskId])
 
     const codexDirCandidates = useMemo(() => {
         const set = new Set<string>()
@@ -521,7 +542,7 @@ export function MobileMindMap({
                 onMoveTask={handleMoveTask}
             />
             <TaskProgressKanban
-                tasks={taskProgressTasks}
+                tasks={taskProgressDisplayTasks}
                 sourceTasksById={taskMap}
                 isMobile
                 isLoading={isTaskProgressSnapshotLoading}

@@ -296,15 +296,49 @@ function parseTimeMsForResume(value: unknown): number | null {
   return null
 }
 
+function stringFromRecord(record: Record<string, unknown>, key: string) {
+  const value = record[key]
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function hasCodexActivityEvidence(result: Record<string, unknown>) {
+  const progressSummary = isRecord(result.progress_summary) ? result.progress_summary : {}
+  const snapshot = isRecord(result.codex_thread_snapshot) ? result.codex_thread_snapshot : {}
+  const values = [
+    stringFromRecord(result, "current_step"),
+    stringFromRecord(result, "message"),
+    stringFromRecord(result, "live_log"),
+    stringFromRecord(progressSummary, "current_step"),
+    stringFromRecord(progressSummary, "summary"),
+    stringFromRecord(snapshot, "preview"),
+  ]
+
+  return values.some((value) => {
+    if (!value) return false
+    return !/プロンプト待ち|送信待ち|Codex\.appで送信|Focusmapはthread状態|Focusmapは状態と出力だけを同期|プロンプトはコピー済み/u.test(value)
+  })
+}
+
 export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): CodexTaskUiState | null {
   if (!task || (task.executor !== "codex" && task.executor !== "codex_app")) return null
-  if (task.status === "completed") return null
 
   const result = isRecord(task.result) ? task.result : {}
   const rawState = result.codex_run_state
   const isManualHandoff = result.codex_manual_handoff === true
   const hasThreadId = typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0
 
+  if (task.status === "failed") {
+    return { state: "connection_failed", label: "接続失敗" }
+  }
+  if (task.status === "completed") {
+    return { state: "awaiting_approval", label: "確認待ち" }
+  }
+  if (task.status === "pending") {
+    if (hasCodexActivityEvidence(result) && (hasThreadId || rawState === "running")) {
+      return { state: "running", label: "実行中" }
+    }
+    return { state: "prompt_waiting", label: "未送信" }
+  }
   if (rawState === "prompt_waiting") {
     return { state: "prompt_waiting", label: "未送信" }
   }
@@ -316,16 +350,13 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   if (rawState === "awaiting_approval") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
-  if (task.status === "failed") {
-    return { state: "connection_failed", label: "接続失敗" }
-  }
   if (task.status === "awaiting_approval" || task.status === "needs_input") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
-  if (rawState === "running") {
+  if (task.status === "running") {
     return { state: "running", label: "実行中" }
   }
-  if (task.status === "pending" || task.status === "running") {
+  if (rawState === "running") {
     return { state: "running", label: "実行中" }
   }
 

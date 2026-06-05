@@ -461,9 +461,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         ? "未送信"
         : codexTask?.status === "failed"
           ? "接続失敗"
-          : codexUiState?.state === "running"
-            ? "Codex実行中"
-            : codexUiState?.state === "awaiting_approval" || codexTask?.status === "awaiting_approval"
+          : codexUiState?.state === "prompt_waiting"
+            ? "未送信"
+            : codexUiState?.state === "running"
+              ? "Codex実行中"
+              : codexUiState?.state === "awaiting_approval" || codexTask?.status === "awaiting_approval"
               ? "確認待ち"
               : codexThreadId
                 ? "送信確認済み"
@@ -471,7 +473,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const codexStatusClass =
     codexTask?.status === "failed"
       ? "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300"
-      : codexWaitingForAppSend
+      : codexWaitingForAppSend || codexUiState?.state === "prompt_waiting"
         ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
         : codexUiState?.state === "running"
           ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"

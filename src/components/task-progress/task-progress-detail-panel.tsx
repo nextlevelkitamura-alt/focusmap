@@ -49,14 +49,35 @@ function formatDateTime(value: string | null | undefined) {
   return formatTaskProgressDateTime(value)
 }
 
-function compactText(value: unknown) {
+function compactText(value: unknown): string {
   if (!value) return ""
   if (typeof value === "string") return value.trim()
   if (typeof value === "number" || typeof value === "boolean") return String(value)
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return ""
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    for (const key of ["current_step", "summary", "message", "error_message", "error", "status", "codex_run_state"]) {
+      const nested: string = compactText(record[key])
+      if (nested) return nested
+    }
+  }
+  return ""
+}
+
+function activityLabel(value: string | null | undefined) {
+  switch (value) {
+    case "running":
+    case "resumed":
+      return "実行中"
+    case "awaiting_approval":
+    case "needs_input":
+    case "completed":
+      return "確認待ち"
+    case "failed":
+      return "接続失敗"
+    case "thread_detected":
+      return "thread検出"
+    default:
+      return value || "activity"
   }
 }
 
@@ -193,8 +214,8 @@ export function TaskProgressDetailPanel({
       <SheetContent
         side={isMobile ? "bottom" : "right"}
         className={cn(
-          "gap-0 p-0",
-          isMobile ? "max-h-[82dvh] rounded-t-2xl" : "w-[420px] sm:max-w-[420px]",
+          "flex flex-col gap-0 p-0",
+          isMobile ? "max-h-[82dvh] rounded-t-2xl" : "h-dvh w-[420px] sm:max-w-[420px]",
         )}
       >
         <SheetHeader className="border-b px-4 pb-3 pt-4">
@@ -265,15 +286,15 @@ export function TaskProgressDetailPanel({
 
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-muted-foreground">Tail</h3>
-                <span className="text-[11px] text-muted-foreground">詳細を高頻度更新中</span>
+                <h3 className="text-xs font-semibold text-muted-foreground">進捗履歴</h3>
+                <span className="text-[11px] text-muted-foreground">開いている間だけ更新</span>
               </div>
               {tailItems.length > 0 ? (
                 <div className="space-y-2">
                   {tailItems.map(item => (
                     <article key={item.id} className="rounded-lg border bg-background p-3">
                       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                        <span className="truncate font-medium">{item.label}</span>
+                        <span className="truncate font-medium">{activityLabel(item.label)}</span>
                         <span className="shrink-0">{formatDateTime(item.createdAt)}</span>
                       </div>
                       <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90">

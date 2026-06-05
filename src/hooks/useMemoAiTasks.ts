@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { AiTask } from '@/types/ai-task'
 import { canUseLocalCodexOpenApi } from '@/lib/codex-app-launch'
+import { getCodexTaskUiState } from '@/lib/codex-run-state'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
@@ -18,11 +19,7 @@ function isCodexTask(task: AiTask) {
 function isRunningCodexTask(task: AiTask) {
   if (!isCodexTask(task)) return false
   if (task.status === 'completed' || task.status === 'failed' || task.status === 'awaiting_approval' || task.status === 'needs_input') return false
-  if (task.status === 'running') return true
-  const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
-    ? task.result as Record<string, unknown>
-    : {}
-  return result.codex_run_state === 'running'
+  return getCodexTaskUiState(task)?.state === 'running'
 }
 
 function hasRunningCodexTask(tasks: Map<string, AiTask>) {

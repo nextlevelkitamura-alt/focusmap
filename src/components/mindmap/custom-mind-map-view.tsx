@@ -24,7 +24,6 @@ import type { CodexRunState } from "@/lib/codex-run-state";
 import {
     codexMonitorToneClass,
     codexMonitorUiLabel,
-    compactCodexMonitorText,
 } from "@/lib/task-progress-ui";
 import { useCalendars } from "@/hooks/useCalendars";
 import type { TaskProgressSnapshotTask } from "@/types/task-progress";
@@ -165,10 +164,6 @@ type CustomEditRequestOptions = {
 
 function taskProgressStatusLabel(status: TaskProgressSnapshotTask["status"]) {
     return codexMonitorUiLabel(status);
-}
-
-function compactTaskProgressText(task: TaskProgressSnapshotTask | null | undefined, isMobile: boolean) {
-    return compactCodexMonitorText(task?.current_step || task?.summary, isMobile ? 42 : 72);
 }
 
 type WebKitGestureEvent = Event & {
@@ -324,8 +319,9 @@ function CustomTaskNode({
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const isCodexPromptWaiting = codexState?.state === "prompt_waiting";
     const isCodexConnectionFailed = codexState?.state === "connection_failed";
+    const showCodexStateBadge = !taskProgress &&
+        (codexState?.state === "prompt_waiting" || codexState?.state === "awaiting_approval" || codexState?.state === "connection_failed");
     const scheduledLabel = formatDateShort(node.scheduledAt);
-    const taskProgressText = compactTaskProgressText(taskProgress, isMobile);
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -702,7 +698,7 @@ function CustomTaskNode({
                     aria-label="Codex 実行中"
                 />
             )}
-            {(codexState?.state === "prompt_waiting" || codexState?.state === "awaiting_approval" || codexState?.state === "connection_failed") && (
+            {showCodexStateBadge && (
                 <div
                     className={cn(
                         "absolute -right-2 -top-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm",
@@ -987,29 +983,6 @@ function CustomTaskNode({
                     )}
                 </div>
             </div>
-
-            {taskProgressText && !isEditing && (
-                <button
-                    type="button"
-                    className={cn(
-                        "mt-1 w-full rounded-md border px-1.5 py-1 text-left text-[10px] leading-snug transition-colors",
-                        "hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring",
-                        codexMonitorToneClass(taskProgress?.status)
-                    )}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        if (taskProgress) onOpenTaskProgress?.(taskProgress);
-                    }}
-                    title={taskProgressText}
-                    aria-label="Codex進捗詳細を開く"
-                >
-                    <span className="block max-h-[2.45em] overflow-hidden break-words">
-                        {taskProgressText}
-                    </span>
-                </button>
-            )}
 
             {onResize && (
                 <div

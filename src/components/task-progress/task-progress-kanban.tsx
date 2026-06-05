@@ -51,7 +51,7 @@ type RunnerConnectionState = {
   lastSeenAt: string | null
 }
 
-type CodexKanbanLaneId = "running" | "review" | "connection_failed" | "done"
+type CodexKanbanLaneId = "unsent" | "running" | "review" | "connection_failed" | "done"
 
 type TaskProgressKanbanProps = {
   tasks: TaskProgressSnapshotTask[]
@@ -73,6 +73,13 @@ const LANES: Array<{
   className: string
 }> = [
   {
+    id: "unsent",
+    label: "未送信",
+    description: "Codex.appで開始待ち",
+    icon: Clock,
+    className: "border-sky-400/50 bg-sky-500/10",
+  },
+  {
     id: "running",
     label: "実行中",
     description: "Codexが作業中",
@@ -82,7 +89,7 @@ const LANES: Array<{
   {
     id: "review",
     label: "確認待ち",
-    description: "人間が見る",
+    description: "人間が確認",
     icon: Clock,
     className: "border-amber-400/60 bg-amber-500/10",
   },
@@ -96,7 +103,7 @@ const LANES: Array<{
   {
     id: "done",
     label: "完了",
-    description: "今日だけ残す",
+    description: "チェック済み当日",
     icon: CheckCircle2,
     className: "border-sky-400/50 bg-sky-500/10",
   },
@@ -162,6 +169,7 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
   }
 
   const uiStatus = getCodexMonitorUiStatus(task.status)
+  if (uiStatus === "unsent") return "unsent"
   if (uiStatus === "running") return "running"
   if (uiStatus === "connection_failed") return "connection_failed"
   return "review"
@@ -211,10 +219,10 @@ function KanbanCard({
   onOpen: (task: TaskProgressSnapshotTask) => void
 }) {
   const statusLabel = codexMonitorUiLabel(task.status)
-  const primary = compactCodexMonitorText(task.current_step, isMobile ? 42 : 74)
-  const secondary = compactCodexMonitorText(task.summary, isMobile ? 56 : 96)
-  const updatedAt = formatTaskProgressDateTime(task.updated_at)
   const uiStatus = getCodexMonitorUiStatus(task.status)
+  const primary = uiStatus === "unsent" ? "" : compactCodexMonitorText(task.current_step, isMobile ? 42 : 74)
+  const secondary = uiStatus === "unsent" ? "" : compactCodexMonitorText(task.summary, isMobile ? 56 : 96)
+  const updatedAt = formatTaskProgressDateTime(task.updated_at)
 
   return (
     <button
@@ -277,7 +285,7 @@ function KanbanLanes({
   onOpenTask: (task: TaskProgressSnapshotTask) => void
 }) {
   return (
-    <div className={cn("grid gap-3", isMobile ? "grid-cols-1" : "grid-cols-4")}>
+    <div className={cn("grid gap-3", isMobile ? "grid-cols-1" : "grid-cols-5")}>
       {LANES.map(lane => {
         const Icon = lane.icon
         const tasks = lanes[lane.id]
@@ -326,12 +334,13 @@ export function TaskProgressKanban({
   onRefresh,
   onOpenTask,
 }: TaskProgressKanbanProps) {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const runnerState = useRunnerConnection()
 
   const lanes = useMemo(() => {
     const grouped: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]> = {
+      unsent: [],
       running: [],
       review: [],
       connection_failed: [],
@@ -352,9 +361,9 @@ export function TaskProgressKanban({
     return LANES.reduce<Record<CodexKanbanLaneId, number>>((acc, lane) => {
       acc[lane.id] = lanes[lane.id].length
       return acc
-    }, { running: 0, review: 0, connection_failed: 0, done: 0 })
+    }, { unsent: 0, running: 0, review: 0, connection_failed: 0, done: 0 })
   }, [lanes])
-  const total = counts.running + counts.review + counts.connection_failed + counts.done
+  const total = counts.unsent + counts.running + counts.review + counts.connection_failed + counts.done
   const pollLabel = relativePollLabel(pollIntervalMs, pollIntervalMs <= 3_000)
 
   const refreshAll = useCallback(async () => {
@@ -378,7 +387,7 @@ export function TaskProgressKanban({
           {total > 0 && <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{total}</span>}
         </button>
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="bottom" className="max-h-[86dvh] overflow-y-auto rounded-t-2xl p-0">
+          <SheetContent side="bottom" className="flex max-h-[86dvh] flex-col rounded-t-2xl p-0">
             <SheetHeader className="border-b px-4 py-3 text-left">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -404,7 +413,7 @@ export function TaskProgressKanban({
                 <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">{pollLabel}</span>
               </div>
             </SheetHeader>
-            <div className="px-3 py-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
               {error && (
                 <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
                   {error}
@@ -466,7 +475,7 @@ export function TaskProgressKanban({
       </div>
 
       {expanded && (
-        <div className="max-h-[34dvh] overflow-y-auto border-t px-4 py-3">
+        <div className="max-h-[28dvh] overflow-y-auto border-t px-4 py-3">
           {isLoading && total === 0 ? (
             <div className="rounded-lg border border-dashed px-3 py-8 text-center text-xs text-muted-foreground">
               最新状態を確認中...

@@ -118,7 +118,17 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: null })?.state).toBe("running")
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })).toEqual({ state: "connection_failed", label: "接続失敗" })
-    expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toBeNull()
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "pending", result: { codex_run_state: "running" } })).toEqual({ state: "prompt_waiting", label: "未送信" })
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "pending",
+      result: {
+        codex_run_state: "prompt_waiting",
+        codex_thread_id: "019e9811-2238-7543-8346-24babac029a7",
+        message: "`work-skill-guide` を入口にして確認します。",
+      },
+    })).toEqual({ state: "running", label: "実行中" })
     expect(getCodexTaskUiState({ executor: "claude", status: "running", result: null })).toBeNull()
   })
 
