@@ -125,6 +125,8 @@ for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
 env.NEXTAUTH_URL = publicUrl;
 env.GOOGLE_REDIRECT_URI = `${publicUrl}/api/calendar/callback`;
 env.NEXT_PUBLIC_SITE_URL = publicUrl;
+env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY = '1';
+env.FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY = '1';
 
 fs.writeFileSync(outputFile, JSON.stringify(env, null, 2));
 NODE

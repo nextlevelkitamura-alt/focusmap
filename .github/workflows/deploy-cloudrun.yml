@@ -99,7 +99,9 @@ jobs:
             --set-env-vars R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }} \
             --set-env-vars R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }} \
             --set-env-vars R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }} \
-            --set-env-vars R2_SCREENSHOT_BUCKET=${{ secrets.R2_SCREENSHOT_BUCKET }}
+            --set-env-vars R2_SCREENSHOT_BUCKET=${{ secrets.R2_SCREENSHOT_BUCKET }} \
+            --set-env-vars FOCUSMAP_TURSO_ACTIVITY_PRIMARY=1 \
+            --set-env-vars FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY=1
 
       - name: Show service URL
         run: |

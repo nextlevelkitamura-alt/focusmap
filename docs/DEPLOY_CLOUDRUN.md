@@ -42,6 +42,10 @@ Codex監視の軽量progressとスクショpreviewを有効にする場合は、
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_SCREENSHOT_BUCKET`
+- `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=1`
+- `FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY=1`
+
+`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` / `FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY` は非secretの固定値としてGitHub Actionsと `deploy-cloudrun.sh` からCloud Runへ渡す。手動で `gcloud run services update --update-env-vars ...` だけ実行すると、次回のGitHub Actions deployで消える可能性があるため、永続化が必要なenvはdeploy設定にも必ず入れる。
 
 ローカルで値を取得したら、リポジトリ直下の `.env.monitoring.local` に同名で一時保存し、以下を実行する。
 `.env.monitoring.local` は `.env*` ignore対象なのでコミットしない。
@@ -98,7 +102,7 @@ git push origin main
 ```
 
 `origin/main` への push 後、GitHub Actions の `Deploy to Cloud Run` が自動で本番へ反映する。
-GitHub Actionsは `TURSO_*` / `R2_*` のSecretsが存在すればCloud Run runtime envへ渡す。
+GitHub Actionsは `TURSO_*` / `R2_*` のSecretsが存在すればCloud Run runtime envへ渡す。Codex監視履歴のTurso primary化env（`FOCUSMAP_TURSO_ACTIVITY_PRIMARY=1` / `FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY=1`）も同じdeployで渡す。
 
 ### 手動デプロイ
 通常は使わない。使う場合も以下の条件を `deploy-cloudrun.sh` が検査する。
