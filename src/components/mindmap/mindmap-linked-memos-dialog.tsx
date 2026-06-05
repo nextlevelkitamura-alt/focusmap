@@ -509,11 +509,11 @@ export function MindmapLinkedMemosDialog({
   const hasCodexRun = (!!codexTask && isCodexTask) || !!justSentPrompt
   const codexCompleted = isCodexTask && codexTask?.status === "completed"
   const codexStatusLabel = codexCompleted
-    ? "Codex完了"
+    ? "確認待ち"
     : codexWaitingForAppSend
-      ? "プロンプト待ち"
+      ? "未送信"
     : codexTask?.status === "failed"
-      ? "失敗"
+      ? "接続失敗"
       : codexUiState?.state === "running"
         ? "Codex実行中"
         : codexManualHandoff && codexThreadId
@@ -702,7 +702,7 @@ export function MindmapLinkedMemosDialog({
 
   const title = task?.title || draftTitle || "ノード詳細"
   const description = hasCodexRun
-    ? (codexWaitingForAppSend ? "プロンプト待ち" : codexCompleted ? "Codex完了" : "Codexで続行中")
+    ? (codexWaitingForAppSend ? "未送信" : codexCompleted ? "確認待ち" : "Codexで続行中")
     : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
 
@@ -746,7 +746,7 @@ export function MindmapLinkedMemosDialog({
                     </span>
                   ) : codexWaitingForAppSend ? (
                     <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                      プロンプト待ち
+                      未送信
                     </span>
                   ) : (
                     <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">

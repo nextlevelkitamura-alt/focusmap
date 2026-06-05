@@ -21,8 +21,13 @@ import {
 import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import type { CodexRunState } from "@/lib/codex-run-state";
+import {
+    codexMonitorToneClass,
+    codexMonitorUiLabel,
+    compactCodexMonitorText,
+} from "@/lib/task-progress-ui";
 import { useCalendars } from "@/hooks/useCalendars";
-import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
+import type { TaskProgressSnapshotTask } from "@/types/task-progress";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -91,15 +96,6 @@ const MOBILE_FLOATING_PROJECT_MIN_HEIGHT = 36;
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 
-const TASK_PROGRESS_STATUS_LABELS: Record<TaskProgressStatus, string> = {
-    pending: "待機",
-    running: "実行中",
-    awaiting_approval: "確認待ち",
-    needs_input: "入力待ち",
-    completed: "完了",
-    failed: "失敗",
-};
-
 type CustomDropTarget = {
     nodeId: string;
     position: CustomDropPosition;
@@ -167,30 +163,12 @@ type CustomEditRequestOptions = {
     selectAll?: boolean;
 };
 
-function getTaskProgressTone(status: TaskProgressStatus | string | null | undefined) {
-    switch (status) {
-        case "running":
-            return "border-emerald-400/70 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
-        case "awaiting_approval":
-        case "needs_input":
-            return "border-amber-400/70 bg-amber-500/10 text-amber-800 dark:text-amber-200";
-        case "completed":
-            return "border-sky-400/60 bg-sky-500/10 text-sky-800 dark:text-sky-200";
-        case "failed":
-            return "border-red-400/70 bg-red-500/10 text-red-700 dark:text-red-200";
-        default:
-            return "border-border bg-muted/60 text-muted-foreground";
-    }
-}
-
 function taskProgressStatusLabel(status: TaskProgressSnapshotTask["status"]) {
-    return TASK_PROGRESS_STATUS_LABELS[status] ?? status;
+    return codexMonitorUiLabel(status);
 }
 
 function compactTaskProgressText(task: TaskProgressSnapshotTask | null | undefined, isMobile: boolean) {
-    const text = (task?.current_step || task?.summary || "").replace(/\s+/g, " ").trim();
-    if (!text) return "";
-    return text.slice(0, isMobile ? 42 : 72);
+    return compactCodexMonitorText(task?.current_step || task?.summary, isMobile ? 42 : 72);
 }
 
 type WebKitGestureEvent = Event & {
@@ -345,6 +323,7 @@ function CustomTaskNode({
     const [menuOpen, setMenuOpen] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const isCodexPromptWaiting = codexState?.state === "prompt_waiting";
+    const isCodexConnectionFailed = codexState?.state === "connection_failed";
     const scheduledLabel = formatDateShort(node.scheduledAt);
     const taskProgressText = compactTaskProgressText(taskProgress, isMobile);
 
@@ -673,9 +652,9 @@ function CustomTaskNode({
                 node.isDone && "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale",
                 codexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
                 codexState?.state === "running" && "border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
+                codexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 taskProgress?.status === "running" && "border-emerald-400/80 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
-                (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
-                taskProgress?.status === "completed" && "border-sky-400/60",
+                (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 selected && node.isDone && "ring-muted-foreground/40",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
@@ -723,12 +702,14 @@ function CustomTaskNode({
                     aria-label="Codex 実行中"
                 />
             )}
-            {(codexState?.state === "prompt_waiting" || codexState?.state === "awaiting_approval") && (
+            {(codexState?.state === "prompt_waiting" || codexState?.state === "awaiting_approval" || codexState?.state === "connection_failed") && (
                 <div
                     className={cn(
                         "absolute -right-2 -top-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm",
                         isCodexPromptWaiting
                             ? "border-sky-400/80 bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-200"
+                            : isCodexConnectionFailed
+                                ? "border-red-400/80 bg-red-100 text-red-900 dark:bg-red-500/20 dark:text-red-200"
                             : "border-amber-400/70 bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
                     )}
                     title={`Codex ${codexState.label}`}
@@ -742,7 +723,7 @@ function CustomTaskNode({
                     className={cn(
                         "absolute -right-2 top-4 z-10 max-w-[112px] rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm transition-colors",
                         "whitespace-nowrap hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
-                        getTaskProgressTone(taskProgress.status),
+                        codexMonitorToneClass(taskProgress.status),
                         isMobile && "top-5 max-w-[96px]"
                     )}
                     onPointerDown={(event) => event.stopPropagation()}
@@ -871,7 +852,7 @@ function CustomTaskNode({
                                                 </span>
                                             )}
                                             {taskProgress && (
-                                                <span className={cn("rounded border px-1.5 py-0.5", getTaskProgressTone(taskProgress.status))}>
+                                                <span className={cn("rounded border px-1.5 py-0.5", codexMonitorToneClass(taskProgress.status))}>
                                                     {taskProgressStatusLabel(taskProgress.status)}
                                                 </span>
                                             )}
@@ -955,7 +936,7 @@ function CustomTaskNode({
                                                 </span>
                                             )}
                                             {taskProgress && (
-                                                <span className={cn("rounded border px-1.5 py-0.5", getTaskProgressTone(taskProgress.status))}>
+                                                <span className={cn("rounded border px-1.5 py-0.5", codexMonitorToneClass(taskProgress.status))}>
                                                     {taskProgressStatusLabel(taskProgress.status)}
                                                 </span>
                                             )}
@@ -1013,7 +994,7 @@ function CustomTaskNode({
                     className={cn(
                         "mt-1 w-full rounded-md border px-1.5 py-1 text-left text-[10px] leading-snug transition-colors",
                         "hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring",
-                        getTaskProgressTone(taskProgress?.status)
+                        codexMonitorToneClass(taskProgress?.status)
                     )}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
@@ -1544,6 +1525,7 @@ export function CustomMindMapView({
             running: states.filter(state => state.state === "running").length,
             promptWaiting: states.filter(state => state.state === "prompt_waiting").length,
             awaitingApproval: states.filter(state => state.state === "awaiting_approval").length,
+            connectionFailed: states.filter(state => state.state === "connection_failed").length,
         };
     }, [codexRunByNodeId, positionedNodes]);
 
@@ -2821,7 +2803,7 @@ export function CustomMindMapView({
                     className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
                 />
             )}
-            {(codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0) && (
+            {(codexSummary.running > 0 || codexSummary.promptWaiting > 0 || codexSummary.awaitingApproval > 0 || codexSummary.connectionFailed > 0) && (
                 <div className="absolute left-12 top-3 z-30 flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium shadow-sm backdrop-blur">
                     {codexSummary.running > 0 && (
                         <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
@@ -2831,12 +2813,17 @@ export function CustomMindMapView({
                     )}
                     {codexSummary.promptWaiting > 0 && (
                         <span className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300">
-                            プロンプト待ち{codexSummary.promptWaiting}
+                            未送信{codexSummary.promptWaiting}
                         </span>
                     )}
                     {codexSummary.awaitingApproval > 0 && (
                         <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
                             確認待ち{codexSummary.awaitingApproval}
+                        </span>
+                    )}
+                    {codexSummary.connectionFailed > 0 && (
+                        <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
+                            接続失敗{codexSummary.connectionFailed}
                         </span>
                     )}
                 </div>

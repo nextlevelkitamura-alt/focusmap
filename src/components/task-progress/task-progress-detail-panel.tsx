@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Terminal } from "lucide-react"
+import { AlertCircle, Clock, Loader2, RefreshCw, Terminal } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -11,51 +11,33 @@ import {
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import {
+  codexMonitorToneClass,
+  codexMonitorUiLabel,
+  formatTaskProgressDateTime,
+  getCodexMonitorUiStatus,
+} from "@/lib/task-progress-ui"
 import { cn } from "@/lib/utils"
 import type {
   TaskProgressDetailResponse,
   TaskProgressSnapshotTask,
-  TaskProgressStatus,
 } from "@/types/task-progress"
 
 const DETAIL_POLL_INTERVAL_MS = 3_000
 const WATCH_PING_INTERVAL_MS = 10_000
 
-const STATUS_LABELS: Record<TaskProgressStatus, string> = {
-  pending: "待機",
-  running: "実行中",
-  awaiting_approval: "確認待ち",
-  needs_input: "入力待ち",
-  completed: "完了",
-  failed: "失敗",
-}
-
 function statusClass(status: string | null | undefined) {
-  switch (status) {
-    case "running":
-      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
-    case "awaiting_approval":
-    case "needs_input":
-      return "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-    case "completed":
-      return "border-sky-500/35 bg-sky-500/10 text-sky-800 dark:text-sky-200"
-    case "failed":
-      return "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-200"
-    default:
-      return "border-border bg-muted text-muted-foreground"
-  }
+  return codexMonitorToneClass(status)
 }
 
 function statusIcon(status: string | null | undefined) {
-  switch (status) {
+  switch (getCodexMonitorUiStatus(status)) {
     case "running":
       return <Loader2 className="h-3.5 w-3.5 animate-spin" />
-    case "awaiting_approval":
-    case "needs_input":
+    case "review":
+    case "unsent":
       return <Clock className="h-3.5 w-3.5" />
-    case "completed":
-      return <CheckCircle2 className="h-3.5 w-3.5" />
-    case "failed":
+    case "connection_failed":
       return <AlertCircle className="h-3.5 w-3.5" />
     default:
       return <Terminal className="h-3.5 w-3.5" />
@@ -64,14 +46,7 @@ function statusIcon(status: string | null | undefined) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat("ja-JP", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date)
+  return formatTaskProgressDateTime(value)
 }
 
 function compactText(value: unknown) {
@@ -190,7 +165,7 @@ export function TaskProgressDetailPanel({
 
   const taskForDisplay = detail?.task ?? task
   const status = taskForDisplay?.status
-  const statusLabel = status && status in STATUS_LABELS ? STATUS_LABELS[status as TaskProgressStatus] : status ?? "不明"
+  const statusLabel = status ? codexMonitorUiLabel(status) : "不明"
   const tailItems = useMemo(() => {
     const progress = detail?.progress ?? []
     const events = detail?.events ?? []
@@ -235,6 +210,12 @@ export function TaskProgressDetailPanel({
                 </span>
                 {taskForDisplay?.executor && <span>{taskForDisplay.executor}</span>}
                 {formatDateTime(taskForDisplay?.updated_at) && <span>{formatDateTime(taskForDisplay?.updated_at)}</span>}
+                {isLoading && (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    最新状態を確認中...
+                  </span>
+                )}
               </SheetDescription>
             </div>
             <Button
@@ -285,7 +266,7 @@ export function TaskProgressDetailPanel({
             <section>
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-muted-foreground">Tail</h3>
-                <span className="text-[11px] text-muted-foreground">3秒更新</span>
+                <span className="text-[11px] text-muted-foreground">詳細を高頻度更新中</span>
               </div>
               {tailItems.length > 0 ? (
                 <div className="space-y-2">

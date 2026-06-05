@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
+import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
+import type { AiTask } from "@/types/ai-task"
 import type { Project, Task } from "@/types/database"
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
 
@@ -59,7 +61,13 @@ export function MobileMindMap({
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
-    const { bySourceId, getBySourceId } = useMemoAiTasks()
+    const memoAiTasks = useMemoAiTasks()
+    const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
+    const bySourceId = memoAiTasks.bySourceId ?? emptyAiTaskMap
+    const getMemoAiTaskBySourceId = memoAiTasks.getBySourceId
+    const getBySourceId = useCallback((sourceId: string) => (
+        getMemoAiTaskBySourceId?.(sourceId) ?? null
+    ), [getMemoAiTaskBySourceId])
 
     const taskMap = useMemo(() => {
         const map = new Map<string, Task>()
@@ -107,11 +115,24 @@ export function MobileMindMap({
     const {
         tasks: taskProgressTasks,
         getById: getTaskProgressById,
+        pollIntervalMs: taskProgressPollIntervalMs,
+        isLoading: isTaskProgressSnapshotLoading,
+        error: taskProgressSnapshotError,
+        refresh: refreshTaskProgressSnapshot,
     } = useTaskProgressSnapshot({
         detailOpen: !!taskProgressPanelTaskId,
         activityHintKey: taskProgressActivityHintKey,
         fixtureTasks: taskProgressFixtureTasks,
     })
+    const [isRefreshingTaskProgressSnapshot, setIsRefreshingTaskProgressSnapshot] = useState(false)
+    const handleRefreshTaskProgressSnapshot = useCallback(async () => {
+        setIsRefreshingTaskProgressSnapshot(true)
+        try {
+            await refreshTaskProgressSnapshot()
+        } finally {
+            setIsRefreshingTaskProgressSnapshot(false)
+        }
+    }, [refreshTaskProgressSnapshot])
 
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {}
@@ -498,6 +519,17 @@ export function MobileMindMap({
                 taskProgressByNodeId={taskProgressByNodeId}
                 onOpenTaskProgress={(task) => setTaskProgressPanelTaskId(task.id)}
                 onMoveTask={handleMoveTask}
+            />
+            <TaskProgressKanban
+                tasks={taskProgressTasks}
+                sourceTasksById={taskMap}
+                isMobile
+                isLoading={isTaskProgressSnapshotLoading}
+                isRefreshing={isRefreshingTaskProgressSnapshot}
+                error={taskProgressSnapshotError}
+                pollIntervalMs={taskProgressPollIntervalMs}
+                onRefresh={handleRefreshTaskProgressSnapshot}
+                onOpenTask={(task) => setTaskProgressPanelTaskId(task.id)}
             />
             <TaskProgressDetailPanel
                 open={!!taskProgressPanelTask}

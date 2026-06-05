@@ -196,17 +196,20 @@ Goals → Projects → TaskGroups → Tasks
 - ユーザー向けの手動実行はMac常駐runnerを必須にしない。Codex.app / ChatGPTアプリが入っていれば、Focusmapはdeep linkとクリップボードで実行開始できる。常駐runnerやローカル同期は状態検出・ログ同期の補助であり、起動条件にはしない。
 - マインドマップのメモ編集パネル（`CodexNodePanel`）では、「Codexに送る」から同じ手動ハンドオフを実行する。Focusmap同期ID付きpromptで `ai_tasks` を作成できた後にだけCodex.app/ChatGPT Codex入口を開き、登録失敗時は外部アプリを開かずエラーを出す。クリップボードコピーはブラウザのユーザー操作制約に合わせてクリック中に開始してよいが、外部アプリ起動はtracking task作成後にする。Mac/デスクトップでは `codex://?prompt=...&path=...&originUrl=...`、スマホではiOS/iPadOSの `com.openai.chat://https://chatgpt.com/codex/mobile/` またはAndroidの `intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end` を使う。
 - マインドマップのCodex.app連携主導線は手動ハンドオフ。オンラインrunnerがあっても、ノードパネルの「Codexに送る」は `dispatch_mode='manual'` の `ai_tasks` を作り、メモ見出し本文とメモ詳細本文だけをラベルなしでクリップボードへコピーし、Codex.appを開く。自動実行は明示導線だけが `dispatch_mode='auto'` を渡し、通常UIの標準にはしない。
-- localhost と `*.trycloudflare.com` のスマホプレビューでは、デスクトップの場合だけローカルAPI `/api/codex/open-repo` からMacの `pbcopy`、`open codex://...`、Codex.appのactivateを実行する。スマホ判定時はChatGPT mobile入口を優先する。ブラウザが外部アプリ起動を止めても、プロンプトはクリップボードに残し、Focusmap側は `ai_tasks` の `プロンプト待ち` として状態を追う。
-- `codex://` deep link 経由の新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。自動実行が必要なメモ詳細の主導線は `ws://127.0.0.1:7878` のCodex app-serverへ送る。Focusmapは「プロンプト待ち」「実行中」「確認待ち」を表示し、`/api/codex/sync-node` と `~/.codex/state_5.sqlite` / rollout JSONL から状態確認とログ同期する。
+- localhost と `*.trycloudflare.com` のスマホプレビューでは、デスクトップの場合だけローカルAPI `/api/codex/open-repo` からMacの `pbcopy`、`open codex://...`、Codex.appのactivateを実行する。スマホ判定時はChatGPT mobile入口を優先する。ブラウザが外部アプリ起動を止めても、プロンプトはクリップボードに残し、Focusmap側は `ai_tasks` の `未送信` として状態を追う。
+- `codex://` deep link 経由の新規スレッド作成・リポジトリ選択・貼り付け済み送信は、OS/アプリ側の公開API制約により完全自動化できない前提。自動実行が必要なメモ詳細の主導線は `ws://127.0.0.1:7878` のCodex app-serverへ送る。Focusmapはユーザー向け状態を `未送信` / `実行中` / `確認待ち` / `接続失敗` の4つへ丸め、`/api/codex/sync-node` と `~/.codex/state_5.sqlite` / rollout JSONL から状態確認とログ同期する。
 - Focusmap Lite `scripts/focusmap-agent` は、Codex.appまたはCodex CLIを検出したMacでは `codex_app` executorをheartbeatに含める。`codex_app` taskをclaimして自動送信するのは `dispatch_mode='auto'` の時だけで、その場合は `ws://127.0.0.1:7878` のCodex app-serverへ `initialize` → `thread/start|thread/resume` → `turn/start` を送る。`dispatch_mode='manual'` のtaskは人間がCodex.appで送信した後の監視・同期対象であり、agentが標準で自動turn/startしない。
 - `scripts/install.sh` はWeb同梱の `focusmap-agent.tar.gz` を優先導入し、Codex.app/Codex CLIがあるMacでは `~/.focusmap/bin/run-codex-app-server.sh` と `~/Library/LaunchAgents/com.focusmap-official.codex-app-server.plist` も作成する。Codex.app未導入の場合は警告だけ出し、Codex導入後に再実行すれば `codex_app` executorが有効になる。
 - プロンプト本文は、メモ見出しなどのラベルを足さず、ノード本文/メモ本文を改行区切りでそのまま渡す。
 - Web起動の詳細設計は `docs/plans/active/codex-app-web-launch-design.md` を参照する。
-- ノードの状態表示は `src/lib/codex-run-state.ts` の `getCodexTaskUiState` を正とする。
-  - `codex_manual_handoff=true` かつ `codex_thread_id` 未検出: `プロンプト待ち`（青）
+- ノードの状態表示は `src/lib/codex-run-state.ts` の `getCodexTaskUiState` と `src/lib/task-progress-ui.ts` の表示丸めを正とする。
+  - `codex_manual_handoff=true` かつ `codex_thread_id` 未検出: `未送信`（青）
   - `status=running` または `result.codex_run_state=running`: `実行中`
-  - `awaiting_approval` / `needs_input` / `failed`: `確認待ち`
-  - `completed`: マップ上のCodex状態表示から外す
+  - `awaiting_approval` / `needs_input` / `completed`: `確認待ち`
+  - `failed`: `接続失敗`
+- ノード自体のタスク完了はCodex状態ではなくチェックボックスで判断する。Codexの `completed` は人間が見るまでは `確認待ち` として扱い、ノードを自動完了扱いにしない。
+- マップ画面のCodex監視はチャットtabへ逃がさず、マップ内で完結させる。デスクトップはマップ下に折りたたみ式 `Codex看板` を置き、モバイルは右下の `Codex` ボタンから下シートで看板を開く。看板レーンは `実行中` / `確認待ち` / `接続失敗` / `完了`。`完了` レーンはノードがチェック済みで、紐づくprogressの `updated_at` が当日のものだけを一時表示し、翌日以降は看板から消す。
+- Codex看板カードは `status`、`current_step`、`summary`、Mac online/offline、最終更新を表示する。モバイルカードは情報量を絞り、状態・今やっていること・確認要否を優先する。タップするとTurso progress詳細panel/drawerを開く。
 - 実行中ノードは、右上の小さなスピナーではなく、ノード外周の緑色の動きで示す。
 - マインドマップ右上の更新アイコンは、Web側の `ai_tasks` 状態を手動再取得するためのもの。常駐runnerの即時スキャン強制ではない。
 
@@ -229,7 +232,7 @@ Goals → Projects → TaskGroups → Tasks
 - `/api/task-progress` はMac agentの軽量progress JSON POSTと、Web/iPhoneのprogress snapshot GETを受ける。Turso未設定時のGETだけ既存Supabase `ai_tasks.result` の最小JSON pathへfallbackし、POSTはTurso必須にする。POSTの通常tickは `ai_tasks` latest snapshot upsertだけを行い、`snapshot_only` なら `ai_task_progress` にinsertしない。`ai_task_events` は `thread_detected` / `running` / `resumed` / `awaiting_approval` / `needs_input` / `completed` / `failed` など状態変化だけをinsertする。既存 `/api/ai-tasks/[id]/live-log` と `/api/ai-tasks/[id]/activity` は、Tursoにprogress/eventがある場合はTursoを優先し、古いSupabase activity/resultは互換fallbackとして残す。
 - 新規 `/api/ai-tasks` 作成、`/api/ai-tasks/schedule` 作成、`/api/agents/tasks/[id]/state`、`/api/agents/heartbeat`、`/api/ai-runners/heartbeat` は、Tursoが設定されている場合だけ軽量dual-writeする。dual-write失敗で既存Supabase導線を落とさない。agent token認証は5分メモリキャッシュし、Heartbeat/Progressで毎回Supabase token lookupへ戻らない。`/api/ai-tasks/schedule` はマップ表示に必要な `source_type` / `source_id` もTursoへ書き、直後のprogress snapshotだけでノードへ紐づけられる状態にする。
 - `insertAiTaskActivityMessage` と `/api/ai-tasks/[id]/progress-check` はTursoへ軽量履歴をmirrorする。無料枠運用でSupabase書き込みをさらに減らす時は、Cloud Runに `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=1` / `FOCUSMAP_TURSO_OBSERVATIONS_PRIMARY=1` を入れると、Turso保存成功後にSupabaseのactivity/observation履歴insertを省略できる。`ai_tasks.result` の最新summary更新は互換のため当面Supabaseに残す。
-- スマホ/マップUIのCodex進捗表示は `/api/task-progress/snapshot?cursor=<updated_at>|<id>&limit=500` を読む。初回はcursorなし、以後は返却された `(user_id, updated_at, id)` cursor以降の差分だけ取得する。短周期snapshot APIでは `select('*')` / count / full scan を使わず、必ずcursor + limitで読む。`user_id, updated_at, id` と `space_id, updated_at, id` のTurso indexを使い、space経由の取得でもfull scanしない。マップ上では `source_type='mindmap'` / `source_id` があればそれを優先し、無い場合は既存 `source_task_id -> ai_task.id` の対応からsnapshot taskをマップノードへ紐づける。ノード上には `running` / `awaiting_approval` / `completed` / `failed` / `needs_input` の短いstatus badgeと、`current_step` または `summary` の短縮表示だけを出す。`running` がある時は5秒poll、AI詳細panel/drawerを開いている時はsnapshotと詳細tailを3秒poll、runningが無い時は45秒pollまたは手動更新にする。詳細panel/drawerは開いた瞬間に `POST /api/task-progress/watch { task_id, action:'open' }`、表示中は10秒ごとに `ping`、閉じる時は `close` を送り、TTL 20秒程度のactive watchとして扱う。watch APIは期限切れから24時間超の `task_progress_watches` を軽くcleanupし、開閉の繰り返しでstorageが増え続けないようにする。Mac agentはactive watch中のtaskだけ3秒、それ以外のrunningは5秒を最短flush間隔にする。マップ一覧では詳細ログを読まない。表示確認用に `?taskProgressFixture=1` または `localStorage.focusmap:task-progress-fixture=1` でrunning/completed/failed/awaiting_approvalのfixtureをマップへ重ねられる。Mac agentはCodex.app app-server/sqlite/rolloutをローカルで1秒単位に確認するが、Tursoへの通常snapshot送信は内容hashが変わった時だけにし、状態変化はforce送信する。
+- スマホ/マップUIのCodex進捗表示は `/api/task-progress/snapshot?cursor=<updated_at>|<id>&limit=500` を読む。初回はcursorなし、以後は返却された `(user_id, updated_at, id)` cursor以降の差分だけ取得する。短周期snapshot APIでは `select('*')` / count / full scan を使わず、必ずcursor + limitで読む。`user_id, updated_at, id` と `space_id, updated_at, id` のTurso indexを使い、space経由の取得でもfull scanしない。マップ上では `source_type='mindmap'` / `source_id` があればそれを優先し、無い場合は既存 `source_task_id -> ai_task.id` の対応からsnapshot taskをマップノードへ紐づける。ノード上と看板では `pending=未送信`、`running=実行中`、`awaiting_approval/needs_input/completed=確認待ち`、`failed=接続失敗` に丸めて表示し、`current_step` または `summary` の短縮表示だけを出す。`running` がある時は5秒poll、AI詳細panel/drawerを開いている時はsnapshotと詳細tailを3秒poll、runningが無い時は45秒pollまたは手動更新にする。詳細panel/drawerは開いた瞬間に `POST /api/task-progress/watch { task_id, action:'open' }`、表示中は10秒ごとに `ping`、閉じる時は `close` を送り、TTL 20秒程度のactive watchとして扱う。watch APIは期限切れから24時間超の `task_progress_watches` を軽くcleanupし、開閉の繰り返しでstorageが増え続けないようにする。Mac agentはactive watch中のtaskだけ3秒、それ以外のrunningは5秒を最短flush間隔にする。マップ一覧では詳細ログを読まない。表示確認用に `?taskProgressFixture=1` または `localStorage.focusmap:task-progress-fixture=1` でrunning/completed/failed/awaiting_approvalのfixtureをマップへ重ねられる。Mac agentはCodex.app app-server/sqlite/rolloutをローカルで1秒単位に確認するが、Tursoへの通常snapshot送信は内容hashが変わった時だけにし、状態変化はforce送信する。
 - 2026-06-05のローカル検証では、`npm run dev` を `.env.monitoring.local` 読み込み付きで `localhost:3001` 起動し、Mac agentの `AgentApiClient` / Codex.app app-serverから `http://127.0.0.1:3001/api/task-progress` へ送ったprogressをTurso snapshot経由でマップに反映できた。API snapshotのrunning反映は約0.8秒、マップUIのrunning表示は約1.3秒、awaiting/completed/failedも表示中画面では1秒以内に反映し、dev server停止後の再読み込みでも最終状態は残った。詳細panelを開くまで `/api/task-progress?task_id=...&limit=50` は呼ばれず、開いている間だけ3秒tail pollになった。一方、既存の `/api/ai-tasks?source=linked&limit=300` は別の開いているdashboard/Macアプリ状態により多めに出ることがあるため、完了/失敗/確認待ち/入力待ちのタスクは古い `result.codex_run_state='running'` だけでrunning扱いしない。
 - Mac agentから `/api/task-progress` へ送るpayloadは、`result.live_log` / `output` / 生のCodex通知全文を含めない。`current_step` は最新ログ行または最新stepを600文字以内、`summary` は最新ログ行または承認待ち要約を1200文字以内に圧縮し、`progress_json` は `executor` / `codex_run_state` / `codex_thread_id` / `last_activity_at` / 直近8steps / 文字数などのcompact metadataだけにする。API側でも `live_log` / `output` / raw log / thread full history / image body 系キーは `progress_json` から落とす。これによりTursoの `ai_tasks` は一覧表示用snapshot、`ai_task_progress` は短いtail履歴、`ai_task_events` は状態変化イベントを持ち、全文ログの保管場所にはしない。5並列24時間の通常想定では、runner heartbeatが約1.3M write/月、running snapshotはhash変化時のみ5秒（detail open中だけ3秒）で約1.5〜1.8M write/月、状態event/progress tailは小さく、合計は月3M前後に収める。全taskが5秒ごとに毎回内容変化するケースは上振れするため、raw log保存や毎tick progress insertは禁止する。
 - スクショpreview試験導入はR2を使う。`src/lib/r2/client.ts` がR2 S3互換clientと署名URLをserver-onlyで持ち、`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_SCREENSHOT_BUCKET`（または互換env）はクライアントへ出さない。`/api/screenshots` はoriginalを拒否し、thumbnail/previewだけR2へ保存し、metadataをTursoへ保存する。通常uploadは1分未満を429にし、`upload_reason=state_change|error|awaiting_approval|user_requested|manual` の時だけ間隔制限を緩める。
@@ -280,17 +283,21 @@ Goals → Projects → TaskGroups → Tasks
 - `function_call` / `custom_tool_call` / `web_search_call` / `tool_search_call` などの内部コマンド開始ログは主ログへ混ぜない。
 - Codex.app bridgeが観測した追加情報は `result.codex_sync_log` に保持し、通常のチャット表示とは分ける。
 - `result.live_log` はチャットUIで表示できる本文、`result.codex_thread_snapshot` はCodex.app上のthread metadata、`codex_last_checked_at` はrunnerの同期間引き用。
-- マインドマップの `CodexNodePanel` は送信後も閉じず、`ai_tasks` とローカルCodex状態を見ながら、プロンプト待ち/実行中/確認待ち、Codex出力、ユーザー追加入力、同期ログ、Codex.appで開くボタンを同じパネル内に表示する。
+- マインドマップの `CodexNodePanel` は送信後も閉じず、`ai_tasks` とローカルCodex状態を見ながら、未送信/実行中/確認待ち/接続失敗、Codex出力、ユーザー追加入力、同期ログ、Codex.appで開くボタンを同じパネル内に表示する。送信済みpromptは再コピーできるが、画像はdeep link自動添付を前提にせず、署名URL/local path/clipboard案内とCodex.app側の手動attachを併用する。
 
 ### 関連ファイル
 
 | 領域 | ファイル |
 |------|----------|
 | Codex状態判定/rollout解析 | `src/lib/codex-run-state.ts` |
+| Codex監視UIの4状態丸め | `src/lib/task-progress-ui.ts` |
 | Supabase JWTオフライン検証 | `src/lib/auth/verify-supabase-jwt.ts` / `src/lib/auth/supabase-auth-fetch.ts` |
 | Web側のai_tasks取得/更新間隔 | `src/hooks/useAiTasks.ts` / `src/hooks/useMemoAiTasks.ts` / `src/hooks/useNoteAiTasks.ts` |
 | マインドマップ表示/状態バッジ/手動更新 | `src/components/mindmap/custom-mind-map-view.tsx` |
 | ダッシュボードからCodex状態を渡す層 | `src/components/dashboard/mind-map.tsx` |
+| モバイルマップ/Codex看板接続 | `src/components/mobile/mobile-mind-map.tsx` |
+| マップ下/モバイル下シートのCodex看板 | `src/components/task-progress/task-progress-kanban.tsx` |
+| Codex progress詳細panel/drawer | `src/components/task-progress/task-progress-detail-panel.tsx` |
 | メモ編集パネル/Codex手動ハンドオフ | `src/components/codex/codex-node-panel.tsx` |
 | Codex.app deep link生成/起動分岐 | `src/lib/codex-app-launch.ts` |
 | Codex.app起動補助 | `src/app/api/codex/open-repo/route.ts` |

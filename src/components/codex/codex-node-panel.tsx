@@ -23,7 +23,7 @@ import {
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
-import { Bot, CheckCircle2, Clock, ExternalLink, Laptop, Loader2, Mic, RefreshCw, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
+import { Bot, Clock, Copy, ExternalLink, Laptop, Loader2, Mic, RefreshCw, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -456,11 +456,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   )
   const codexStatusLabel =
     codexTask?.status === "completed"
-      ? "Codex完了"
+      ? "確認待ち"
       : codexWaitingForAppSend
-        ? "プロンプト待ち"
+        ? "未送信"
         : codexTask?.status === "failed"
-          ? "失敗"
+          ? "接続失敗"
           : codexUiState?.state === "running"
             ? "Codex実行中"
             : codexUiState?.state === "awaiting_approval" || codexTask?.status === "awaiting_approval"
@@ -619,6 +619,15 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }
   }, [candidates, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState])
 
+  const recopyCodexPrompt = useCallback(async () => {
+    const prompt = sentPrompt || codexPrompt
+    if (!prompt.trim()) return
+    const copied = await copyPromptToClipboard(prompt)
+    setCodexFeedback(copied
+      ? "プロンプトを再コピーしました。画像が必要な場合はCodex.app側で手動添付してください。"
+      : "プロンプトの再コピーに失敗しました。")
+  }, [codexPrompt, sentPrompt])
+
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
     codexRunnerStatus.checked &&
@@ -761,10 +770,12 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                     <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-semibold ${codexStatusClass}`}>
                       {codexUiState?.state === "running" ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : codexTask?.status === "failed" ? (
+                        <TriangleAlert className="h-3.5 w-3.5" />
                       ) : codexWaitingForAppSend ? (
                         <Clock className="h-3.5 w-3.5" />
                       ) : (
-                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <Clock className="h-3.5 w-3.5" />
                       )}
                       {codexStatusLabel}
                     </span>
@@ -774,7 +785,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       </span>
                     ) : (
                       <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                        {codexWaitingForAppSend ? "貼り付け前" : "thread検出待ち"}
+                        {codexWaitingForAppSend ? "未送信" : "thread検出待ち"}
                       </span>
                     )}
                     <span className="text-[11px] text-muted-foreground">
@@ -791,6 +802,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       <RefreshCw className={`h-3.5 w-3.5 ${isSyncingCodex ? "animate-spin" : ""}`} />
                       更新
                     </button>
+                    {sentPrompt && (
+                      <button
+                        type="button"
+                        onClick={() => void recopyCodexPrompt()}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-xs font-semibold transition-colors hover:bg-muted"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        再コピー
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void openCodexThread()}

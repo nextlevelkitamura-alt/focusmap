@@ -1,4 +1,4 @@
-export type CodexRunState = "prompt_waiting" | "running" | "awaiting_approval"
+export type CodexRunState = "prompt_waiting" | "running" | "awaiting_approval" | "connection_failed"
 
 export type CodexReviewReason =
   | "started"
@@ -306,17 +306,20 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   const hasThreadId = typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0
 
   if (rawState === "prompt_waiting") {
-    return { state: "prompt_waiting", label: "プロンプト待ち" }
+    return { state: "prompt_waiting", label: "未送信" }
   }
 
   if (isManualHandoff && !hasThreadId) {
-    return { state: "prompt_waiting", label: "プロンプト待ち" }
+    return { state: "prompt_waiting", label: "未送信" }
   }
 
   if (rawState === "awaiting_approval") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
-  if (task.status === "awaiting_approval" || task.status === "needs_input" || task.status === "failed") {
+  if (task.status === "failed") {
+    return { state: "connection_failed", label: "接続失敗" }
+  }
+  if (task.status === "awaiting_approval" || task.status === "needs_input") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
   if (rawState === "running") {

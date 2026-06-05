@@ -116,8 +116,8 @@ describe("detectCodexResumeAfterApproval", () => {
 describe("getCodexTaskUiState", () => {
   test("normalizes Codex tasks to prompt waiting, running or review", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: null })?.state).toBe("running")
-    expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })?.state).toBe("awaiting_approval")
-    expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })?.state).toBe("awaiting_approval")
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })).toEqual({ state: "connection_failed", label: "接続失敗" })
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toBeNull()
     expect(getCodexTaskUiState({ executor: "claude", status: "running", result: null })).toBeNull()
   })
@@ -127,7 +127,7 @@ describe("getCodexTaskUiState", () => {
       executor: "codex_app",
       status: "awaiting_approval",
       result: { codex_manual_handoff: true, codex_run_state: "prompt_waiting" },
-    })).toEqual({ state: "prompt_waiting", label: "プロンプト待ち" })
+    })).toEqual({ state: "prompt_waiting", label: "未送信" })
 
     expect(getCodexTaskUiState({
       executor: "codex_app",
@@ -149,7 +149,7 @@ describe("getCodexTaskUiState", () => {
         codex_run_state: "prompt_waiting",
         codex_thread_id: "019e7961-30b1-7a82-ab25-da26ad30d8ed",
       },
-    })).toEqual({ state: "prompt_waiting", label: "プロンプト待ち" })
+    })).toEqual({ state: "prompt_waiting", label: "未送信" })
   })
 })
 

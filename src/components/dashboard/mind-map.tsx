@@ -8,6 +8,7 @@ import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { CodexNodePanel } from "@/components/codex/codex-node-panel";
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel";
+import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
@@ -216,6 +217,8 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         tasks: taskProgressTasks,
         getById: getTaskProgressById,
         pollIntervalMs: taskProgressPollIntervalMs,
+        isLoading: isTaskProgressSnapshotLoading,
+        error: taskProgressSnapshotError,
         refresh: refreshTaskProgressSnapshot,
     } = useTaskProgressSnapshot({
         detailOpen: !!taskProgressPanelTaskId,
@@ -1343,43 +1346,58 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 />
             </div>
 
-            <CustomMindMapView
-                project={project}
-                groups={groups}
-                tasks={tasks}
-                isMobile={isNarrow}
-                collapsedTaskIds={collapsedTaskIds}
-                selectedNodeId={selectedNodeId}
-                selectedNodeIds={selectedNodeIds}
-                onSelectNode={handleCustomSelectNode}
-                onSelectNodes={handleCustomSelectNodes}
-                onToggleCollapse={toggleTaskCollapse}
-                pendingEditNodeId={pendingEditNodeId}
-                onAddRootNode={() => callbacks.createRootTaskAndFocus("")}
-                onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
-                onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
-                onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}
-                onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
-                onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
-                onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
-                onSaveProjectTitle={(title) => project?.id ? callbacks.onUpdateProject?.(project.id, title) : undefined}
-                onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
-                onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
-                onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
-                    scheduled_at: params.scheduledAt,
-                    estimated_time: params.estimatedMinutes,
-                    calendar_id: params.calendarId,
-                })}
-                onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
-                onRunCodex={handleRunCodex}
-                onRefreshCodex={handleRefreshCodexTasks}
-                isRefreshingCodex={isRefreshingCodexTasks}
-                codexRunByNodeId={codexRunByNodeId}
-                taskProgressByNodeId={taskProgressByNodeId}
-                onOpenTaskProgress={handleOpenTaskProgress}
-                onMoveTask={handleCustomMoveTask}
-                onMoveTasks={handleCustomMoveTasks}
-            />
+            <div className="flex h-full min-h-0 flex-col">
+                <div className="relative min-h-0 flex-1">
+                    <CustomMindMapView
+                        project={project}
+                        groups={groups}
+                        tasks={tasks}
+                        isMobile={isNarrow}
+                        collapsedTaskIds={collapsedTaskIds}
+                        selectedNodeId={selectedNodeId}
+                        selectedNodeIds={selectedNodeIds}
+                        onSelectNode={handleCustomSelectNode}
+                        onSelectNodes={handleCustomSelectNodes}
+                        onToggleCollapse={toggleTaskCollapse}
+                        pendingEditNodeId={pendingEditNodeId}
+                        onAddRootNode={() => callbacks.createRootTaskAndFocus("")}
+                        onAddChildNode={(taskId) => callbacks.addChildTask(taskId)}
+                        onAddSiblingNode={(taskId) => callbacks.addSiblingTask(taskId)}
+                        onPromoteNode={(taskId) => callbacks.promoteTask(taskId)}
+                        onDeleteNode={(taskId) => callbacks.deleteTask(taskId)}
+                        onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
+                        onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
+                        onSaveProjectTitle={(title) => project?.id ? callbacks.onUpdateProject?.(project.id, title) : undefined}
+                        onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                        onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
+                        onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
+                            scheduled_at: params.scheduledAt,
+                            estimated_time: params.estimatedMinutes,
+                            calendar_id: params.calendarId,
+                        })}
+                        onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
+                        onRunCodex={handleRunCodex}
+                        onRefreshCodex={handleRefreshCodexTasks}
+                        isRefreshingCodex={isRefreshingCodexTasks}
+                        codexRunByNodeId={codexRunByNodeId}
+                        taskProgressByNodeId={taskProgressByNodeId}
+                        onOpenTaskProgress={handleOpenTaskProgress}
+                        onMoveTask={handleCustomMoveTask}
+                        onMoveTasks={handleCustomMoveTasks}
+                    />
+                </div>
+                <TaskProgressKanban
+                    tasks={taskProgressTasks}
+                    sourceTasksById={allTasksByIdForCodex}
+                    isMobile={isNarrow}
+                    isLoading={isTaskProgressSnapshotLoading}
+                    isRefreshing={isRefreshingTaskProgressSnapshot}
+                    error={taskProgressSnapshotError}
+                    pollIntervalMs={taskProgressPollIntervalMs}
+                    onRefresh={handleRefreshTaskProgressSnapshot}
+                    onOpenTask={handleOpenTaskProgress}
+                />
+            </div>
             <TaskProgressDetailPanel
                 open={!!taskProgressPanelTask}
                 task={taskProgressPanelTask}

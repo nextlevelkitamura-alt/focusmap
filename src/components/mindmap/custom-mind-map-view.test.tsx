@@ -205,7 +205,7 @@ describe("CustomMindMapView keyboard operations", () => {
         "root-1": {
           state: "prompt_waiting",
           taskId: "ai-task-1",
-          label: "プロンプト待ち",
+          label: "未送信",
         },
         "child-1": {
           state: "awaiting_approval",
@@ -215,8 +215,8 @@ describe("CustomMindMapView keyboard operations", () => {
       },
     })
 
-    expect(screen.getByText("プロンプト待ち1")).toBeInTheDocument()
-    expect(screen.getAllByText("プロンプト待ち")).toHaveLength(1)
+    expect(screen.getByText("未送信1")).toBeInTheDocument()
+    expect(screen.getAllByText("未送信")).toHaveLength(1)
     expect(screen.getByText("確認待ち1")).toBeInTheDocument()
   })
 
@@ -703,7 +703,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(committedWidth).toBeGreaterThan(initialWidth)
   })
 
-  test("checks a task immediately and hides it from the map after 300ms", async () => {
+  test("checks a task immediately and keeps it visible on the map", async () => {
     vi.useFakeTimers()
     const onUpdateStatus = vi.fn(() => Promise.resolve())
 
@@ -720,18 +720,14 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(within(node).getByRole("checkbox")).toHaveAttribute("aria-checked", "true")
 
     await act(async () => {
-      vi.advanceTimersByTime(299)
+      vi.advanceTimersByTime(300)
     })
     expect(screen.getByText("Root task")).toBeInTheDocument()
-
-    await act(async () => {
-      vi.advanceTimersByTime(1)
-    })
-    expect(document.querySelector('[data-id="root-1"]')).not.toBeInTheDocument()
-    expect(screen.getByRole("dialog", { name: "完了の取り消し" })).toBeInTheDocument()
+    expect(document.querySelector('[data-id="root-1"]')).toBeInTheDocument()
+    expect(screen.queryByRole("dialog", { name: "完了の取り消し" })).not.toBeInTheDocument()
   })
 
-  test("can restore a hidden completed task from the undo dialog", async () => {
+  test("can uncheck a completed task from the visible node checkbox", async () => {
     vi.useFakeTimers()
     const onUpdateStatus = vi.fn(() => Promise.resolve())
 
@@ -743,10 +739,10 @@ describe("CustomMindMapView keyboard operations", () => {
       vi.advanceTimersByTime(300)
     })
 
-    expect(document.querySelector('[data-id="root-1"]')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-id="root-1"]')).toBeInTheDocument()
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "戻す" }))
+      fireEvent.click(within(node).getByRole("checkbox", { name: "完了を取消" }))
       await Promise.resolve()
     })
 
@@ -756,7 +752,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(screen.queryByRole("dialog", { name: "完了の取り消し" })).not.toBeInTheDocument()
   })
 
-  test("removes the undo dialog after five seconds", async () => {
+  test("does not show an undo dialog after checking a task", async () => {
     vi.useFakeTimers()
     const onUpdateStatus = vi.fn(() => Promise.resolve())
 
@@ -766,12 +762,6 @@ describe("CustomMindMapView keyboard operations", () => {
     await act(async () => {
       fireEvent.click(within(node).getByRole("checkbox", { name: "完了にする" }))
       vi.advanceTimersByTime(300)
-    })
-
-    expect(screen.getByRole("dialog", { name: "完了の取り消し" })).toBeInTheDocument()
-
-    await act(async () => {
-      vi.advanceTimersByTime(5000)
     })
 
     expect(screen.queryByRole("dialog", { name: "完了の取り消し" })).not.toBeInTheDocument()
