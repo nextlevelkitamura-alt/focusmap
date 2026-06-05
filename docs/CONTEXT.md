@@ -138,6 +138,7 @@ Goals → Projects → TaskGroups → Tasks
 ### AIエージェント並列作業ポリシー
 
 - 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は、`task-router` Skill を入口にする。詳細な判断基準、worktree安全策、各チャット用プロンプト雛形は `task-router` の workflows を正とする。
+- task-router の進捗管理は `docs/ai/task-board.md` を現在地の正本にする。task-router が新規に作る計画は `docs/ai/plans/active/`、完了タスクは `docs/ai/task-archive/YYYY/MM.md`、完了計画は `docs/ai/plans/archive/YYYY/MM/` に月別で格納する。
 - 並列化判断はタスク量・見積時間だけで行わず、同じファイルを触る可能性、UI/backend等の責務分離、API contract / DB schema / shared types / auth / error format の未確定、generated files / lockfile / migration の衝突、統合コスト、失敗worktreeを破棄できるかを見て提案する。
 - UI と backend を並列で進める場合は、まず Planner が `API_CONTRACT.md` / `UI_ACCEPTANCE.md` / `TEST_PLAN.md` / `OWNERSHIP.md` 相当を作り、Frontend / Backend / Integration / Review に分ける。worktree は統括側が branch/status/uncommitted changes/base/責務/allowed files/merge順を確認してから提案し、force push、`git reset --hard`、`git clean -fd`、本番DB操作、secret/token表示編集、GCP/GCS削除停止、未承認の大規模削除、意図しないlockfile更新、unrelated refactorは禁止する。
 

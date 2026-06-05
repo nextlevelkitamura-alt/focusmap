@@ -54,6 +54,12 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - 詳細な判断基準・worktree安全策・プロンプト雛形は `task-router` の workflows を正とする
 - 並列化は時間だけで判断しない。編集範囲、共通契約、衝突コスト、危険操作、統合条件を見て提案する
 
+### Task Router Board
+- 現在のタスクボードは [docs/ai/task-board.md](docs/ai/task-board.md) を正とする
+- task-router が新規に作る計画は `docs/ai/plans/active/` に置く
+- 完了タスクは `docs/ai/task-archive/YYYY/MM.md`、完了計画は `docs/ai/plans/archive/YYYY/MM/` に月別で移す
+- 非自明な作業を始める時・計画を立てた時・完了前には task-router がこのボードを更新する
+
 ### 本番デプロイ運用（重要）
 - 本番 Cloud Run は **origin/main の内容だけ**を正とする
 - feature ブランチや未コミット差分を本番に直接デプロイしない
