@@ -16,3 +16,4 @@
 ## 重要計画
 
 - [focusmap-lite-mac-agent.md](./focusmap-lite-mac-agent.md) — Focusmap Lite.app / Mac常駐エージェント方式の正本
+- [active/codex-monitoring-data-architecture.md](./active/codex-monitoring-data-architecture.md) — Codex監視・Auth軽量化・Turso/R2段階移行の正本
