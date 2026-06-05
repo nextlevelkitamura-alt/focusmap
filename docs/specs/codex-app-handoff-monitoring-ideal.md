@@ -1,381 +1,381 @@
-# Codex.app handoff + monitoring ideal
+# Codex.app handoff + monitoring 理想仕様
 
 Status: living spec
 Created: 2026-06-05
-Primary audience: future Codex/Claude agents working on Focusmap Codex.app integration
+Updated: 2026-06-05
+対象: Focusmap の Codex.app 連携、Mac agent、Turso監視、マップ内Codex UIを触る将来のエージェント
 
-## Purpose
+## この文書の目的
 
-This document is the ideal target for Focusmap's Codex.app handoff and monitoring flow. When future agents change backend, Mac agent, task progress UI, or map/Codex UX, they should compare their proposal against this document before editing code.
+この文書は、Focusmap の Codex.app handoff + monitoring が目指す理想状態をまとめた正本です。
 
-Focusmap's role is not to become Codex.app. Focusmap prepares the work, keeps the dashboard understandable, and shows the state that humans need for oversight. Codex.app remains the canonical place where the human sends and continues Codex turns.
+今後、バックエンド、Mac agent、Turso同期、マップUI、Codex看板、ノード詳細、task progress APIを修正するエージェントは、実装前にこの文書を読み、現在の差分がこの理想に近づいているかを確認してください。
 
-## Product Principle
+Focusmap は Codex.app の代替ではありません。Focusmap は作業の準備、俯瞰、状態集計、確認導線を担います。Codex.app の thread 履歴が会話の正であり、Codex.app で最終送信するのは人間です。
 
-Focusmap is the dashboard where AI works and humans steer.
+## プロダクト原則
 
-For Codex.app tasks, this means:
+Focusmap は「AIが働き、人間が舵を取る」ダッシュボードです。
 
-- Focusmap shows what needs attention, what is running, what failed to connect, and what was recently completed.
-- Codex.app thread history is the source of truth for the conversation.
-- Focusmap stores and displays lightweight state, short summaries, current step, and activity messages.
-- Focusmap must not store or poll full raw logs as the normal path.
-- Humans make the final send action in Codex.app for the standard flow.
+Codex.app 連携では、次を守ります。
 
-## Standard Flow
+- Focusmap は「今動いているもの」「確認が必要なもの」「接続に失敗したもの」「最近完了したもの」を分かりやすく表示する。
+- Codex.app の thread 履歴を会話の正とする。
+- Focusmap に保存するのは軽量な状態、短いsummary、current_step、activity message中心にする。
+- Focusmap は通常導線で full raw log を保存・短周期pollしない。
+- 標準導線では、人間が Codex.app で最終送信する。
 
-The standard Codex.app flow is manual handoff.
+## 標準導線
 
-1. User presses `Codexに送る` or an equivalent Codex action in Focusmap.
-2. Focusmap creates a tracking `ai_tasks` record with `executor='codex_app'` and `dispatch_mode='manual'`.
-3. Focusmap creates a handoff package:
-   - prompt text
-   - handoff token / Focusmap sync marker
-   - repo path when available
-   - image references when available
-   - source task/memo identifiers
-4. Focusmap copies the prompt to clipboard.
-5. Focusmap opens Codex.app composer when possible, for example with `codex://threads/new?prompt=...&path=...`.
-6. Human sends the prompt in Codex.app.
-7. Mac local agent observes Codex.app state locally and sends lightweight snapshots/events to Focusmap.
-8. Focusmap shows `未送信`, `実行中`, `確認待ち`, or `接続失敗` in map, board, and details.
+標準導線は manual handoff です。
 
-Automatic `thread/start` / `turn/start` through the Codex app-server is not the standard path. It may exist only as an explicit mode when `dispatch_mode='auto'` is intentionally selected by a dedicated UI or internal workflow.
+1. ユーザーが Focusmap で `Codexに送る` などのCodex操作を押す。
+2. Focusmap が `executor='codex_app'`、`dispatch_mode='manual'` の追跡用 `ai_tasks` を作る。
+3. Focusmap が handoff package を作る。
+   - prompt本文
+   - handoff token または Focusmap sync marker
+   - repo path
+   - 画像参照
+   - source task/memo id
+4. Focusmap が prompt をクリップボードへコピーする。
+5. 可能なら `codex://threads/new?prompt=...&path=...` などで Codex.app composer を開く。
+6. 人間が Codex.app で送信する。
+7. Mac local agent が Codex.app の状態をローカルで観測し、軽量snapshot/eventをFocusmapへ送る。
+8. Focusmap はマップ、看板、詳細で `未送信` / `実行中` / `確認待ち` / `接続失敗` を表示する。
 
-## Critical Invariants
+Codex app-server 経由の `thread/start` / `turn/start` 自動実行は標準導線ではありません。これは `dispatch_mode='auto'` を明示した専用導線だけで使います。
 
-These rules should not be broken during future fixes:
+## 絶対に守る不変条件
 
-- Manual handoff tracking must exist before or atomically with opening Codex.app.
-- Opening Codex.app without a Focusmap tracking task is a bug unless the UI clearly shows recovery/retry.
-- Deep links set composer text; they must not be assumed to auto-send.
-- Image attachment must not be assumed to work through deep links.
-- Mac local checks can be frequent; cloud writes must stay lightweight and deduplicated.
-- Full Codex logs, raw command output, full thread history, image bodies, and screenshots are not normal Turso payloads.
-- `completed` from Codex is not the same as a completed Focusmap node. Human review still matters.
-- Existing API contracts must not be broken to make the UI look simpler.
+- manual handoff の追跡taskは、Codex.appを開く前、または開く処理と同時に必ず作る。
+- Codex.appを開いたのにFocusmap側に追跡taskが無い状態はバグとして扱う。
+- 追跡task作成に失敗した場合は、外部アプリを開かないか、明確な復旧・再登録導線を出す。
+- deep link は composer text をセットする用途であり、自動送信できると決め打ちしない。
+- 画像添付が deep link で自動添付されると決め打ちしない。
+- Macローカル確認は1秒単位でもよいが、クラウド書き込みは軽量・差分・hash抑制を守る。
+- Codexの全文ログ、生コマンド出力、full thread history、image body、スクショ原本をTursoへ通常保存しない。
+- Codex側の `completed` は Focusmapノードの完了ではない。人間の確認が必要です。
+- 既存API契約を壊してUIだけ簡単に見せる修正は禁止。
 
-## User-Facing State Model
+## ユーザー向け状態モデル
 
-Internal task states are mapped to user-facing Codex states:
+内部状態は、ユーザー向けに次の4状態へ丸めます。
 
-| Internal status / condition | User label | Meaning |
+| 内部状態・条件 | 表示 | 意味 |
 |---|---|---|
-| `pending` or manual handoff without detected thread | `未送信` | Focusmap prepared the prompt; human still needs to send or Codex thread has not been detected. |
-| `running` | `実行中` | Codex is actively working or recently resumed. |
-| `awaiting_approval` / `needs_input` / Codex-side completion before human review | `確認待ち` | Human should inspect Codex output, approve, answer, or decide what to do next. |
-| `failed` / monitoring lost / thread not found after timeout | `接続失敗` | Focusmap could not reliably connect or track the Codex session. |
+| `pending` または manual handoff でthread未検出 | `未送信` | Focusmapはpromptを準備済み。人間の送信待ち、またはthread未検出。 |
+| `running` | `実行中` | Codexが実行中、または追加入力で再開済み。 |
+| `awaiting_approval` / `needs_input` / Codex側完了後の人間確認前 | `確認待ち` | 人間がCodex出力を確認し、承認・追加入力・完了判断をする状態。 |
+| `failed` / monitoring lost / thread検出失敗 | `接続失敗` | FocusmapがCodexセッションを確実に追跡できなかった状態。 |
 
-Important behavior:
+重要なルール:
 
-- Old `result.codex_run_state='running'` alone must not override a newer terminal or waiting state.
-- Codex completion should be displayed as `確認待ち` until the human explicitly completes the Focusmap node.
-- The node checkbox remains the source of truth for task completion in the map.
+- 古い `result.codex_run_state='running'` だけで、新しい待機・失敗・完了系状態を上書きしない。
+- Codex側で完了しても、人間がFocusmapノードを完了するまでは `確認待ち` として扱う。
+- マップ上のノード完了は、Codex状態ではなくチェックボックスを正とする。
 
-## Ideal UI
+## 理想UI
 
-### Map First
+### マップを主画面にする
 
-The map is the primary place for node-specific Codex monitoring. Do not move this workflow to the generic chat tab.
+ノード別Codex監視の主画面は `マップ` です。通常の `チャット` tab に逃がしません。
 
-Desktop:
+デスクトップ:
 
-- Show a compact, collapsible `Codex看板` under the map.
-- Keep the map visually primary; the board should not dominate the screen by default.
-- Initial collapsed state should show counts and urgent attention, not raw logs.
+- マップ下にコンパクトな折りたたみ式 `Codex看板` を置く。
+- マップを主役にし、看板が画面を支配しない。
+- 初期状態では畳んで件数と緊急度だけ分かるようにする。
 
-Mobile:
+モバイル:
 
-- Show a bottom-right `Codex` button.
-- Open a bottom sheet with the Codex board.
-- Keep tap targets at least 44px.
-- Prioritize one-handed operation and quick recognition of what needs attention.
+- 右下に `Codex` ボタンを置く。
+- ボタンから下シートで `Codex看板` を開く。
+- タップターゲットは44px以上を守る。
+- 片手操作で「今見るべきもの」が分かるようにする。
 
-Board lanes:
+看板レーン:
 
 - `実行中`
 - `確認待ち`
 - `接続失敗`
 - `完了`
 
-`未送信` cards may live in the `確認待ち` lane, but each card must clearly show its own `未送信` status.
+`未送信` カードは `確認待ち` レーンに入れてよいですが、カード上で `未送信` と明確に分かるようにします。
 
-`完了` should be temporary: show recently checked/completed items for context, but do not turn the board into a permanent archive.
+`完了` レーンは一時表示です。恒久的なアーカイブにしないでください。
 
-### Board Cards
+### 看板カード
 
-Each card should show only what helps decide the next action:
+カードには次のような、次の判断に必要な情報だけを出します。
 
 - status label
-- node/memo title
-- `current_step` or short fallback
-- short `summary`
-- Mac agent online/offline indication when relevant
-- last updated time
-- compact action surface
+- ノード・メモのタイトル
+- `current_step` または短いfallback
+- 短い `summary`
+- 必要な場合だけ Mac agent online/offline
+- 最終更新時刻
+- 最小限の操作
 
-Do not show raw JSON, long tool logs, or full thread dumps in board cards.
+カードに raw JSON、長いtool log、full thread dump を出さないでください。
 
-### Detail Panel / Drawer
+### 詳細panel / drawer
 
-Details open only when the user asks for them.
+詳細はユーザーが開いた時だけ読みます。
 
-When opened:
+開いた時:
 
-- immediately fetch current task progress
-- open an active watch for the task
-- poll detail tail at the boosted interval
-- show summary/current step/activity first
-- keep raw event/progress tail behind a detail affordance if needed
+- すぐに現在の task progress を取得する。
+- そのtaskの active watch を開く。
+- detail tail はboost間隔でpollする。
+- summary/current_step/activity を先に見せる。
+- raw event/progress tail は必要なら詳細表示の奥に置く。
 
-Expected safe operations:
+安全に表示できる操作:
 
 - `Codexで開く`
 - `再コピー`
 - `更新`
-- future: `送信済みにする`
-- future: `確認待ちにする`
-- future: `手動thread紐付け`
+- 将来: `送信済みにする`
+- 将来: `確認待ちにする`
+- 将来: `手動thread紐付け`
 
-Do not fake actions that lack backend support. If an action is required but not implemented, keep it as a documented gap rather than a misleading button.
+backendがない操作を、動くように見せかけて実装しないでください。必要だが未実装の操作は、未解決課題として残します。
 
-### Node Detail Priority
+### ノード詳細の優先順位
 
-For a node with Codex activity, the Codex block should appear above long memo text because it is currently the most actionable context.
+Codex活動があるノードでは、Codex実行ブロックを長いメモ本文より上に出します。今いちばん重要なのは「Codexがどうなっているか」だからです。
 
-Still preserve access to the memo body. The detail view should not become a separate chat page or hide the source task.
+ただし、メモ本文へのアクセスは残します。ノード詳細を別のチャットページにしてはいけません。
 
-## Handoff Package Requirements
+## Handoff package 要件
 
-The handoff package should be enough for a future agent or human to recover the flow.
+handoff package は、人間や将来のエージェントが流れを復旧できる情報を持つ必要があります。
 
-Required:
+必須:
 
-- `handoff_id` or validated handoff token
+- `handoff_id` または検証済みhandoff token
 - `ai_task_id`
-- prompt text
-- source type and source id
-- repo path when known
-- created timestamp
+- prompt本文
+- source type / source id
+- repo path
+- 作成時刻
 
-Optional:
+任意:
 
-- expected workspace path
-- image references
-- image local paths
-- signed URLs if supported
-- fallback instructions for manual attachment
+- workspace path
+- 画像参照
+- 画像local path
+- 署名URL
+- 手動添付の案内
 
-Image handling must stay explicit:
+画像処理の前提:
 
-- Clipboard paste may work for some images but cannot be assumed.
-- Signed URLs may work if reachable from Codex.app/ChatGPT environment.
-- Local paths may help only when Codex.app can access the same Mac path.
-- Manual attach remains a valid fallback.
+- clipboard paste は使える場合があるが、常に使えるとは限らない。
+- 署名URLはCodex.app/ChatGPT側から到達できる場合だけ有効。
+- local path は同じMac上でCodex.appが参照できる場合だけ有効。
+- 手動attachは現実的なfallbackとして残す。
 
-## Thread Detection
+## Thread検出
 
-Focusmap should link `handoff_id` / `ai_task_id` / `codex_thread_id` as follows:
+`handoff_id` / `ai_task_id` / `codex_thread_id` は次の流れで紐付けます。
 
-1. The tracking task exists before Codex.app opens.
-2. The prompt includes a compact Focusmap marker or handoff token.
-3. Mac local monitor reads Codex.app sqlite/rollout/app-server state.
-4. It matches new or updated threads by:
-   - explicit marker when available
-   - prompt prefix/content match when needed
+1. Codex.appを開く前に追跡taskが存在する。
+2. promptに短いFocusmap markerまたはhandoff tokenを含める。
+3. Mac local monitor が Codex.app sqlite / rollout / app-server state を読む。
+4. 次の情報で新規・更新threadを照合する。
+   - 明示marker
+   - prompt先頭・本文match
    - repo path / cwd
    - created/updated time window
-5. When matched, it writes `codex_thread_id` to the lightweight snapshot and compatible `ai_tasks` fields.
-6. If no thread is detected within the fast window, the task becomes `接続失敗` or `確認待ち` with a clear recovery path.
+5. matchしたら `codex_thread_id` を軽量snapshotと互換用 `ai_tasks` fieldへ書く。
+6. fast window内に検出できなければ、明確な復旧導線つきで `接続失敗` または `確認待ち` にする。
 
-Thread detection must not rely on writing `codex_last_checked_at` repeatedly when nothing visible changed.
+何も表示が変わっていないのに、`codex_last_checked_at` だけを繰り返し書く監視は避けます。
 
-## Local Monitoring vs Cloud Sync
+## ローカル監視とクラウド同期の違い
 
-Mac local monitoring and Turso sync are separate.
+Macローカル監視とTurso同期は別物です。
 
-Mac local:
+Macローカル:
 
-- can read Codex.app state every 1 second while the agent is active
-- can detect additional user input quickly
-- can inspect sqlite/rollout/app-server locally
-- can hold raw detail locally if needed
+- agent起動中はCodex.app状態を1秒ごとに読んでよい。
+- 人間の追加入力をすばやく検知してよい。
+- sqlite / rollout / app-server をローカルで読む。
+- 必要ならローカルにraw detailを持ってよい。
 
-Cloud sync:
+クラウド同期:
 
-- sends latest small snapshot only when content hash changed or minimum interval passed
-- sends state events only on meaningful transitions
-- sends short detail tail only when needed
-- never sends full logs on every tick
+- 内容hashが変わった時、または最短間隔を過ぎた時だけ小さいsnapshotを送る。
+- state event は意味のある状態変化だけ送る。
+- 短いdetail tailは必要な時だけ送る。
+- full log を毎tick送らない。
 
-Recommended intervals:
+推奨間隔:
 
-| Situation | Local check | Cloud write/read |
+| 状況 | Mac local check | Cloud write/read |
 |---|---:|---:|
-| Runner alive | local process loop | heartbeat upsert every 10s |
-| Running task, no detail open | 1s local | snapshot min 5s, only if hash changed |
-| Detail panel open | 1s local | active watch + detail poll 3s |
-| Awaiting approval / needs input | 1s local allowed | state change within 5s when user resumes |
-| No running task visible | normal background | 30-45s or manual refresh |
-| Completed / failed old tasks | no tight loop | low frequency or manual |
+| runner生存 | local process loop | 10秒ごとheartbeat upsert |
+| running、詳細未表示 | 1秒 | 5秒最短snapshot、hash変化時のみ |
+| detail panel表示中 | 1秒 | active watch + 3秒detail poll |
+| awaiting approval / needs input | 1秒可 | 追加入力・再開を5秒以内に反映 |
+| runningなし | 通常background | 30から45秒、または手動更新 |
+| 古いcompleted / failed | tight loop不要 | 低頻度、または手動 |
 
-## Turso Data Rules
+## Turso保存ルール
 
-Turso is for lightweight monitoring state, not archival logs.
+Tursoは軽量monitoring state用です。ログ保管庫ではありません。
 
-Tables:
+対象テーブル:
 
-- `ai_tasks`: latest display snapshot
-- `ai_task_progress`: short tail/history only
-- `ai_task_events`: state changes only
-- `runner_heartbeats`: runner liveness
-- `task_progress_watches`: detail-open boost hints
-- `screenshots`: metadata only, not originals
+- `ai_tasks`: 最新表示snapshot
+- `ai_task_progress`: 短いtail/history
+- `ai_task_events`: 状態変化event
+- `runner_heartbeats`: runner生存
+- `task_progress_watches`: detail open中のboost hint
+- `screenshots`: metadataのみ。原本ではない。
 
-Allowed in Turso:
+保存してよいもの:
 
-- task id, user id, space id
-- source type/id
+- task id / user id / space id
+- source type / source id
 - status
 - `codex_thread_id`
-- `current_step` under a small character limit
-- `summary` under a small character limit
+- 文字数上限つき `current_step`
+- 文字数上限つき `summary`
 - compact progress metadata
-- event type and small payload
+- event type と小さいpayload
 - heartbeat metadata
 
-Not allowed as normal Turso payload:
+通常保存してはいけないもの:
 
 - full `live_log`
 - full `output`
 - raw command output
 - full thread history
 - full rollout JSON
-- image body/base64
-- screenshot originals
-- large unbounded JSON
+- image body / base64
+- screenshot original
+- 上限なしの巨大JSON
 
-The API should sanitize payloads defensively even if the Mac agent is expected to compact them first.
+Mac agent側で圧縮する前提でも、API側で必ず防御的にsanitizeします。
 
-## Turso Free Tier Discipline
+## Turso無料枠に収める規律
 
-The target is to remain comfortably inside Turso Free for normal personal use.
+通常の個人利用では、Turso Freeに余裕を持って収めることを目標にします。
 
-Write budget mindset:
+write budgetの考え方:
 
-- 10 second runner heartbeat is acceptable.
-- 5 second running snapshot is acceptable if hash-deduplicated.
-- 3 second boost is acceptable only while a detail panel/drawer is open.
-- Every tick must not insert progress rows.
-- Every tick must not insert event rows.
-- Raw logs must not be saved repeatedly.
+- runner heartbeat 10秒は許容。
+- running snapshot 5秒は、hash dedupe前提なら許容。
+- detail open中だけ3秒boostを許容。
+- 毎tick progress insertは禁止。
+- 毎tick event insertは禁止。
+- raw log の繰り返し保存は禁止。
 
-Rough monthly write examples:
+概算:
 
-| Scenario | Approx writes/month | Notes |
+| ケース | 月間write概算 | 備考 |
 |---|---:|---|
-| 1 runner heartbeat every 10s | 259k | One upsert row. |
-| 1 running task every 5s, always changing, 24h/day | 518k | Worst normal snapshot case. |
-| 5 running tasks every 5s, always changing, 24h/day | 2.59M | Still acceptable if no raw progress inserts. |
-| 5 tasks detail-open every 3s, always changing, 24h/day | 4.32M | Heavy but still under 10M if other writes stay small. |
-| Every task inserts progress/event every 3s | Too high | This is not allowed. |
+| 1 runner heartbeat 10秒 | 259k | 1 row upsert |
+| 1 running task 5秒、常に変化、24h/day | 518k | 通常snapshotの重めケース |
+| 5 running tasks 5秒、常に変化、24h/day | 2.59M | progress/eventを増やさなければ許容 |
+| 5 tasks detail-open 3秒、常に変化、24h/day | 4.32M | 重いが他writeが小さければ10M未満 |
+| 全taskが3秒ごとにprogress/event insert | 危険 | 禁止 |
 
-Read budget discipline:
+read budgetの考え方:
 
-- Use `(updated_at, id)` cursor with `limit`.
-- Avoid short-interval `select('*')`.
-- Avoid `count` on hot paths.
-- Avoid full scans.
-- Add and preserve indexes for user and space cursor paths.
+- `(updated_at, id)` cursor と `limit` を使う。
+- 短周期APIで `select('*')` しない。
+- hot pathで `count` しない。
+- full scanを避ける。
+- user path / space path のcursor indexを維持する。
 
-Required indexes for snapshot-style reads:
+必要なindex:
 
 - `(user_id, updated_at, id)`
-- `(space_id, updated_at, id)` when space reads are supported
-- task progress by `(task_id, created_at)`
-- events by `(task_id, created_at)`
-- runner heartbeat by `(user_id, last_seen_at)`
-- active watches by `(user_id, expires_at)` and/or `(task_id, expires_at)`
+- space取得を使う場合は `(space_id, updated_at, id)`
+- progressは `(task_id, created_at)`
+- eventsは `(task_id, created_at)`
+- heartbeatは `(user_id, last_seen_at)`
+- watchesは `(user_id, expires_at)` と必要に応じて `(task_id, expires_at)`
 
-`task_progress_watches` must be cleaned up. TTL filtering alone is not enough; expired rows older than a retention window such as 24 hours should be deleted opportunistically.
+`task_progress_watches` は掃除が必要です。TTLでactive判定するだけでは不十分です。期限切れから24時間以上経過したwatchは、open/listなどで軽く削除します。
 
-## Backend Acceptance
+## Backend acceptance
 
-Backend changes are acceptable only if they preserve these outcomes:
+backend修正は、次を満たす場合だけ理想に近づいています。
 
-- Manual handoff creates tracking task before opening Codex.app or provides an explicit recovery path.
-- `dispatch_mode='manual'` is never automatically `turn/start`ed by the normal runner.
-- `dispatch_mode='auto'` remains explicit and separate.
-- Snapshot POST updates latest state without inserting history when `snapshot_only=true`.
-- Events insert only for meaningful transitions.
-- Progress history is short and bounded.
-- Watch open/ping/close controls detail boost.
-- Expired watches do not accumulate forever.
-- Runner monitoring is scoped by user/space when running in multi-user contexts.
-- Turso failures do not destroy existing Supabase-compatible behavior unless the endpoint is explicitly Turso-only.
+- manual handoff時、Codex.appを開く前、または同時にtracking taskを作る。
+- `dispatch_mode='manual'` を通常runnerが勝手に `turn/start` しない。
+- `dispatch_mode='auto'` は明示的な別モードとして残す。
+- `snapshot_only=true` の通常POSTは最新snapshotだけ更新し、履歴insertしない。
+- event insert は意味のある状態変化だけ。
+- progress history は短く、上限つき。
+- watch open/ping/close でdetail boostを制御する。
+- expired watch が無限に増えない。
+- 複数ユーザー/spaceを想定するrunnerでは監視対象をuser/spaceで絞る。
+- Turso dual-write失敗で既存Supabase互換導線を壊さない。ただしTurso専用endpointは例外。
 
-## Frontend Acceptance
+## Frontend acceptance
 
-Frontend changes are acceptable only if they preserve these outcomes:
+frontend修正は、次を満たす場合だけ理想に近づいています。
 
-- Map remains the main Codex monitoring surface.
-- Board/card UI is compact and task-focused.
-- Mobile uses a bottom sheet rather than a dense always-visible board.
-- Detail tail is fetched only when detail is open.
-- `未送信` / `実行中` / `確認待ち` / `接続失敗` labels are consistent.
-- Completed Codex output does not auto-complete the Focusmap node.
-- UI does not offer fake actions without backend support.
-- Text does not overflow buttons/cards on mobile or desktop.
-- Tap targets are at least 44px on mobile.
-- The UI remains quiet, dense, and operational rather than decorative.
+- マップがCodex監視の主画面のまま。
+- 看板/card UIがコンパクトで実務向け。
+- モバイルは常時表示の密な看板ではなく、下シートを使う。
+- detail tail はdetail open時だけ読む。
+- `未送信` / `実行中` / `確認待ち` / `接続失敗` の表示が一貫している。
+- CodexのcompletedでFocusmapノードを自動完了にしない。
+- backend未実装の操作を動くボタンとして出さない。
+- モバイル/デスクトップでテキストがボタンやカードからはみ出さない。
+- モバイルのタップターゲットが44px以上。
+- UIは装飾的ではなく、静かで密度のある運用画面にする。
 
-## Verification Checklist
+## 検証チェックリスト
 
-Before finishing related work, run or explicitly explain why each item could not run:
+関連作業の完了前に、実行するか、実行できない理由を明記します。
 
 - `git fetch --prune origin`
 - `git status --short --branch`
-- inspect existing uncommitted changes and avoid mixing them
-- relevant lint for touched files
-- relevant unit tests for Codex state mapping and map UI
+- 既存未コミット差分を確認し、混ぜない
+- touched file lint
+- Codex状態丸めとマップUIの関連unit test
 - `git diff --check`
 - `npx tsc --noEmit --pretty false`
-- desktop check at `http://localhost:3001/dashboard?taskProgressFixture=1`
-- mobile-width check of Codex button and bottom sheet
+- desktop: `http://localhost:3001/dashboard?taskProgressFixture=1`
+- mobile幅: Codexボタンと下シート
 
-Known existing type errors should be named precisely and not hidden as successful typecheck.
+既存の型エラーがある場合は、今回変更由来か既存由来かを具体的に書きます。
 
-## Prompt Template For Future Agents
-
-Use this short block when handing the work to another agent:
+## 将来エージェントへ渡す短いプロンプト
 
 ```md
-Read `docs/specs/codex-app-handoff-monitoring-ideal.md` before editing.
-Your job is to move the current implementation closer to that ideal without breaking API contracts or mixing unrelated changes.
+編集前に `docs/specs/codex-app-handoff-monitoring-ideal.md` を読んでください。
+目的は、現在の実装をこの理想仕様へ近づけることです。API契約を壊さず、関係ない差分を混ぜないでください。
 
-Prioritize:
-1. manual handoff tracking cannot be lost
-2. Turso writes stay snapshot/hash/event based
-3. detail tail is read only when detail is open
-4. UI labels stay 未送信 / 実行中 / 確認待ち / 接続失敗
-5. map remains the primary monitoring surface
+優先順位:
+1. manual handoff の tracking task を失わない
+2. Turso write は snapshot/hash/event ベースにする
+3. detail tail は detail open時だけ読む
+4. UI表示は 未送信 / 実行中 / 確認待ち / 接続失敗 に揃える
+5. マップをCodex監視の主画面にする
 
-Do not:
-- auto-send Codex.app standard handoffs
-- save full logs to Turso
-- assume images can be deep-link attached
-- fake UI actions without backend support
-- edit unrelated files
+禁止:
+- 標準manual handoffをCodex.appへ自動送信する
+- Tursoへ全文ログを保存する
+- deep linkで画像自動添付できると決め打ちする
+- backend未実装の操作を動くように見せる
+- 関係ないファイルを編集する
 ```
 
-## Open Decisions
+## 未決定事項
 
-These are intentionally not forced by the current ideal:
+この理想仕様では、次はまだ確定しません。
 
-- Whether to build `送信済みにする` as a real API action.
-- Whether to build manual `codex_thread_id` linking UI.
-- Whether to introduce SSE later for active detail views.
-- Whether screenshots preview should become part of the first Codex monitoring release.
-- Whether multi-user runner scoping should be mandatory before public release or only before shared-space rollout.
+- `送信済みにする` 専用APIを作るか。
+- `codex_thread_id` 手動紐付けUIを作るか。
+- active detail viewにSSEを導入するか。
+- スクショpreviewを最初のCodex監視リリースに含めるか。
+- multi-user runner scopingを公開前必須にするか、shared-space rollout前必須にするか。
 
-Until those are decided, use the conservative behavior described above.
+未決定事項は、上の保守的な挙動を守ったまま別途判断します。
