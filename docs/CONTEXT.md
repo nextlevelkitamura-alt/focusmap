@@ -223,6 +223,7 @@ Goals → Projects → TaskGroups → Tasks
 - スクショpreview試験導入はR2を使う。`src/lib/r2/client.ts` がR2 S3互換clientと署名URLをserver-onlyで持ち、`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_SCREENSHOT_BUCKET`（または互換env）はクライアントへ出さない。`/api/screenshots` はoriginalを拒否し、thumbnail/previewだけR2へ保存し、metadataをTursoへ保存する。通常uploadは1分未満を429にし、`upload_reason=state_change|error|awaiting_approval|user_requested|manual` の時だけ間隔制限を緩める。
 - スクショ画像は一覧取得で署名URLを返さない。`/api/screenshots/[id]/url?variant=preview|thumbnail` で表示時だけ60〜900秒の署名付きURLを発行する。削除は `/api/screenshots/[id]` でmetadataをsoft deleteし、R2 object削除も試みる。
 - Mac agent側のスクショ原本保存とWebP圧縮は `scripts/focusmap-agent/src/screenshot-preview.ts` を使う。原本は `~/.focusmap/screenshots/<taskId>/` に保存し、クラウドへ送るのは800KB以下のpreview WebPと120KB以下のthumbnail WebPだけにする。`AgentApiClient.uploadScreenshotPreview()` はこのbundleを `/api/screenshots` へmultipart uploadする。
+- Turso/R2の外部設定値を取得した後は、`.env.monitoring.local` に `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` / `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_SCREENSHOT_BUCKET` を置き、`npm run codex-monitoring:set-secrets` でGitHub Secretsへ登録し、`npm run codex-monitoring:migrate-turso` でTurso schemaを適用する。GitHub ActionsのCloud Run deployはこれらのSecretsをruntime envへ渡す。
 
 ### Focusmap MacアプリMVP
 

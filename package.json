@@ -23,6 +23,8 @@
     "start": "next start",
     "lint": "eslint",
     "setup:opencode-go": "node scripts/setup-opencode-go-env.mjs",
+    "codex-monitoring:set-secrets": "node scripts/set-codex-monitoring-github-secrets.mjs",
+    "codex-monitoring:migrate-turso": "node scripts/apply-turso-monitoring-migration.mjs",
     "deploy:cloudrun": "./deploy-cloudrun.sh",
     "test": "vitest",
     "test:run": "vitest run"

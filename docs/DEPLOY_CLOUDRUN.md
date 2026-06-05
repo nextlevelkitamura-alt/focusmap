@@ -31,6 +31,29 @@
 - `GOOGLE_CLIENT_SECRET=<Google OAuth Client Secret>`
 - `GOOGLE_REDIRECT_URI=https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback`
 
+### Codex監視/Turso/R2 環境変数
+
+Codex監視の軽量progressとスクショpreviewを有効にする場合は、GitHub Secretsに以下を入れる。
+未設定でも既存Supabase fallbackで起動するが、Turso/R2側の新APIは503を返す。
+
+- `TURSO_DATABASE_URL`
+- `TURSO_AUTH_TOKEN`
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_SCREENSHOT_BUCKET`
+
+ローカルで値を取得したら、リポジトリ直下の `.env.monitoring.local` に同名で一時保存し、以下を実行する。
+`.env.monitoring.local` は `.env*` ignore対象なのでコミットしない。
+
+```bash
+npm run codex-monitoring:set-secrets
+npm run codex-monitoring:migrate-turso
+```
+
+`codex-monitoring:set-secrets` は `gh secret set` でGitHub Secretsへ登録する。値は標準出力へ表示しない。
+`codex-monitoring:migrate-turso` は `db/turso/migrations/20260605000000_codex_monitoring.sql` をTursoへ適用する。
+
 ---
 
 ## 本番デプロイ運用ルール
@@ -75,6 +98,7 @@ git push origin main
 ```
 
 `origin/main` への push 後、GitHub Actions の `Deploy to Cloud Run` が自動で本番へ反映する。
+GitHub Actionsは `TURSO_*` / `R2_*` のSecretsが存在すればCloud Run runtime envへ渡す。
 
 ### 手動デプロイ
 通常は使わない。使う場合も以下の条件を `deploy-cloudrun.sh` が検査する。

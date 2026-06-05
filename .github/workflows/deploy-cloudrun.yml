@@ -93,7 +93,13 @@ jobs:
             --set-env-vars DEEPSEEK_MODEL=deepseek-v4-flash \
             --set-env-vars DEEPSEEK_INTENT_MODEL=deepseek-v4-flash \
             --set-env-vars DEEPSEEK_AUTOMATION_MODEL=deepseek-v4-pro \
-            --set-env-vars DEEPSEEK_AGENT_MODEL=deepseek-v4-pro
+            --set-env-vars DEEPSEEK_AGENT_MODEL=deepseek-v4-pro \
+            --set-env-vars TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }} \
+            --set-env-vars TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }} \
+            --set-env-vars R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }} \
+            --set-env-vars R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }} \
+            --set-env-vars R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }} \
+            --set-env-vars R2_SCREENSHOT_BUCKET=${{ secrets.R2_SCREENSHOT_BUCKET }}
 
       - name: Show service URL
         run: |
