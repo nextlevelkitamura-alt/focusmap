@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAgent } from '@/lib/agent-auth'
+import { isTursoConfigured } from '@/lib/turso/client'
+import { upsertRunnerHeartbeat } from '@/lib/turso/codex-monitoring'
 
 const VALID_EXECUTORS = new Set(['playwright', 'simple', 'browser', 'terminal', 'codex_app'])
 
@@ -49,6 +51,24 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    if (isTursoConfigured()) {
+      try {
+        await upsertRunnerHeartbeat({
+          runner_id: runner.id,
+          user_id: token.user_id,
+          device_id: hostname,
+          status: 'online',
+          version: typeof metadata.version === 'string' ? metadata.version : null,
+          metadata_json: {
+            ...metadata,
+            executors: executors.length ? executors : ['playwright', 'simple', 'browser', 'terminal'],
+          },
+        })
+      } catch (tursoError) {
+        console.error('[agents/heartbeat turso]', tursoError)
+      }
+    }
 
     if (token.space_id) {
       await supabase

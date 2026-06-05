@@ -4,6 +4,8 @@ import { canViewSpace, normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/s
 import { assertCanExecute } from '@/lib/usage-guard'
 import { formatBillingCycle } from '@/lib/format'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
+import { isTursoConfigured } from '@/lib/turso/client'
+import { upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 const AI_TASK_LIST_SELECT = [
   'id',
@@ -230,6 +232,24 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('[ai-tasks]', error.message)
     return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+  }
+
+  if (isTursoConfigured() && isRecord(data)) {
+    try {
+      await upsertTursoAiTask({
+        id: String(data.id),
+        user_id: user.id,
+        space_id: typeof data.space_id === 'string' ? data.space_id : null,
+        title: prompt.trim().slice(0, 140),
+        status: typeof data.status === 'string' ? data.status : 'pending',
+        executor: selectedExecutor,
+        created_at: typeof data.created_at === 'string' ? data.created_at : null,
+        started_at: typeof data.started_at === 'string' ? data.started_at : null,
+        completed_at: typeof data.completed_at === 'string' ? data.completed_at : null,
+      })
+    } catch (tursoError) {
+      console.error('[ai-tasks turso mirror]', tursoError)
+    }
   }
 
   return NextResponse.json(data, { status: 201 })

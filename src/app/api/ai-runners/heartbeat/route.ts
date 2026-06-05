@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 import { canEditSpace } from "@/lib/space-access"
 import { authenticateSupabaseRequest } from "@/lib/auth/verify-supabase-jwt"
+import { isTursoConfigured } from "@/lib/turso/client"
+import { upsertRunnerHeartbeat } from "@/lib/turso/codex-monitoring"
 
 const VALID_EXECUTORS = new Set(["claude", "codex", "codex_app"])
 
@@ -46,6 +48,24 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  if (isTursoConfigured()) {
+    try {
+      await upsertRunnerHeartbeat({
+        runner_id: runner.id,
+        user_id: user.id,
+        device_id: hostname,
+        status: "online",
+        version: typeof body.version === "string" ? body.version : null,
+        metadata_json: {
+          ...(body.metadata && typeof body.metadata === "object" ? body.metadata : {}),
+          executors: executors.length ? executors : ["claude"],
+        },
+      })
+    } catch (tursoError) {
+      console.error("[ai-runners/heartbeat turso]", tursoError)
+    }
+  }
 
   const requestedSpaceIds = stringArray(body.space_ids)
   const enabledRows: Array<{ runner_id: string; space_id: string; enabled: boolean }> = []

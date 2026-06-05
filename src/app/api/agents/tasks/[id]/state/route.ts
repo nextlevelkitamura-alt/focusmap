@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAgent } from '@/lib/agent-auth'
+import { isTursoConfigured } from '@/lib/turso/client'
+import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function compactString(value: unknown, max: number) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
+}
 
 export async function POST(
   request: NextRequest,
@@ -48,6 +58,49 @@ export async function POST(
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (isTursoConfigured()) {
+      try {
+        const resultJson = isRecord(body.result) ? body.result : {}
+        const currentStep = compactString(resultJson.current_step, 4000)
+          ?? compactString(resultJson.message, 4000)
+          ?? compactString(resultJson.live_log, 4000)
+        const summary = isRecord(resultJson.progress_summary)
+          ? JSON.stringify(resultJson.progress_summary).slice(0, 2000)
+          : compactString(resultJson.summary, 2000)
+        await upsertTursoAiTask({
+          id,
+          user_id: String(task.user_id),
+          space_id: typeof task.space_id === 'string' ? task.space_id : null,
+          status,
+          current_step: currentStep,
+          summary,
+          error_message: typeof body.error === 'string' ? body.error : null,
+          started_at: status === 'running' ? new Date().toISOString() : null,
+          completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
+        })
+        await insertTaskEvent({
+          task_id: id,
+          user_id: String(task.user_id),
+          event_type: `status:${status}`,
+          payload_json: {
+            runner_id: runnerId,
+            status,
+            error: typeof body.error === 'string' ? body.error : null,
+          },
+        })
+        if (currentStep || summary) {
+          await insertTaskProgress({
+            task_id: id,
+            user_id: String(task.user_id),
+            phase: status,
+            message: currentStep,
+            progress_json: isRecord(resultJson.progress_summary) ? resultJson.progress_summary : null,
+          })
+        }
+      } catch (tursoError) {
+        console.error('[agents/tasks/state turso]', tursoError)
+      }
+    }
     return NextResponse.json({ task: data })
   } catch (error) {
     return NextResponse.json(

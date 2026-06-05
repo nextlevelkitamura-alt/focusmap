@@ -16,6 +16,16 @@ export interface AgentAuthContext {
   token: AgentTokenRecord
 }
 
+type CachedAgentToken = {
+  token: AgentTokenRecord
+  expiresAt: number
+  lastUsedWriteAt: number
+}
+
+const AGENT_TOKEN_CACHE_TTL_MS = 5 * 60_000
+const AGENT_TOKEN_LAST_USED_WRITE_TTL_MS = 5 * 60_000
+const agentTokenCache = new Map<string, CachedAgentToken>()
+
 export function hashAgentToken(token: string) {
   return createHash('sha256').update(token).digest('hex')
 }
@@ -32,6 +42,25 @@ export async function authenticateAgent(request: NextRequest): Promise<AgentAuth
 
   const supabase = createServiceClient()
   const tokenHash = hashAgentToken(rawToken)
+  const now = Date.now()
+  const cached = agentTokenCache.get(tokenHash)
+  if (cached && cached.expiresAt > now) {
+    if (cached.token.expires_at && new Date(cached.token.expires_at).getTime() <= now) {
+      agentTokenCache.delete(tokenHash)
+      throw new Error('agent token is expired')
+    }
+
+    if (now - cached.lastUsedWriteAt > AGENT_TOKEN_LAST_USED_WRITE_TTL_MS) {
+      cached.lastUsedWriteAt = now
+      await supabase
+        .from('agent_tokens')
+        .update({ last_used_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString() })
+        .eq('id', cached.token.id)
+    }
+
+    return { supabase, token: cached.token }
+  }
+
   const { data, error } = await supabase
     .from('agent_tokens')
     .select('id, user_id, space_id, name, expires_at, revoked_at')
@@ -51,6 +80,12 @@ export async function authenticateAgent(request: NextRequest): Promise<AgentAuth
     .from('agent_tokens')
     .update({ last_used_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', token.id)
+
+  agentTokenCache.set(tokenHash, {
+    token,
+    expiresAt: now + AGENT_TOKEN_CACHE_TTL_MS,
+    lastUsedWriteAt: now,
+  })
 
   return { supabase, token }
 }
