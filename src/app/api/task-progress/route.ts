@@ -8,6 +8,7 @@ import {
   listTaskProgress,
   upsertTursoAiTask,
 } from '@/lib/turso/codex-monitoring'
+import { boundedTaskProgressJson } from '@/lib/turso/task-progress-payload'
 import { authenticateMonitoringRequest } from '@/lib/turso/request-auth'
 
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
@@ -16,18 +17,20 @@ const MAX_CURRENT_STEP_CHARS = 600
 const MAX_SUMMARY_CHARS = 1_200
 const MAX_PHASE_CHARS = 80
 const MAX_EVENT_TYPE_CHARS = 80
-const MAX_JSON_CHARS = 6_000
-const BLOCKED_PROGRESS_JSON_KEYS = new Set([
-  'live_log',
-  'output',
-  'raw_log',
-  'raw_output',
-  'thread_full_history',
-  'codex_thread_snapshot',
-  'image',
-  'image_body',
-  'screenshot',
-  'body',
+const ALLOWED_EVENT_TYPES = new Set([
+  'thread_detected',
+  'running',
+  'resumed',
+  'awaiting_approval',
+  'needs_input',
+  'completed',
+  'failed',
+  'status:pending',
+  'status:running',
+  'status:awaiting_approval',
+  'status:needs_input',
+  'status:completed',
+  'status:failed',
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,32 +43,9 @@ function compactString(value: unknown, max: number) {
     : null
 }
 
-function sanitizeProgressJson(value: unknown, depth = 0): unknown {
-  if (value === undefined || value === null) return null
-  if (typeof value === 'string') return value.slice(0, 600)
-  if (typeof value === 'number' || typeof value === 'boolean') return value
-  if (Array.isArray(value)) {
-    if (depth >= 3) return value.length
-    return value.slice(-20).map(item => sanitizeProgressJson(item, depth + 1))
-  }
-  if (!isRecord(value)) return null
-  if (depth >= 3) return { keys: Object.keys(value).slice(0, 20) }
-
-  const entries = Object.entries(value)
-    .filter(([key]) => !BLOCKED_PROGRESS_JSON_KEYS.has(key.toLowerCase()))
-    .slice(0, 40)
-    .map(([key, item]) => [key.slice(0, 80), sanitizeProgressJson(item, depth + 1)])
-  return Object.fromEntries(entries)
-}
-
-function boundedProgressJson(value: unknown) {
-  if (value === undefined || value === null) return null
-  const sanitized = sanitizeProgressJson(value)
-  const serialized = JSON.stringify(sanitized)
-  if (serialized.length > MAX_JSON_CHARS) {
-    throw new Error(`json payload must be ${MAX_JSON_CHARS} chars or less`)
-  }
-  return sanitized
+function allowedEventType(value: string | null) {
+  if (!value) return null
+  return ALLOWED_EVENT_TYPES.has(value) ? value : null
 }
 
 function boundedProgressPercent(value: unknown) {
@@ -187,7 +167,7 @@ export async function POST(request: NextRequest) {
 
     const phase = compactString(body.phase, MAX_PHASE_CHARS)
     const message = compactString(body.message, MAX_MESSAGE_CHARS)
-    const progressJson = boundedProgressJson(body.progress_json)
+    const progressJson = boundedTaskProgressJson(body.progress_json)
     const status = compactString(body.status, 40)
     const currentStep = compactString(body.current_step, MAX_CURRENT_STEP_CHARS)
     const summary = compactString(body.summary, MAX_SUMMARY_CHARS)
@@ -196,8 +176,8 @@ export async function POST(request: NextRequest) {
     const codexThreadId = compactString(body.codex_thread_id, 200)
     const executor = compactString(body.executor, 80)
     const lastActivityAt = compactString(body.last_activity_at, 80)
-    const eventType = compactString(body.event_type, MAX_EVENT_TYPE_CHARS)
-    const eventPayload = boundedProgressJson(body.event_payload)
+    const eventType = allowedEventType(compactString(body.event_type, MAX_EVENT_TYPE_CHARS))
+    const eventPayload = boundedTaskProgressJson(body.event_payload)
     const snapshotOnly = body.snapshot_only === true
     const forceEvent = body.force_event === true
 

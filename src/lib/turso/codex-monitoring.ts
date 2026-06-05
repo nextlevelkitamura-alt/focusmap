@@ -548,6 +548,21 @@ export async function closeTaskProgressWatch(input: {
   })
 }
 
+export async function deleteExpiredTaskProgressWatches(options: {
+  olderThanSeconds?: number
+  now?: string | null
+} = {}) {
+  const nowMs = options.now ? Date.parse(options.now) : Date.now()
+  const baseMs = Number.isFinite(nowMs) ? nowMs : Date.now()
+  const olderThanSeconds = Math.max(options.olderThanSeconds ?? 24 * 60 * 60, 60)
+  const cutoff = new Date(baseMs - olderThanSeconds * 1000).toISOString()
+  const result = await getTursoClient().execute({
+    sql: 'DELETE FROM task_progress_watches WHERE expires_at < ?',
+    args: [cutoff],
+  })
+  return { deleted: result.rowsAffected ?? 0, cutoff }
+}
+
 export async function listActiveTaskProgressWatches(options: {
   userId?: string | null
   taskId?: string | null

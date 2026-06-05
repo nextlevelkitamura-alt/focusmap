@@ -11,7 +11,9 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import {
+  appendCodexHandoffToken,
   buildCodexOpenTarget,
+  buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
@@ -618,6 +620,7 @@ export function MindmapLinkedMemosDialog({
     const res = await fetch("/api/ai-tasks/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      keepalive: prompt.length < 50_000,
       body: JSON.stringify({
         prompt,
         cwd: selectedRepoPath,
@@ -638,8 +641,8 @@ export function MindmapLinkedMemosDialog({
 
   async function handleStartInCodexApp() {
     if (!task || hasCodexRun) return
-    const prompt = buildCodexPrompt(draftTitle, draftMemo)
-    if (!prompt) {
+    const basePrompt = buildCodexPrompt(draftTitle, draftMemo)
+    if (!basePrompt) {
       setError("Codexに渡す内容を入力してください")
       return
     }
@@ -652,20 +655,20 @@ export function MindmapLinkedMemosDialog({
     setIsSaving(true)
     setError(null)
     const useLocalApi = canUseLocalCodexOpenApi()
+    const handoffToken = buildCodexHandoffToken(task.id)
+    const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
     try {
-      if (!useLocalApi) {
-        openCodexFromLinkedDialog(prompt, selectedRepoPath)
-      }
-
+      await saveDraft()
+      await createCodexTask("manual", prompt, handoffToken)
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(prompt).catch(() => undefined)
       }
-      await saveDraft()
-      await createCodexTask("manual", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
       if (useLocalApi) {
         await launchCodexViaLocalApi({ prompt, repoPath: selectedRepoPath })
+      } else {
+        openCodexFromLinkedDialog(prompt, selectedRepoPath)
       }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)

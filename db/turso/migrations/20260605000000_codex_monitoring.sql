@@ -34,6 +34,10 @@ CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_user_created
 CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_user_updated_cursor
   ON ai_tasks(user_id, updated_at ASC, id ASC);
 
+CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_space_updated_cursor
+  ON ai_tasks(space_id, updated_at ASC, id ASC)
+  WHERE space_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_codex_thread
   ON ai_tasks(codex_thread_id)
   WHERE codex_thread_id IS NOT NULL;
@@ -102,6 +106,9 @@ CREATE INDEX IF NOT EXISTS idx_turso_task_progress_watches_user_expires
 
 CREATE INDEX IF NOT EXISTS idx_turso_task_progress_watches_task_expires
   ON task_progress_watches(task_id, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_turso_task_progress_watches_expires
+  ON task_progress_watches(expires_at ASC);
 
 CREATE TABLE IF NOT EXISTS screenshots (
   id TEXT PRIMARY KEY,

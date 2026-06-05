@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest"
 import {
+  appendCodexHandoffToken,
   buildChatGptCodexMobileAppUrl,
   buildCodexDeepLink,
+  buildCodexHandoffToken,
   buildCodexOpenTarget,
   detectMobilePlatform,
   isLocalCodexOpenHost,
@@ -32,6 +34,17 @@ describe("buildCodexDeepLink", () => {
     expect(url.searchParams.get("prompt")).toBe("fix this")
     expect(url.searchParams.get("path")).toBe("/Users/me/project")
     expect(url.searchParams.get("originUrl")).toBe("https://abc-123.trycloudflare.com/dashboard")
+  })
+})
+
+describe("Codex handoff token", () => {
+  test("builds a schedule-compatible token and appends it once", () => {
+    const token = buildCodexHandoffToken("task-123")
+    expect(token).toMatch(/^FM-[A-Za-z0-9._:-]{8,120}$/)
+
+    const prompt = appendCodexHandoffToken("Fix this", token)
+    expect(prompt).toContain(`Focusmap同期ID: ${token}`)
+    expect(appendCodexHandoffToken(prompt, token)).toBe(prompt)
   })
 })
 

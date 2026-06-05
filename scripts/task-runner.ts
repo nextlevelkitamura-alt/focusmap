@@ -155,6 +155,17 @@ type MonitoredCodexTask = {
   source_task_id: string | null
 }
 
+type RunnerMonitorScope = {
+  userId: string | null
+  spaceIds: string[]
+}
+
+type AiTaskMonitorQueryBuilder = {
+  eq(column: string, value: string): AiTaskMonitorQueryBuilder
+  in(column: string, values: string[]): AiTaskMonitorQueryBuilder
+  or(filters: string): AiTaskMonitorQueryBuilder
+}
+
 type CodexRpcEnvelope = {
   jsonrpc?: string
   id?: number
@@ -1650,11 +1661,14 @@ async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set
   })
 }
 
-async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient): Promise<void> {
+async function syncCompletedFocusmapNodesToCodexArchive(
+  supabase: SupabaseClient,
+  scope: RunnerMonitorScope,
+): Promise<void> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return
 
-  const { data: aiTasks, error } = await supabase
+  let query = supabase
     .from('ai_tasks')
     .select('id, user_id, prompt, codex_thread_id, started_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
@@ -1662,6 +1676,8 @@ async function syncCompletedFocusmapNodesToCodexArchive(supabase: SupabaseClient
     .not('codex_thread_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(100)
+  query = applyAiTaskMonitorScope(query, scope)
+  const { data: aiTasks, error } = await query
 
   if (error) {
     console.error('[codex-app] completed source task scan failed:', error.message)
@@ -1750,10 +1766,13 @@ function stableJson(value: unknown): string {
   return JSON.stringify(stable(value))
 }
 
-async function activeTaskProgressWatchIds(): Promise<Set<string>> {
+async function activeTaskProgressWatchIds(scope: RunnerMonitorScope): Promise<Set<string>> {
   if (!isTursoConfigured()) return new Set()
   try {
-    const watches = await listActiveTaskProgressWatches({ limit: 500 })
+    const watches = await listActiveTaskProgressWatches({
+      userId: scope.userId,
+      limit: 500,
+    })
     return new Set(watches.map(watch => watch.task_id))
   } catch (error) {
     console.warn('[codex-app] active watch lookup failed:', error instanceof Error ? error.message : error)
@@ -1817,25 +1836,30 @@ async function mirrorCodexTaskSnapshotToTurso(input: {
   codexTursoSnapshotCache.set(input.task.id, { hash: snapshotHash, sentAt: now })
 }
 
-async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncStats> {
+async function syncCodexAppThreads(
+  supabase: SupabaseClient,
+  scope: RunnerMonitorScope,
+): Promise<CodexSyncStats> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
 
   // codex_app / codex 両 executor の実行中・確認待ちタスクを監視する。
   // 実行中は細かく追い、確認待ち以降は codex_last_checked_at で間引く。
-  const { data: tasks } = await supabase
+  let query = supabase
     .from('ai_tasks')
     .select('id, user_id, space_id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
+  query = applyAiTaskMonitorScope(query, scope)
+  const { data: tasks } = await query
 
   if (!tasks || tasks.length === 0) return { monitored: 0, fastFollow: false }
 
   const monitoredTasks = tasks as MonitoredCodexTask[]
   const nowMs = Date.now()
   const nowIso = new Date(nowMs).toISOString()
-  const activeWatchIds = await activeTaskProgressWatchIds()
+  const activeWatchIds = await activeTaskProgressWatchIds(scope)
   const dueTasks = monitoredTasks.filter(task => shouldSyncCodexTaskNow(task, nowMs, activeWatchIds.has(task.id)))
   const stats: CodexSyncStats = {
     monitored: monitoredTasks.length,
@@ -2209,14 +2233,15 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
 async function syncActiveCodexFollowUps(
   supabase: SupabaseClient,
   initialStats: CodexSyncStats,
+  scope: RunnerMonitorScope,
 ): Promise<void> {
   let stats = initialStats
   for (let i = 0; i < CODEX_ACTIVE_SYNC_EXTRA_PASSES && stats.fastFollow; i += 1) {
     await sleep(CODEX_ACTIVE_SYNC_INTERVAL_MS)
-    await syncCodexLiveLogs(supabase)
-    stats = await syncCodexAppThreads(supabase)
+    await syncCodexLiveLogs(supabase, scope)
+    stats = await syncCodexAppThreads(supabase, scope)
     if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
-      await syncCompletedFocusmapNodesToCodexArchive(supabase)
+      await syncCompletedFocusmapNodesToCodexArchive(supabase, scope)
     }
   }
 }
@@ -2232,14 +2257,16 @@ async function syncActiveCodexFollowUps(
  * Codex 専用（Claude は Remote Control 経由で見られるので不要）
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function syncCodexLiveLogs(supabase: any): Promise<void> {
-  const { data: codexRunning } = await supabase
+async function syncCodexLiveLogs(supabase: any, scope: RunnerMonitorScope): Promise<void> {
+  let query = supabase
     .from('ai_tasks')
     .select('id, tmux_session_name, result')
     .eq('executor', 'codex')
     .eq('status', 'running')
     .not('tmux_session_name', 'is', null)
     .limit(20)
+  query = applyAiTaskMonitorScope(query, scope)
+  const { data: codexRunning } = await query
 
   for (const task of (codexRunning ?? []) as Array<{
     id: string
@@ -2274,15 +2301,17 @@ async function syncCodexLiveLogs(supabase: any): Promise<void> {
 //   - 基準: executor='codex' で started_at が 30 分以上前
 // ─────────────────────────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function cleanupStaleCodexTasks(supabase: any): Promise<void> {
+async function cleanupStaleCodexTasks(supabase: any, scope: RunnerMonitorScope): Promise<void> {
   const cutoff = new Date(Date.now() - 30 * 60_000).toISOString()
-  const { data } = await supabase
+  let query = supabase
     .from('ai_tasks')
     .select('id, tmux_session_name')
     .eq('executor', 'codex')
     .eq('status', 'running')
     .lt('started_at', cutoff)
     .limit(50)
+  query = applyAiTaskMonitorScope(query, scope)
+  const { data } = await query
 
   for (const t of (data ?? []) as Array<{ id: string; tmux_session_name: string | null }>) {
     // 旧 tmux セッションが残っていれば kill（codex_app の codex:// は tmux 使わないので影響なし）
@@ -2305,13 +2334,15 @@ async function cleanupStaleCodexTasks(supabase: any): Promise<void> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function reconcileRemoteControlSessions(supabase: any): Promise<void> {
-  const { data: runningTasks } = await supabase
+async function reconcileRemoteControlSessions(supabase: any, scope: RunnerMonitorScope): Promise<void> {
+  let query = supabase
     .from('ai_tasks')
     .select('id, executor, tmux_session_name, started_at, result')
     .eq('status', 'running')
     .not('tmux_session_name', 'is', null)
     .limit(50)
+  query = applyAiTaskMonitorScope(query, scope)
+  const { data: runningTasks } = await query
 
   const rows = (runningTasks ?? []) as Array<{
     id: string
@@ -2571,6 +2602,79 @@ function readLocalRunnerUserId(): string | null {
     return null
   }
   return null
+}
+
+function safeSupabaseFilterIdentifier(value: string | null | undefined): string | null {
+  const normalized = value?.trim()
+  if (!normalized) return null
+  return /^[A-Za-z0-9._:-]{1,160}$/.test(normalized) ? normalized : null
+}
+
+function readConfiguredRunnerSpaceIds(): string[] {
+  const raw = [
+    process.env.FOCUSMAP_RUNNER_SPACE_ID,
+    process.env.FOCUSMAP_RUNNER_SPACE_IDS,
+  ].filter((value): value is string => typeof value === 'string' && value.trim())
+
+  const ids = new Set<string>()
+  for (const value of raw) {
+    for (const part of value.split(/[,\s]+/)) {
+      const safe = safeSupabaseFilterIdentifier(part)
+      if (safe) ids.add(safe)
+    }
+  }
+  return [...ids]
+}
+
+function applyAiTaskMonitorScope<QueryBuilder extends AiTaskMonitorQueryBuilder>(
+  query: QueryBuilder,
+  scope: RunnerMonitorScope,
+): QueryBuilder {
+  if (scope.userId && scope.spaceIds.length > 0) {
+    return query.or(`user_id.eq.${scope.userId},space_id.in.(${scope.spaceIds.join(',')})`) as QueryBuilder
+  }
+  if (scope.userId) return query.eq('user_id', scope.userId) as QueryBuilder
+  if (scope.spaceIds.length > 0) return query.in('space_id', scope.spaceIds) as QueryBuilder
+  return query
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resolveRunnerMonitorScope(supabase: any, hostname: string): Promise<RunnerMonitorScope> {
+  const userId = safeSupabaseFilterIdentifier(readLocalRunnerUserId())
+  const spaceIds = new Set(readConfiguredRunnerSpaceIds())
+  if (!userId) {
+    return { userId: null, spaceIds: [...spaceIds] }
+  }
+
+  const { data: runner, error: runnerError } = await supabase
+    .from('ai_runners')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('hostname', hostname)
+    .maybeSingle()
+
+  if (runnerError) {
+    console.warn('[runner] monitor scope runner lookup failed:', runnerError.message)
+  }
+
+  const runnerId = typeof runner?.id === 'string' ? runner.id : null
+  if (runnerId) {
+    const { data: runnerSpaces, error: spacesError } = await supabase
+      .from('ai_runner_spaces')
+      .select('space_id')
+      .eq('runner_id', runnerId)
+      .eq('enabled', true)
+
+    if (spacesError) {
+      console.warn('[runner] monitor scope space lookup failed:', spacesError.message)
+    }
+    for (const row of (runnerSpaces ?? []) as Array<{ space_id: string | null }>) {
+      const safe = safeSupabaseFilterIdentifier(row.space_id)
+      if (safe) spaceIds.add(safe)
+    }
+  }
+
+  return { userId, spaceIds: [...spaceIds] }
 }
 
 function commandExists(command: string): boolean {
@@ -3204,6 +3308,7 @@ async function main() {
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+  const hostname = os.hostname()
   schemaCapabilities = await detectSchemaCapabilities(supabase)
   const immediateTaskId = immediateTaskIdFromArgs()
   let dueTasks: StaffStatusDueTask[] = []
@@ -3227,25 +3332,31 @@ async function main() {
     dueTasks = immediateTask ? [immediateTask as unknown as StaffStatusDueTask] : []
     console.log(`[task-runner] immediate dispatch requested: ${immediateTaskId}`)
   } else {
+    const monitorScope = schemaCapabilities.hasAiRunnerTables && schemaCapabilities.hasSharedAiTaskColumns
+      ? await resolveRunnerMonitorScope(supabase, hostname)
+      : {
+          userId: safeSupabaseFilterIdentifier(readLocalRunnerUserId()),
+          spaceIds: readConfiguredRunnerSpaceIds(),
+        }
+
     // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
-    await reconcileRemoteControlSessions(supabase)
-    await cleanupStaleCodexTasks(supabase)
+    await reconcileRemoteControlSessions(supabase, monitorScope)
+    await cleanupStaleCodexTasks(supabase, monitorScope)
 
     // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
-    await syncCodexLiveLogs(supabase)
+    await syncCodexLiveLogs(supabase, monitorScope)
 
     // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
-    const codexSyncStats = await syncCodexAppThreads(supabase)
+    const codexSyncStats = await syncCodexAppThreads(supabase, monitorScope)
     if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
-      await syncCompletedFocusmapNodesToCodexArchive(supabase)
+      await syncCompletedFocusmapNodesToCodexArchive(supabase, monitorScope)
     }
-    await syncActiveCodexFollowUps(supabase, codexSyncStats)
+    await syncActiveCodexFollowUps(supabase, codexSyncStats, monitorScope)
 
     // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
     await recoverStaleStaffStatusTasks(supabase)
 
     // ─── 0.5. リポ自動発見スキャン（5分に1回 or scan_now 要求時）─
-    const hostname = os.hostname()
     try {
       const localRunnerUserId = readLocalRunnerUserId()
       if (localRunnerUserId) {

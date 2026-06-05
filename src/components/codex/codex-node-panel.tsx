@@ -9,7 +9,9 @@ import {
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import {
+  appendCodexHandoffToken,
   buildCodexOpenTarget,
+  buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
@@ -539,7 +541,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       return
     }
 
-    const prompt = buildCodexPrompt(promptHeading, detail)
+    const basePrompt = buildCodexPrompt(promptHeading, detail)
+    const handoffToken = buildCodexHandoffToken(node.taskId)
+    const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
     const openTarget = buildCodexOpenTarget(
       {
@@ -560,7 +564,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       const clipboardPromise = copyPromptToClipboard(prompt)
       const dispatchMode = "manual"
       const savePromise = saveDraft(heading, detail)
-      const schedulePromise = fetch("/api/ai-tasks/schedule", {
+      await savePromise
+      const scheduleRes = await fetch("/api/ai-tasks/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         keepalive: prompt.length < 50_000,
@@ -572,32 +577,27 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           scheduled_at: new Date().toISOString(),
           executor: "codex_app",
           dispatch_mode: dispatchMode,
+          codex_handoff_token: handoffToken,
         }),
       })
-      const launchPromise = useLocalApi
-        ? launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
-          .then(result => ({ result, error: null }))
-          .catch(error => ({ result: null, error }))
-        : Promise.resolve({ result: { mode: openTarget.mode, url: openTarget.url, copiedToClipboard: false }, error: null })
-
-      if (!useLocalApi && typeof window !== "undefined") {
-        launchMode = openTarget.mode
-        window.location.href = openTarget.url
+      if (!scheduleRes.ok && scheduleRes.status !== 409) {
+        const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`)
+      }
+      if (scheduleRes.status === 409) {
+        const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error || "このノードは既にCodexで実行中または確認待ちです")
       }
 
       let copiedToClipboard = await clipboardPromise
-      await savePromise
-      const scheduleRes = await schedulePromise
-      let handoffWarning: string | null = null
-      if (!scheduleRes.ok && scheduleRes.status !== 409) {
-        const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
-        handoffWarning = data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`
+      if (useLocalApi) {
+        const launchOutcome = await launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
+        launchMode = launchOutcome.mode
+        if (launchOutcome.copiedToClipboard) copiedToClipboard = true
+      } else if (typeof window !== "undefined") {
+        launchMode = openTarget.mode
+        window.location.href = openTarget.url
       }
-
-      const launchOutcome = await launchPromise
-      if (launchOutcome.error) throw launchOutcome.error
-      launchMode = launchOutcome.result?.mode ?? launchMode ?? openTarget.mode
-      if (launchOutcome.result?.copiedToClipboard) copiedToClipboard = true
 
       setCodexSendStatus("sent")
       setJustSentPrompt(prompt)
@@ -605,18 +605,14 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       window.setTimeout(() => void syncCodexState(), 1200)
       window.setTimeout(() => void syncCodexState(), 3500)
       const copyFeedback = copiedToClipboard ? "プロンプトはコピー済みです。" : "プロンプトのコピーに失敗しました。"
-      if (handoffWarning) {
-        setError(`${copyFeedback} ${handoffWarning}`)
-      } else {
-        const dispatchFeedback = isMobileOpenTarget
-            ? "ChatGPTアプリのCodex画面で貼り付けて開始してください。"
-            : repoPath
-            ? "Macセットアップ未完了のため、今回はCodex.appで貼り付けて開始してください。"
-            : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
-        setCodexFeedback(
-          `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
-        )
-      }
+      const dispatchFeedback = isMobileOpenTarget
+          ? "ChatGPTアプリのCodex画面で貼り付けて開始してください。"
+          : repoPath
+          ? "Macセットアップ未完了のため、今回はCodex.appで貼り付けて開始してください。"
+          : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
+      setCodexFeedback(
+        `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
+      )
     } catch (err) {
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")

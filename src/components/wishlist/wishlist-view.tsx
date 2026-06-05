@@ -54,7 +54,9 @@ import type { CalendarEvent } from "@/types/calendar"
 import { cn } from "@/lib/utils"
 import { colorToRgba, getTagColor } from "@/lib/color-utils"
 import {
+  appendCodexHandoffToken,
   buildCodexOpenTarget,
+  buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
@@ -920,16 +922,20 @@ export function WishlistView({
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
-    const prompt = (isCodexAutoRun || isCodexManualHandoff)
+    const basePrompt = (isCodexAutoRun || isCodexManualHandoff)
       ? await buildMemoCodexHandoffText(item)
       : item.description?.trim() || item.title
     const scheduleExecutor = (isCodexAutoRun || isCodexManualHandoff) ? 'codex_app' : executor
-    const handoffToken = isCodexManualHandoff ? `FM-${Date.now().toString(36)}-${item.id.slice(0, 8)}` : undefined
+    const handoffToken = isCodexManualHandoff ? buildCodexHandoffToken(item.id) : undefined
+    const prompt = isCodexManualHandoff
+      ? appendCodexHandoffToken(basePrompt, handoffToken)
+      : basePrompt
 
     const registerTask = async () => {
       const res = await fetch("/api/ai-tasks/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        keepalive: prompt.length < 50_000,
         body: JSON.stringify({
           prompt,
           cwd: repoPath ?? null,
@@ -948,10 +954,8 @@ export function WishlistView({
     }
 
     if (isCodexManualHandoff) {
+      await registerTask()
       await openCodexHandoff(prompt, repoPath ?? null)
-      void registerTask().catch(error => {
-        console.error("[wishlist] Codex handoff tracking failed:", error instanceof Error ? error.message : error)
-      })
       return
     }
 

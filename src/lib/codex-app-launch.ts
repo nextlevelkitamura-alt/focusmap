@@ -31,6 +31,41 @@ export function normalizeCodexPrompt(value: string) {
   return value.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
 }
 
+function randomHandoffSuffix() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+  }
+  return Math.random().toString(36).slice(2, 14)
+}
+
+function sanitizeHandoffSeed(value: string | null | undefined) {
+  return value?.trim().replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 24) || null
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+export function buildCodexHandoffToken(seed?: string | null) {
+  const suffix = sanitizeHandoffSeed(seed)
+  return `FM-${Date.now().toString(36)}-${randomHandoffSuffix()}${suffix ? `-${suffix}` : ""}`
+}
+
+export function appendCodexHandoffToken(prompt: string, token: string | null | undefined) {
+  const normalizedPrompt = normalizeCodexPrompt(prompt)
+  const normalizedToken = token?.trim()
+  if (!normalizedToken) return normalizedPrompt
+  if (new RegExp(`^Focusmap同期ID:\\s+${escapeRegExp(normalizedToken)}$`, "mu").test(normalizedPrompt)) {
+    return normalizedPrompt
+  }
+  return [
+    normalizedPrompt,
+    "---",
+    `Focusmap同期ID: ${normalizedToken}`,
+    "この同期IDはFocusmap連携用です。返信では触れないでください。",
+  ].filter(Boolean).join("\n")
+}
+
 export function canUseLocalCodexOpenApi() {
   if (typeof window === "undefined") return false
   return isLocalCodexOpenHost(window.location.hostname)

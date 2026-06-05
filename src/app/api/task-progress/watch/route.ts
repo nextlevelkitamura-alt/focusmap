@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isTursoConfigured, TursoConfigurationError } from '@/lib/turso/client'
 import {
   closeTaskProgressWatch,
+  deleteExpiredTaskProgressWatches,
   getTursoTaskForAuth,
   listActiveTaskProgressWatches,
   upsertTaskProgressWatch,
@@ -9,6 +10,10 @@ import {
 import { authenticateMonitoringRequest } from '@/lib/turso/request-auth'
 
 const VALID_ACTIONS = new Set(['open', 'close', 'ping'])
+const EXPIRED_WATCH_RETENTION_SECONDS = 24 * 60 * 60
+const WATCH_CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+
+let lastWatchCleanupAttemptMs = 0
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -30,6 +35,20 @@ function defaultWatcherId(auth: NonNullable<Awaited<ReturnType<typeof authentica
   return `web:${auth.userId}`
 }
 
+async function cleanupExpiredWatchesIfDue() {
+  const now = Date.now()
+  if (now - lastWatchCleanupAttemptMs < WATCH_CLEANUP_INTERVAL_MS) return
+  lastWatchCleanupAttemptMs = now
+  try {
+    await deleteExpiredTaskProgressWatches({
+      olderThanSeconds: EXPIRED_WATCH_RETENTION_SECONDS,
+      now: new Date(now).toISOString(),
+    })
+  } catch (error) {
+    console.error('[task-progress/watch cleanup]', error)
+  }
+}
+
 export async function GET(request: NextRequest) {
   const auth = await authenticateMonitoringRequest(request)
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -40,6 +59,7 @@ export async function GET(request: NextRequest) {
   const limit = Math.min(Math.max(Number.parseInt(searchParams.get('limit') || '200', 10) || 200, 1), 500)
 
   try {
+    await cleanupExpiredWatchesIfDue()
     const watches = await listActiveTaskProgressWatches({
       userId: auth.userId,
       taskId,
@@ -74,6 +94,7 @@ export async function POST(request: NextRequest) {
   if (!action || !VALID_ACTIONS.has(action)) return NextResponse.json({ error: 'invalid action' }, { status: 400 })
 
   try {
+    await cleanupExpiredWatchesIfDue()
     const task = await getTursoTaskForAuth(taskId, {
       userId: auth.userId,
       spaceId: auth.spaceId,
