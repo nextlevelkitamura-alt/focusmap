@@ -226,6 +226,47 @@ function compactText(value: string | null | undefined, max: number) {
   return text.length > max ? text.slice(-max) : text
 }
 
+function normalizeVisibleText(value: string) {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function isPromptWaitingText(value: string) {
+  return /プロンプト待ち|送信待ち|Codex\.appで送信|Focusmapはthread状態|Focusmapは状態と出力だけを同期|プロンプトはコピー済み/u.test(value)
+}
+
+function isPromptEcho(value: string, task: CodexTaskRow) {
+  const text = normalizeVisibleText(value)
+  if (!text) return true
+  const prompt = normalizeVisibleText(task.prompt)
+  const firstPromptLine = normalizeVisibleText(task.prompt.split('\n').find(line => line.trim()) ?? '')
+  return text === prompt || (!!firstPromptLine && text === firstPromptLine)
+}
+
+function hasVisibleCodexOutput(row: CodexThreadRow, parsed: ReturnType<typeof parseCodexRollout>, task: CodexTaskRow) {
+  const values = [
+    parsed.latestAgentMessage,
+    parsed.liveLog,
+    row.preview ?? '',
+  ]
+  return values.some(value => {
+    const text = value?.trim()
+    if (!text) return false
+    if (isPromptWaitingText(text)) return false
+    return !isPromptEcho(text, task)
+  })
+}
+
+function threadUpdatedAtIso(row: CodexThreadRow) {
+  return row.updated_at_ms ? new Date(row.updated_at_ms).toISOString() : null
+}
+
+function threadMovedSinceLastSync(current: Record<string, unknown>, row: CodexThreadRow) {
+  const previousSnapshot = asRecord(current.codex_thread_snapshot)
+  const previousUpdatedAt = parseTimeMs(previousSnapshot.updated_at_ms)
+  const nextUpdatedAt = parseTimeMs(row.updated_at_ms)
+  return previousUpdatedAt != null && nextUpdatedAt != null && nextUpdatedAt > previousUpdatedAt
+}
+
 async function mirrorCodexSyncToTurso(input: {
   task: CodexTaskRow
   status: 'running' | 'awaiting_approval' | 'needs_input'
@@ -387,13 +428,23 @@ export async function POST(req: NextRequest) {
     current.awaiting_approval_at,
     row,
   )
+  const visibleCodexOutput = hasVisibleCodexOutput(row, parsed, task)
+  const threadMoved = threadMovedSinceLastSync(current, row)
   const codexState: CodexRunState = resumedFromApproval
     ? 'running'
-    : sentInCodex ? parsed.state : 'prompt_waiting'
+    : sentInCodex
+      ? parsed.state
+      : visibleCodexOutput
+        ? (threadMoved ? 'running' : 'awaiting_approval')
+        : 'prompt_waiting'
   const reviewReason: CodexReviewReason = resumedFromApproval
     ? 'started'
-    : sentInCodex ? parsed.reviewReason : 'manual_handoff'
-  const liveLog = sentInCodex || resumedFromApproval
+    : sentInCodex
+      ? parsed.reviewReason
+      : visibleCodexOutput
+        ? 'completed'
+        : 'manual_handoff'
+  const liveLog = sentInCodex || resumedFromApproval || visibleCodexOutput
     ? (parsed.liveLog || buildFallbackLog(row))
     : (typeof current.live_log === 'string' ? current.live_log : 'プロンプト待ち。Codex.appで送信されると、Focusmapはthread状態とログを同期します。')
   const currentStep = codexState === 'awaiting_approval'
@@ -446,9 +497,9 @@ export async function POST(req: NextRequest) {
         codex_thread_id: threadId,
         codex_thread_url: `codex://threads/${threadId}`,
         codex_run_state: codexState,
-        codex_review_reason: sentInCodex ? parsed.reviewReason : 'manual_handoff',
+        codex_review_reason: reviewReason,
         codex_last_checked_at: nowIso,
-        last_activity_at: parsed.lastActivityAt ?? nowIso,
+        last_activity_at: parsed.lastActivityAt ?? threadUpdatedAtIso(row) ?? (typeof current.last_activity_at === 'string' ? current.last_activity_at : nowIso),
         live_log: liveLog,
         message: codexState === 'awaiting_approval'
           ? `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`
@@ -479,20 +530,29 @@ export async function POST(req: NextRequest) {
     })
     .eq('id', task.id)
 
-  try {
-    await mirrorCodexSyncToTurso({
-      task,
-      status: nextStatus,
-      threadId,
-      currentStep,
-      summary: liveLog,
-      codexState,
-      previousRunState,
-      hadThreadId,
-      resumedFromApproval,
-    })
-  } catch (tursoError) {
-    console.error('[codex/sync-node turso]', tursoError)
+  const shouldMirrorToTurso =
+    !hadThreadId ||
+    resumedFromApproval ||
+    threadMoved ||
+    previousRunState !== codexState ||
+    current.current_step !== currentStep
+
+  if (shouldMirrorToTurso) {
+    try {
+      await mirrorCodexSyncToTurso({
+        task,
+        status: nextStatus,
+        threadId,
+        currentStep,
+        summary: liveLog,
+        codexState,
+        previousRunState,
+        hadThreadId,
+        resumedFromApproval,
+      })
+    } catch (tursoError) {
+      console.error('[codex/sync-node turso]', tursoError)
+    }
   }
 
   const activityEvents: Array<{

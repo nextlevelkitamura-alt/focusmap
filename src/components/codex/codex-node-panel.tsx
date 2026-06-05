@@ -505,7 +505,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   useEffect(() => {
     if (!open || !hasCodexRun) return
     void syncCodexState()
-    const intervalMs = codexUiState?.state === "running"
+    const intervalMs = (
+      codexUiState?.state === "running" ||
+      codexUiState?.state === "prompt_waiting" ||
+      codexUiState?.state === "awaiting_approval"
+    )
       ? CODEX_PANEL_SYNC_INTERVAL_MS
       : CODEX_PANEL_IDLE_SYNC_INTERVAL_MS
     const intervalId = window.setInterval(() => {

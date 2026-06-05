@@ -40,6 +40,7 @@ export type CodexRolloutSummary = {
 export type CodexTaskLike = {
   status?: string | null
   executor?: string | null
+  codex_thread_id?: string | null
   result?: Record<string, unknown> | null
 }
 
@@ -47,6 +48,8 @@ export type CodexTaskUiState = {
   state: CodexRunState
   label: string
 }
+
+const CODEX_VISIBLE_ACTIVITY_RUNNING_WINDOW_MS = 45_000
 
 const MAX_LIVE_LOG_CHARS = 80_000
 
@@ -319,13 +322,41 @@ function hasCodexActivityEvidence(result: Record<string, unknown>) {
   })
 }
 
+function latestVisibleActivityMs(result: Record<string, unknown>): number | null {
+  const progressSummary = isRecord(result.progress_summary) ? result.progress_summary : {}
+  const snapshot = isRecord(result.codex_thread_snapshot) ? result.codex_thread_snapshot : {}
+  const values = [
+    result.last_activity_at,
+    progressSummary.last_activity_at,
+    snapshot.updated_at_ms,
+  ]
+
+  let latest: number | null = null
+  for (const value of values) {
+    const ms = parseTimeMsForResume(value)
+    if (ms == null) continue
+    latest = latest == null ? ms : Math.max(latest, ms)
+  }
+  return latest
+}
+
+function stateForVisibleCodexActivity(result: Record<string, unknown>): CodexTaskUiState {
+  const latestMs = latestVisibleActivityMs(result)
+  if (latestMs != null && Date.now() - latestMs <= CODEX_VISIBLE_ACTIVITY_RUNNING_WINDOW_MS) {
+    return { state: "running", label: "実行中" }
+  }
+  return { state: "awaiting_approval", label: "確認待ち" }
+}
+
 export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): CodexTaskUiState | null {
   if (!task || (task.executor !== "codex" && task.executor !== "codex_app")) return null
 
   const result = isRecord(task.result) ? task.result : {}
   const rawState = result.codex_run_state
   const isManualHandoff = result.codex_manual_handoff === true
-  const hasThreadId = typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0
+  const hasThreadId =
+    (typeof task.codex_thread_id === "string" && task.codex_thread_id.trim().length > 0) ||
+    (typeof result.codex_thread_id === "string" && result.codex_thread_id.trim().length > 0)
 
   if (task.status === "failed") {
     return { state: "connection_failed", label: "接続失敗" }
@@ -335,7 +366,7 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   }
   if (task.status === "pending") {
     if (hasCodexActivityEvidence(result) && (hasThreadId || rawState === "running")) {
-      return { state: "running", label: "実行中" }
+      return stateForVisibleCodexActivity(result)
     }
     return { state: "prompt_waiting", label: "未送信" }
   }

@@ -123,12 +123,23 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({
       executor: "codex_app",
       status: "pending",
+      codex_thread_id: "019e9811-3f91-79c1-84b2-b5d0803fea8e",
       result: {
         codex_run_state: "prompt_waiting",
-        codex_thread_id: "019e9811-2238-7543-8346-24babac029a7",
+        last_activity_at: new Date().toISOString(),
         message: "`work-skill-guide` を入口にして確認します。",
       },
     })).toEqual({ state: "running", label: "実行中" })
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "pending",
+      codex_thread_id: "019e9811-3f91-79c1-84b2-b5d0803fea8e",
+      result: {
+        codex_run_state: "prompt_waiting",
+        last_activity_at: "2020-01-01T00:00:00.000Z",
+        message: "どうしました？ Focusmapでやりたい作業があれば、そのまま投げてください。",
+      },
+    })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
     expect(getCodexTaskUiState({ executor: "claude", status: "running", result: null })).toBeNull()
   })
 

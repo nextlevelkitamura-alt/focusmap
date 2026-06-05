@@ -209,10 +209,12 @@ Goals → Projects → TaskGroups → Tasks
   - `awaiting_approval` / `needs_input` / `completed`: `確認待ち`
   - `failed`: `接続失敗`
   - 古い `result.codex_run_state=running` だけでは、`pending` / `completed` / `awaiting_approval` / `needs_input` / `failed` を実行中扱いにしない。ただし `pending` でも `codex_thread_id` とユーザー可視のCodex出力/進捗文が同期済みなら、手動handoff後に実行へ進んだ暫定状態として `実行中` に戻す。
+- `Codexに送る` 直後のmanual handoffは `未送信` として表示する。Codex.appのthreadを検出しても、Codex出力/進捗文がまだ無い間は `未送信` のままにする。`codex_thread_snapshot.preview` / `message` / `current_step` などユーザー可視のCodex出力が取れたら `未送信` から外し、threadの `updated_at_ms` や `last_activity_at` が直近45秒以内なら `実行中`、動きが止まっていれば `確認待ち` とする。
 - ノード自体のタスク完了はCodex状態ではなくチェックボックスで判断する。Codexの `completed` は人間が見るまでは `確認待ち` として扱い、ノードを自動完了扱いにしない。
 - マップ画面のCodex監視はチャットtabへ逃がさず、マップ内で完結させる。デスクトップはマップ下に折りたたみ式 `Codex看板` を置き、初期状態は畳んで件数だけを見せ、必要な時だけ展開する。モバイルは右下の `Codex` ボタンから下シートで看板を開く。看板レーンは `未送信` / `実行中` / `確認待ち` / `接続失敗` / `完了`。`未送信` はCodex.appでまだ開始されていないもの、`確認待ち` はCodex出力や完了を人間が確認するものに限定し、同じカード内で両方の意味を併記しない。`完了` レーンはノードがチェック済みで、紐づくprogressの `updated_at` が当日のものだけを一時表示し、翌日以降は看板から消す。
 - Codex看板カードは `status`、`current_step`、`summary`、Mac online/offline、最終更新を表示する。モバイルカードは情報量を絞り、状態・今やっていること・確認要否を優先する。タップするとTurso progress詳細panel/drawerを開く。
 - `/api/task-progress/snapshot` が一時的に失敗した場合でも、現在のマップノードに紐づく `/api/ai-tasks?source=linked` の最小状態から暫定カードを作り、看板とノードのCodex状態を空にしない。Turso snapshotが復帰したら正式snapshotを優先する。この暫定表示では詳細tailを事前取得しない。
+- ノード詳細を開いている間は、`未送信` / `実行中` / `確認待ち` のCodex taskだけ `/api/codex/sync-node` を約3秒ごとに呼び、Codex.appへの貼り付け・出力開始・出力停止を短時間でUIへ反映する。ただし `/api/codex/sync-node` のTurso mirrorは、thread検出、状態変化、Codex thread `updated_at_ms` 変化、current_step変化がある時だけ行い、同じsnapshotを3秒ごとにTursoへ書かない。
 - 実行中ノードは、右上の小さなスピナーではなく、ノード外周の緑色の動きで示す。
 - マインドマップ右上の更新アイコンは、Web側の `ai_tasks` 状態を手動再取得するためのもの。常駐runnerの即時スキャン強制ではない。
 
