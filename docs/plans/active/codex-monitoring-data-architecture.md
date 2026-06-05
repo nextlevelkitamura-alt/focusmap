@@ -291,15 +291,23 @@ Index:
 
 ### Phase 1: Supabase止血とAuthオフライン検証
 
-- [ ] Supabase JWT署名方式を確認する。
-- [ ] API用のJWT検証ユーティリティを作る。
-- [ ] 高頻度APIで `auth.getUser()` を呼ばないようにする。
-- [ ] `select('*')` を最小カラム取得へ置換する。
-- [ ] `result` / `live_log` / 巨大JSONを一覧取得から外す。
-- [ ] `running` だけ短周期更新する。
-- [ ] Realtimeとpollingの二重実行を整理する。
-- [ ] idle heartbeatを1〜5分へ変更する。
-- [ ] Supabase制限時はrunnerがpause/backoffする。
+- [ ] Supabase JWT署名方式を実プロジェクト設定で確認する。
+- [x] API用のJWT検証ユーティリティを作る。
+  - `src/lib/auth/verify-supabase-jwt.ts` を追加。JWKS検証を優先し、legacy HS256はサーバー環境変数がある場合だけfallbackする。
+- [x] 高頻度APIで `auth.getUser()` を毎回呼ばないようにする。
+  - `ai_tasks` / `ai-runners` / Codex同期の主要APIは `Authorization: Bearer` またはSSR cookie tokenをオフライン検証する。古いcookie互換のfallbackだけ残す。
+- [x] `select('*')` を最小カラム取得へ置換する。
+  - `/api/ai-tasks` は一覧に必要な通常カラムと `result` JSON pathのみ取得する。
+- [x] `result` / `live_log` / 巨大JSONを一覧取得から外す。
+  - 一覧では `live_log` tailを短くし、巨大な `result` 全体とCodex thread snapshotを返さない。
+- [x] `running` だけ短周期更新する。
+  - `running` は3〜5秒、`pending` は30秒、確認待ち/完了/失敗/手動貼り付け待ちは低頻度または手動更新にする。
+- [x] Realtimeとpollingの二重実行を整理する。
+  - `useAiTasks` / `useMemoAiTasks` / `useNoteAiTasks` の広域 `ai_tasks` Realtime購読を外し、Bearer付きREST snapshot取得へ寄せる。
+- [x] idle heartbeatを1〜5分へ変更する。
+  - `focusmap-agent` heartbeatは60秒、runner状態UIは30秒polling、オンライン判定窓は5分にする。
+- [x] Supabase制限時はrunnerがpause/backoffする。
+  - `task-runner` は制限エラーでpause fileを作り、`focusmap-agent` のheartbeat/claim/command loopは通信失敗時にbackoffする。
 
 ### Phase 2: Tursoへ軽量状態を移す
 
@@ -370,13 +378,13 @@ Index:
 
 ```text
 [router 状態] 目的:Codex監視とDB/画像同期を軽量化
- 詰め:進行中  分解:5タスク案
- #1 auth-offline-verify  未着手  allowed: src/lib/auth/**, high-frequency API auth部分
- #2 polling-egress-stop   未着手  allowed: src/hooks/useAiTasks.ts, useMemoAiTasks.ts, useNoteAiTasks.ts, use-ai-task-stream.ts
- #3 runner-backoff        未着手  allowed: scripts/task-runner.ts, scripts/focusmap-agent/src/**
+ 詰め:✅  分解:5タスク案
+ #1 auth-offline-verify  ✅ Phase 1実装済み  allowed: src/lib/auth/**, high-frequency API auth部分
+ #2 polling-egress-stop   ✅ Phase 1実装済み  allowed: src/hooks/useAiTasks.ts, useMemoAiTasks.ts, useNoteAiTasks.ts, use-ai-task-stream.ts
+ #3 runner-backoff        ✅ Phase 1実装済み  allowed: scripts/task-runner.ts, scripts/focusmap-agent/src/**
  #4 turso-progress-api    未着手  allowed: src/lib/turso/**, src/app/api/task-progress/**
  #5 r2-screenshot-spike   未着手  allowed: src/lib/r2/**, src/app/api/screenshots/**
- 検証:未  mainマージ:未(人間ゲート)  デプロイ:未
+ 検証:型チェック/変更ファイルlint済み  mainマージ:main直コミット予定  デプロイ:未
 ```
 
 並列化する場合は、allowed filesが重ならない単位にする。`auth-offline-verify` と既存API修正は重なりやすいため、最初は直列で進める。

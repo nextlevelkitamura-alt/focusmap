@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+import { canEditSpace, canViewSpace, normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 
 // GET /api/ai-tasks/:id — 単一AIタスク取得
 export async function GET(
@@ -9,8 +10,9 @@ export async function GET(
 ) {
   const { id } = await params
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(_req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const { data, error } = await supabase
     .from('ai_tasks')
@@ -20,6 +22,15 @@ export async function GET(
 
   if (error) {
     console.error('[ai-tasks/id]', error.message)
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+  const ownsTask = data.user_id === user.id
+  const canViewSharedTask =
+    !ownsTask &&
+    data.run_visibility === 'space' &&
+    typeof data.space_id === 'string' &&
+    await canViewSpace(supabase, user.id, data.space_id)
+  if (!ownsTask && !canViewSharedTask) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
   return NextResponse.json(data)
@@ -32,8 +43,9 @@ export async function PATCH(
 ) {
   const { id } = await params
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const body = await req.json()
   const {
@@ -63,6 +75,14 @@ export async function PATCH(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
   const ownsTask = existingTask.user_id === user.id
+  const canEditSharedTask =
+    !ownsTask &&
+    existingTask.run_visibility === 'space' &&
+    typeof existingTask.space_id === 'string' &&
+    await canEditSpace(supabase, user.id, existingTask.space_id)
+  if (!ownsTask && !canEditSharedTask) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
 
   const updates: Record<string, unknown> = {}
 
@@ -139,13 +159,15 @@ export async function DELETE(
 ) {
   const { id } = await params
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(_req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const { error } = await supabase
     .from('ai_tasks')
     .delete()
     .eq('id', id)
+    .eq('user_id', user.id)
 
   if (error) {
     console.error('[ai-tasks/id DELETE]', error.message)

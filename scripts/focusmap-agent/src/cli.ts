@@ -10,8 +10,8 @@
  *   2. Config 読み込み + 検証
  *   3. Focusmap API client 作成 (agent_token認証)
  *   4. ai_runners に登録 → runner_id 取得
- *   5. 30秒ごとに heartbeat ループ
- *   6. 10秒ごとに claim_ai_task_for_runner で task pull
+ *   5. 60秒ごとに heartbeat ループ
+ *   6. 15秒ごとに claim_ai_task_for_runner で task pull
  *   7. claim したタスクを executor で実行
  *   8. SIGINT/SIGTERM でグレースフルシャットダウン
  */
@@ -25,9 +25,15 @@ import { executeTask } from './executor.js';
 import { AgentApiClient } from './api-client.js';
 import { info, error as logError } from './logger.js';
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
-const CLAIM_INTERVAL_MS = 10_000;
-const CLAIM_TTL_SEC = 300;
+function intervalFromEnv(name: string, fallbackMs: number, minMs: number, maxMs: number): number {
+  const raw = Number(process.env[name]);
+  if (!Number.isFinite(raw)) return fallbackMs;
+  return Math.max(minMs, Math.min(maxMs, raw));
+}
+
+const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL_MS', 60_000, 60_000, 5 * 60_000);
+const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 15_000, 5_000, 60_000);
+const COMMAND_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_COMMAND_INTERVAL_MS', 15_000, 5_000, 60_000);
 
 async function main(): Promise<void> {
   // 1. Safety check
@@ -71,10 +77,10 @@ async function main(): Promise<void> {
   }
   info(`runner registered id=${runnerId}`);
 
-  // 5. Heartbeat ループ (30s)
+  // 5. Heartbeat ループ (60s by default)
   const heartbeatTimer = startHeartbeatLoop(api, config, HEARTBEAT_INTERVAL_MS);
 
-  // 6. Claim ループ (10s)
+  // 6. Claim ループ (15s by default)
   const claimTimer = startClaimLoop(
     api,
     runnerId,
@@ -83,10 +89,10 @@ async function main(): Promise<void> {
     },
     CLAIM_INTERVAL_MS,
   );
-  const commandTimer = startCommandLoop(api, runnerId, config);
+  const commandTimer = startCommandLoop(api, runnerId, config, COMMAND_INTERVAL_MS);
 
   info(
-    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s / claim poll ${CLAIM_INTERVAL_MS / 1000}s`,
+    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s`,
   );
 
   // 7. Shutdown

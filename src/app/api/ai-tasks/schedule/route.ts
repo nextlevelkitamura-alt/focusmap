@@ -6,6 +6,7 @@ import { insertAiTaskActivityMessage } from '@/lib/ai-task-activity'
 import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 
 export const runtime = 'nodejs'
 
@@ -78,8 +79,9 @@ function isValidCron(expr: string): boolean {
 // POST /api/ai-tasks/schedule — スケジュール付きAIタスクを作成
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const body = await req.json()
   const { prompt, skill_id, scheduled_at, recurrence_cron, approval_type, cwd, source_note_id, source_ideal_goal_id, source_task_id, executor, space_id, run_visibility, codex_resume_thread_id, dispatch_mode, codex_handoff_token } = body as {
@@ -153,6 +155,7 @@ export async function POST(req: NextRequest) {
       .from('ai_tasks')
       .select('id, status, result')
       .eq(dupeColumn, dupeValue)
+      .eq('user_id', user.id)
       .in('status', ['pending', 'running', 'awaiting_approval', 'needs_input'])
       .limit(1)
       .maybeSingle()

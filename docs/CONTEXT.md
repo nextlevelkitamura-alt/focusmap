@@ -213,7 +213,10 @@ Goals → Projects → TaskGroups → Tasks
 - Codex thread未検出の高速探索は開始後2分まで。2分を超えて見つからない場合は `monitoring_lost` として確認待ちにする。
 - 確認待ち・手動貼り付け待ち・needs_inputは、頻繁に追わない。`result.codex_last_checked_at` を使い、通常は30分ごとの再確認に抑える。
 - Focusmapで完了済みになったノードに紐づくCodex threadのアーカイブ/削除確認も、常時ではなく30分間隔の巡回に抑える。
-- Web側の `useMemoAiTasks` は、`running` のCodexタスクがある場合だけ3秒更新。確認待ちやプロンプト待ちは3秒監視せず、低頻度同期または手動更新で再開検知する。ローカル `/api/codex/sync-node` も同じタスクIDごとに最終同期時刻を共有し、`running` は3秒間隔、待機/確認待ちは60分間隔を下回って再実行しない。`useAiTasks` は既存どおり短周期表示を残すが、メモ実行の正は `useMemoAiTasks` / `/api/codex/sync-node` のrunning限定ポリシーに合わせる。
+- 高頻度のAI実行系APIは `src/lib/auth/verify-supabase-jwt.ts` でSupabase access tokenをオフライン検証し、`user_id` はJWTの `sub` を使う。`Authorization: Bearer <access_token>` を優先し、SSR cookieからもaccess tokenを読める。JWKSはサーバー側で10分キャッシュし、legacy HS256はサーバー環境変数 `SUPABASE_JWT_SECRET` / `SUPABASE_AUTH_JWT_SECRET` がある場合だけfallbackする。互換性のため検証できない古いcookieでは `auth.getUser()` fallbackを残すが、通常の短周期APIは `src/lib/auth/supabase-auth-fetch.ts` でBearerを付ける。
+- `/api/ai-tasks` の一覧取得は `select('*')` を使わず、一覧・バッジ・タイムラインに必要なカラムと `result` のJSON pathだけを取得する。`result.live_log` は一覧では短いtailだけにし、巨大な `result` / `codex_thread_snapshot` / 生ログを一覧レスポンスへ載せない。詳細ログが必要な画面だけ個別APIで取る。
+- Web側の `useAiTasks` / `useMemoAiTasks` / `useNoteAiTasks` / `useScheduledTasks` は、広域の `ai_tasks` Realtime購読をやめ、Bearer付きREST snapshot取得へ寄せる。`running` のCodexタスクだけ3〜5秒更新、`pending` は30秒、確認待ち・完了・失敗・手動貼り付け待ちは低頻度または手動更新にする。ブラウザ/iPhoneがバックグラウンド中はinterval取得しない。ローカル `/api/codex/sync-node` も同じタスクIDごとに最終同期時刻を共有し、`running` は3秒間隔、待機/確認待ちは60分間隔を下回って再実行しない。
+- runner状態表示は5秒pollingではなく30秒pollingを基準にし、オンライン判定窓は5分にする。`scripts/focusmap-agent` は通常heartbeat 60秒、claim/command 15秒を基準にし、通信失敗時はbackoffする。`scripts/com.focusmap.task-runner.plist` の通常launchd起動は60秒間隔にし、即時Codex投入は `--fast` 起動で補う。Supabase制限エラーを検知した場合、`scripts/task-runner.ts` は pause file を作って制限中の無駄な巡回を止める。
 
 ### Focusmap MacアプリMVP
 
@@ -261,7 +264,8 @@ Goals → Projects → TaskGroups → Tasks
 | 領域 | ファイル |
 |------|----------|
 | Codex状態判定/rollout解析 | `src/lib/codex-run-state.ts` |
-| Web側のai_tasks取得/更新間隔 | `src/hooks/useMemoAiTasks.ts` |
+| Supabase JWTオフライン検証 | `src/lib/auth/verify-supabase-jwt.ts` / `src/lib/auth/supabase-auth-fetch.ts` |
+| Web側のai_tasks取得/更新間隔 | `src/hooks/useAiTasks.ts` / `src/hooks/useMemoAiTasks.ts` / `src/hooks/useNoteAiTasks.ts` |
 | マインドマップ表示/状態バッジ/手動更新 | `src/components/mindmap/custom-mind-map-view.tsx` |
 | ダッシュボードからCodex状態を渡す層 | `src/components/dashboard/mind-map.tsx` |
 | メモ編集パネル/Codex手動ハンドオフ | `src/components/codex/codex-node-panel.tsx` |

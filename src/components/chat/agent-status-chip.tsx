@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react"
 import { Activity, Loader2, WifiOff, Download } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 
-const HEARTBEAT_ONLINE_WINDOW_MS = 2 * 60 * 1000
-const POLL_INTERVAL_MS = 5_000
+const HEARTBEAT_ONLINE_WINDOW_MS = 5 * 60 * 1000
+const POLL_INTERVAL_MS = 30_000
 
 export type AgentConnectionState = "online" | "offline" | "absent" | "loading"
 
@@ -26,8 +27,8 @@ function canExecuteRemoteCommands(metadata: unknown): boolean {
 }
 
 /**
- * Mac常駐エージェントの接続状態を5秒ごとにポーリングして返す。
- * - online : agent_commands を実行できる focusmap-agent が heartbeat 2分以内 → 即実行できる
+ * Mac常駐エージェントの接続状態を30秒ごとにポーリングして返す。
+ * - online : agent_commands を実行できる focusmap-agent が heartbeat 5分以内 → 即実行できる
  * - offline: focusmap-agent は登録済みだが heartbeat 切れ → 予約実行になる
  * - absent : focusmap-agent 未登録 → セットアップが必要
  */
@@ -39,7 +40,7 @@ export function useAgentConnection(): { state: AgentConnectionState } {
 
     const poll = async () => {
       try {
-        const res = await fetch("/api/ai-runners", { cache: "no-store" })
+        const res = await fetchWithSupabaseAuth("/api/ai-runners", { cache: "no-store" })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         const allRunners: RunnerRow[] = Array.isArray(data?.runners) ? data.runners : []

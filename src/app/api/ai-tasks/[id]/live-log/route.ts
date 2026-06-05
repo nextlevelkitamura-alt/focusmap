@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
+import { authenticateSupabaseRequest } from "@/lib/auth/verify-supabase-jwt"
 import { promises as fs } from "fs"
 import path from "path"
 
@@ -9,12 +10,13 @@ import path from "path"
 //   Mac で Next.js dev サーバーが localhost で動いている場合のみ意味あり
 //   または将来、task-runner が定期的に DB の result.live_log にダンプする実装に切替可
 export async function GET(
-  req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const { user } = auth
 
   const { id } = await params
 
@@ -23,6 +25,7 @@ export async function GET(
     .from("ai_tasks")
     .select("id, executor, status")
     .eq("id", id)
+    .eq("user_id", user.id)
     .maybeSingle()
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 })
 
@@ -31,6 +34,7 @@ export async function GET(
     .from("ai_tasks")
     .select("result")
     .eq("id", id)
+    .eq("user_id", user.id)
     .maybeSingle()
 
   const result = (full?.result ?? {}) as { live_log?: string; message?: string }

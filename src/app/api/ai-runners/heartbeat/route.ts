@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 import { canEditSpace } from "@/lib/space-access"
+import { authenticateSupabaseRequest } from "@/lib/auth/verify-supabase-jwt"
 
 const VALID_EXECUTORS = new Set(["claude", "codex", "codex_app"])
 
@@ -12,8 +13,9 @@ function stringArray(value: unknown) {
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(request, supabase)
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const { user } = auth
 
   const body = await request.json()
   const hostname = typeof body.hostname === "string" ? body.hostname.trim() : ""

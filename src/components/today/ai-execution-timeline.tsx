@@ -22,6 +22,7 @@ import { format } from "date-fns"
 import { ja } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useAiTasks } from "@/hooks/useAiTasks"
 import { useScheduledTasks } from "@/hooks/useScheduledTasks"
 import type { AiTask, AiTaskProgressSummary, AiTaskStatus } from "@/types/ai-task"
@@ -549,7 +550,7 @@ export function AiExecutionTimeline({
     try {
       const params = new URLSearchParams({ from, to, limit: "500" })
       if (selectedSpaceId) params.set("space_id", selectedSpaceId)
-      const res = await fetch(`/api/ai-tasks?${params.toString()}`)
+      const res = await fetchWithSupabaseAuth(`/api/ai-tasks?${params.toString()}`)
       if (!res.ok) throw new Error("AI実行履歴を取得できませんでした")
       const data = await res.json() as AiTask[]
       setRangeTasks(data)

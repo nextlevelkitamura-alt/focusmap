@@ -1,23 +1,39 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
+import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
-const IDLE_REFRESH_INTERVAL_MS = 30_000
+const RUNNING_CODEX_REFRESH_INTERVAL_MS = 5_000
+const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
+const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 
-function hasActiveCodexTask(tasks: Map<string, AiTask>) {
+function isCodexTask(task: AiTask) {
+  return task.executor === 'codex' || task.executor === 'codex_app'
+}
+
+function hasRunningCodexTask(tasks: Map<string, AiTask>) {
   for (const task of tasks.values()) {
     if (
-      (task.executor === 'codex' || task.executor === 'codex_app') &&
-      ACTIVE_STATUSES.includes(task.status)
+      isCodexTask(task) &&
+      (task.status === 'running' || task.result?.codex_run_state === 'running')
     ) {
       return true
     }
   }
   return false
+}
+
+function hasPendingCodexTask(tasks: Map<string, AiTask>) {
+  for (const task of tasks.values()) {
+    if (isCodexTask(task) && task.status === 'pending') return true
+  }
+  return false
+}
+
+function isPageVisible() {
+  return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
 /**
@@ -31,16 +47,9 @@ export function useNoteAiTasks() {
 
   const fetchInitial = useCallback(async () => {
     try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const { data } = await supabase
-        .from('ai_tasks')
-        .select('*')
-        .not('source_note_id', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(200)
+      const res = await fetchWithSupabaseAuth('/api/ai-tasks?source=note&limit=200')
+      if (!res.ok) return
+      const data = await res.json() as AiTask[]
 
       const map = new Map<string, AiTask>()
       for (const task of (data ?? []) as AiTask[]) {
@@ -59,65 +68,28 @@ export function useNoteAiTasks() {
     fetchInitial()
   }, [fetchInitial])
 
-  const refreshIntervalMs = hasActiveCodexTask(byNoteId)
-    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+  const refreshIntervalMs = hasRunningCodexTask(byNoteId)
+    ? RUNNING_CODEX_REFRESH_INTERVAL_MS
+    : hasPendingCodexTask(byNoteId)
+      ? PENDING_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
-    const intervalId = window.setInterval(fetchInitial, refreshIntervalMs)
+    const intervalId = window.setInterval(() => {
+      if (isPageVisible()) void fetchInitial()
+    }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
 
-  // Realtime — INSERT / UPDATE / DELETE を反映
   useEffect(() => {
-    const supabase = createClient()
-
-    const channel = supabase
-      .channel('note_ai_tasks_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'ai_tasks',
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-            const task = payload.new as AiTask
-            if (!task.source_note_id) return
-            setByNoteId(prev => {
-              const next = new Map(prev)
-              const existing = next.get(task.source_note_id!)
-              // 同じメモに対しては最新の created_at のもので上書き
-              if (!existing || new Date(task.created_at) >= new Date(existing.created_at)) {
-                next.set(task.source_note_id!, task)
-              } else if (existing.id === task.id) {
-                // 既存と同じタスクの UPDATE なら反映
-                next.set(task.source_note_id!, task)
-              }
-              return next
-            })
-          } else if (payload.eventType === 'DELETE') {
-            const deleted = payload.old as Partial<AiTask>
-            if (!deleted.source_note_id) return
-            setByNoteId(prev => {
-              const existing = prev.get(deleted.source_note_id!)
-              if (existing && existing.id === deleted.id) {
-                const next = new Map(prev)
-                next.delete(deleted.source_note_id!)
-                return next
-              }
-              return prev
-            })
-          }
-        },
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
+    const onVisibilityChange = () => {
+      if (isPageVisible()) void fetchInitial()
     }
-  }, [])
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [fetchInitial])
 
   const getByNoteId = useCallback((noteId: string) => byNoteId.get(noteId) ?? null, [byNoteId])
 

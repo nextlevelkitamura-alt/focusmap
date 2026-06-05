@@ -20,6 +20,7 @@ import {
   type CodexLaunchMode,
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { Bot, CheckCircle2, Clock, ExternalLink, Laptop, Loader2, Mic, RefreshCw, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
@@ -67,9 +68,10 @@ type CodexChatEntry = {
   text: string
 }
 
-const RUNNER_ONLINE_WINDOW_MS = 2 * 60 * 1000
-const RUNNER_STATUS_POLL_MS = 10_000
+const RUNNER_ONLINE_WINDOW_MS = 5 * 60 * 1000
+const RUNNER_STATUS_POLL_MS = 30_000
 const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
+const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -284,7 +286,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
     const fetchRunnerStatus = async () => {
       try {
-        const res = await fetch("/api/ai-runners", { cache: "no-store" })
+        const res = await fetchWithSupabaseAuth("/api/ai-runners", { cache: "no-store" })
         const data = await res.json().catch(() => ({})) as { runners?: AiRunner[] }
         if (cancelled) return
         setCodexRunnerStatus({
@@ -482,7 +484,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     if (!open || !hasCodexRun) return
     setIsSyncingCodex(true)
     try {
-      await fetch("/api/codex/sync-node", {
+      await fetchWithSupabaseAuth("/api/codex/sync-node", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -499,9 +501,14 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   useEffect(() => {
     if (!open || !hasCodexRun) return
     void syncCodexState()
-    const intervalId = window.setInterval(() => void syncCodexState(), CODEX_PANEL_SYNC_INTERVAL_MS)
+    const intervalMs = codexUiState?.state === "running"
+      ? CODEX_PANEL_SYNC_INTERVAL_MS
+      : CODEX_PANEL_IDLE_SYNC_INTERVAL_MS
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void syncCodexState()
+    }, intervalMs)
     return () => window.clearInterval(intervalId)
-  }, [hasCodexRun, open, syncCodexState])
+  }, [codexUiState?.state, hasCodexRun, open, syncCodexState])
 
   const openCodexThread = useCallback(async () => {
     const prompt = codexThreadUrl ? "" : sentPrompt || codexPrompt

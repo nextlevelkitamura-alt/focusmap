@@ -1,6 +1,7 @@
 import { generateText } from "ai"
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
+import { authenticateSupabaseRequest } from "@/lib/auth/verify-supabase-jwt"
 import { getModelForSkill, resolveGeminiModel } from "@/lib/ai/providers"
 import {
   collectProgressEvidence,
@@ -156,18 +157,20 @@ can_mark_completed は deterministic.can_mark_completed が true の場合だけ
 }
 
 export async function POST(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const { user } = auth
 
   const { data: task, error } = await supabase
     .from("ai_tasks")
     .select("id, prompt, status, error, result, executor, started_at, completed_at, created_at, remote_session_url, tmux_session_name, codex_thread_id, cwd")
     .eq("id", id)
+    .eq("user_id", user.id)
     .maybeSingle()
 
   if (error) {
@@ -199,6 +202,7 @@ export async function POST(
     .from("ai_tasks")
     .update(updates)
     .eq("id", id)
+    .eq("user_id", user.id)
     .select()
     .single()
 

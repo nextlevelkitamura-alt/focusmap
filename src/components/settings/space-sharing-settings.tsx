@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useCalendars } from "@/hooks/useCalendars"
 import type { SpaceRole } from "@/lib/space-access"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 
 type SpaceMemberRow = {
   id: string
@@ -130,7 +131,7 @@ export function SpaceSharingSettings({ initialSpaces }: { initialSpaces: Space[]
     const [membersRes, packagesRes, runnersRes] = await Promise.all([
       fetch(`/api/spaces/${selectedSpaceId}/members`),
       fetch(`/api/ai-packages?space_id=${encodeURIComponent(selectedSpaceId)}`),
-      fetch(`/api/ai-runners?space_id=${encodeURIComponent(selectedSpaceId)}`),
+      fetchWithSupabaseAuth(`/api/ai-runners?space_id=${encodeURIComponent(selectedSpaceId)}`),
     ])
 
     if (membersRes.ok) setMembers(((await membersRes.json()).members ?? []) as SpaceMemberRow[])

@@ -18,6 +18,7 @@ import {
   type CodexThreadSnapshot,
 } from '@/lib/codex-run-state'
 import { createClient } from '@/utils/supabase/server'
+import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -239,8 +240,9 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   let query = supabase
     .from('ai_tasks')

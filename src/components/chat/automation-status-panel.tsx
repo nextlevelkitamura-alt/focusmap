@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { startCalendarOAuth } from "@/lib/external-auth-launch"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 
 type StatusLevel = "ok" | "warn" | "missing" | "checking" | "unknown"
 
@@ -111,7 +112,7 @@ export function AutomationStatusPanel({ spaceId, embedded = false, className }: 
     setScanMessage(null)
     const runnerUrl = spaceId ? `/api/ai-runners?space_id=${encodeURIComponent(spaceId)}` : "/api/ai-runners"
     const [runnerRes, calendarRes, localRes] = await Promise.allSettled([
-      fetch(runnerUrl, { cache: "no-store" }),
+      fetchWithSupabaseAuth(runnerUrl, { cache: "no-store" }),
       fetch("/api/calendar/status", { cache: "no-store" }),
       fetch("/api/ai-tasks/status", { cache: "no-store" }),
     ])

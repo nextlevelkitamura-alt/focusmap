@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { UsageStickyBanner } from "@/components/chat/usage-sticky-banner"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
@@ -155,7 +156,7 @@ function useAutomationSetupPrompt(enabled: boolean) {
 
     void (async () => {
       const [runnerRes, calendarRes] = await Promise.allSettled([
-        fetch("/api/ai-runners", { cache: "no-store" }),
+        fetchWithSupabaseAuth("/api/ai-runners", { cache: "no-store" }),
         fetch("/api/calendar/status", { cache: "no-store" }),
       ])
       if (!mounted) return

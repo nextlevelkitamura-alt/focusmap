@@ -1,14 +1,93 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
+import { canViewSpace, normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { assertCanExecute } from '@/lib/usage-guard'
 import { formatBillingCycle } from '@/lib/format'
+import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
+
+const AI_TASK_LIST_SELECT = [
+  'id',
+  'user_id',
+  'space_id',
+  'package_id',
+  'package_version_id',
+  'claimed_runner_id',
+  'claim_expires_at',
+  'run_visibility',
+  'prompt',
+  'skill_id',
+  'approval_type',
+  'status',
+  'error',
+  'parent_task_id',
+  'created_at',
+  'started_at',
+  'completed_at',
+  'scheduled_at',
+  'recurrence_cron',
+  'cwd',
+  'source_note_id',
+  'source_ideal_goal_id',
+  'source_task_id',
+  'remote_session_url',
+  'tmux_session_name',
+  'executor',
+  'codex_thread_id',
+  'result_codex_run_state:result->>codex_run_state',
+  'result_codex_review_reason:result->>codex_review_reason',
+  'result_current_step:result->>current_step',
+  'result_last_activity_at:result->>last_activity_at',
+  'result_message:result->>message',
+  'result_live_log:result->>live_log',
+  'result_progress_summary:result->progress_summary',
+  'result_steps:result->steps',
+  'result_codex_manual_handoff:result->codex_manual_handoff',
+  'result_awaiting_approval_at:result->>awaiting_approval_at',
+].join(', ')
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function trimText(value: unknown, max: number) {
+  return typeof value === 'string' && value.length > max ? value.slice(-max) : value
+}
+
+function compactAiTask(row: Record<string, unknown>) {
+  const result: Record<string, unknown> = {}
+  const resultKeyMap: Array<[string, string, number?]> = [
+    ['result_codex_run_state', 'codex_run_state'],
+    ['result_codex_review_reason', 'codex_review_reason'],
+    ['result_current_step', 'current_step'],
+    ['result_last_activity_at', 'last_activity_at'],
+    ['result_message', 'message', 2_000],
+    ['result_live_log', 'live_log', 4_000],
+    ['result_progress_summary', 'progress_summary'],
+    ['result_steps', 'steps'],
+    ['result_codex_manual_handoff', 'codex_manual_handoff'],
+    ['result_awaiting_approval_at', 'awaiting_approval_at'],
+  ]
+
+  for (const [sourceKey, targetKey, max] of resultKeyMap) {
+    const value = row[sourceKey]
+    if (value === undefined || value === null) continue
+    result[targetKey] = max ? trimText(value, max) : value
+  }
+
+  const compacted: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    if (!key.startsWith('result_')) compacted[key] = value
+  }
+  compacted.result = Object.keys(result).length > 0 ? result : null
+  return compacted
+}
 
 // GET /api/ai-tasks — 自分のAIタスク一覧取得
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
@@ -16,12 +95,26 @@ export async function GET(req: NextRequest) {
   const from = searchParams.get('from')
   const to = searchParams.get('to')
   const spaceId = searchParams.get('space_id')
+  const source = searchParams.get('source')
   const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '50', 10) || 50, 1), 500)
 
   let query = supabase
     .from('ai_tasks')
-    .select('*')
+    .select(AI_TASK_LIST_SELECT)
     .limit(limit)
+
+  if (spaceId && spaceId !== '__unassigned__') {
+    if (!(await canViewSpace(supabase, user.id, spaceId))) {
+      return NextResponse.json({ error: 'No access to the selected space' }, { status: 403 })
+    }
+    query = query
+      .eq('space_id', spaceId)
+      .or(`user_id.eq.${user.id},run_visibility.eq.space`)
+  } else if (spaceId === '__unassigned__') {
+    query = query.eq('user_id', user.id).is('space_id', null)
+  } else {
+    query = query.eq('user_id', user.id)
+  }
 
   if (status) {
     query = query.eq('status', status)
@@ -29,10 +122,12 @@ export async function GET(req: NextRequest) {
   if (executor && ['claude', 'codex', 'codex_app'].includes(executor)) {
     query = query.eq('executor', executor)
   }
-  if (spaceId === '__unassigned__') {
-    query = query.is('space_id', null)
-  } else if (spaceId) {
-    query = query.eq('space_id', spaceId)
+  if (source === 'linked') {
+    query = query.or('source_note_id.not.is.null,source_ideal_goal_id.not.is.null,source_task_id.not.is.null')
+  } else if (source === 'note') {
+    query = query.not('source_note_id', 'is', null)
+  } else if (source === 'mindmap') {
+    query = query.not('source_task_id', 'is', null)
   }
 
   // scheduled=true のとき recurrence_cron が設定されたタスクのみ返す
@@ -57,14 +152,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
   }
 
-  return NextResponse.json(data)
+  return NextResponse.json((data ?? []).map(row => compactAiTask(isRecord(row) ? row : {})))
 }
 
 // POST /api/ai-tasks — AIタスク作成（壁打ち・スキル実行）
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const body = await req.json()
   const {

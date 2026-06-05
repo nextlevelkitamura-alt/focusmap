@@ -5,7 +5,7 @@
  * (ターミナル/ブラウザ/ファイル) を呼ぶときの橋渡し。
  *
  * 仕組み:
- *  1. resolveOnlineRunner() で heartbeat 2分以内の runner を1台選ぶ
+ *  1. resolveOnlineRunner() で heartbeat 5分以内の runner を1台選ぶ
  *  2. runRemoteCommand() で agent_commands に1行 INSERT (status=pending)
  *  3. Mac 側が claim → 実行 → status を completed/failed に更新し result/error を書く
  *  4. サーバーは agent_commands 行をポーリングして結果を待つ
@@ -18,7 +18,7 @@ import { z } from 'zod/v3'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 
-const HEARTBEAT_ONLINE_WINDOW_MS = 2 * 60 * 1000 // 2分以内の heartbeat をオンラインとみなす
+const HEARTBEAT_ONLINE_WINDOW_MS = 5 * 60 * 1000 // 5分以内の heartbeat をオンラインとみなす
 const DEFAULT_TIMEOUT_MS = 120_000 // 1ツール最大2分
 const DEFAULT_POLL_MS = 1_500
 const DEFAULT_SHELL_TIMEOUT_MS = 180_000
@@ -76,7 +76,7 @@ function canExecuteRemoteCommands(metadata: unknown): boolean {
 }
 
 /**
- * heartbeat が直近 2 分以内で、かつ agent_commands を実行できる focusmap-agent を1台返す。
+ * heartbeat が直近 5 分以内で、かつ agent_commands を実行できる focusmap-agent を1台返す。
  * 無ければ null (= Macオフライン)。最新 heartbeat のものを優先する。
  */
 export async function resolveOnlineRunner(

@@ -19,6 +19,7 @@ import {
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch';
 
 interface Runner {
   id: string;
@@ -65,8 +66,8 @@ const KIND_META: Record<AgentKind, { label: string; icon: typeof Bot; color: str
   },
 };
 
-const HEARTBEAT_ONLINE_WINDOW_MS = 2 * 60 * 1000; // 2分以内なら ONLINE
-const POLL_INTERVAL_MS = 5_000;
+const HEARTBEAT_ONLINE_WINDOW_MS = 5 * 60 * 1000; // 5分以内なら ONLINE
+const POLL_INTERVAL_MS = 30_000;
 
 function formatAge(ms: number): string {
   if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}秒前`;
@@ -77,7 +78,7 @@ function formatAge(ms: number): string {
 
 /**
  * 設定画面に常時表示するエージェント常駐状況バッジ。
- * - 5秒ごとに /api/ai-runners をpollして 最新状態を反映
+ * - 30秒ごとに /api/ai-runners をpollして 最新状態を反映
  * - 接続中の数を カード で表示
  * - 接続無しなら 「セットアップ手順を開く」 CTA
  * - 各 runner の hostname / executors / 最終heartbeat を一覧表示
@@ -91,7 +92,7 @@ export function AgentStatusBadge() {
   const fetchRunners = async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const res = await fetch('/api/ai-runners', { cache: 'no-store' });
+      const res = await fetchWithSupabaseAuth('/api/ai-runners', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setRunners(Array.isArray(data?.runners) ? data.runners : []);

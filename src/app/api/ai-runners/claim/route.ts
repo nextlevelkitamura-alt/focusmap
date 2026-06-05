@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
+import { authenticateSupabaseRequest } from "@/lib/auth/verify-supabase-jwt"
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(request, supabase)
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const { user } = auth
 
   const body = await request.json().catch(() => ({}))
   const runnerId = typeof body.runner_id === "string" ? body.runner_id : ""

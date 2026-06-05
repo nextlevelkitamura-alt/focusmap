@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { createClient } from '@/utils/supabase/client'
 import type { AiTask } from '@/types/ai-task'
+import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
-const IDLE_REFRESH_INTERVAL_MS = 30_000
+const RUNNING_CODEX_REFRESH_INTERVAL_MS = 3_000
+const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
+const IDLE_REFRESH_INTERVAL_MS = 2 * 60_000
 
 interface UseAiTasksOptions {
   /** 最大取得件数（デフォルト: 20） */
@@ -14,17 +15,23 @@ interface UseAiTasksOptions {
   spaceId?: string | null
 }
 
-function matchesSpaceFilter(task: AiTask, spaceId: string | null | undefined) {
-  if (!spaceId) return true
-  if (spaceId === '__unassigned__') return !task.space_id
-  return task.space_id === spaceId
+function isCodexTask(task: AiTask) {
+  return task.executor === 'codex' || task.executor === 'codex_app'
 }
 
-function hasActiveCodexTask(tasks: AiTask[]) {
+function hasRunningCodexTask(tasks: AiTask[]) {
   return tasks.some(task =>
-    (task.executor === 'codex' || task.executor === 'codex_app') &&
-    ['pending', 'running', 'awaiting_approval', 'needs_input'].includes(task.status)
+    isCodexTask(task) &&
+    (task.status === 'running' || task.result?.codex_run_state === 'running')
   )
+}
+
+function hasPendingCodexTask(tasks: AiTask[]) {
+  return tasks.some(task => isCodexTask(task) && task.status === 'pending')
+}
+
+function isPageVisible() {
+  return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
 export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {}) {
@@ -37,7 +44,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
     try {
       const params = new URLSearchParams({ limit: String(limit) })
       if (spaceId) params.set('space_id', spaceId)
-      const res = await fetch(`/api/ai-tasks?${params.toString()}`)
+      const res = await fetchWithSupabaseAuth(`/api/ai-tasks?${params.toString()}`)
       if (!res.ok) throw new Error('Failed to fetch ai_tasks')
       const data: AiTask[] = await res.json()
       setTasks(data)
@@ -53,53 +60,28 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
     fetchTasks()
   }, [fetchTasks])
 
-  const refreshIntervalMs = hasActiveCodexTask(tasks)
-    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+  const refreshIntervalMs = hasRunningCodexTask(tasks)
+    ? RUNNING_CODEX_REFRESH_INTERVAL_MS
+    : hasPendingCodexTask(tasks)
+      ? PENDING_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
-    const intervalId = window.setInterval(fetchTasks, refreshIntervalMs)
+    const intervalId = window.setInterval(() => {
+      if (isPageVisible()) void fetchTasks()
+    }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchTasks, refreshIntervalMs])
 
-  // Realtime subscription
   useEffect(() => {
-    const supabase = createClient()
-
-    const channel = supabase
-      .channel('ai_tasks_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'ai_tasks',
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const newTask = payload.new as AiTask
-            if (!matchesSpaceFilter(newTask, spaceId)) return
-            setTasks(prev => [newTask, ...prev].slice(0, limit))
-          } else if (payload.eventType === 'UPDATE') {
-            const updated = payload.new as AiTask
-            setTasks(prev => {
-              if (!matchesSpaceFilter(updated, spaceId)) return prev.filter(t => t.id !== updated.id)
-              return prev.some(t => t.id === updated.id)
-                ? prev.map(t => t.id === updated.id ? updated : t)
-                : [updated, ...prev].slice(0, limit)
-            })
-          } else if (payload.eventType === 'DELETE') {
-            const deleted = payload.old as { id: string }
-            setTasks(prev => prev.filter(t => t.id !== deleted.id))
-          }
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
+    const onVisibilityChange = () => {
+      if (isPageVisible()) void fetchTasks()
     }
-  }, [limit, spaceId])
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [fetchTasks])
 
   // 壁打ち送信
   const sendPrompt = useCallback(async (prompt: string, options?: {
@@ -108,7 +90,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
     parent_task_id?: string
     space_id?: string | null
   }) => {
-    const res = await fetch('/api/ai-tasks', {
+    const res = await fetchWithSupabaseAuth('/api/ai-tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, ...options }),
@@ -122,7 +104,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
 
   // 承認（completed にする）
   const approve = useCallback(async (taskId: string) => {
-    const res = await fetch(`/api/ai-tasks/${taskId}`, {
+    const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'completed' }),
@@ -133,7 +115,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
 
   // 却下（failed にする）
   const reject = useCallback(async (taskId: string, reason?: string) => {
-    const res = await fetch(`/api/ai-tasks/${taskId}`, {
+    const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'failed', error: reason || 'ユーザーにより却下' }),
@@ -170,7 +152,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
       const prevCompletedAt = task.completed_at
 
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, completed_at: newCompletedAt } : t))
-      const res = await fetch(`/api/ai-tasks/${taskId}`, {
+      const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed_at: newCompletedAt }),
@@ -188,7 +170,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
     const currentStatus = task.status
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed'
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as AiTask['status'] } : t))
-    const res = await fetch(`/api/ai-tasks/${taskId}`, {
+    const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
@@ -204,7 +186,7 @@ export function useAiTasks({ limit = 20, spaceId = null }: UseAiTasksOptions = {
   // 削除
   const deleteTask = useCallback(async (taskId: string) => {
     setTasks(prev => prev.filter(t => t.id !== taskId))
-    const res = await fetch(`/api/ai-tasks/${taskId}`, { method: 'DELETE' })
+    const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}`, { method: 'DELETE' })
     if (!res.ok) {
       await fetchTasks()
       throw new Error('Failed to delete ai task')

@@ -31,9 +31,9 @@
     <string>/Users/kitamuranaohiro/Private/focusmap/scripts/run-task-runner.sh</string>
   </array>
 
-  <!-- 毎15秒ごとに実行（応答速度優先） -->
+  <!-- 毎60秒ごとに実行（idle時のSupabase egress抑制。即時Codex投入は --fast 起動で補う） -->
   <key>StartInterval</key>
-  <integer>15</integer>
+  <integer>60</integer>
 
   <!-- 作業ディレクトリ -->
   <key>WorkingDirectory</key>

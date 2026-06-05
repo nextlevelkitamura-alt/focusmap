@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/utils/supabase/server"
 import { canViewSpace } from "@/lib/space-access"
+import { authenticateSupabaseRequest } from "@/lib/auth/verify-supabase-jwt"
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(request, supabase)
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const { user } = auth
 
   const { searchParams } = new URL(request.url)
   const spaceId = searchParams.get("space_id")

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch';
 
 interface TaskResultCardProps {
   taskId: string;
@@ -21,7 +22,10 @@ interface RunnerSnapshot {
   metadata?: Record<string, unknown> | null;
 }
 
-const ONLINE_WINDOW_MS = 2 * 60 * 1000;
+const ONLINE_WINDOW_MS = 5 * 60 * 1000;
+const RUNNER_POLL_INTERVAL_MS = 30_000;
+const LIVE_LOG_RUNNING_INTERVAL_MS = 4_000;
+const LIVE_LOG_IDLE_INTERVAL_MS = 30_000;
 
 /**
  * Focusmap Lite (Phase F) のオンラインランナーが居るかどうかを軽量にpoll する。
@@ -39,7 +43,7 @@ function useFocusmapLiteOnline(): { hasOnline: boolean | null; lastSeenMinutesAg
     let cancelled = false;
     const fetchOnce = async () => {
       try {
-        const res = await fetch('/api/ai-runners', { cache: 'no-store' });
+        const res = await fetchWithSupabaseAuth('/api/ai-runners', { cache: 'no-store' });
         if (!res.ok) return;
         const data = (await res.json()) as { runners?: RunnerSnapshot[] };
         const runners = data.runners ?? [];
@@ -68,7 +72,7 @@ function useFocusmapLiteOnline(): { hasOnline: boolean | null; lastSeenMinutesAg
       }
     };
     void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), 10_000);
+    const id = window.setInterval(() => void fetchOnce(), RUNNER_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -107,7 +111,7 @@ export function TaskResultCard({ taskId }: TaskResultCardProps) {
 
     const fetchLiveLog = async () => {
       try {
-        const res = await fetch(`/api/ai-tasks/${taskId}/live-log`, { cache: 'no-store' });
+        const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}/live-log`, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         if (mounted) setLiveLog(typeof data.log === 'string' ? data.log : '');
@@ -117,13 +121,15 @@ export function TaskResultCard({ taskId }: TaskResultCardProps) {
     };
 
     void fetchLiveLog();
+    const intervalMs = task?.status === 'running' ? LIVE_LOG_RUNNING_INTERVAL_MS : LIVE_LOG_IDLE_INTERVAL_MS;
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       if (task?.status === 'completed' || task?.status === 'failed') {
         window.clearInterval(interval);
         return;
       }
       void fetchLiveLog();
-    }, 4000);
+    }, intervalMs);
 
     return () => {
       mounted = false;

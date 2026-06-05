@@ -90,6 +90,22 @@ const CODEX_AWAITING_RECHECK_MS = 30 * 60_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
 const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
 
+function pauseRunnerForSupabaseRestriction(message: string): boolean {
+  if (!SUPABASE_RESTRICTED_PATTERN.test(message)) return false
+  fs.writeFileSync(
+    PAUSE_FILE,
+    [
+      `Paused at ${new Date().toISOString()}`,
+      `Reason: ${message}`,
+      'Remove this file after the Supabase project restriction is lifted.',
+      '',
+    ].join('\n'),
+    'utf-8',
+  )
+  console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
+  return true
+}
+
 type StaffStatusDueTask = {
   id: string
   user_id: string
@@ -2518,6 +2534,7 @@ async function heartbeatRunner(supabase: any, hostname: string): Promise<AiRunne
 
   if (error) {
     console.error('[runner] heartbeat failed:', error.message)
+    pauseRunnerForSupabaseRestriction(error.message)
     return null
   }
 
@@ -2984,6 +3001,7 @@ async function claimDueTasksWithRunner(supabase: any, runner: AiRunner, limit = 
     })
     if (error) {
       console.error('[runner] claim failed:', error.message)
+      pauseRunnerForSupabaseRestriction(error.message)
       break
     }
     const task = Array.isArray(data) ? data[0] : data
@@ -3118,19 +3136,7 @@ async function main() {
 
       if (error) {
         console.error('[task-runner] DB error:', error.message)
-        if (SUPABASE_RESTRICTED_PATTERN.test(error.message)) {
-          fs.writeFileSync(
-            PAUSE_FILE,
-            [
-              `Paused at ${new Date().toISOString()}`,
-              `Reason: ${error.message}`,
-              'Remove this file after the Supabase project restriction is lifted.',
-              '',
-            ].join('\n'),
-            'utf-8',
-          )
-          console.error(`[task-runner] Supabase project is restricted. Created ${PAUSE_FILE} and paused future runs.`)
-        }
+        pauseRunnerForSupabaseRestriction(error.message)
         process.exit(1)
       }
 

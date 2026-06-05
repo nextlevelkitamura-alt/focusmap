@@ -1,14 +1,16 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
 
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await authenticateSupabaseRequest(req, supabase)
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { user } = auth
 
   const { data: task } = await supabase
     .from('ai_tasks')

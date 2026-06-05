@@ -2,6 +2,8 @@ import type { AgentApiClient } from './api-client.js';
 import type { AiTask } from './types.js';
 import { debug, error as logError, info } from './logger.js';
 
+const MAX_CLAIM_BACKOFF_MS = 2 * 60_000;
+
 export function startClaimLoop(
   api: AgentApiClient,
   runnerId: string,
@@ -9,7 +11,11 @@ export function startClaimLoop(
   intervalMs = 10_000,
 ): NodeJS.Timeout {
   let running = false;
+  let nextAllowedAt = 0;
+  let backoffMs = intervalMs;
   return setInterval(async () => {
+    const now = Date.now();
+    if (now < nextAllowedAt) return;
     if (running) {
       debug('claim loop: previous still running, skipping');
       return;
@@ -25,8 +31,12 @@ export function startClaimLoop(
           logError(`task ${task.id} failed during execution`, error);
         }
       }
+      backoffMs = intervalMs;
+      nextAllowedAt = 0;
     } catch (error) {
       logError('claim loop error', error);
+      nextAllowedAt = Date.now() + backoffMs;
+      backoffMs = Math.min(MAX_CLAIM_BACKOFF_MS, backoffMs * 2);
     } finally {
       running = false;
     }
