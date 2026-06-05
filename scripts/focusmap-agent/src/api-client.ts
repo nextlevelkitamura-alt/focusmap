@@ -62,13 +62,54 @@ export class AgentApiClient {
       steps: result.steps?.slice(-8),
       message_chars: result.message?.length ?? 0,
       live_log_chars: result.live_log?.length ?? 0,
+      output_chars: result.output?.length ?? 0,
     };
   }
 
-  private compactText(value: string | undefined, maxChars: number): string | undefined {
+  private compactText(value: string | undefined, maxChars: number, fromEnd = false): string | undefined {
     const text = value?.trim();
     if (!text) return undefined;
-    return text.length > maxChars ? text.slice(-maxChars) : text;
+    if (text.length <= maxChars) return text;
+    return fromEnd ? text.slice(-maxChars) : text.slice(0, maxChars);
+  }
+
+  private compactLogLine(value: string | undefined, maxChars: number): string | undefined {
+    const text = value?.trim();
+    if (!text) return undefined;
+    const blocks = text
+      .split(/\n{2,}|\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const latest = blocks.at(-1);
+    return this.compactText(latest, maxChars, true);
+  }
+
+  private currentStepFromResult(result: TaskResultJson | undefined): string | undefined {
+    if (!result) return undefined;
+    if (result.executor === 'codex_app') {
+      const latestLog = this.compactLogLine(result.live_log || result.output || result.message, 600);
+      if (latestLog) return latestLog;
+    }
+    const lastStep = result.steps?.slice().reverse().find((step) => step.label || step.detail);
+    if (lastStep) {
+      const detail = lastStep.detail ? `: ${lastStep.detail}` : '';
+      return this.compactText(`${lastStep.label}${detail}`, 600, true);
+    }
+    return this.compactLogLine(result.live_log || result.output || result.message, 600);
+  }
+
+  private summaryFromResult(result: TaskResultJson | undefined): string | undefined {
+    if (!result) return undefined;
+    if (result.codex_run_state === 'awaiting_approval') {
+      return 'Codex実行が完了し、Focusmapで承認待ちです。';
+    }
+    const latestLog = this.compactLogLine(result.live_log || result.output || result.message, 1_200);
+    return latestLog ?? this.compactText(result.message, 1_200, true);
+  }
+
+  private eventTypeForStatus(status: AiTask['status']): string {
+    if (status === 'awaiting_approval' || status === 'completed' || status === 'failed') return status;
+    return `status:${status}`;
   }
 
   async sendTaskProgressSnapshot(
@@ -79,7 +120,7 @@ export class AgentApiClient {
     options: { force?: boolean; minIntervalMs?: number; eventType?: string } = {},
   ): Promise<boolean> {
     const result = payload.result;
-    const currentStep = this.compactText(result?.message || result?.live_log || result?.output, 4_000);
+    const currentStep = this.currentStepFromResult(result);
     const body: Record<string, unknown> = {
       task_id: taskId,
       status,
@@ -87,7 +128,7 @@ export class AgentApiClient {
       executor: result?.executor,
       codex_thread_id: result?.codex_thread_id,
       current_step: currentStep,
-      summary: this.compactText(result?.message, 2_000),
+      summary: this.summaryFromResult(result),
       error_message: payload.error,
       last_activity_at: result?.last_activity_at,
       progress_json: this.compactTaskResult(result),
@@ -149,15 +190,17 @@ export class AgentApiClient {
     status: AiTask['status'],
     payload: { result?: TaskResultJson; error?: string } = {},
   ): Promise<void> {
+    const eventType = this.eventTypeForStatus(status);
+    const progress = this.sendTaskProgressSnapshot(runnerId, taskId, status, payload, {
+      force: true,
+      eventType,
+    }).catch(() => undefined);
     await this.request(`/agents/tasks/${taskId}/state`, {
       runner_id: runnerId,
       status,
       ...payload,
     });
-    await this.sendTaskProgressSnapshot(runnerId, taskId, status, payload, {
-      force: true,
-      eventType: `status:${status}`,
-    }).catch(() => undefined);
+    await progress;
   }
 
   async claimCommand(runnerId: string): Promise<AgentCommand | null> {

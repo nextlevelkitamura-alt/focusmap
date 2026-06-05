@@ -395,6 +395,8 @@ UIは後続作業でよい。先にAPI契約だけ固定する。
   - Codex.app通知はローカルで1〜2秒単位に拾う。
   - Turso通常progress送信は内容hashが変わった時だけ、最短3秒間隔。
   - `codex_thread_ready` / `codex_prompt_sent` / `awaiting_approval` / `completed` / `failed` は即送信。
+  - `result.live_log` / `output` / 生のCodex通知全文は送信しない。`current_step` は最新ログ行または最新stepを600文字以内、`summary` は最新ログ行または承認待ち要約を1200文字以内、`progress_json` は `executor` / `codex_run_state` / `codex_thread_id` / `last_activity_at` / 直近8steps / 文字数などのcompact metadataだけにする。
+  - `/api/task-progress` は `ai_tasks` をupsertし、通常progressは `ai_task_progress`、状態変化は `ai_task_events` に分けて保存する。snapshot APIは `ai_tasks.updated_at > updated_after` の差分を最大500件返し、UI一覧は詳細tailを読まない。
 
 ### Codexタスク分割指針
 
