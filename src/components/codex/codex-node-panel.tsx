@@ -755,13 +755,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                 </button>
               </div>
             </div>
-            <textarea
-              value={detail}
-              onChange={(event) => handleDetailChange(event.target.value)}
-              className="min-h-[44dvh] w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary"
-              placeholder="メモの詳細を書いてください"
-            />
-
             {hasCodexRun && (
               <section className="overflow-hidden rounded-lg border border-border/70 bg-card">
                 <div className="flex flex-col gap-2 border-b border-border/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -907,6 +900,13 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                 </div>
               </section>
             )}
+
+            <textarea
+              value={detail}
+              onChange={(event) => handleDetailChange(event.target.value)}
+              className={`${hasCodexRun ? "min-h-[28dvh]" : "min-h-[44dvh]"} w-full resize-y rounded-lg border border-border/70 bg-background px-4 py-3 text-base leading-relaxed outline-none focus:border-primary`}
+              placeholder="メモの詳細を書いてください"
+            />
 
             {showCodexSetupPrompt && (
               <div className="rounded-md border border-amber-300/50 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
