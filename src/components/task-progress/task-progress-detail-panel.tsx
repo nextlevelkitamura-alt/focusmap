@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertCircle, Clock, Loader2, RefreshCw, Terminal } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { AlertCircle, Clock, Loader2, Terminal } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -9,7 +9,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Button } from "@/components/ui/button"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import {
   codexMonitorToneClass,
@@ -64,40 +63,23 @@ function compactText(value: unknown): string {
   return ""
 }
 
-function activityLabel(value: string | null | undefined) {
-  switch (value) {
-    case "running":
-    case "resumed":
-      return "実行中"
-    case "awaiting_approval":
-    case "needs_input":
-    case "completed":
-      return "確認待ち"
-    case "failed":
-      return "接続失敗"
-    case "thread_detected":
-      return "thread検出"
-    default:
-      return value || "activity"
-  }
-}
-
 function activityMessageLabel(message: AiTaskActivityMessage) {
-  if (message.role === "user" || message.kind === "user_answer") return "Focusmap"
+  if (message.role === "user" || message.kind === "user_answer" || message.kind === "sent") return "送信した内容"
   if (message.kind === "question") return "Codexから質問"
-  if (message.kind === "approval") return "Codex確認"
-  if (message.kind === "completed") return "Codex完了"
+  if (message.kind === "approval") return "Codexの返答"
+  if (message.kind === "completed") return "Codexの返答"
   if (message.kind === "failed") return "接続失敗"
   if (message.kind === "prompt_waiting") return "プロンプト待ち"
-  return message.role === "codex" ? "Codex" : "状態"
+  return message.role === "codex" ? "Codexの返答" : "状態"
 }
 
 function activityMessageClass(message: AiTaskActivityMessage) {
-  if (message.role === "user" || message.kind === "user_answer") return "ml-auto bg-muted"
-  if (message.kind === "question" || message.kind === "approval") return "border-amber-500/30 bg-amber-500/10"
-  if (message.kind === "failed") return "border-red-500/30 bg-red-500/10"
-  if (message.kind === "completed") return "border-emerald-500/30 bg-emerald-500/10"
-  return "bg-background"
+  if (message.role === "user" || message.kind === "user_answer" || message.kind === "sent") return "ml-auto max-w-[86%] border-muted bg-muted"
+  if (message.role === "status") return "mx-auto max-w-[92%] border-transparent bg-transparent px-1 py-1 text-center text-muted-foreground shadow-none"
+  if (message.kind === "question" || message.kind === "approval") return "mr-auto max-w-[92%] border-amber-500/30 bg-amber-500/10"
+  if (message.kind === "failed") return "mr-auto max-w-[92%] border-red-500/30 bg-red-500/10"
+  if (message.kind === "completed") return "mr-auto max-w-[92%] border-emerald-500/30 bg-emerald-500/10"
+  return "mr-auto max-w-[92%] bg-background"
 }
 
 type TaskProgressDetailPanelProps = {
@@ -167,7 +149,36 @@ export function TaskProgressDetailPanel({
   }, [isFixtureTask, task, taskId])
 
   const fetchActivity = useCallback(async () => {
-    if (!taskId || isFixtureTask) return
+    if (!taskId) return
+    if (isFixtureTask && task) {
+      const now = new Date().toISOString()
+      setActivityMessages([
+        {
+          id: `${taskId}:fixture-prompt`,
+          task_id: taskId,
+          user_id: "fixture",
+          role: "user",
+          kind: "sent",
+          body: task.title || "このタスクを確認してください",
+          importance: "normal",
+          metadata: { source: "fixture" },
+          created_at: now,
+        },
+        {
+          id: `${taskId}:fixture-response`,
+          task_id: taskId,
+          user_id: "fixture",
+          role: "codex",
+          kind: task.status === "failed" ? "failed" : task.status === "awaiting_approval" ? "approval" : "progress",
+          body: task.current_step || task.summary || "Codex側の状態を確認中です",
+          importance: task.status === "running" ? "normal" : "important",
+          metadata: { source: "fixture" },
+          created_at: now,
+        },
+      ])
+      setActivityError(null)
+      return
+    }
     try {
       const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(taskId)}/activity`, { cache: "no-store" })
       const data = await response.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
@@ -177,7 +188,7 @@ export function TaskProgressDetailPanel({
     } catch (err) {
       setActivityError(err instanceof Error ? err.message : "activity fetch failed")
     }
-  }, [isFixtureTask, taskId])
+  }, [isFixtureTask, task, taskId])
 
   useEffect(() => {
     if (!open || !taskId) {
@@ -230,27 +241,7 @@ export function TaskProgressDetailPanel({
   const taskForDisplay = detail?.task ?? task
   const status = taskForDisplay?.status
   const statusLabel = status ? codexMonitorUiLabel(status) : "不明"
-  const tailItems = useMemo(() => {
-    const progress = detail?.progress ?? []
-    const events = detail?.events ?? []
-    return [
-      ...progress.map(item => ({
-        id: `progress:${item.id}`,
-        createdAt: item.created_at ?? "",
-        label: item.phase ?? "progress",
-        body: item.message || compactText(item.progress_json),
-      })),
-      ...events.map(item => ({
-        id: `event:${item.id}`,
-        createdAt: item.created_at ?? "",
-        label: item.event_type,
-        body: compactText(item.payload_json),
-      })),
-    ]
-      .filter(item => item.body)
-      .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))
-      .slice(0, 50)
-  }, [detail])
+  const latestStatusText = compactText(taskForDisplay?.current_step) || compactText(taskForDisplay?.summary)
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -282,43 +273,17 @@ export function TaskProgressDetailPanel({
                 )}
               </SheetDescription>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="mr-6 h-9 w-9 shrink-0"
-              onClick={() => void fetchDetail()}
-              disabled={isLoading || !taskId}
-              aria-label="Codex進捗を更新"
-              title="更新"
-            >
-              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-            </Button>
           </div>
         </SheetHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           <div className="space-y-3">
-            {(taskForDisplay?.current_step || taskForDisplay?.summary) && (
-              <section className="rounded-lg border bg-muted/20 p-3">
-                <div className="text-[11px] font-semibold uppercase text-muted-foreground">Current</div>
-                <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed">
-                  {taskForDisplay.current_step || taskForDisplay.summary}
-                </div>
-                {typeof taskForDisplay.progress_percent === "number" && (
-                  <div className="mt-3">
-                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full bg-primary transition-[width] duration-300"
-                        style={{ width: `${Math.max(0, Math.min(100, taskForDisplay.progress_percent))}%` }}
-                      />
-                    </div>
-                    <div className="mt-1 text-right text-[11px] text-muted-foreground">
-                      {taskForDisplay.progress_percent}%
-                    </div>
-                  </div>
-                )}
-              </section>
+            {latestStatusText && (
+              <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                <span className="font-medium text-foreground">{statusLabel}</span>
+                <span className="mx-1.5">·</span>
+                <span className="whitespace-pre-wrap break-words">{latestStatusText}</span>
+              </div>
             )}
 
             {error && (
@@ -329,55 +294,40 @@ export function TaskProgressDetailPanel({
 
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-muted-foreground">Codexチャット / 活動</h3>
-                <span className="text-[11px] text-muted-foreground">5秒ごとに確認</span>
+                <h3 className="text-xs font-semibold text-muted-foreground">チャット</h3>
+                <span className="text-[11px] text-muted-foreground">
+                  {isLoading ? "確認中..." : "最新ログまで表示"}
+                </span>
               </div>
               {activityMessages.length > 0 ? (
-                <div className="space-y-2">
-                  {activityMessages.slice(-12).map(message => (
-                    <article key={message.id} className={cn("max-w-[95%] rounded-lg border p-3", activityMessageClass(message))}>
-                      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                        <span className="truncate font-medium text-foreground">{activityMessageLabel(message)}</span>
-                        <span className="shrink-0">{formatDateTime(message.created_at)}</span>
-                      </div>
-                      <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90">
-                        {message.body}
-                      </p>
-                    </article>
-                  ))}
+                <div className="space-y-3">
+                  {activityMessages.slice(-20).map(message => {
+                    const isStatus = message.role === "status"
+                    return (
+                      <article key={message.id} className={cn("rounded-lg border p-3 shadow-sm", activityMessageClass(message))}>
+                        <div className={cn("mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground", isStatus && "mb-0 justify-center")}>
+                          <span className={cn("truncate font-medium", isStatus ? "text-muted-foreground" : "text-foreground")}>
+                            {activityMessageLabel(message)}
+                          </span>
+                          {!isStatus && <span className="shrink-0">{formatDateTime(message.created_at)}</span>}
+                        </div>
+                        <p className={cn("whitespace-pre-wrap break-words text-xs leading-relaxed", isStatus ? "text-muted-foreground" : "text-foreground/90")}>
+                          {message.body}
+                        </p>
+                      </article>
+                    )
+                  })}
+                  <div className="py-1 text-center text-[11px] text-muted-foreground">
+                    最新ログまで表示済み
+                  </div>
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
-                  {activityError ? "Codex activityを取得できません" : "Codex側の発話を待っています"}
+                <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
+                  {activityError ? "チャットログを取得できません" : "Codex側の返答を待っています"}
                 </div>
               )}
             </section>
 
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-muted-foreground">進捗履歴</h3>
-                <span className="text-[11px] text-muted-foreground">開いている間だけ更新</span>
-              </div>
-              {tailItems.length > 0 ? (
-                <div className="space-y-2">
-                  {tailItems.map(item => (
-                    <article key={item.id} className="rounded-lg border bg-background p-3">
-                      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                        <span className="truncate font-medium">{activityLabel(item.label)}</span>
-                        <span className="shrink-0">{formatDateTime(item.createdAt)}</span>
-                      </div>
-                      <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90">
-                        {item.body}
-                      </p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-lg border border-dashed px-3 py-8 text-center text-xs text-muted-foreground">
-                  {isLoading ? "読み込み中..." : "まだ詳細ログはありません"}
-                </div>
-              )}
-            </section>
           </div>
         </div>
       </SheetContent>

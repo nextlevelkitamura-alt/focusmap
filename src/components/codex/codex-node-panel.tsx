@@ -24,7 +24,7 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Clock, Copy, ExternalLink, Laptop, Loader2, Mic, RefreshCw, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
+import { Bot, Clock, ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -457,10 +457,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const codexThreadId =
     stringValue(codexTask?.codex_thread_id) ||
     stringValue(codexResult.codex_thread_id)
-  const codexThreadUrl =
-    codexThreadId
-      ? `codex://threads/${codexThreadId}`
-      : stringValue(codexResult.codex_thread_url) || node.codexThreadUrl || null
   const codexManualHandoff = codexResult.codex_manual_handoff === true
   const hasCodexRun = isCodexTask || !!justSentPrompt
   const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
@@ -579,27 +575,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }
   }, [codexTask?.id, codexUiState?.state, isCodexTask, open])
 
-  const openCodexThread = useCallback(async () => {
-    const prompt = codexThreadUrl ? "" : sentPrompt || codexPrompt
-    const repoPath = codexRepoPath || codexTask?.cwd?.trim() || null
-    setError(null)
-    try {
-      if (canUseLocalCodexOpenApi() && !isMobileOpenTarget) {
-        await launchCodexViaLocalApi({ prompt, repoPath, threadUrl: codexThreadUrl })
-      } else {
-        const target = buildCodexOpenTarget(
-          { prompt, repoPath, threadUrl: codexThreadUrl },
-          { preferMobile: isMobileOpenTarget, mobilePlatform },
-        )
-        window.location.href = target.url
-      }
-      window.setTimeout(() => void syncCodexState(), 1200)
-      window.setTimeout(() => void syncCodexState(), 3500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
-    }
-  }, [codexPrompt, codexRepoPath, codexTask?.cwd, codexThreadUrl, isMobileOpenTarget, mobilePlatform, sentPrompt, syncCodexState])
-
   const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const promptHeading = heading || node.title
     if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(detail)) {
@@ -686,15 +661,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }
   }, [candidates, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState])
 
-  const recopyCodexPrompt = useCallback(async () => {
-    const prompt = sentPrompt || codexPrompt
-    if (!prompt.trim()) return
-    const copied = await copyPromptToClipboard(prompt)
-    setCodexFeedback(copied
-      ? "プロンプトを再コピーしました。画像が必要な場合はCodex.app側で手動添付してください。"
-      : "プロンプトの再コピーに失敗しました。")
-  }, [codexPrompt, sentPrompt])
-
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
     codexRunnerStatus.checked &&
@@ -747,30 +713,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                 </span>
               </div>
               <div className="flex shrink-0 items-center justify-end gap-2">
-                {hasCodexRun ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void syncCodexState()}
-                      disabled={isSyncingCodex}
-                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-sm font-semibold transition-colors hover:bg-muted disabled:opacity-50"
-                      aria-label="Codexログを更新"
-                      title="Codexログを更新"
-                    >
-                      <RefreshCw className={`h-4 w-4 ${isSyncingCodex ? "animate-spin" : ""}`} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void openCodexThread()}
-                      className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-100"
-                      aria-label={codexThreadUrl ? "Codexスレッドを開く" : "Codex.appを開く"}
-                      title={codexThreadUrl ? "Codexスレッドを開く" : "Codex.appを開く"}
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      {codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
-                    </button>
-                  </>
-                ) : (
+                {!hasCodexRun && (
                   <a
                     href={codexHref}
                     onClick={sendToCodex}
@@ -852,55 +795,15 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       {isSyncingCodex ? "同期中" : "約5秒ごとに同期"}
                     </span>
                   </div>
-                  <div className="flex shrink-0 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void syncCodexState()}
-                      disabled={isSyncingCodex}
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-xs font-semibold transition-colors hover:bg-muted disabled:opacity-50"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${isSyncingCodex ? "animate-spin" : ""}`} />
-                      更新
-                    </button>
-                    {sentPrompt && (
-                      <button
-                        type="button"
-                        onClick={() => void recopyCodexPrompt()}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-xs font-semibold transition-colors hover:bg-muted"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                        再コピー
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void openCodexThread()}
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-500"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      {codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
-                    </button>
-                  </div>
                 </div>
 
-                <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                <div>
                   <div className="max-h-[46dvh] min-h-64 space-y-3 overflow-y-auto px-3 py-4">
-                    <div className="flex justify-start">
-                      <div className="max-w-[88%] rounded-2xl border bg-background px-3 py-2 text-sm leading-6 shadow-sm">
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">Focusmap</p>
-                        <p className="text-muted-foreground">
-                          {codexWaitingForAppSend
-                            ? "プロンプトはコピー済みです。Codex.appで貼り付けて送信すると、この欄に状態と出力が同期されます。"
-                            : "このノードの続きはCodex.appで進めます。Focusmapは状態と出力だけを同期します。"}
-                        </p>
-                      </div>
-                    </div>
-
                     {sentPrompt && (
                       <div className="flex justify-end">
                         <div className="max-w-[84%] rounded-2xl bg-muted px-3 py-2 text-sm leading-6 text-foreground">
                           <p className="mb-1 text-xs font-medium text-muted-foreground">
-                            {codexWaitingForAppSend ? "コピー済み" : "Codex側で送信"}
+                            {codexWaitingForAppSend ? "送信前の内容" : "送信した内容"}
                           </p>
                           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-sans">{sentPrompt}</pre>
                         </div>
@@ -938,34 +841,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                     ) : (
                       <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
                         {codexWaitingForAppSend
-                          ? "Codex.appで送信されると、ここに同期ログが表示されます"
+                          ? "Codex.appで送信されると、ここに返答が表示されます"
                           : codexActivityError
-                            ? "Codex活動履歴を取得できません。更新を押すか、Codexで開いて確認してください"
-                            : "Codex.app側の出力はまだ同期されていません"}
+                            ? "チャットログを取得できません"
+                            : "Codex側の返答を待っています"}
                       </div>
                     )}
+                    <div className="py-1 text-center text-[11px] text-muted-foreground">
+                      {isSyncingCodex ? "最新状態を確認中..." : "最新ログまで表示済み"}
+                    </div>
                   </div>
-
-                  <aside className="border-t bg-muted/5 px-3 py-3 lg:border-l lg:border-t-0">
-                    <details className="group text-xs">
-                      <summary className="cursor-pointer select-none rounded-md border bg-background px-3 py-2 font-medium text-muted-foreground">
-                        同期ログ {codexConversation.processLogs.length}
-                      </summary>
-                      <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-                        {codexConversation.processLogs.length > 0 ? (
-                          codexConversation.processLogs.map((log, index) => (
-                            <div key={`${index}-${log.slice(0, 20)}`} className="whitespace-pre-wrap rounded-md border bg-background px-3 py-2 leading-5 text-muted-foreground">
-                              {log}
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-md border bg-background px-3 py-2 leading-5 text-muted-foreground">
-                            まだ詳細ログは同期されていません
-                          </div>
-                        )}
-                      </div>
-                    </details>
-                  </aside>
                 </div>
               </section>
             )}

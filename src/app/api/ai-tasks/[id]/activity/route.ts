@@ -32,6 +32,7 @@ function kindFromEventType(eventType: string) {
 function fallbackMessagesFromTask(task: {
   id: string
   user_id: string
+  prompt?: string | null
   result?: unknown
   created_at?: string | null
   started_at?: string | null
@@ -43,14 +44,29 @@ function fallbackMessagesFromTask(task: {
     stringValue(result.message) ||
     stringValue(result.current_step)
 
-  if (!body) return []
+  const sentPrompt = stringValue(task.prompt)
+  const messages = sentPrompt
+    ? [{
+        id: `prompt:${task.id}`,
+        task_id: task.id,
+        user_id: task.user_id,
+        role: 'user',
+        kind: 'sent',
+        body: sentPrompt,
+        importance: 'normal',
+        metadata: { source: 'ai_tasks.prompt' },
+        created_at: task.created_at || createdAt,
+      }]
+    : []
+
+  if (!body) return messages
   const kind = stringValue(result.codex_run_state) === 'prompt_waiting'
     ? 'prompt_waiting'
     : stringValue(result.codex_run_state) === 'awaiting_approval'
       ? 'approval'
       : 'progress'
 
-  return [{
+  return [...messages, {
     id: `fallback:${task.id}:${kind}`,
     task_id: task.id,
     user_id: task.user_id,
@@ -61,6 +77,35 @@ function fallbackMessagesFromTask(task: {
     metadata: { source: 'ai_tasks.result' },
     created_at: createdAt,
   }]
+}
+
+function taskPromptMessage(task: {
+  id: string
+  user_id: string
+  title?: string | null
+  prompt?: string | null
+  created_at?: string | null
+}) {
+  const body = stringValue(task.prompt) || stringValue(task.title)
+  if (!body) return null
+  return {
+    id: `prompt:${task.id}`,
+    task_id: task.id,
+    user_id: task.user_id,
+    role: 'user',
+    kind: 'sent',
+    body,
+    importance: 'normal',
+    metadata: { source: task.prompt ? 'ai_tasks.prompt' : 'turso.ai_tasks.title' },
+    created_at: task.created_at || new Date().toISOString(),
+  }
+}
+
+function hasUserSentMessage(messages: Array<{ role?: unknown; kind?: unknown; body?: unknown }>) {
+  return messages.some(message =>
+    (message.role === 'user' || message.kind === 'user_answer' || message.kind === 'sent') &&
+    !!stringValue(message.body)
+  )
 }
 
 export async function GET(
@@ -84,31 +129,35 @@ export async function GET(
           listTaskProgress(task.id, task.user_id, 50),
           listTaskEvents(task.id, task.user_id, 50),
         ])
+        const progressMessages = progress.map(item => ({
+          id: item.id,
+          task_id: item.task_id,
+          user_id: item.user_id,
+          role: 'codex',
+          kind: 'progress',
+          body: item.message || item.phase || '進捗更新',
+          importance: 'normal',
+          metadata: item.progress_json ?? {},
+          created_at: item.created_at,
+        }))
+        const eventMessages = events.map(item => ({
+          id: item.id,
+          task_id: item.task_id,
+          user_id: item.user_id,
+          role: 'status',
+          kind: kindFromEventType(item.event_type),
+          body: item.event_type.startsWith('status:')
+            ? `状態: ${item.event_type.slice('status:'.length)}`
+            : item.event_type,
+          importance: item.event_type.includes('failed') || item.event_type.includes('approval') ? 'important' : 'normal',
+          metadata: item.payload_json ?? {},
+          created_at: item.created_at,
+        }))
+        const promptMessage = taskPromptMessage(task)
         const messages = [
-          ...progress.map(item => ({
-            id: item.id,
-            task_id: item.task_id,
-            user_id: item.user_id,
-            role: 'codex',
-            kind: 'progress',
-            body: item.message || item.phase || '進捗更新',
-            importance: 'normal',
-            metadata: item.progress_json ?? {},
-            created_at: item.created_at,
-          })),
-          ...events.map(item => ({
-            id: item.id,
-            task_id: item.task_id,
-            user_id: item.user_id,
-            role: 'status',
-            kind: kindFromEventType(item.event_type),
-            body: item.event_type.startsWith('status:')
-              ? `状態: ${item.event_type.slice('status:'.length)}`
-              : item.event_type,
-            importance: item.event_type.includes('failed') || item.event_type.includes('approval') ? 'important' : 'normal',
-            metadata: item.payload_json ?? {},
-            created_at: item.created_at,
-          })),
+          ...(promptMessage && !hasUserSentMessage([...progressMessages, ...eventMessages]) ? [promptMessage] : []),
+          ...progressMessages,
+          ...eventMessages,
         ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).slice(-50)
 
         if (messages.length > 0) return NextResponse.json({ source: 'turso', messages })
@@ -120,7 +169,7 @@ export async function GET(
 
   const { data: task } = await supabase
     .from('ai_tasks')
-    .select('id, user_id, result, created_at, started_at')
+    .select('id, user_id, prompt, result, created_at, started_at')
     .eq('id', id)
     .eq('user_id', user.id)
     .maybeSingle()
@@ -146,5 +195,11 @@ export async function GET(
     return NextResponse.json({ error: 'Activity query failed' }, { status: 500 })
   }
 
-  return NextResponse.json({ messages: [...(data ?? [])].reverse() })
+  const promptMessage = taskPromptMessage(task)
+  const activityMessages = [...(data ?? [])].reverse()
+  const messages = [
+    ...(promptMessage && !hasUserSentMessage(activityMessages) ? [promptMessage] : []),
+    ...activityMessages,
+  ]
+  return NextResponse.json({ messages })
 }
