@@ -225,6 +225,7 @@ Goals → Projects → TaskGroups → Tasks
 - スクショ画像は一覧取得で署名URLを返さない。`/api/screenshots/[id]/url?variant=preview|thumbnail` で表示時だけ60〜900秒の署名付きURLを発行する。削除は `/api/screenshots/[id]` でmetadataをsoft deleteし、R2 object削除も試みる。
 - Mac agent側のスクショ原本保存とWebP圧縮は `scripts/focusmap-agent/src/screenshot-preview.ts` を使う。原本は `~/.focusmap/screenshots/<taskId>/` に保存し、クラウドへ送るのは800KB以下のpreview WebPと120KB以下のthumbnail WebPだけにする。`AgentApiClient.uploadScreenshotPreview()` はこのbundleを `/api/screenshots` へmultipart uploadする。
 - Turso/R2の外部設定値を取得した後は、`.env.monitoring.local` に `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` / `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_SCREENSHOT_BUCKET` を置き、`npm run codex-monitoring:set-secrets` でGitHub Secretsへ登録し、`npm run codex-monitoring:migrate-turso` でTurso schemaを適用する。GitHub ActionsのCloud Run deployはこれらのSecretsをruntime envへ渡す。
+- SupabaseからTursoへのCodex監視backfillは `npm run codex-monitoring:backfill -- --days 30 --dry-run` で必ず対象件数・推定write・既存skip候補を確認してから、必要な時だけ `--apply` で実行する。スクリプトは `.env.monitoring.local` / `.env.local` を読み、Supabase service role keyはローカル/サーバー実行だけで使う。対象はCodex系 `ai_tasks` の軽量カラム、`result` の `current_step` / `progress_summary` / tail化した表示用文言、直近件数制限付きのactivity/observationだけで、Supabase Storage画像や全文 `live_log` / raw resultは移行しない。2026-06-05の初回30日backfillでは `ai_tasks` 79件、progress 82件、events 79件をTursoへ投入し、`ai_task_activity_messages` は本番Supabase schema cacheに無かったためスキップした。
 
 ### Focusmap MacアプリMVP
 

@@ -325,6 +325,33 @@ Index:
   - 既存UIの `/api/ai-tasks/[id]/live-log` / `activity` はTurso優先に切替。URL互換を保つ。
 - [x] 旧Supabase読み取り互換を残す。
   - Turso未設定または古いタスクのprogress未作成時はSupabaseの最小JSON path / activity messagesへfallbackする。
+- [x] Codex監視の軽量backfillスクリプトを追加する。
+  - `scripts/backfill-codex-monitoring-to-turso.mjs`。`.env.monitoring.local` / `.env.local` からSupabase service role keyとTurso envを読み、`--dry-run` または `--apply` の明示を必須にする。
+  - Supabase側は `select('*')` を使わず、Codex系 `ai_tasks` の軽量カラムと `result` JSON pathだけを読む。`result.live_log` はtail/summary用途に圧縮し、Supabase Storage画像やraw resultは移行しない。
+  - `ai_tasks` はTursoへupsert、snapshot/activity/observation progressとstatus eventsは `backfill:*` の deterministic ID で重複を抑制する。activity/observationは直近件数だけを対象にする。
+
+### Backfill運用
+
+まず必ずdry-runする。
+
+```bash
+npm run codex-monitoring:backfill -- --days 30 --dry-run
+```
+
+確認するもの:
+
+- `targets.ai_tasks` / `targets.snapshot_progress` / `targets.observation_progress` / `targets.status_events`
+- `estimated_turso_writes.total_statements`
+- `existing_in_turso` と `skip_candidates`
+- `ai_task_activity_messages` が無い環境では警告付きでスキップされること
+
+実投入はdry-runのwrite数が小さいことを確認した後だけ行う。
+
+```bash
+npm run codex-monitoring:backfill -- --days 30 --apply
+```
+
+2026-06-05の初回投入は直近30日だけに限定し、`ai_tasks` 79件、progress 82件、events 79件をTurso側で検証した。再dry-runでは同じprogress/eventsが既存行として検出されるため、再実行しても履歴が重複しない。
 
 ### Phase 3: スクショmetadataとR2 preview試験導入
 
