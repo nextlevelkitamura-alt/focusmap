@@ -161,13 +161,19 @@ export async function POST(request: NextRequest) {
     const summary = compactString(body.summary, MAX_SUMMARY_CHARS)
     const errorMessage = compactString(body.error_message, MAX_SUMMARY_CHARS)
     const progressPercent = boundedProgressPercent(body.progress_percent)
+    const codexThreadId = compactString(body.codex_thread_id, 200)
+    const executor = compactString(body.executor, 80)
+    const lastActivityAt = compactString(body.last_activity_at, 80)
     const eventType = compactString(body.event_type, MAX_EVENT_TYPE_CHARS)
     const eventPayload = boundedJson(body.event_payload)
 
     if (status && !VALID_STATUSES.has(status)) {
       return NextResponse.json({ error: 'invalid status' }, { status: 400 })
     }
-    if (!phase && !message && !progressJson && !eventType && !status && !currentStep && progressPercent === null) {
+    if (
+      !phase && !message && !progressJson && !eventType && !status && !currentStep &&
+      !summary && !errorMessage && !codexThreadId && !executor && progressPercent === null
+    ) {
       return NextResponse.json({ error: 'progress payload is empty' }, { status: 400 })
     }
 
@@ -176,10 +182,15 @@ export async function POST(request: NextRequest) {
       user_id: task.user_id,
       space_id: task.space_id,
       status: status ?? task.status,
+      executor,
+      codex_thread_id: codexThreadId,
       current_step: currentStep,
       progress_percent: progressPercent,
       summary,
       error_message: errorMessage,
+      updated_at: lastActivityAt && !Number.isNaN(Date.parse(lastActivityAt))
+        ? new Date(lastActivityAt).toISOString()
+        : null,
       started_at: status === 'running' ? new Date().toISOString() : null,
       completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
     })

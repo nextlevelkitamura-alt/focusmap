@@ -269,8 +269,14 @@ export async function runCodexAppTask(
     },
   });
 
-  const flushState = async () => {
-    await api.updateTaskState(runnerId, task.id, 'running', { result: resultSnapshot() });
+  const flushState = async (force = false, eventType?: string) => {
+    await api.sendTaskProgressSnapshot(
+      runnerId,
+      task.id,
+      'running',
+      { result: resultSnapshot() },
+      { minIntervalMs: 3_000, force, eventType },
+    );
   };
 
   const scheduleFlush = () => {
@@ -338,7 +344,7 @@ export async function runCodexAppTask(
     }
 
     openCodexThread(threadId);
-    await flushState();
+    await flushState(true, 'codex_thread_ready');
 
     let completed = false;
     let completedStatus = 'completed';
@@ -403,7 +409,7 @@ export async function runCodexAppTask(
     }
     if (!turnResp) throw new Error('Codex turn/startに失敗しました');
     addStep(steps, 'プロンプト送信完了');
-    await flushState();
+    await flushState(true, 'codex_prompt_sent');
 
     const startedAt = Date.now();
     while (!completed) {

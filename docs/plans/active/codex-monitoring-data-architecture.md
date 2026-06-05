@@ -380,6 +380,32 @@ R2: 新規スクショpreview/thumbnail、新規メモ添付画像、AI生成画
 - iPhone/ブラウザバックグラウンドで常時pollingしない。
 - Tursoに権限境界を委譲しない。Turso読み書きは必ずAPI側でJWT由来 `user_id` / `space_id` を検証する。
 
+### UI統合契約
+
+UIは後続作業でよい。先にAPI契約だけ固定する。
+
+- 一覧/マップ表示: `GET /api/task-progress/snapshot?updated_after=<cursor>&limit=500`
+  - 返却: `{ source, server_time, cursor, tasks }`
+  - 初回は `updated_after` なし。以後は返却 `cursor` を保存して差分だけ読む。
+  - AI画面表示中は3秒poll、マップにrunningノードがある時は5秒poll、runningが無い時は30〜60秒または手動更新。
+- 詳細表示: `GET /api/task-progress?task_id=<id>&limit=50`
+  - 返却: `{ source, task, progress, events }`
+  - 詳細を開いた時だけtailを読む。マップ一覧では読まない。
+- Mac agent送信:
+  - Codex.app通知はローカルで1〜2秒単位に拾う。
+  - Turso通常progress送信は内容hashが変わった時だけ、最短3秒間隔。
+  - `codex_thread_ready` / `codex_prompt_sent` / `awaiting_approval` / `completed` / `failed` は即送信。
+
+### Codexタスク分割指針
+
+Codexには「大きな画面を丸ごと作る」より、「観測可能な小さい成果」を渡す。
+
+- 1タスクは1つの成果にする。例: snapshot取得hook、running badge、詳細tail panel、offline表示、手動更新command。
+- 入力には対象ファイル、触ってよい層、受け入れ条件、検証コマンドを含める。
+- UI並列作業ではAPI契約を変えない。必要な追加フィールドは先に `task-progress/snapshot` のレスポンスへ後方互換で足す。
+- 同じファイルを複数Codexに触らせない。hook/API/model/docs/visual componentのように境界で分ける。
+- 進捗表示UIは、まずsnapshotだけでマップ上に状態を出し、詳細tailや手動refreshは別タスクで足す。
+
 ### Phase 3: スクショmetadataとR2 preview試験導入
 
 - [x] `screenshots` metadataをTursoへ保存する。

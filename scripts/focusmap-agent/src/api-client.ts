@@ -13,6 +13,7 @@ export function webOriginFromApiUrl(apiUrl: string | undefined): string {
 export class AgentApiClient {
   private readonly apiUrl: string;
   private readonly token: string;
+  private readonly progressCache = new Map<string, { hash: string; sentAt: number }>();
 
   constructor(config: AgentConfig) {
     this.apiUrl = normalizeApiUrl(config.api_url);
@@ -33,6 +34,86 @@ export class AgentApiClient {
       throw new Error(typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`);
     }
     return data as T;
+  }
+
+  private progressHash(body: Record<string, unknown>): string {
+    const stable = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(stable);
+      if (!value || typeof value !== 'object') return value;
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, item]) => [key, stable(item)]),
+      );
+    };
+    return JSON.stringify(stable(body));
+  }
+
+  private compactTaskResult(result: TaskResultJson | undefined): Record<string, unknown> | undefined {
+    if (!result) return undefined;
+    return {
+      executor: result.executor,
+      codex_run_state: result.codex_run_state,
+      codex_review_reason: result.codex_review_reason,
+      codex_thread_id: result.codex_thread_id,
+      codex_thread_url: result.codex_thread_url,
+      last_activity_at: result.last_activity_at,
+      awaiting_approval_at: result.awaiting_approval_at,
+      steps: result.steps?.slice(-8),
+      message_chars: result.message?.length ?? 0,
+      live_log_chars: result.live_log?.length ?? 0,
+    };
+  }
+
+  private compactText(value: string | undefined, maxChars: number): string | undefined {
+    const text = value?.trim();
+    if (!text) return undefined;
+    return text.length > maxChars ? text.slice(-maxChars) : text;
+  }
+
+  async sendTaskProgressSnapshot(
+    runnerId: string,
+    taskId: string,
+    status: AiTask['status'],
+    payload: { result?: TaskResultJson; error?: string } = {},
+    options: { force?: boolean; minIntervalMs?: number; eventType?: string } = {},
+  ): Promise<boolean> {
+    const result = payload.result;
+    const currentStep = this.compactText(result?.message || result?.live_log || result?.output, 4_000);
+    const body: Record<string, unknown> = {
+      task_id: taskId,
+      status,
+      phase: status,
+      executor: result?.executor,
+      codex_thread_id: result?.codex_thread_id,
+      current_step: currentStep,
+      summary: this.compactText(result?.message, 2_000),
+      error_message: payload.error,
+      last_activity_at: result?.last_activity_at,
+      progress_json: this.compactTaskResult(result),
+      event_type: options.eventType,
+      event_payload: {
+        runner_id: runnerId,
+        status,
+        error: payload.error,
+        codex_thread_id: result?.codex_thread_id,
+        codex_run_state: result?.codex_run_state,
+      },
+    };
+    for (const key of Object.keys(body)) {
+      if (body[key] === undefined) delete body[key];
+    }
+
+    const hash = this.progressHash(body);
+    const minIntervalMs = options.minIntervalMs ?? 3_000;
+    const cached = this.progressCache.get(taskId);
+    const now = Date.now();
+    if (!options.force && cached?.hash === hash) return false;
+    if (!options.force && cached && now - cached.sentAt < minIntervalMs) return false;
+
+    await this.request('/task-progress', body);
+    this.progressCache.set(taskId, { hash, sentAt: now });
+    return true;
   }
 
   private async multipartRequest<T>(path: string, form: FormData): Promise<T> {
@@ -73,20 +154,9 @@ export class AgentApiClient {
       status,
       ...payload,
     });
-    await this.request('/task-progress', {
-      task_id: taskId,
-      status,
-      phase: status,
-      current_step: payload.result?.message || payload.result?.live_log || payload.result?.output || undefined,
-      summary: payload.result?.message,
-      error_message: payload.error,
-      progress_json: payload.result ?? undefined,
-      event_type: `status:${status}`,
-      event_payload: {
-        runner_id: runnerId,
-        status,
-        error: payload.error,
-      },
+    await this.sendTaskProgressSnapshot(runnerId, taskId, status, payload, {
+      force: true,
+      eventType: `status:${status}`,
     }).catch(() => undefined);
   }
 

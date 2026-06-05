@@ -428,6 +428,51 @@ export async function listTaskEvents(taskId: string, userId: string, limit = 50)
   return result.rows.map(row => asEvent(row as Row))
 }
 
+export async function listTursoAiTaskSnapshots(options: {
+  userId: string
+  spaceId?: string | null
+  status?: string | null
+  updatedAfter?: string | null
+  limit?: number
+}) {
+  const clauses = ['(user_id = ?']
+  const args: Array<string | number> = [options.userId]
+
+  if (options.spaceId) {
+    clauses[0] += ' OR space_id = ?'
+    args.push(options.spaceId)
+  }
+  clauses[0] += ')'
+
+  if (options.status) {
+    clauses.push('status = ?')
+    args.push(options.status)
+  }
+  if (options.updatedAfter) {
+    clauses.push('updated_at > ?')
+    args.push(options.updatedAfter)
+  }
+
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
+  const hasCursor = !!options.updatedAfter
+  const orderDirection = hasCursor ? 'ASC' : 'DESC'
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT
+        id, user_id, space_id, title, status, executor, dispatch_mode, source_type, source_id,
+        codex_thread_id, current_step, progress_percent, summary, error_message,
+        created_at, updated_at, started_at, completed_at
+      FROM ai_tasks
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY updated_at ${orderDirection}, id ${orderDirection}
+      LIMIT ?
+    `,
+    args: [...args, limit],
+  })
+  const tasks = result.rows.map(row => asTask(row as Row))
+  return hasCursor ? tasks : tasks.reverse()
+}
+
 export async function upsertRunnerHeartbeat(input: {
   runner_id: string
   user_id: string
