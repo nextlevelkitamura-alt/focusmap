@@ -50,8 +50,8 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 6. **迷ったらブランチではなく、小さくコミットして戻せる状態にする**
 
 ### AIエージェント並列作業
-- 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は `parallel-work-planner` Skill を使う
-- 詳細な判断基準・worktree安全策・プロンプト雛形は [docs/agent-workflow/parallelization.md](docs/agent-workflow/parallelization.md) / [docs/agent-workflow/worktree_strategy.md](docs/agent-workflow/worktree_strategy.md) / [docs/agent-workflow/prompt_templates.md](docs/agent-workflow/prompt_templates.md) を正とする
+- 複数チャット・readonlyサブエージェント・Git worktree を使うか迷う依頼は `task-router` Skill を使う
+- 詳細な判断基準・worktree安全策・プロンプト雛形は `task-router` の workflows を正とする
 - 並列化は時間だけで判断しない。編集範囲、共通契約、衝突コスト、危険操作、統合条件を見て提案する
 
 ### 本番デプロイ運用（重要）
