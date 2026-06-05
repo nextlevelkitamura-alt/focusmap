@@ -54,6 +54,17 @@ export type TursoRunnerHeartbeat = {
   updated_at: string
 }
 
+export type TursoTaskProgressWatch = {
+  task_id: string
+  user_id: string
+  watcher_id: string
+  watcher_type: string
+  expires_at: string
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
 export type TursoScreenshot = {
   id: string
   task_id: string
@@ -146,6 +157,19 @@ function asRunnerHeartbeat(row: Row): TursoRunnerHeartbeat {
     current_task_id: asString(row.current_task_id),
     version: asString(row.version),
     metadata_json: parseJsonRecord(row.metadata_json),
+    created_at: asString(row.created_at) ?? nowIso(),
+    updated_at: asString(row.updated_at) ?? nowIso(),
+  }
+}
+
+function asTaskProgressWatch(row: Row): TursoTaskProgressWatch {
+  return {
+    task_id: String(row.task_id),
+    user_id: String(row.user_id),
+    watcher_id: String(row.watcher_id),
+    watcher_type: asString(row.watcher_type) ?? 'web',
+    expires_at: asString(row.expires_at) ?? nowIso(),
+    last_seen_at: asString(row.last_seen_at) ?? nowIso(),
     created_at: asString(row.created_at) ?? nowIso(),
     updated_at: asString(row.updated_at) ?? nowIso(),
   }
@@ -433,6 +457,7 @@ export async function listTursoAiTaskSnapshots(options: {
   spaceId?: string | null
   status?: string | null
   updatedAfter?: string | null
+  cursor?: { updatedAt: string; id: string } | null
   limit?: number
 }) {
   const clauses = ['(user_id = ?']
@@ -448,13 +473,16 @@ export async function listTursoAiTaskSnapshots(options: {
     clauses.push('status = ?')
     args.push(options.status)
   }
-  if (options.updatedAfter) {
+  if (options.cursor) {
+    clauses.push('(updated_at > ? OR (updated_at = ? AND id > ?))')
+    args.push(options.cursor.updatedAt, options.cursor.updatedAt, options.cursor.id)
+  } else if (options.updatedAfter) {
     clauses.push('updated_at > ?')
     args.push(options.updatedAfter)
   }
 
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
-  const hasCursor = !!options.updatedAfter
+  const hasCursor = !!options.cursor || !!options.updatedAfter
   const orderDirection = hasCursor ? 'ASC' : 'DESC'
   const result = await getTursoClient().execute({
     sql: `
@@ -471,6 +499,83 @@ export async function listTursoAiTaskSnapshots(options: {
   })
   const tasks = result.rows.map(row => asTask(row as Row))
   return hasCursor ? tasks : tasks.reverse()
+}
+
+export async function upsertTaskProgressWatch(input: {
+  task_id: string
+  user_id: string
+  watcher_id: string
+  watcher_type?: string | null
+  ttl_seconds?: number | null
+}) {
+  const now = nowIso()
+  const ttlSeconds = Math.min(Math.max(input.ttl_seconds ?? 20, 5), 60)
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString()
+  await getTursoClient().execute({
+    sql: `
+      INSERT INTO task_progress_watches (
+        task_id, user_id, watcher_id, watcher_type, expires_at, last_seen_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(task_id, user_id, watcher_id) DO UPDATE SET
+        watcher_type = excluded.watcher_type,
+        expires_at = excluded.expires_at,
+        last_seen_at = excluded.last_seen_at,
+        updated_at = excluded.updated_at
+    `,
+    args: [
+      input.task_id,
+      input.user_id,
+      input.watcher_id,
+      input.watcher_type ?? 'web',
+      expiresAt,
+      now,
+      now,
+      now,
+    ],
+  })
+  return { expires_at: expiresAt, last_seen_at: now }
+}
+
+export async function closeTaskProgressWatch(input: {
+  task_id: string
+  user_id: string
+  watcher_id: string
+}) {
+  await getTursoClient().execute({
+    sql: 'DELETE FROM task_progress_watches WHERE task_id = ? AND user_id = ? AND watcher_id = ?',
+    args: [input.task_id, input.user_id, input.watcher_id],
+  })
+}
+
+export async function listActiveTaskProgressWatches(options: {
+  userId?: string | null
+  taskId?: string | null
+  now?: string | null
+  limit?: number
+}) {
+  const clauses = ['expires_at > ?']
+  const args: Array<string | number> = [options.now ?? nowIso()]
+  if (options.userId) {
+    clauses.push('user_id = ?')
+    args.push(options.userId)
+  }
+  if (options.taskId) {
+    clauses.push('task_id = ?')
+    args.push(options.taskId)
+  }
+  const limit = Math.min(Math.max(options.limit ?? 200, 1), 500)
+  const result = await getTursoClient().execute({
+    sql: `
+      SELECT task_id, user_id, watcher_id, watcher_type, expires_at, last_seen_at, created_at, updated_at
+      FROM task_progress_watches
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY expires_at DESC
+      LIMIT ?
+    `,
+    args: [...args, limit],
+  })
+  return result.rows.map(row => asTaskProgressWatch(row as Row))
 }
 
 export async function upsertRunnerHeartbeat(input: {

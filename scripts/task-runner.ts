@@ -38,6 +38,12 @@ import {
   type CodexRunState,
   type CodexThreadSnapshot,
 } from '../src/lib/codex-run-state'
+import { isTursoConfigured } from '../src/lib/turso/client'
+import {
+  insertTaskEvent,
+  listActiveTaskProgressWatches,
+  upsertTursoAiTask,
+} from '../src/lib/turso/codex-monitoring'
 
 // ES モジュール対応の __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -60,6 +66,8 @@ function loadEnvFile(filePath: string) {
 
 const envPath = path.resolve(__dirname, '../.env.local')
 loadEnvFile(envPath)
+const monitoringEnvPath = path.resolve(__dirname, '../.env.monitoring.local')
+loadEnvFile(monitoringEnvPath)
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -82,11 +90,11 @@ const CODEX_APP_WS_URL = 'ws://127.0.0.1:7878'
 const CODEX_APP_RPC_TIMEOUT_MS = 5_000
 const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
 const CODEX_LIVE_LOG_MAX_CHARS = 20_000
-const CODEX_ACTIVE_SYNC_INTERVAL_MS = 3_000
-const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 4
+const CODEX_ACTIVE_SYNC_INTERVAL_MS = 1_000
+const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 5
 const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
 const CODEX_THREAD_MATCH_FAST_WINDOW_MS = 2 * 60_000
-const CODEX_AWAITING_RECHECK_MS = 30 * 60_000
+const CODEX_AWAITING_RECHECK_MS = 1_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
 const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
 
@@ -135,6 +143,7 @@ type StaffStatusDueTask = {
 type MonitoredCodexTask = {
   id: string
   user_id: string
+  space_id?: string | null
   prompt: string
   codex_thread_id: string | null
   started_at: string | null
@@ -1323,7 +1332,8 @@ function codexTaskRunState(task: MonitoredCodexTask): string | null {
   return typeof result.codex_run_state === 'string' ? result.codex_run_state : null
 }
 
-function shouldSyncCodexTaskNow(task: MonitoredCodexTask, nowMs = Date.now()): boolean {
+function shouldSyncCodexTaskNow(task: MonitoredCodexTask, nowMs = Date.now(), activeWatch = false): boolean {
+  if (activeWatch) return true
   const result = asResultRecord(task.result)
   const threadId = codexTaskThreadId(task)
   const startedMs = codexTaskStartedAtMs(task, nowMs)
@@ -1351,10 +1361,12 @@ function shouldSyncCodexTaskNow(task: MonitoredCodexTask, nowMs = Date.now()): b
   return false
 }
 
-function shouldFastFollowCodexTask(task: MonitoredCodexTask, nowMs = Date.now()): boolean {
+function shouldFastFollowCodexTask(task: MonitoredCodexTask, nowMs = Date.now(), activeWatch = false): boolean {
+  if (activeWatch) return true
   const threadId = codexTaskThreadId(task)
   const ageMs = nowMs - codexTaskStartedAtMs(task, nowMs)
   const runState = codexTaskRunState(task)
+  if (task.status === 'awaiting_approval' || task.status === 'needs_input' || runState === 'awaiting_approval') return true
   if (!threadId) return task.status === 'running' && ageMs <= CODEX_THREAD_MATCH_FAST_WINDOW_MS
   return task.status === 'running' || runState === 'running'
 }
@@ -1528,6 +1540,19 @@ async function completeCodexTaskClosedFromApp(
       },
     })
     .eq('id', task.id)
+
+  await mirrorCodexTaskSnapshotToTurso({
+    task,
+    status: 'completed',
+    threadId: opts.threadId,
+    currentStep: completionNotice,
+    summary: liveLog,
+    eventType: 'completed',
+    updatedAt: now,
+    force: true,
+  }).catch(error => {
+    console.warn('[codex-app] turso completion mirror failed:', error instanceof Error ? error.message : error)
+  })
 
   await insertAiTaskActivityMessage(supabase, {
     taskId: task.id,
@@ -1710,6 +1735,88 @@ type CodexSyncStats = {
   fastFollow: boolean
 }
 
+const codexTursoSnapshotCache = new Map<string, { hash: string; sentAt: number }>()
+
+function stableJson(value: unknown): string {
+  const stable = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(stable)
+    if (!item || typeof item !== 'object') return item
+    return Object.fromEntries(
+      Object.entries(item as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, nested]) => [key, stable(nested)]),
+    )
+  }
+  return JSON.stringify(stable(value))
+}
+
+async function activeTaskProgressWatchIds(): Promise<Set<string>> {
+  if (!isTursoConfigured()) return new Set()
+  try {
+    const watches = await listActiveTaskProgressWatches({ limit: 500 })
+    return new Set(watches.map(watch => watch.task_id))
+  } catch (error) {
+    console.warn('[codex-app] active watch lookup failed:', error instanceof Error ? error.message : error)
+    return new Set()
+  }
+}
+
+function compactCodexText(value: string | null | undefined, maxChars: number): string | null {
+  const text = value?.trim()
+  if (!text) return null
+  return text.length > maxChars ? text.slice(-maxChars) : text
+}
+
+async function mirrorCodexTaskSnapshotToTurso(input: {
+  task: MonitoredCodexTask
+  status: string
+  threadId: string | null
+  currentStep: string
+  summary: string
+  eventType?: string | null
+  updatedAt?: string | null
+  force?: boolean
+  minIntervalMs?: number
+}): Promise<void> {
+  if (!isTursoConfigured()) return
+  const snapshotHash = stableJson({
+    status: input.status,
+    threadId: input.threadId,
+    currentStep: compactCodexText(input.currentStep, 600),
+    summary: compactCodexText(input.summary, 1_200),
+  })
+  const cached = codexTursoSnapshotCache.get(input.task.id)
+  const now = Date.now()
+  if (!input.force && cached?.hash === snapshotHash) return
+  if (!input.force && cached && now - cached.sentAt < (input.minIntervalMs ?? 5_000)) return
+
+  await upsertTursoAiTask({
+    id: input.task.id,
+    user_id: input.task.user_id,
+    space_id: input.task.space_id ?? null,
+    status: input.status,
+    executor: input.task.executor === 'codex' ? 'codex' : 'codex_app',
+    codex_thread_id: input.threadId,
+    current_step: compactCodexText(input.currentStep, 600),
+    summary: compactCodexText(input.summary, 1_200),
+    updated_at: input.updatedAt ?? new Date().toISOString(),
+    started_at: input.status === 'running' ? input.task.started_at ?? new Date().toISOString() : null,
+    completed_at: input.status === 'completed' || input.status === 'failed' ? new Date().toISOString() : null,
+  })
+  if (input.eventType) {
+    await insertTaskEvent({
+      task_id: input.task.id,
+      user_id: input.task.user_id,
+      event_type: input.eventType,
+      payload_json: {
+        status: input.status,
+        codex_thread_id: input.threadId,
+      },
+    })
+  }
+  codexTursoSnapshotCache.set(input.task.id, { hash: snapshotHash, sentAt: now })
+}
+
 async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncStats> {
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
@@ -1718,7 +1825,7 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
   // 実行中は細かく追い、確認待ち以降は codex_last_checked_at で間引く。
   const { data: tasks } = await supabase
     .from('ai_tasks')
-    .select('id, user_id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
+    .select('id, user_id, space_id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
     .in('executor', ['codex_app', 'codex'])
     .in('status', ['running', 'awaiting_approval', 'needs_input'])
     .limit(50)
@@ -1728,13 +1835,15 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
   const monitoredTasks = tasks as MonitoredCodexTask[]
   const nowMs = Date.now()
   const nowIso = new Date(nowMs).toISOString()
-  const dueTasks = monitoredTasks.filter(task => shouldSyncCodexTaskNow(task, nowMs))
+  const activeWatchIds = await activeTaskProgressWatchIds()
+  const dueTasks = monitoredTasks.filter(task => shouldSyncCodexTaskNow(task, nowMs, activeWatchIds.has(task.id)))
   const stats: CodexSyncStats = {
     monitored: monitoredTasks.length,
-    fastFollow: dueTasks.some(task => shouldFastFollowCodexTask(task, nowMs)),
+    fastFollow: dueTasks.some(task => shouldFastFollowCodexTask(task, nowMs, activeWatchIds.has(task.id))),
   }
 
   for (const task of dueTasks) {
+    const activeWatch = activeWatchIds.has(task.id)
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = codexTaskThreadId(task)
     const hadThreadId = Boolean(threadId)
@@ -1776,6 +1885,18 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
             },
           })
           .eq('id', task.id)
+        await mirrorCodexTaskSnapshotToTurso({
+          task,
+          status: 'awaiting_approval',
+          threadId: null,
+          currentStep: 'Codex threadを2分以内に検出できませんでした',
+          summary: 'Codex thread を2分以内に検出できませんでした。Codex.app側の状態確認が必要です。',
+          eventType: 'awaiting_approval',
+          updatedAt: nowIso,
+          force: true,
+        }).catch(error => {
+          console.warn('[codex-app] turso monitoring_lost mirror failed:', error instanceof Error ? error.message : error)
+        })
         await insertAiTaskActivityMessage(supabase, {
           taskId: task.id,
           userId: task.user_id,
@@ -1785,15 +1906,17 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
           dedupeKey: `task:${task.id}:monitoring_lost`,
         })
       } else {
-        await supabase
-          .from('ai_tasks')
-          .update({
-            result: {
-              ...current,
-              codex_last_checked_at: nowIso,
-            },
-          })
-          .eq('id', task.id)
+        if (typeof current.codex_last_checked_at !== 'string') {
+          await supabase
+            .from('ai_tasks')
+            .update({
+              result: {
+                ...current,
+                codex_last_checked_at: nowIso,
+              },
+            })
+            .eq('id', task.id)
+        }
       }
       continue
     }
@@ -1961,10 +2084,44 @@ async function syncCodexAppThreads(supabase: SupabaseClient): Promise<CodexSyncS
           session_health: 'active',
         }
       }
-      await supabase
-        .from('ai_tasks')
-        .update(updates)
-        .eq('id', task.id)
+      const nextStatus = typeof updates.status === 'string' ? updates.status : task.status
+      const meaningfulChange =
+        nextStatus !== task.status ||
+        !hadThreadId ||
+        resumedFromApproval ||
+        previousRunState !== codexState ||
+        current.current_step !== currentStep ||
+        current.live_log !== liveLog ||
+        current.last_activity_at !== lastActivityAt ||
+        shouldRecordProgress
+
+      if (meaningfulChange) {
+        await supabase
+          .from('ai_tasks')
+          .update(updates)
+          .eq('id', task.id)
+
+        const tursoEventType = !hadThreadId
+          ? 'thread_detected'
+          : resumedFromApproval
+            ? 'resumed'
+            : previousRunState !== codexState
+              ? codexState
+              : null
+        await mirrorCodexTaskSnapshotToTurso({
+          task,
+          status: nextStatus,
+          threadId,
+          currentStep,
+          summary: liveLog,
+          eventType: tursoEventType,
+          updatedAt: lastActivityAt ?? nowIso,
+          force: Boolean(tursoEventType),
+          minIntervalMs: activeWatch ? 3_000 : 5_000,
+        }).catch(error => {
+          console.warn('[codex-app] turso snapshot mirror failed:', error instanceof Error ? error.message : error)
+        })
+      }
 
       const activityEvents: Array<{
         role: AiTaskActivityRole

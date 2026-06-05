@@ -19,6 +19,8 @@ import {
 } from '@/lib/codex-run-state'
 import { createClient } from '@/utils/supabase/server'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
+import { isTursoConfigured } from '@/lib/turso/client'
+import { insertTaskEvent, upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -26,6 +28,8 @@ export const dynamic = 'force-dynamic'
 const execFileAsync = promisify(execFile)
 const SQLITE_BIN = '/usr/bin/sqlite3'
 const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
+const MAX_CURRENT_STEP_CHARS = 600
+const MAX_SUMMARY_CHARS = 1_200
 
 type SyncNodeBody = {
   source_task_id?: unknown
@@ -214,6 +218,56 @@ function reviewReasonLabel(reason: CodexReviewReason): string {
   if (reason === 'aborted') return '停止確認'
   if (reason === 'archived') return 'アーカイブ確認'
   return '確認待ち'
+}
+
+function compactText(value: string | null | undefined, max: number) {
+  const text = value?.trim()
+  if (!text) return null
+  return text.length > max ? text.slice(-max) : text
+}
+
+async function mirrorCodexSyncToTurso(input: {
+  task: CodexTaskRow
+  status: 'running' | 'awaiting_approval' | 'needs_input'
+  threadId: string | null
+  currentStep: string
+  summary: string
+  codexState: CodexRunState | 'prompt_waiting'
+  previousRunState: string | null
+  hadThreadId: boolean
+  resumedFromApproval: boolean
+}) {
+  if (!isTursoConfigured()) return
+  await upsertTursoAiTask({
+    id: input.task.id,
+    user_id: input.task.user_id,
+    status: input.status,
+    executor: input.task.executor,
+    codex_thread_id: input.threadId,
+    current_step: compactText(input.currentStep, MAX_CURRENT_STEP_CHARS),
+    summary: compactText(input.summary, MAX_SUMMARY_CHARS),
+    updated_at: new Date().toISOString(),
+    started_at: input.status === 'running' ? new Date().toISOString() : null,
+  })
+
+  const eventType = !input.hadThreadId && input.threadId
+    ? 'thread_detected'
+    : input.resumedFromApproval
+      ? 'resumed'
+      : input.previousRunState !== input.codexState
+        ? input.status
+        : null
+  if (eventType) {
+    await insertTaskEvent({
+      task_id: input.task.id,
+      user_id: input.task.user_id,
+      event_type: eventType,
+      payload_json: {
+        status: input.status,
+        codex_thread_id: input.threadId,
+      },
+    })
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -424,6 +478,22 @@ export async function POST(req: NextRequest) {
       },
     })
     .eq('id', task.id)
+
+  try {
+    await mirrorCodexSyncToTurso({
+      task,
+      status: nextStatus,
+      threadId,
+      currentStep,
+      summary: liveLog,
+      codexState,
+      previousRunState,
+      hadThreadId,
+      resumedFromApproval,
+    })
+  } catch (tursoError) {
+    console.error('[codex/sync-node turso]', tursoError)
+  }
 
   const activityEvents: Array<{
     role: AiTaskActivityRole

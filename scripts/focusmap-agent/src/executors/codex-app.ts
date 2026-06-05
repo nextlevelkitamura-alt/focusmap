@@ -242,6 +242,7 @@ export async function runCodexAppTask(
   const seenNotifications = new Set<string>();
   let flushTimer: NodeJS.Timeout | null = null;
   let threadId = task.codex_resume_thread_id || task.codex_thread_id || '';
+  let lastActivityAt = new Date().toISOString();
 
   const buildLiveLog = () => {
     const active = [...activeAgentMessages.values()]
@@ -260,7 +261,7 @@ export async function runCodexAppTask(
     codex_thread_url: threadId ? `codex://threads/${threadId}` : undefined,
     codex_run_state: 'running',
     codex_review_reason: 'started',
-    last_activity_at: new Date().toISOString(),
+    last_activity_at: lastActivityAt,
     meta: {
       cwd,
       prompt_chars: prompt.length,
@@ -275,7 +276,7 @@ export async function runCodexAppTask(
       task.id,
       'running',
       { result: resultSnapshot() },
-      { minIntervalMs: 3_000, force, eventType },
+      { force, eventType },
     );
   };
 
@@ -289,6 +290,7 @@ export async function runCodexAppTask(
 
   const appendLog = (entry: string) => {
     if (!entry.trim()) return;
+    lastActivityAt = new Date().toISOString();
     logEntries.push(entry.trim());
     if (logEntries.length > 200) logEntries.splice(0, logEntries.length - 200);
     scheduleFlush();
@@ -360,6 +362,7 @@ export async function runCodexAppTask(
         const itemId = typeof params.itemId === 'string' ? params.itemId : null;
         const delta = extractText(params.delta);
         if (itemId && delta) {
+          lastActivityAt = new Date().toISOString();
           activeAgentMessages.set(itemId, (activeAgentMessages.get(itemId) ?? '') + delta);
           scheduleFlush();
         }

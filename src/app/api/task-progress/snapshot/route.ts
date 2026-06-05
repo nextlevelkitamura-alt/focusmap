@@ -16,6 +16,18 @@ function validIsoCursor(value: string | null) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
 }
 
+function parseSnapshotCursor(value: string | null) {
+  if (!value) return null
+  const [updatedAtRaw, idRaw] = value.split('|')
+  const updatedAt = validIsoCursor(updatedAtRaw)
+  const id = typeof idRaw === 'string' ? idRaw.trim() : null
+  return updatedAt && id !== null ? { updatedAt, id } : null
+}
+
+function encodeSnapshotCursor(updatedAt: string, id: string) {
+  return `${updatedAt}|${id}`
+}
+
 function unavailable() {
   return NextResponse.json(
     { error: 'Turso is not configured', code: 'turso_not_configured' },
@@ -34,7 +46,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'invalid status' }, { status: 400 })
   }
 
-  const updatedAfter = validIsoCursor(searchParams.get('updated_after') || searchParams.get('cursor'))
+  const cursorParam = searchParams.get('cursor') || searchParams.get('updated_after')
+  const parsedCursor = parseSnapshotCursor(cursorParam)
+  const updatedAfter = parsedCursor ? null : validIsoCursor(cursorParam)
   const limit = parseLimit(searchParams.get('limit'))
 
   try {
@@ -42,18 +56,19 @@ export async function GET(request: NextRequest) {
       userId: auth.userId,
       spaceId: auth.spaceId,
       status,
+      cursor: parsedCursor,
       updatedAfter,
       limit,
     })
     const serverTime = new Date().toISOString()
-    const cursor = tasks.length > 0
-      ? tasks[tasks.length - 1]?.updated_at ?? updatedAfter
-      : updatedAfter ?? serverTime
+    const responseCursor = tasks.length > 0
+      ? encodeSnapshotCursor(tasks[tasks.length - 1]!.updated_at, tasks[tasks.length - 1]!.id)
+      : cursorParam ?? (updatedAfter ? `${updatedAfter}|` : `${serverTime}|`)
 
     return NextResponse.json({
       source: 'turso',
       server_time: serverTime,
-      cursor,
+      cursor: responseCursor,
       tasks,
     })
   } catch (error) {

@@ -43,7 +43,7 @@ const result = await client.execute(`
   SELECT name
   FROM sqlite_master
   WHERE type = 'table'
-    AND name IN ('ai_tasks', 'ai_task_progress', 'ai_task_events', 'runner_heartbeats', 'screenshots')
+    AND name IN ('ai_tasks', 'ai_task_progress', 'ai_task_events', 'runner_heartbeats', 'task_progress_watches', 'screenshots')
   ORDER BY name
 `)
 

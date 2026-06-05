@@ -174,6 +174,8 @@ export async function POST(req: NextRequest) {
     recurrence_cron,
     cwd,
     executor,
+    dispatch_mode,
+    codex_handoff_token,
     space_id,
     run_visibility,
   } = body
@@ -185,6 +187,17 @@ export async function POST(req: NextRequest) {
   if (!['claude', 'codex', 'codex_app', 'playwright', 'simple', 'browser', 'terminal'].includes(selectedExecutor)) {
     return NextResponse.json({ error: 'Invalid executor' }, { status: 400 })
   }
+  const codexDispatchMode = selectedExecutor === 'codex_app'
+    ? (dispatch_mode === 'auto' ? 'auto' : 'manual')
+    : null
+  const manualCodexHandoff = selectedExecutor === 'codex_app' && codexDispatchMode !== 'auto'
+  if (selectedExecutor === 'codex_app' && codexDispatchMode === 'auto' && (!cwd || typeof cwd !== 'string' || !cwd.trim())) {
+    return NextResponse.json({ error: 'cwd is required for Codex.app auto dispatch' }, { status: 400 })
+  }
+  const handoffToken = typeof codex_handoff_token === 'string' && /^FM-[A-Za-z0-9._:-]{8,120}$/.test(codex_handoff_token.trim())
+    ? codex_handoff_token.trim()
+    : null
+  const nowIso = new Date().toISOString()
 
   const resolved = await resolveAiTaskSpaceId(supabase, user.id, {
     space_id: typeof space_id === 'string' ? space_id : null,
@@ -218,13 +231,34 @@ export async function POST(req: NextRequest) {
       skill_id: skill_id || null,
       approval_type: approval_type || 'auto',
       parent_task_id: parent_task_id || null,
-      status: 'pending',
+      status: manualCodexHandoff ? 'needs_input' : 'pending',
+      started_at: manualCodexHandoff ? nowIso : null,
       scheduled_at: scheduled_at ?? null,
       recurrence_cron: recurrence_cron ?? null,
       cwd: cwd ?? null,
       executor: selectedExecutor,
       run_visibility: normalizeVisibility(run_visibility, resolved.spaceId ? 'space' : 'private'),
       billing_cycle: formatBillingCycle(),
+      result: manualCodexHandoff
+        ? {
+            executor: 'codex_app',
+            codex_manual_handoff: true,
+            codex_handoff_token: handoffToken,
+            codex_run_state: 'prompt_waiting',
+            codex_review_reason: 'manual_handoff',
+            live_log: 'プロンプト待ち。Codex.appで送信されると、Focusmapはthread状態とログを同期します。',
+            message: 'プロンプト待ちです。Codex.appで送信してください。',
+            last_activity_at: nowIso,
+            steps: [
+              {
+                key: 'prompt_waiting',
+                label: 'プロンプト待ち',
+                status: 'active',
+                at: nowIso,
+              },
+            ],
+          }
+        : null,
     })
     .select()
     .single()
@@ -241,8 +275,9 @@ export async function POST(req: NextRequest) {
         user_id: user.id,
         space_id: typeof data.space_id === 'string' ? data.space_id : null,
         title: prompt.trim().slice(0, 140),
-        status: typeof data.status === 'string' ? data.status : 'pending',
+        status: typeof data.status === 'string' ? data.status : manualCodexHandoff ? 'needs_input' : 'pending',
         executor: selectedExecutor,
+        dispatch_mode: codexDispatchMode,
         created_at: typeof data.created_at === 'string' ? data.created_at : null,
         started_at: typeof data.started_at === 'string' ? data.started_at : null,
         completed_at: typeof data.completed_at === 'string' ? data.completed_at : null,

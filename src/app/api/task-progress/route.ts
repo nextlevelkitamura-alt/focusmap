@@ -11,11 +11,24 @@ import {
 import { authenticateMonitoringRequest } from '@/lib/turso/request-auth'
 
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
-const MAX_MESSAGE_CHARS = 4_000
-const MAX_SUMMARY_CHARS = 2_000
+const MAX_MESSAGE_CHARS = 1_200
+const MAX_CURRENT_STEP_CHARS = 600
+const MAX_SUMMARY_CHARS = 1_200
 const MAX_PHASE_CHARS = 80
 const MAX_EVENT_TYPE_CHARS = 80
-const MAX_JSON_CHARS = 16_000
+const MAX_JSON_CHARS = 6_000
+const BLOCKED_PROGRESS_JSON_KEYS = new Set([
+  'live_log',
+  'output',
+  'raw_log',
+  'raw_output',
+  'thread_full_history',
+  'codex_thread_snapshot',
+  'image',
+  'image_body',
+  'screenshot',
+  'body',
+])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -27,13 +40,32 @@ function compactString(value: unknown, max: number) {
     : null
 }
 
-function boundedJson(value: unknown) {
+function sanitizeProgressJson(value: unknown, depth = 0): unknown {
   if (value === undefined || value === null) return null
-  const serialized = JSON.stringify(value)
+  if (typeof value === 'string') return value.slice(0, 600)
+  if (typeof value === 'number' || typeof value === 'boolean') return value
+  if (Array.isArray(value)) {
+    if (depth >= 3) return value.length
+    return value.slice(-20).map(item => sanitizeProgressJson(item, depth + 1))
+  }
+  if (!isRecord(value)) return null
+  if (depth >= 3) return { keys: Object.keys(value).slice(0, 20) }
+
+  const entries = Object.entries(value)
+    .filter(([key]) => !BLOCKED_PROGRESS_JSON_KEYS.has(key.toLowerCase()))
+    .slice(0, 40)
+    .map(([key, item]) => [key.slice(0, 80), sanitizeProgressJson(item, depth + 1)])
+  return Object.fromEntries(entries)
+}
+
+function boundedProgressJson(value: unknown) {
+  if (value === undefined || value === null) return null
+  const sanitized = sanitizeProgressJson(value)
+  const serialized = JSON.stringify(sanitized)
   if (serialized.length > MAX_JSON_CHARS) {
     throw new Error(`json payload must be ${MAX_JSON_CHARS} chars or less`)
   }
-  return value
+  return sanitized
 }
 
 function boundedProgressPercent(value: unknown) {
@@ -155,9 +187,9 @@ export async function POST(request: NextRequest) {
 
     const phase = compactString(body.phase, MAX_PHASE_CHARS)
     const message = compactString(body.message, MAX_MESSAGE_CHARS)
-    const progressJson = boundedJson(body.progress_json)
+    const progressJson = boundedProgressJson(body.progress_json)
     const status = compactString(body.status, 40)
-    const currentStep = compactString(body.current_step, MAX_MESSAGE_CHARS)
+    const currentStep = compactString(body.current_step, MAX_CURRENT_STEP_CHARS)
     const summary = compactString(body.summary, MAX_SUMMARY_CHARS)
     const errorMessage = compactString(body.error_message, MAX_SUMMARY_CHARS)
     const progressPercent = boundedProgressPercent(body.progress_percent)
@@ -165,7 +197,9 @@ export async function POST(request: NextRequest) {
     const executor = compactString(body.executor, 80)
     const lastActivityAt = compactString(body.last_activity_at, 80)
     const eventType = compactString(body.event_type, MAX_EVENT_TYPE_CHARS)
-    const eventPayload = boundedJson(body.event_payload)
+    const eventPayload = boundedProgressJson(body.event_payload)
+    const snapshotOnly = body.snapshot_only === true
+    const forceEvent = body.force_event === true
 
     if (status && !VALID_STATUSES.has(status)) {
       return NextResponse.json({ error: 'invalid status' }, { status: 400 })
@@ -195,7 +229,8 @@ export async function POST(request: NextRequest) {
       completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
     })
 
-    const progress = phase || message || progressJson
+    const statusChanged = Boolean(status && status !== task.status)
+    const progress = !snapshotOnly && (phase || message || progressJson)
       ? await insertTaskProgress({
           task_id: task.id,
           user_id: task.user_id,
@@ -210,13 +245,13 @@ export async function POST(request: NextRequest) {
           task_id: task.id,
           user_id: task.user_id,
           event_type: eventType,
-          payload_json: eventPayload,
-        })
-      : status
+            payload_json: eventPayload,
+          })
+        : status && (statusChanged || forceEvent)
         ? await insertTaskEvent({
             task_id: task.id,
             user_id: task.user_id,
-            event_type: `status:${status}`,
+            event_type: status,
             payload_json: { status, current_step: currentStep, progress_percent: progressPercent },
           })
         : null

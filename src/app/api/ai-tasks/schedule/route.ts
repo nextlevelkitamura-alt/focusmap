@@ -141,7 +141,10 @@ export async function POST(req: NextRequest) {
     executor === 'codex_app' ? 'codex_app' :
     executor === 'codex' ? 'codex' :
     'claude'
-  const manualCodexHandoff = resolvedExecutor === 'codex_app' && dispatch_mode === 'manual'
+  const codexDispatchMode = resolvedExecutor === 'codex_app'
+    ? (dispatch_mode === 'auto' ? 'auto' : 'manual')
+    : null
+  const manualCodexHandoff = resolvedExecutor === 'codex_app' && codexDispatchMode !== 'auto'
   if (resolvedExecutor === 'codex_app' && !manualCodexHandoff && (!cwd || typeof cwd !== 'string' || !cwd.trim())) {
     return NextResponse.json({ error: 'cwd is required for Codex.app auto dispatch' }, { status: 400 })
   }
@@ -313,7 +316,7 @@ export async function POST(req: NextRequest) {
         title: prompt.trim().slice(0, 140),
         status: typeof data.status === 'string' ? data.status : manualCodexHandoff ? 'needs_input' : 'pending',
         executor: resolvedExecutor,
-        dispatch_mode: dispatch_mode ?? null,
+        dispatch_mode: codexDispatchMode,
         source_type: source.source_type,
         source_id: source.source_id,
         codex_thread_id: typeof data.codex_thread_id === 'string' ? data.codex_thread_id : null,

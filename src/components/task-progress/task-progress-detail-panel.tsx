@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Terminal } from "lucide-react"
 import {
   Sheet,
@@ -19,6 +19,7 @@ import type {
 } from "@/types/task-progress"
 
 const DETAIL_POLL_INTERVAL_MS = 3_000
+const WATCH_PING_INTERVAL_MS = 10_000
 
 const STATUS_LABELS: Record<TaskProgressStatus, string> = {
   pending: "待機",
@@ -100,8 +101,13 @@ export function TaskProgressDetailPanel({
   const [detail, setDetail] = useState<TaskProgressDetailResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const watchIdRef = useRef<string | null>(null)
   const taskId = task?.id ?? null
   const isFixtureTask = !!taskId?.startsWith("fixture:")
+
+  if (!watchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    watchIdRef.current = `detail:${crypto.randomUUID()}`
+  }
 
   const fetchDetail = useCallback(async () => {
     if (!taskId) return
@@ -157,6 +163,30 @@ export function TaskProgressDetailPanel({
     const intervalId = window.setInterval(() => void fetchDetail(), DETAIL_POLL_INTERVAL_MS)
     return () => window.clearInterval(intervalId)
   }, [fetchDetail, isFixtureTask, open, taskId])
+
+  useEffect(() => {
+    if (!open || !taskId || isFixtureTask) return
+    const watchId = watchIdRef.current ?? `detail:${taskId}`
+    const sendWatch = (action: "open" | "close" | "ping") => {
+      void fetchWithSupabaseAuth("/api/task-progress/watch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: action === "close",
+        body: JSON.stringify({
+          task_id: taskId,
+          action,
+          watch_id: watchId,
+          ttl_seconds: 20,
+        }),
+      }).catch(() => undefined)
+    }
+    sendWatch("open")
+    const intervalId = window.setInterval(() => sendWatch("ping"), WATCH_PING_INTERVAL_MS)
+    return () => {
+      window.clearInterval(intervalId)
+      sendWatch("close")
+    }
+  }, [isFixtureTask, open, taskId])
 
   const taskForDisplay = detail?.task ?? task
   const status = taskForDisplay?.status

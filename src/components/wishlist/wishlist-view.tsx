@@ -910,7 +910,7 @@ export function WishlistView({
   }, [loadMemoCodexImages])
 
   // メモから AI エージェント（Claude / Codex）を起動
-  // Codex の主導線は Mac runner による自動実行。手動handoffは別導線で残す。
+  // Codex.app の標準導線は手動handoff。Focusmapはpromptと追跡taskだけ作る。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
@@ -958,9 +958,8 @@ export function WishlistView({
     await registerTask()
   }, [buildMemoCodexHandoffText, openCodexHandoff, projects])
 
-  // codex に一本化。claude(当環境でENOEXEC) / codex_app(GUI重複) は UI から撤去。
-  // 復活時は launchAiForMemo(item, 'claude'|'codex_app') の alias を足して prop を渡す。
-  const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
+  // 自動実行を復活させる場合は launchAiForMemo(item, 'codex') を明示導線に分ける。
+  const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
 
   const copyCodexPromptForMemo = useCallback(async (item: MemoItem) => {
     const text = await buildMemoCodexHandoffText(item)

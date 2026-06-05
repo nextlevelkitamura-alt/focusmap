@@ -4,6 +4,8 @@ import { isTursoConfigured } from '@/lib/turso/client'
 import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
+const MAX_CURRENT_STEP_CHARS = 600
+const MAX_SUMMARY_CHARS = 1_200
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -11,6 +13,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function compactString(value: unknown, max: number) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
+}
+
+function compactLatestLine(value: unknown, max: number) {
+  if (typeof value !== 'string') return null
+  const latest = value
+    .split(/\n{2,}|\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  return compactString(latest, max)
 }
 
 export async function POST(
@@ -28,7 +40,7 @@ export async function POST(
 
     const { data: task } = await supabase
       .from('ai_tasks')
-      .select('id, user_id, space_id, claimed_runner_id')
+          .select('id, user_id, space_id, claimed_runner_id, status')
       .eq('id', id)
       .maybeSingle()
     if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
@@ -61,12 +73,14 @@ export async function POST(
     if (isTursoConfigured()) {
       try {
         const resultJson = isRecord(body.result) ? body.result : {}
-        const currentStep = compactString(resultJson.current_step, 4000)
-          ?? compactString(resultJson.message, 4000)
-          ?? compactString(resultJson.live_log, 4000)
+        const currentStep = compactString(resultJson.current_step, MAX_CURRENT_STEP_CHARS)
+          ?? compactLatestLine(resultJson.message, MAX_CURRENT_STEP_CHARS)
+          ?? compactLatestLine(resultJson.live_log, MAX_CURRENT_STEP_CHARS)
         const summary = isRecord(resultJson.progress_summary)
-          ? JSON.stringify(resultJson.progress_summary).slice(0, 2000)
-          : compactString(resultJson.summary, 2000)
+          ? JSON.stringify(resultJson.progress_summary).slice(0, MAX_SUMMARY_CHARS)
+          : compactString(resultJson.summary, MAX_SUMMARY_CHARS)
+            ?? compactLatestLine(resultJson.message, MAX_SUMMARY_CHARS)
+        const statusChanged = status !== task.status
         await upsertTursoAiTask({
           id,
           user_id: String(task.user_id),
@@ -78,17 +92,19 @@ export async function POST(
           started_at: status === 'running' ? new Date().toISOString() : null,
           completed_at: status === 'completed' || status === 'failed' ? new Date().toISOString() : null,
         })
-        await insertTaskEvent({
-          task_id: id,
-          user_id: String(task.user_id),
-          event_type: `status:${status}`,
-          payload_json: {
-            runner_id: runnerId,
-            status,
-            error: typeof body.error === 'string' ? body.error : null,
-          },
-        })
-        if (currentStep || summary) {
+        if (statusChanged) {
+          await insertTaskEvent({
+            task_id: id,
+            user_id: String(task.user_id),
+            event_type: status,
+            payload_json: {
+              runner_id: runnerId,
+              status,
+              error: typeof body.error === 'string' ? body.error : null,
+            },
+          })
+        }
+        if (statusChanged && (currentStep || summary)) {
           await insertTaskProgress({
             task_id: id,
             user_id: String(task.user_id),

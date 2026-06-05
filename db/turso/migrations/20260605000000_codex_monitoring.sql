@@ -31,6 +31,9 @@ CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_user_status_updated
 CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_user_created
   ON ai_tasks(user_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_user_updated_cursor
+  ON ai_tasks(user_id, updated_at ASC, id ASC);
+
 CREATE INDEX IF NOT EXISTS idx_turso_ai_tasks_codex_thread
   ON ai_tasks(codex_thread_id)
   WHERE codex_thread_id IS NOT NULL;
@@ -81,6 +84,24 @@ CREATE TABLE IF NOT EXISTS runner_heartbeats (
 
 CREATE INDEX IF NOT EXISTS idx_turso_runner_heartbeats_user_seen
   ON runner_heartbeats(user_id, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS task_progress_watches (
+  task_id TEXT NOT NULL REFERENCES ai_tasks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  watcher_id TEXT NOT NULL,
+  watcher_type TEXT NOT NULL DEFAULT 'web',
+  expires_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (task_id, user_id, watcher_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_turso_task_progress_watches_user_expires
+  ON task_progress_watches(user_id, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_turso_task_progress_watches_task_expires
+  ON task_progress_watches(task_id, expires_at DESC);
 
 CREATE TABLE IF NOT EXISTS screenshots (
   id TEXT PRIMARY KEY,

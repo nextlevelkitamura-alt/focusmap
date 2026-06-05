@@ -14,6 +14,7 @@ export class AgentApiClient {
   private readonly apiUrl: string;
   private readonly token: string;
   private readonly progressCache = new Map<string, { hash: string; sentAt: number }>();
+  private activeWatchCache: { taskIds: Set<string>; expiresAt: number } | null = null;
 
   constructor(config: AgentConfig) {
     this.apiUrl = normalizeApiUrl(config.api_url);
@@ -36,6 +37,20 @@ export class AgentApiClient {
     return data as T;
   }
 
+  private async get<T>(path: string): Promise<T> {
+    const res = await fetch(`${this.apiUrl}${path}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`);
+    }
+    return data as T;
+  }
+
   private progressHash(body: Record<string, unknown>): string {
     const stable = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(stable);
@@ -47,6 +62,23 @@ export class AgentApiClient {
       );
     };
     return JSON.stringify(stable(body));
+  }
+
+  private async isTaskActivelyWatched(taskId: string): Promise<boolean> {
+    const now = Date.now();
+    if (this.activeWatchCache && this.activeWatchCache.expiresAt > now) {
+      return this.activeWatchCache.taskIds.has(taskId);
+    }
+    try {
+      const data = await this.get<{ active_task_ids?: string[] }>('/task-progress/watch?limit=200');
+      this.activeWatchCache = {
+        taskIds: new Set(Array.isArray(data.active_task_ids) ? data.active_task_ids : []),
+        expiresAt: now + 2_500,
+      };
+    } catch {
+      this.activeWatchCache = { taskIds: new Set(), expiresAt: now + 5_000 };
+    }
+    return this.activeWatchCache.taskIds.has(taskId);
   }
 
   private compactTaskResult(result: TaskResultJson | undefined): Record<string, unknown> | undefined {
@@ -125,6 +157,7 @@ export class AgentApiClient {
       task_id: taskId,
       status,
       phase: status,
+      snapshot_only: !options.eventType,
       executor: result?.executor,
       codex_thread_id: result?.codex_thread_id,
       current_step: currentStep,
@@ -146,7 +179,7 @@ export class AgentApiClient {
     }
 
     const hash = this.progressHash(body);
-    const minIntervalMs = options.minIntervalMs ?? 3_000;
+    const minIntervalMs = options.minIntervalMs ?? ((await this.isTaskActivelyWatched(taskId)) ? 3_000 : 5_000);
     const cached = this.progressCache.get(taskId);
     const now = Date.now();
     if (!options.force && cached?.hash === hash) return false;
@@ -174,6 +207,10 @@ export class AgentApiClient {
 
   async heartbeat(payload: Record<string, unknown>): Promise<{ runner: { id: string } }> {
     return this.request('/agents/heartbeat', payload);
+  }
+
+  async runnerHeartbeat(payload: Record<string, unknown>): Promise<{ heartbeat?: { last_seen_at: string } }> {
+    return this.request('/task-progress/runner-heartbeats', payload);
   }
 
   async claimTask(runnerId: string): Promise<AiTask | null> {
