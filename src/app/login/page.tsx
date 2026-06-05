@@ -3,11 +3,12 @@
 import { createClient } from "@/utils/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect, Suspense, useCallback, useMemo } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { isFocusmapIosAppShell, openExternalAuthUrl } from "@/lib/external-auth-launch"
+import type { Session } from "@supabase/supabase-js"
 
 const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
 const FALLBACK_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indoc2pzc2NnbWtra3pnY3d4amtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3MzgzNTcsImV4cCI6MjA4NDMxNDM1N30.qMVqh1DPzYFhJx29NtWghqfLGM68JHd3O51nxxWsWPA'
@@ -31,6 +32,23 @@ declare global {
                     status?: string
                 } | null
             }>
+            saveAuthSession?: (session: {
+                access_token: string
+                refresh_token: string
+                expires_at?: number | null
+                user_id?: string | null
+            }) => Promise<{ ok: boolean; error?: string }>
+            loadAuthSession?: () => Promise<{
+                ok: boolean
+                error?: string
+                session?: {
+                    access_token: string
+                    refresh_token: string
+                    expires_at?: number | null
+                    user_id?: string | null
+                } | null
+            }>
+            clearAuthSession?: () => Promise<{ ok: boolean; error?: string }>
         }
     }
 }
@@ -82,7 +100,7 @@ async function consumeDesktopAuthSession(nonce: string, authOrigin: string) {
 }
 
 function LoginContent() {
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
     const searchParams = useSearchParams()
     const router = useRouter()
     const [email, setEmail] = useState("")
@@ -104,6 +122,39 @@ function LoginContent() {
         }
         return text
     }
+
+    const saveDesktopSession = useCallback(async (session: Session | {
+        access_token?: string | null
+        refresh_token?: string | null
+        expires_at?: number | null
+        user?: { id?: string | null } | null
+        user_id?: string | null
+    } | null) => {
+        if (!isDesktopShell || !window.focusmapDesktop?.saveAuthSession || !session?.access_token || !session.refresh_token) {
+            return
+        }
+        await window.focusmapDesktop.saveAuthSession({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            expires_at: typeof session.expires_at === 'number' ? session.expires_at : null,
+            user_id: session.user?.id ?? ('user_id' in session ? session.user_id ?? null : null),
+        })
+    }, [isDesktopShell])
+
+    const restoreDesktopSession = useCallback(async () => {
+        if (!isDesktopShell || !window.focusmapDesktop?.loadAuthSession) return false
+        const saved = await window.focusmapDesktop.loadAuthSession()
+        if (!saved.ok || !saved.session?.access_token || !saved.session.refresh_token) return false
+        const { error } = await supabase.auth.setSession({
+            access_token: saved.session.access_token,
+            refresh_token: saved.session.refresh_token,
+        })
+        if (error) {
+            await window.focusmapDesktop.clearAuthSession?.()
+            return false
+        }
+        return true
+    }, [isDesktopShell, supabase])
 
     const checkSupabaseAuthAvailable = async () => {
         const response = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
@@ -131,14 +182,40 @@ function LoginContent() {
 
     // Check if already logged in
     useEffect(() => {
+        let cancelled = false
         const checkUser = async () => {
-            const { data: { user } } = await supabase.auth.getUser()
+            let { data: { user } } = await supabase.auth.getUser()
+            if (!user) {
+                const restored = await restoreDesktopSession()
+                if (restored) {
+                    const restoredUser = await supabase.auth.getUser()
+                    user = restoredUser.data.user
+                }
+            }
             if (user) {
+                if (cancelled) return
                 router.push(dashboardPath)
             }
         }
         checkUser()
-    }, [supabase, router, dashboardPath])
+        return () => {
+            cancelled = true
+        }
+    }, [supabase, router, dashboardPath, restoreDesktopSession])
+
+    useEffect(() => {
+        if (!isDesktopShell) return
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_OUT') {
+                window.focusmapDesktop?.clearAuthSession?.()
+                return
+            }
+            if (session) {
+                saveDesktopSession(session).catch(() => {})
+            }
+        })
+        return () => subscription.unsubscribe()
+    }, [supabase, isDesktopShell, saveDesktopSession])
 
     const handleGoogleLogin = async () => {
         setLoading(true)
@@ -168,6 +245,11 @@ function LoginContent() {
                             refresh_token: payload.refresh_token,
                         })
                         if (sessionError) throw sessionError
+                        await saveDesktopSession({
+                            access_token: payload.access_token,
+                            refresh_token: payload.refresh_token,
+                            user_id: payload.user_id ?? null,
+                        })
                         router.push('/dashboard?desktop=1&source=mac')
                         return
                     }
@@ -206,11 +288,12 @@ function LoginContent() {
         setMessage(null)
         try {
             await checkSupabaseAuthAvailable()
-            const { error } = await supabase.auth.signInWithPassword({
+            const { data, error } = await supabase.auth.signInWithPassword({
                 email,
                 password,
             })
             if (error) throw error
+            await saveDesktopSession(data.session)
             router.push(dashboardPath)
         } catch (error: unknown) {
             setMessage({ type: 'error', text: formatAuthError(error) })

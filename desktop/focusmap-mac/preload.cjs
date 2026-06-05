@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('focusmapDesktop', {
   openExternal: (url) => ipcRenderer.invoke('focusmap-desktop:openExternal', url),
   getWebAuthOrigin: () => ipcRenderer.invoke('focusmap-desktop:getWebAuthOrigin'),
   consumeAuthSession: (nonce, origin) => ipcRenderer.invoke('focusmap-desktop:consumeAuthSession', nonce, origin),
+  saveAuthSession: (session) => ipcRenderer.invoke('focusmap-desktop:saveAuthSession', session),
+  loadAuthSession: () => ipcRenderer.invoke('focusmap-desktop:loadAuthSession'),
+  clearAuthSession: () => ipcRenderer.invoke('focusmap-desktop:clearAuthSession'),
   onLog: (callback) => {
     const listener = (_event, line) => callback(line);
     ipcRenderer.on('focusmap-desktop:log', listener);

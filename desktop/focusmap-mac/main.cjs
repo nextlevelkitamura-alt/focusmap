@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage } = require('electron');
 const { spawn, execFile } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
@@ -8,6 +9,10 @@ const path = require('node:path');
 
 const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
 const APP_ORIGIN = process.env.FOCUSMAP_DESKTOP_URL || `http://127.0.0.1:${APP_PORT}`;
+const DESKTOP_USER_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'focusmap-desktop-shell');
+const DESKTOP_HEALTH_TOKEN = process.env.FOCUSMAP_DESKTOP_HEALTH_TOKEN || randomUUID();
+app.setPath('userData', DESKTOP_USER_DATA_DIR);
+
 function resolveRepoRoot() {
   if (process.env.FOCUSMAP_REPO_DIR) return process.env.FOCUSMAP_REPO_DIR;
   const candidates = [
@@ -61,6 +66,7 @@ const WEB_AUTH_ORIGIN = (
 ).replace(/\/$/, '');
 const RESOURCE_ROOT = app.isPackaged ? process.resourcesPath : REPO_ROOT;
 const CONFIG_PATH = path.join(os.homedir(), '.focusmap', 'config.json');
+const AUTH_SESSION_PATH = path.join(DESKTOP_USER_DATA_DIR, 'auth-session.json');
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 const AGENT_CLI = app.isPackaged
   ? path.join(RESOURCE_ROOT, 'focusmap-agent', 'dist', 'cli.js')
@@ -199,22 +205,35 @@ function tcpReady(host, port, timeoutMs = 800) {
   });
 }
 
-function httpReady(url, timeoutMs = 1000) {
+function httpRequest(url, timeoutMs = 1000, headers = {}) {
   return new Promise((resolve) => {
-    const req = http.get(url, { timeout: timeoutMs }, (res) => {
-      res.resume();
-      resolve(res.statusCode ? res.statusCode < 500 && res.statusCode !== 404 : true);
+    const req = http.get(url, { timeout: timeoutMs, headers }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode || 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+        });
+      });
     });
     req.once('timeout', () => {
       req.destroy();
-      resolve(false);
+      resolve({ statusCode: 0, body: '' });
     });
-    req.once('error', () => resolve(false));
+    req.once('error', () => resolve({ statusCode: 0, body: '' }));
   });
 }
 
+async function httpReady(url, timeoutMs = 1000) {
+  const response = await httpRequest(url, timeoutMs);
+  return response.statusCode < 500 && response.statusCode !== 404 && response.statusCode > 0;
+}
+
 function healthUrl() {
-  return `${APP_ORIGIN}/api/desktop/health`;
+  const url = new URL('/api/desktop/health', APP_ORIGIN);
+  if (isLocalAppOrigin()) url.searchParams.set('desktop_token', DESKTOP_HEALTH_TOKEN);
+  return url.toString();
 }
 
 function isLocalAppOrigin() {
@@ -485,6 +504,23 @@ async function waitForHttp(url, timeoutMs = 60_000) {
   return false;
 }
 
+async function desktopHealthReady(timeoutMs = 1200) {
+  const response = await httpRequest(healthUrl(), timeoutMs, {
+    'x-focusmap-desktop-token': DESKTOP_HEALTH_TOKEN,
+  });
+  if (response.statusCode >= 500 || response.statusCode === 404 || response.statusCode === 0) return false;
+  if (!isLocalAppOrigin() || process.env.FOCUSMAP_DESKTOP_URL) return true;
+
+  try {
+    const payload = JSON.parse(response.body);
+    if (payload?.app !== 'focusmap') return false;
+    if (!app.isPackaged) return true;
+    return payload.desktop_token_ok === true;
+  } catch {
+    return false;
+  }
+}
+
 function startNextServer() {
   if (process.env.FOCUSMAP_DESKTOP_URL) return null;
   if (isChildRunning(managedProcesses.next)) return managedProcesses.next;
@@ -510,6 +546,7 @@ function startNextServer() {
       PATH: CHILD_PATH,
       HOSTNAME: '127.0.0.1',
       PORT: String(APP_PORT),
+      FOCUSMAP_DESKTOP_HEALTH_TOKEN: DESKTOP_HEALTH_TOKEN,
       NEXTAUTH_URL: process.env.NEXTAUTH_URL || DESKTOP_ENV.NEXTAUTH_URL || APP_ORIGIN,
       NODE_ENV: isPackagedStandalone ? 'production' : process.env.NODE_ENV || 'development',
       NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-http-header-size=65536',
@@ -523,11 +560,105 @@ function startNextServer() {
 }
 
 async function ensureFocusmapApp() {
-  if (await httpReady(healthUrl(), 1200)) return APP_ORIGIN;
+  if (await desktopHealthReady(1200)) return APP_ORIGIN;
+  if (isLocalAppOrigin() && await tcpReady(appOriginHost(), APP_PORT, 250)) {
+    throw new Error(`${APP_ORIGIN} は応答していますが、このFocusmap Macアプリが起動したWebではありません。3001番を使っている古いNext/別プロジェクトを終了してから、Focusmapを開き直してください。`);
+  }
   startNextServer();
-  const ready = await waitForHttp(healthUrl(), 60_000);
+  const start = Date.now();
+  let ready = false;
+  while (Date.now() - start < 60_000) {
+    if (await desktopHealthReady(1200)) {
+      ready = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 800));
+  }
   if (!ready) throw new Error(`Focusmap を ${APP_ORIGIN} で起動できませんでした`);
   return APP_ORIGIN;
+}
+
+function normalizeDesktopAuthSession(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const accessToken = payload.access_token;
+  const refreshToken = payload.refresh_token;
+  if (typeof accessToken !== 'string' || accessToken.length < 20) return null;
+  if (typeof refreshToken !== 'string' || refreshToken.length < 20) return null;
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_at: typeof payload.expires_at === 'number' ? payload.expires_at : null,
+    user_id: typeof payload.user_id === 'string' ? payload.user_id : null,
+    saved_at: new Date().toISOString(),
+  };
+}
+
+function encodeDesktopAuthSession(sessionPayload) {
+  const serialized = JSON.stringify({ version: 1, session: sessionPayload });
+  if (safeStorage.isEncryptionAvailable()) {
+    return {
+      encryption: 'safeStorage',
+      data: safeStorage.encryptString(serialized).toString('base64'),
+    };
+  }
+  return {
+    encryption: 'plain',
+    data: serialized,
+  };
+}
+
+function decodeDesktopAuthSession(filePayload) {
+  if (!filePayload || typeof filePayload !== 'object') return null;
+  if (filePayload.encryption === 'safeStorage' && typeof filePayload.data === 'string') {
+    const decoded = safeStorage.decryptString(Buffer.from(filePayload.data, 'base64'));
+    return JSON.parse(decoded).session;
+  }
+  if (filePayload.encryption === 'plain' && typeof filePayload.data === 'string') {
+    return JSON.parse(filePayload.data).session;
+  }
+  return null;
+}
+
+function saveDesktopAuthSession(_event, payload) {
+  const sessionPayload = normalizeDesktopAuthSession(payload);
+  if (!sessionPayload) return { ok: false, error: '保存できるログインセッションがありません' };
+  try {
+    fs.mkdirSync(DESKTOP_USER_DATA_DIR, { recursive: true });
+    fs.writeFileSync(AUTH_SESSION_PATH, JSON.stringify(encodeDesktopAuthSession(sessionPayload), null, 2));
+    fs.chmodSync(AUTH_SESSION_PATH, 0o600);
+    log('auth', 'saved desktop auth session locally');
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log('auth', `failed to save desktop auth session: ${message}`);
+    return { ok: false, error: message };
+  }
+}
+
+function loadDesktopAuthSession() {
+  try {
+    if (!fs.existsSync(AUTH_SESSION_PATH)) return { ok: true, session: null };
+    const filePayload = JSON.parse(fs.readFileSync(AUTH_SESSION_PATH, 'utf8'));
+    const sessionPayload = normalizeDesktopAuthSession(decodeDesktopAuthSession(filePayload));
+    if (!sessionPayload) return { ok: true, session: null };
+    return { ok: true, session: sessionPayload };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log('auth', `failed to load desktop auth session: ${message}`);
+    return { ok: false, error: message, session: null };
+  }
+}
+
+function clearDesktopAuthSession() {
+  try {
+    fs.rmSync(AUTH_SESSION_PATH, { force: true });
+    log('auth', 'cleared desktop auth session');
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log('auth', `failed to clear desktop auth session: ${message}`);
+    return { ok: false, error: message };
+  }
 }
 
 async function startAgent() {
@@ -688,6 +819,7 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      partition: 'persist:focusmap-desktop',
     },
   });
   void loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html')).catch((error) => {
@@ -743,6 +875,7 @@ function createStatusWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      partition: 'persist:focusmap-desktop',
     },
   });
   statusWindow.loadFile(path.join(__dirname, 'status.html'));
@@ -804,6 +937,9 @@ ipcMain.handle('focusmap-desktop:openMain', () => {
 ipcMain.handle('focusmap-desktop:openExternal', (_event, url) => shell.openExternal(url));
 ipcMain.handle('focusmap-desktop:getWebAuthOrigin', () => WEB_AUTH_ORIGIN);
 ipcMain.handle('focusmap-desktop:consumeAuthSession', consumeExternalAuthSession);
+ipcMain.handle('focusmap-desktop:saveAuthSession', saveDesktopAuthSession);
+ipcMain.handle('focusmap-desktop:loadAuthSession', loadDesktopAuthSession);
+ipcMain.handle('focusmap-desktop:clearAuthSession', clearDesktopAuthSession);
 
 app.on('before-quit', () => {
   for (const name of Object.keys(managedProcesses)) {
