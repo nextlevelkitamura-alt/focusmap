@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { getLocalDevAuthForRequest } from '@/lib/auth/local-dev-auth'
 
 // Timeout for auth operations in middleware (5 seconds max)
 const AUTH_TIMEOUT = 5000
@@ -20,6 +21,16 @@ export async function updateSession(request: NextRequest) {
     let supabaseResponse = NextResponse.next({
         request,
     })
+
+    const localDevAuth = getLocalDevAuthForRequest(request)
+    if (localDevAuth) {
+        if (request.nextUrl.pathname === '/' || request.nextUrl.pathname === '/login') {
+            const url = request.nextUrl.clone()
+            url.pathname = '/dashboard'
+            return NextResponse.redirect(url)
+        }
+        return supabaseResponse
+    }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY

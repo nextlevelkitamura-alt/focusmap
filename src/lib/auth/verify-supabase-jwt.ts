@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server'
+import { getLocalDevAuthForRequest } from './local-dev-auth'
 
 const FALLBACK_SUPABASE_URL = 'https://whsjsscgmkkkzgcwxjko.supabase.co'
 const JWKS_CACHE_TTL_MS = 10 * 60_000
@@ -32,7 +33,7 @@ export type SupabaseAuthUser = {
 export type SupabaseRequestAuth = {
   user: SupabaseAuthUser
   claims: SupabaseJwtClaims | null
-  source: 'jwt' | 'supabase'
+  source: 'jwt' | 'supabase' | 'local_dev'
 }
 
 type JwtHeader = {
@@ -326,6 +327,15 @@ export async function authenticateSupabaseRequest(
   supabase?: SupabaseLikeWithAuth,
   options: { allowSupabaseFallback?: boolean } = {},
 ): Promise<SupabaseRequestAuth | null> {
+  const localDevAuth = getLocalDevAuthForRequest(request)
+  if (localDevAuth) {
+    return {
+      user: localDevAuth.user,
+      claims: null,
+      source: 'local_dev',
+    }
+  }
+
   const token = readSupabaseAccessToken(request)
   if (token) {
     try {
