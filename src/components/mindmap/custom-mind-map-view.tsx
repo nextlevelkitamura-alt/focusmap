@@ -22,6 +22,7 @@ import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import type { CodexRunState } from "@/lib/codex-run-state";
 import { useCalendars } from "@/hooks/useCalendars";
+import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
 type CustomMindMapViewProps = {
     project: Project;
@@ -51,6 +52,8 @@ type CustomMindMapViewProps = {
     onRefreshCodex?: () => void | Promise<void>;
     isRefreshingCodex?: boolean;
     codexRunByNodeId?: Record<string, CodexNodeState>;
+    taskProgressByNodeId?: Record<string, TaskProgressSnapshotTask>;
+    onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
     onMoveTask?: (params: {
         taskId: string;
         targetId: string;
@@ -87,6 +90,15 @@ const MOBILE_FLOATING_TASK_MIN_HEIGHT = 34;
 const MOBILE_FLOATING_PROJECT_MIN_HEIGHT = 36;
 type CustomDropPosition = "above" | "below" | "as-child";
 type CustomNavigationDirection = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+
+const TASK_PROGRESS_STATUS_LABELS: Record<TaskProgressStatus, string> = {
+    pending: "待機",
+    running: "実行中",
+    awaiting_approval: "確認待ち",
+    needs_input: "入力待ち",
+    completed: "完了",
+    failed: "失敗",
+};
 
 type CustomDropTarget = {
     nodeId: string;
@@ -154,6 +166,32 @@ type CustomTaskEditController = {
 type CustomEditRequestOptions = {
     selectAll?: boolean;
 };
+
+function getTaskProgressTone(status: TaskProgressStatus | string | null | undefined) {
+    switch (status) {
+        case "running":
+            return "border-emerald-400/70 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200";
+        case "awaiting_approval":
+        case "needs_input":
+            return "border-amber-400/70 bg-amber-500/10 text-amber-800 dark:text-amber-200";
+        case "completed":
+            return "border-sky-400/60 bg-sky-500/10 text-sky-800 dark:text-sky-200";
+        case "failed":
+            return "border-red-400/70 bg-red-500/10 text-red-700 dark:text-red-200";
+        default:
+            return "border-border bg-muted/60 text-muted-foreground";
+    }
+}
+
+function taskProgressStatusLabel(status: TaskProgressSnapshotTask["status"]) {
+    return TASK_PROGRESS_STATUS_LABELS[status] ?? status;
+}
+
+function compactTaskProgressText(task: TaskProgressSnapshotTask | null | undefined, isMobile: boolean) {
+    const text = (task?.current_step || task?.summary || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    return text.slice(0, isMobile ? 42 : 72);
+}
 
 type WebKitGestureEvent = Event & {
     scale: number;
@@ -254,6 +292,8 @@ function CustomTaskNode({
     calendars,
     onRunCodex,
     codexState,
+    taskProgress,
+    onOpenTaskProgress,
     onEditingChange,
     onRegisterEditController,
     onRequestEdit,
@@ -287,6 +327,8 @@ function CustomTaskNode({
     calendars: Array<{ google_calendar_id: string; name: string; selected?: boolean; is_primary?: boolean; color?: string | null; background_color?: string | null }>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexState?: CodexNodeState | null;
+    taskProgress?: TaskProgressSnapshotTask | null;
+    onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
     onEditingChange?: (taskId: string, isEditing: boolean) => void;
     onRegisterEditController?: (taskId: string, controller: CustomTaskEditController | null) => void;
     onRequestEdit?: (nodeId: string, initialValue?: string, options?: CustomEditRequestOptions) => boolean;
@@ -304,6 +346,7 @@ function CustomTaskNode({
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const isCodexPromptWaiting = codexState?.state === "prompt_waiting";
     const scheduledLabel = formatDateShort(node.scheduledAt);
+    const taskProgressText = compactTaskProgressText(taskProgress, isMobile);
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -630,6 +673,10 @@ function CustomTaskNode({
                 node.isDone && "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale",
                 codexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
                 codexState?.state === "running" && "border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
+                taskProgress?.status === "running" && "border-emerald-400/80 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
+                (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
+                taskProgress?.status === "completed" && "border-sky-400/60",
+                taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 selected && node.isDone && "ring-muted-foreground/40",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
@@ -669,6 +716,13 @@ function CustomTaskNode({
                     aria-label="Codex 実行中"
                 />
             )}
+            {taskProgress?.status === "running" && codexState?.state !== "running" && (
+                <div
+                    className="codex-node-running-orbit"
+                    title="Codex 実行中"
+                    aria-label="Codex 実行中"
+                />
+            )}
             {(codexState?.state === "prompt_waiting" || codexState?.state === "awaiting_approval") && (
                 <div
                     className={cn(
@@ -681,6 +735,27 @@ function CustomTaskNode({
                 >
                     {codexState.label}
                 </div>
+            )}
+            {taskProgress && (
+                <button
+                    type="button"
+                    className={cn(
+                        "absolute -right-2 top-4 z-10 max-w-[112px] rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm transition-colors",
+                        "whitespace-nowrap hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
+                        getTaskProgressTone(taskProgress.status),
+                        isMobile && "top-5 max-w-[96px]"
+                    )}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onOpenTaskProgress?.(taskProgress);
+                    }}
+                    title={`Codex ${taskProgressStatusLabel(taskProgress.status)}`}
+                    aria-label={`Codex進捗: ${taskProgressStatusLabel(taskProgress.status)} を開く`}
+                >
+                    <span className="truncate">{taskProgressStatusLabel(taskProgress.status)}</span>
+                </button>
             )}
             <div className="flex items-center gap-1">
                 <button
@@ -795,6 +870,11 @@ function CustomTaskNode({
                                                     Codex {codexState.label}
                                                 </span>
                                             )}
+                                            {taskProgress && (
+                                                <span className={cn("rounded border px-1.5 py-0.5", getTaskProgressTone(taskProgress.status))}>
+                                                    {taskProgressStatusLabel(taskProgress.status)}
+                                                </span>
+                                            )}
                                             {scheduledLabel && <span>{scheduledLabel}</span>}
                                             {node.estimatedDisplayMinutes > 0 && <span>{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>}
                                         </div>
@@ -807,6 +887,16 @@ function CustomTaskNode({
                                         <Bot className="h-4 w-4" />
                                         Codexに送る
                                     </button>
+                                    {taskProgress && (
+                                        <button
+                                            type="button"
+                                            className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                            onClick={(event) => handleMenuAction(event, () => onOpenTaskProgress?.(taskProgress))}
+                                        >
+                                            <Loader2 className={cn("h-4 w-4", taskProgress.status === "running" && "animate-spin")} />
+                                            Codex進捗を見る
+                                        </button>
+                                    )}
                                     <DateTimePicker
                                         date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
                                         estimatedMinutes={node.estimatedTime && node.estimatedTime > 0 ? node.estimatedTime : node.estimatedDisplayMinutes}
@@ -864,6 +954,11 @@ function CustomTaskNode({
                                                     Codex {codexState.label}
                                                 </span>
                                             )}
+                                            {taskProgress && (
+                                                <span className={cn("rounded border px-1.5 py-0.5", getTaskProgressTone(taskProgress.status))}>
+                                                    {taskProgressStatusLabel(taskProgress.status)}
+                                                </span>
+                                            )}
                                             {scheduledLabel && <span>{scheduledLabel}</span>}
                                             {node.estimatedDisplayMinutes > 0 && <span>{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>}
                                         </div>
@@ -876,6 +971,16 @@ function CustomTaskNode({
                                         <Bot className="h-4 w-4" />
                                         Codexに送る
                                     </button>
+                                    {taskProgress && (
+                                        <button
+                                            type="button"
+                                            className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
+                                            onClick={(event) => handleMenuAction(event, () => onOpenTaskProgress?.(taskProgress))}
+                                        >
+                                            <Loader2 className={cn("h-4 w-4", taskProgress.status === "running" && "animate-spin")} />
+                                            Codex進捗を見る
+                                        </button>
+                                    )}
                                     <DateTimePicker
                                         date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
                                         estimatedMinutes={node.estimatedTime && node.estimatedTime > 0 ? node.estimatedTime : node.estimatedDisplayMinutes}
@@ -901,6 +1006,29 @@ function CustomTaskNode({
                     )}
                 </div>
             </div>
+
+            {taskProgressText && !isEditing && (
+                <button
+                    type="button"
+                    className={cn(
+                        "mt-1 w-full rounded-md border px-1.5 py-1 text-left text-[10px] leading-snug transition-colors",
+                        "hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring",
+                        getTaskProgressTone(taskProgress?.status)
+                    )}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (taskProgress) onOpenTaskProgress?.(taskProgress);
+                    }}
+                    title={taskProgressText}
+                    aria-label="Codex進捗詳細を開く"
+                >
+                    <span className="block max-h-[2.45em] overflow-hidden break-words">
+                        {taskProgressText}
+                    </span>
+                </button>
+            )}
 
             {onResize && (
                 <div
@@ -1240,6 +1368,8 @@ export function CustomMindMapView({
     onResizeNode,
     onRunCodex,
     codexRunByNodeId = {},
+    taskProgressByNodeId = {},
+    onOpenTaskProgress,
     onMoveTask,
     onMoveTasks,
 }: CustomMindMapViewProps) {
@@ -2823,6 +2953,8 @@ export function CustomMindMapView({
                                 calendars={calendars}
                                 onRunCodex={onRunCodex}
                                 codexState={codexRunByNodeId[node.id] ?? null}
+                                taskProgress={taskProgressByNodeId[node.id] ?? null}
+                                onOpenTaskProgress={onOpenTaskProgress}
                                 onEditingChange={handleEditingChange}
                                 onRegisterEditController={handleRegisterEditController}
                                 onRequestEdit={startFloatingEdit}

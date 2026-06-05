@@ -3,11 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
+import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
+import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
 import type { Project, Task } from "@/types/database"
+import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress"
 
 type MobileCustomDropPosition = "above" | "below" | "as-child"
+const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiting_approval", "completed", "failed"]
+
+function shouldUseTaskProgressFixture() {
+    if (typeof window === "undefined") return false
+    const params = new URLSearchParams(window.location.search)
+    if (params.has("taskProgressFixture")) return true
+    return window.localStorage.getItem("focusmap:task-progress-fixture") === "1"
+}
 
 interface MobileMindMapProps {
     project: Project
@@ -44,6 +55,8 @@ export function MobileMindMap({
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
     const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
     const [codexPanelTaskId, setCodexPanelTaskId] = useState<string | null>(null)
+    const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
+    const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
     const { getBySourceId } = useMemoAiTasks()
 
@@ -55,6 +68,35 @@ export function MobileMindMap({
         return map
     }, [groups, tasks])
     const allMindMapTasks = useMemo(() => [...groups, ...tasks], [groups, tasks])
+
+    const taskProgressFixtureTasks = useMemo<TaskProgressSnapshotTask[] | undefined>(() => {
+        if (!taskProgressFixtureEnabled) return undefined
+        const now = new Date().toISOString()
+        return allMindMapTasks.slice(0, TASK_PROGRESS_FIXTURE_STATUSES.length).map((task, index) => {
+            const status = TASK_PROGRESS_FIXTURE_STATUSES[index] ?? "running"
+            return {
+                id: `fixture:${task.id}`,
+                title: task.title,
+                status,
+                executor: "codex_app",
+                codex_thread_id: `fixture-mobile-thread-${index + 1}`,
+                current_step: status === "running" ? "スマホ幅の進捗表示を確認中" : status === "awaiting_approval" ? "確認待ちです" : null,
+                progress_percent: status === "running" ? 58 : status === "completed" ? 100 : null,
+                summary: status === "failed" ? "検証でエラーがあります" : "Codex監視snapshotの表示確認",
+                updated_at: now,
+                source_type: "mindmap",
+                source_id: task.id,
+            }
+        })
+    }, [allMindMapTasks, taskProgressFixtureEnabled])
+
+    const {
+        tasks: taskProgressTasks,
+        getById: getTaskProgressById,
+    } = useTaskProgressSnapshot({
+        detailOpen: !!taskProgressPanelTaskId,
+        fixtureTasks: taskProgressFixtureTasks,
+    })
 
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {}
@@ -74,6 +116,28 @@ export function MobileMindMap({
         }
         return result
     }, [allMindMapTasks, getBySourceId])
+
+    const taskProgressByNodeId = useMemo(() => {
+        const result: Record<string, TaskProgressSnapshotTask> = {}
+        const snapshotByAiTaskId = new Map(taskProgressTasks.map(task => [task.id, task]))
+        for (const progressTask of taskProgressTasks) {
+            if (progressTask.source_type === "mindmap" && progressTask.source_id && taskMap.has(progressTask.source_id)) {
+                result[progressTask.source_id] = progressTask
+            }
+        }
+        for (const task of allMindMapTasks) {
+            if (result[task.id]) continue
+            const aiTask = getBySourceId(task.id)
+            const progressTask = aiTask ? snapshotByAiTaskId.get(aiTask.id) : null
+            if (progressTask) result[task.id] = progressTask
+        }
+        return result
+    }, [allMindMapTasks, getBySourceId, taskMap, taskProgressTasks])
+
+    const taskProgressPanelTask = useMemo(() => {
+        if (!taskProgressPanelTaskId) return null
+        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressTasks.find(task => task.id === taskProgressPanelTaskId) ?? null
+    }, [getTaskProgressById, taskProgressPanelTaskId, taskProgressTasks])
 
     const codexDirCandidates = useMemo(() => {
         const set = new Set<string>()
@@ -416,7 +480,17 @@ export function MobileMindMap({
                 onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                 onRunCodex={(taskId) => setCodexPanelTaskId(taskId)}
                 codexRunByNodeId={codexRunByNodeId}
+                taskProgressByNodeId={taskProgressByNodeId}
+                onOpenTaskProgress={(task) => setTaskProgressPanelTaskId(task.id)}
                 onMoveTask={handleMoveTask}
+            />
+            <TaskProgressDetailPanel
+                open={!!taskProgressPanelTask}
+                task={taskProgressPanelTask}
+                isMobile
+                onOpenChange={(open) => {
+                    if (!open) setTaskProgressPanelTaskId(null)
+                }}
             />
             {codexPanelNode && (
                 <CodexNodePanel

@@ -1,14 +1,18 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
+import { RefreshCw } from "lucide-react";
 import { Task, Project } from "@/types/database";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view";
 import { CodexNodePanel } from "@/components/codex/codex-node-panel";
+import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel";
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
+import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
+import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
 const waitForTaskStateFlush = () => new Promise<void>(resolve => {
     if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
@@ -80,6 +84,7 @@ const fileToDataUrl = (file: File): Promise<string> =>
 
 
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
+const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ['running', 'awaiting_approval', 'completed', 'failed'];
 
 type MindMapClipboardNode = {
     title: string;
@@ -112,6 +117,13 @@ type MindMapClipboardPayloadV1 = {
 };
 
 type MindMapClipboardAnyPayload = MindMapClipboardPayload | MindMapClipboardPayloadV1;
+
+function shouldUseTaskProgressFixture() {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('taskProgressFixture')) return true;
+    return window.localStorage.getItem('focusmap:task-progress-fixture') === '1';
+}
 
 interface MindMapProps {
     project: Project
@@ -150,11 +162,60 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onRemoveOptimisticEvent,
     });
     const allTasksByIdForCodex = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task])), [groups, tasks]);
+    const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture());
     const {
         bySourceId: aiTasksBySourceId,
         getBySourceId: getAiTaskBySourceId,
         refresh: refreshAiTasks,
     } = useMemoAiTasks();
+    const taskProgressFixtureTasks = useMemo<TaskProgressSnapshotTask[] | undefined>(() => {
+        if (!taskProgressFixtureEnabled) return undefined;
+        const sourceTasks = [...groups, ...tasks].slice(0, TASK_PROGRESS_FIXTURE_STATUSES.length);
+        const now = new Date().toISOString();
+        return sourceTasks.map((task, index) => {
+            const status = TASK_PROGRESS_FIXTURE_STATUSES[index] ?? 'running';
+            return {
+                id: `fixture:${task.id}`,
+                title: task.title,
+                status,
+                executor: 'codex_app',
+                codex_thread_id: `fixture-thread-${index + 1}`,
+                current_step: status === 'running'
+                    ? '差分を確認してUIへ反映中'
+                    : status === 'awaiting_approval'
+                        ? 'ユーザー確認待ち'
+                        : null,
+                progress_percent: status === 'running' ? 62 : status === 'completed' ? 100 : null,
+                summary: status === 'failed'
+                    ? '検証でエラーが出ています'
+                    : status === 'completed'
+                        ? '変更は完了しました'
+                        : 'Codex監視snapshotの表示確認',
+                updated_at: now,
+                source_type: 'mindmap',
+                source_id: task.id,
+            };
+        });
+    }, [groups, taskProgressFixtureEnabled, tasks]);
+    const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null);
+    const {
+        tasks: taskProgressTasks,
+        getById: getTaskProgressById,
+        pollIntervalMs: taskProgressPollIntervalMs,
+        refresh: refreshTaskProgressSnapshot,
+    } = useTaskProgressSnapshot({
+        detailOpen: !!taskProgressPanelTaskId,
+        fixtureTasks: taskProgressFixtureTasks,
+    });
+    const [isRefreshingTaskProgressSnapshot, setIsRefreshingTaskProgressSnapshot] = useState(false);
+    const handleRefreshTaskProgressSnapshot = useCallback(async () => {
+        setIsRefreshingTaskProgressSnapshot(true);
+        try {
+            await refreshTaskProgressSnapshot();
+        } finally {
+            setIsRefreshingTaskProgressSnapshot(false);
+        }
+    }, [refreshTaskProgressSnapshot]);
     const [isRefreshingCodexTasks, setIsRefreshingCodexTasks] = useState(false);
     const handleRefreshCodexTasks = useCallback(async () => {
         setIsRefreshingCodexTasks(true);
@@ -183,6 +244,29 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         }
         return result;
     }, [allTasksByIdForCodex, getAiTaskBySourceId]);
+    const taskProgressByNodeId = useMemo(() => {
+        const result: Record<string, TaskProgressSnapshotTask> = {};
+        const snapshotByAiTaskId = new Map(taskProgressTasks.map(task => [task.id, task]));
+        for (const progressTask of taskProgressTasks) {
+            if (progressTask.source_type === 'mindmap' && progressTask.source_id && allTasksByIdForCodex.has(progressTask.source_id)) {
+                result[progressTask.source_id] = progressTask;
+            }
+        }
+        for (const task of allTasksByIdForCodex.values()) {
+            if (result[task.id]) continue;
+            const aiTask = getAiTaskBySourceId(task.id);
+            const progressTask = aiTask ? snapshotByAiTaskId.get(aiTask.id) : null;
+            if (progressTask) result[task.id] = progressTask;
+        }
+        return result;
+    }, [allTasksByIdForCodex, getAiTaskBySourceId, taskProgressTasks]);
+    const taskProgressPanelTask = useMemo(() => {
+        if (!taskProgressPanelTaskId) return null;
+        return getTaskProgressById(taskProgressPanelTaskId) ?? taskProgressTasks.find(task => task.id === taskProgressPanelTaskId) ?? null;
+    }, [getTaskProgressById, taskProgressPanelTaskId, taskProgressTasks]);
+    const handleOpenTaskProgress = useCallback((task: TaskProgressSnapshotTask) => {
+        setTaskProgressPanelTaskId(task.id);
+    }, []);
     const codexCompletedNodeUpdates = useMemo(() => {
         const updates: Array<{ taskId: string; key: string }> = [];
         for (const task of allTasksByIdForCodex.values()) {
@@ -1227,7 +1311,17 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             onPasteCapture={handleContainerPasteCapture}
         >
             {/* MindMap Display Settings Button (Top Right) */}
-            <div className="absolute top-3 right-3 z-10">
+            <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={() => void handleRefreshTaskProgressSnapshot()}
+                    disabled={isRefreshingTaskProgressSnapshot}
+                    title={`Codex監視snapshotを更新（現在${Math.round(taskProgressPollIntervalMs / 1000)}秒間隔）`}
+                    aria-label="Codex監視snapshotを更新"
+                >
+                    <RefreshCw className={isRefreshingTaskProgressSnapshot ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                </button>
                 <MindMapDisplaySettingsPopover
                     value={displaySettings}
                     onChange={setDisplaySettings}
@@ -1266,8 +1360,18 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 onRefreshCodex={handleRefreshCodexTasks}
                 isRefreshingCodex={isRefreshingCodexTasks}
                 codexRunByNodeId={codexRunByNodeId}
+                taskProgressByNodeId={taskProgressByNodeId}
+                onOpenTaskProgress={handleOpenTaskProgress}
                 onMoveTask={handleCustomMoveTask}
                 onMoveTasks={handleCustomMoveTasks}
+            />
+            <TaskProgressDetailPanel
+                open={!!taskProgressPanelTask}
+                task={taskProgressPanelTask}
+                isMobile={isNarrow}
+                onOpenChange={(open) => {
+                    if (!open) setTaskProgressPanelTaskId(null);
+                }}
             />
             {codexPanelNode && (
                 <CodexNodePanel
