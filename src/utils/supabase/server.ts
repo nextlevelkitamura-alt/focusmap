@@ -14,10 +14,15 @@ export async function createClient() {
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY
     const localDevAuth = getLocalDevAuthForHost(headerStore.get('host'))
     const localDevJwt = localDevAuth ? createLocalDevSupabaseJwt(localDevAuth.user) : null
+    // Server-only localhost fallback for local DB reads when the Supabase JWT secret is unavailable.
+    const localDevServiceRoleKey = localDevAuth && !localDevJwt?.accessToken
+        ? process.env.SUPABASE_SERVICE_ROLE_KEY
+        : null
+    const supabaseKey = localDevServiceRoleKey || supabaseAnonKey
 
     const supabase = createServerClient(
         supabaseUrl,
-        supabaseAnonKey,
+        supabaseKey,
         {
             global: localDevJwt?.accessToken
                 ? {
