@@ -11,13 +11,13 @@ import { cn } from "@/lib/utils"
 
 const MAX_VISIBLE_ENTRIES = 4
 const MOBILE_MAX_VISIBLE_ENTRIES = 4
-const MOBILE_MAX_VISIBLE_ENTRIES_DENSE = 3
+const MOBILE_MAX_VISIBLE_ENTRIES_DENSE = 4
 const MONTH_ENTRY_FONT_SIZE = 8
 const MONTH_ENTRY_LINE_HEIGHT = 12
 const MONTH_DAY_NUMBER_FONT_SIZE = 8
-const MOBILE_MONTH_ENTRY_FONT_SIZE = 10
-const MOBILE_MONTH_ENTRY_LINE_HEIGHT = 18
-const MOBILE_MONTH_DAY_NUMBER_FONT_SIZE = 14
+const MOBILE_MONTH_ENTRY_FONT_SIZE = 9
+const MOBILE_MONTH_ENTRY_LINE_HEIGHT = 14
+const MOBILE_MONTH_DAY_NUMBER_FONT_SIZE = 10
 
 interface TodayMonthCalendarProps {
   selectedDate: Date
@@ -138,7 +138,7 @@ export function TodayMonthCalendar({
       <div
         className={cn(
           "grid flex-shrink-0 grid-cols-7 border-b",
-          isMobile ? "h-10 border-white/15 bg-[#090b0d]" : "border-border/30 bg-background/95",
+          isMobile ? "h-8 border-white/15 bg-[#090b0d]" : "border-border/30 bg-background/95",
         )}
       >
         {["月", "火", "水", "木", "金", "土", "日"].map((label) => (
@@ -146,7 +146,7 @@ export function TodayMonthCalendar({
             key={label}
             className={cn(
               "text-center font-semibold",
-              isMobile ? "grid place-items-center text-[13px]" : "py-1.5 text-[10px]",
+              isMobile ? "grid place-items-center text-[10px]" : "py-1.5 text-[10px]",
               label === "日"
                 ? isMobile
                   ? "text-[#ff7373]"
@@ -197,7 +197,7 @@ export function TodayMonthCalendar({
                 className={cn(
                   "min-w-0 overflow-hidden border-b border-r text-left outline-none",
                   isMobile
-                    ? "border-white/15 px-[2px] pb-1.5 pt-2 active:bg-white/[0.06]"
+                    ? "border-white/15 px-[2px] pb-1 pt-1 active:bg-white/[0.06]"
                     : "border-border/20 px-[5px] pb-1 pt-1 active:bg-muted/30",
                   !isCurrentMonth && (isMobile ? "opacity-38" : "opacity-35"),
                   isMobile && isSelected && "bg-white/[0.035] ring-1 ring-inset ring-white/80 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_0_14px_rgba(255,255,255,0.12)]",
@@ -205,11 +205,11 @@ export function TodayMonthCalendar({
                 )}
                 style={{ contain: "paint" }}
               >
-                <div className={cn("flex items-start justify-between gap-1", isMobile ? "mb-2" : "mb-0.5")}>
+                <div className="mb-0.5 flex items-start justify-between gap-1">
                   <span
                     className={cn(
                       "grid place-items-center font-bold",
-                      isMobile ? "h-6 min-w-6 rounded-full px-1" : "h-3.5 min-w-3.5 rounded px-0.5",
+                      isMobile ? "h-3.5 min-w-3.5 rounded-full px-0.5" : "h-3.5 min-w-3.5 rounded px-0.5",
                       isSunday || isHoliday
                         ? isMobile
                           ? "text-[#ff7373]"
@@ -223,21 +223,21 @@ export function TodayMonthCalendar({
                     )}
                     style={{
                       fontSize: isMobile ? MOBILE_MONTH_DAY_NUMBER_FONT_SIZE : MONTH_DAY_NUMBER_FONT_SIZE,
-                      lineHeight: isMobile ? "18px" : "10px",
+                      lineHeight: isMobile ? "10px" : "10px",
                     }}
                   >
                     {format(day, "d")}
                   </span>
                 </div>
 
-                <div className={cn(isMobile ? "space-y-1" : "space-y-0.5")}>
+                <div className="space-y-0.5">
                   {visibleEntries.map((entry) => (
                     <div
                       key={entry.id}
                       className={cn(
                         "block w-full max-w-full overflow-hidden whitespace-nowrap border-l font-medium",
                         isMobile
-                          ? "h-[18px] rounded-[3px] px-[2px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
+                          ? "h-3.5 rounded-[2px] px-[2px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
                           : "h-3 rounded-[2px] px-[4px] text-foreground/80",
                       )}
                       style={entryStyle(entry.color, variant)}
@@ -250,7 +250,7 @@ export function TodayMonthCalendar({
                       className={cn(
                         "block w-full max-w-full overflow-hidden whitespace-nowrap font-semibold",
                         isMobile
-                          ? "h-[18px] rounded-[3px] px-[2px] text-neutral-300"
+                          ? "h-3.5 rounded-[2px] px-[2px] text-neutral-300"
                           : "h-3 rounded-[2px] bg-muted/55 px-[4px] text-muted-foreground",
                       )}
                       style={{

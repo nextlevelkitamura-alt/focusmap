@@ -12,7 +12,7 @@ interface CalendarMonthViewProps {
 }
 
 const WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
-const MAX_DISPLAY_EVENTS = 5
+const MAX_DISPLAY_EVENTS = 4
 
 export function CalendarMonthView({
   currentDate,
@@ -75,16 +75,16 @@ export function CalendarMonthView({
             <div
               key={dayStr}
               className={cn(
-                "relative p-2 border border-border/10 transition-all duration-200 flex flex-col min-h-0 overflow-hidden",
+                "relative p-1.5 border border-border/10 transition-all duration-200 flex flex-col min-h-0 overflow-hidden",
                 !isCurrentMonth && "bg-muted/3 text-muted-foreground/50",
                 isHighlighted && "bg-primary/5 ring-2 ring-primary/30 ring-inset z-10",
                 "pointer-events-auto hover:bg-muted/10"
               )}
             >
               {/* Day Number */}
-              <div className="flex justify-start mb-1.5">
+              <div className="flex justify-start mb-0.5">
                 <span className={cn(
-                  "text-xs w-7 h-7 flex items-center justify-center rounded-full transition-colors flex-shrink-0",
+                  "text-[11px] h-[22px] w-[22px] flex items-center justify-center rounded-full transition-colors flex-shrink-0 leading-none",
                   isTodayDate
                     ? "bg-primary text-primary-foreground shadow-md font-semibold"
                     : "text-foreground/80 font-medium"
@@ -94,7 +94,7 @@ export function CalendarMonthView({
               </div>
 
               {/* Events List */}
-              <div className="flex flex-col gap-1 flex-1 overflow-hidden min-h-0">
+              <div className="flex flex-col gap-0.5 flex-1 overflow-hidden min-h-0">
                 {dayEvents.slice(0, MAX_DISPLAY_EVENTS).map((event) => (
                   <button
                     key={event.id}
@@ -102,7 +102,7 @@ export function CalendarMonthView({
                       e.stopPropagation()
                       onEventClick?.(event.id)
                     }}
-                    className="text-left text-[9px] px-1.5 py-0.5 rounded-md truncate transition-all hover:opacity-80 hover:scale-[1.02] shadow-sm border border-transparent leading-tight font-medium whitespace-nowrap"
+                    className="h-4 text-left text-[9px] px-1 py-0 rounded-[3px] truncate transition-all hover:opacity-80 hover:scale-[1.01] shadow-sm border border-transparent leading-4 font-medium whitespace-nowrap"
                     style={{
                       backgroundColor: event.background_color || '#039BE5',
                       color: '#ffffff',
@@ -119,8 +119,8 @@ export function CalendarMonthView({
                   </button>
                 ))}
                 {dayEvents.length > MAX_DISPLAY_EVENTS && (
-                  <span className="text-[9px] text-foreground/60 pl-1 font-medium cursor-pointer block truncate">
-                    +{dayEvents.length - MAX_DISPLAY_EVENTS}
+                  <span className="h-[13px] text-[9px] leading-[13px] text-foreground/60 pl-1 font-medium cursor-pointer block truncate">
+                    +{dayEvents.length - MAX_DISPLAY_EVENTS}件
                   </span>
                 )}
               </div>
