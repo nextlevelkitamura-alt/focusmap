@@ -28,6 +28,7 @@ export const dynamic = 'force-dynamic'
 const execFileAsync = promisify(execFile)
 const SQLITE_BIN = '/usr/bin/sqlite3'
 const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
+const CODEX_LAST_CHECKED_WRITE_INTERVAL_MS = 30_000
 const MAX_CURRENT_STEP_CHARS = 600
 const MAX_SUMMARY_CHARS = 1_200
 
@@ -147,16 +148,6 @@ async function readCodexThread(dbPath: string, threadId: string): Promise<CodexT
   return rows[0] ?? null
 }
 
-function buildFallbackLog(row: CodexThreadRow): string {
-  return [
-    `Codex thread ${row.id.slice(0, 8)}`,
-    `タイトル: ${row.title ?? '(未設定)'}`,
-    `最終更新: ${row.updated_at_ms ? new Date(row.updated_at_ms).toLocaleString('ja-JP') : '(未更新)'}`,
-    '',
-    row.preview ?? '',
-  ].filter(Boolean).join('\n')
-}
-
 function textFingerprint(value: string): string {
   let hash = 0
   for (let i = 0; i < value.length; i += 1) {
@@ -256,8 +247,57 @@ function hasVisibleCodexOutput(row: CodexThreadRow, parsed: ReturnType<typeof pa
   })
 }
 
+function visibleCodexActivityEvent(row: CodexThreadRow, parsed: ReturnType<typeof parseCodexRollout>, task: CodexTaskRow): {
+  role: AiTaskActivityRole
+  kind: AiTaskActivityKind
+  body: string
+  dedupeKey: string
+  importance?: 'normal' | 'important'
+} | null {
+  const candidates = [
+    { body: parsed.latestQuestion, kind: 'question' as const, importance: 'important' as const },
+    { body: parsed.latestAgentMessage, kind: 'progress' as const, importance: 'normal' as const },
+    { body: row.preview ?? '', kind: 'progress' as const, importance: 'normal' as const },
+  ]
+
+  for (const candidate of candidates) {
+    const body = compactText(candidate.body, 2_000)
+    if (!body) continue
+    if (isPromptWaitingText(body)) continue
+    if (isPromptEcho(body, task)) continue
+    const fingerprint = textFingerprint(body)
+    return {
+      role: 'codex',
+      kind: candidate.kind,
+      body,
+      dedupeKey: `thread:${row.id}:visible:${candidate.kind}:${fingerprint}`,
+      importance: candidate.importance,
+    }
+  }
+
+  return null
+}
+
 function threadUpdatedAtIso(row: CodexThreadRow) {
   return row.updated_at_ms ? new Date(row.updated_at_ms).toISOString() : null
+}
+
+function codexPulseStep(state: CodexRunState | 'prompt_waiting', reason: CodexReviewReason): string {
+  if (state === 'running') return 'Codex.appが作業中です'
+  if (state === 'awaiting_approval') return reviewReasonLabel(reason)
+  return 'プロンプト待ち'
+}
+
+function codexPulseSummary(state: CodexRunState | 'prompt_waiting', reason: CodexReviewReason, lastActivityAt: string | null): string {
+  const activity = lastActivityAt ? `最終活動 ${lastActivityAt}` : '活動時刻未取得'
+  if (state === 'running') return `Codex.appの稼働シグナルを確認中。${activity}`
+  if (state === 'awaiting_approval') return `Codex.appは確認待ちです（${reason}）。${activity}`
+  return `Codex.appは送信待ちです。${activity}`
+}
+
+function shouldWriteLastChecked(current: Record<string, unknown>, nowMs: number) {
+  const lastCheckedMs = parseTimeMs(current.codex_last_checked_at)
+  return lastCheckedMs == null || nowMs - lastCheckedMs >= CODEX_LAST_CHECKED_WRITE_INTERVAL_MS
 }
 
 function threadMovedSinceLastSync(current: Record<string, unknown>, row: CodexThreadRow) {
@@ -370,15 +410,17 @@ export async function POST(req: NextRequest) {
   if (!threadId) {
     threadId = await findMatchingCodexThread(dbPath, task)
     if (!threadId) {
-      await supabase
-        .from('ai_tasks')
-        .update({
-          result: {
-            ...current,
-            codex_last_checked_at: nowIso,
-          },
-        })
-        .eq('id', task.id)
+      if (shouldWriteLastChecked(current, nowMs)) {
+        await supabase
+          .from('ai_tasks')
+          .update({
+            result: {
+              ...current,
+              codex_last_checked_at: nowIso,
+            },
+          })
+          .eq('id', task.id)
+      }
       return NextResponse.json({ task_id: task.id, thread_id: null, state: 'prompt_waiting', synced: true })
     }
   }
@@ -407,7 +449,7 @@ export async function POST(req: NextRequest) {
           codex_review_reason: 'thread_deleted',
           codex_last_checked_at: nowIso,
           current_step: 'Codex threadが見つかりません',
-          live_log: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
+          live_log: undefined,
           message: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
         },
       })
@@ -444,14 +486,9 @@ export async function POST(req: NextRequest) {
       : visibleCodexOutput
         ? 'completed'
         : 'manual_handoff'
-  const liveLog = sentInCodex || resumedFromApproval || visibleCodexOutput
-    ? (parsed.liveLog || buildFallbackLog(row))
-    : (typeof current.live_log === 'string' ? current.live_log : 'プロンプト待ち。Codex.appで送信されると、Focusmapはthread状態とログを同期します。')
-  const currentStep = codexState === 'awaiting_approval'
-    ? reviewReasonLabel(reviewReason)
-    : codexState === 'running'
-      ? (parsed.currentStep || 'Codex.appで実行中')
-      : 'プロンプト待ち'
+  const currentStep = codexPulseStep(codexState, reviewReason)
+  const lastActivityAt = parsed.lastActivityAt ?? threadUpdatedAtIso(row) ?? (typeof current.last_activity_at === 'string' ? current.last_activity_at : nowIso)
+  const summary = codexPulseSummary(codexState, reviewReason, lastActivityAt)
 
   const nextStatus =
     codexState === 'prompt_waiting'
@@ -484,51 +521,68 @@ export async function POST(req: NextRequest) {
     else steps.push(completedStep)
   }
 
-  await supabase
-    .from('ai_tasks')
-    .update({
-      status: nextStatus,
-      started_at: task.started_at ?? nowIso,
-      codex_thread_id: threadId,
-      result: {
-        ...current,
-        executor: task.executor,
-        codex_manual_handoff: current.codex_manual_handoff === true,
+  const shouldRecordProgress = codexState === 'running' && shouldWriteProgressActivity(current, currentStep, nowMs)
+  const result = {
+    ...current,
+    executor: task.executor,
+    codex_manual_handoff: current.codex_manual_handoff === true,
+    codex_thread_id: threadId,
+    codex_thread_url: `codex://threads/${threadId}`,
+    codex_run_state: codexState,
+    codex_review_reason: reviewReason,
+    codex_last_checked_at: nowIso,
+    last_activity_at: lastActivityAt,
+    live_log: undefined,
+    message: codexState === 'awaiting_approval'
+      ? 'Codex セッションは確認待ちです。内容を確認して完了にしてください。'
+      : summary,
+    current_step: currentStep,
+    session_health: codexState === 'running' ? 'active' : codexState === 'awaiting_approval' ? 'stopped' : 'unknown',
+    awaiting_approval_at: codexState === 'awaiting_approval'
+      ? (typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso)
+      : null,
+    codex_thread_snapshot: {
+      title: row.title ?? null,
+      preview: null,
+      preview_chars: typeof row.preview === 'string' ? row.preview.length : 0,
+      tokens_used: row.tokens_used ?? null,
+      has_user_event: row.has_user_event ?? null,
+      archived,
+      updated_at_ms: row.updated_at_ms ?? null,
+      source: row.source ?? null,
+      cwd: row.cwd ?? null,
+    },
+    ...(shouldRecordProgress
+      ? {
+          codex_activity_last_progress_step: currentStep,
+          codex_activity_last_progress_at: nowIso,
+        }
+      : {}),
+    steps,
+  }
+
+  const shouldUpdateSupabase =
+    nextStatus !== task.status ||
+    !hadThreadId ||
+    resumedFromApproval ||
+    threadMoved ||
+    previousRunState !== codexState ||
+    current.current_step !== currentStep ||
+    current.last_activity_at !== lastActivityAt ||
+    shouldRecordProgress ||
+    shouldWriteLastChecked(current, nowMs)
+
+  if (shouldUpdateSupabase) {
+    await supabase
+      .from('ai_tasks')
+      .update({
+        status: nextStatus,
+        started_at: task.started_at ?? nowIso,
         codex_thread_id: threadId,
-        codex_thread_url: `codex://threads/${threadId}`,
-        codex_run_state: codexState,
-        codex_review_reason: reviewReason,
-        codex_last_checked_at: nowIso,
-        last_activity_at: parsed.lastActivityAt ?? threadUpdatedAtIso(row) ?? (typeof current.last_activity_at === 'string' ? current.last_activity_at : nowIso),
-        live_log: liveLog,
-        message: codexState === 'awaiting_approval'
-          ? `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`
-          : liveLog,
-        current_step: currentStep,
-        session_health: codexState === 'running' ? 'active' : codexState === 'awaiting_approval' ? 'stopped' : 'unknown',
-        awaiting_approval_at: codexState === 'awaiting_approval'
-          ? (typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso)
-          : null,
-        codex_thread_snapshot: {
-          title: row.title ?? null,
-          preview: row.preview ?? null,
-          tokens_used: row.tokens_used ?? null,
-          has_user_event: row.has_user_event ?? null,
-          archived,
-          updated_at_ms: row.updated_at_ms ?? null,
-          source: row.source ?? null,
-          cwd: row.cwd ?? null,
-        },
-        ...(codexState === 'running' && shouldWriteProgressActivity(current, currentStep, nowMs)
-          ? {
-              codex_activity_last_progress_step: currentStep,
-              codex_activity_last_progress_at: nowIso,
-            }
-          : {}),
-        steps,
-      },
-    })
-    .eq('id', task.id)
+        result,
+      })
+      .eq('id', task.id)
+  }
 
   const shouldMirrorToTurso =
     !hadThreadId ||
@@ -544,7 +598,7 @@ export async function POST(req: NextRequest) {
         status: nextStatus,
         threadId,
         currentStep,
-        summary: liveLog,
+        summary,
         codexState,
         previousRunState,
         hadThreadId,
@@ -604,6 +658,11 @@ export async function POST(req: NextRequest) {
       body: parsed.latestQuestion,
       dedupeKey: `thread:${threadId}:question:${textFingerprint(parsed.latestQuestion)}`,
     })
+  }
+
+  const visibleActivityEvent = visibleCodexActivityEvent(row, parsed, task)
+  if (visibleActivityEvent && !activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
+    activityEvents.push(visibleActivityEvent)
   }
 
   if (

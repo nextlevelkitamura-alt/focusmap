@@ -5,7 +5,7 @@ import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 import type { TaskProgressSnapshotResponse, TaskProgressSnapshotTask } from '@/types/task-progress'
 
 const RUNNING_POLL_INTERVAL_MS = 5_000
-const DETAIL_POLL_INTERVAL_MS = 3_000
+const DETAIL_POLL_INTERVAL_MS = 5_000
 const IDLE_POLL_INTERVAL_MS = 45_000
 const ACTIVITY_HINT_POLL_INTERVAL_MS = 5_000
 const ACTIVITY_HINT_WARM_MS = 90_000

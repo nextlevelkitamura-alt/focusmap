@@ -23,6 +23,7 @@ import {
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import type { AiTaskActivityMessage } from "@/types/ai-task"
 import { Bot, Clock, Copy, ExternalLink, Laptop, Loader2, Mic, RefreshCw, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
@@ -72,7 +73,7 @@ type CodexChatEntry = {
 
 const RUNNER_ONLINE_WINDOW_MS = 5 * 60 * 1000
 const RUNNER_STATUS_POLL_MS = 30_000
-const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
+const CODEX_PANEL_SYNC_INTERVAL_MS = 5_000
 const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 
@@ -146,6 +147,21 @@ function sanitizeCodexDisplayLog(value: string): string {
 function buildCodexDisplayLog(liveLog: string, message: string, preview: string): string {
   const base = liveLog || message || preview
   return sanitizeCodexDisplayLog(base).slice(-CODEX_DISPLAY_LOG_CHARS)
+}
+
+function activityMessagesToDisplayLog(messages: AiTaskActivityMessage[]): string {
+  return messages
+    .map((message) => {
+      const body = message.body.trim()
+      if (!body) return ""
+      if (message.role === "user" || message.kind === "user_answer") return `[user] ${body}`
+      if (message.role === "codex" && (message.kind === "progress" || message.kind === "question" || message.kind === "approval" || message.kind === "completed")) {
+        return `[assistant] ${body}`
+      }
+      return `[Codex] ${body}`
+    })
+    .filter(Boolean)
+    .join("\n\n")
 }
 
 function parseCodexConversation(value: string, prompt: string): { entries: CodexChatEntry[]; processLogs: string[] } {
@@ -259,6 +275,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [isSyncingCodex, setIsSyncingCodex] = useState(false)
   const [justSentPrompt, setJustSentPrompt] = useState("")
   const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
+  const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
   const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
@@ -278,6 +296,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setIsSyncingCodex(false)
     setJustSentPrompt("")
     setCodexRunnerStatus({ checked: false, ready: false })
+    setCodexActivityMessages([])
+    setCodexActivityError(null)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
   }, [open, node.taskId, node.title, node.memo])
@@ -450,9 +470,10 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
+  const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
   const codexConversation = useMemo(
-    () => parseCodexConversation(codexDisplayLog, rawSentPrompt),
-    [codexDisplayLog, rawSentPrompt],
+    () => parseCodexConversation([codexActivityDisplayLog, codexDisplayLog].filter(Boolean).join("\n\n"), rawSentPrompt),
+    [codexActivityDisplayLog, codexDisplayLog, rawSentPrompt],
   )
   const codexStatusLabel =
     codexTask?.status === "completed"
@@ -517,6 +538,46 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }, intervalMs)
     return () => window.clearInterval(intervalId)
   }, [codexUiState?.state, hasCodexRun, open, syncCodexState])
+
+  useEffect(() => {
+    const taskId = codexTask?.id
+    if (!open || !taskId || !isCodexTask) {
+      setCodexActivityMessages([])
+      setCodexActivityError(null)
+      return
+    }
+
+    let cancelled = false
+    const loadActivity = async () => {
+      try {
+        const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}/activity`, { cache: "no-store" })
+        const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+        if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+        if (!cancelled) {
+          setCodexActivityMessages(Array.isArray(data.messages) ? data.messages : [])
+          setCodexActivityError(null)
+        }
+      } catch (err) {
+        if (!cancelled) setCodexActivityError(err instanceof Error ? err.message : "Codex活動履歴を取得できません")
+      }
+    }
+
+    void loadActivity()
+    const intervalMs = (
+      codexUiState?.state === "running" ||
+      codexUiState?.state === "prompt_waiting" ||
+      codexUiState?.state === "awaiting_approval"
+    )
+      ? CODEX_PANEL_SYNC_INTERVAL_MS
+      : CODEX_PANEL_IDLE_SYNC_INTERVAL_MS
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadActivity()
+    }, intervalMs)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [codexTask?.id, codexUiState?.state, isCodexTask, open])
 
   const openCodexThread = useCallback(async () => {
     const prompt = codexThreadUrl ? "" : sentPrompt || codexPrompt
@@ -788,7 +849,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       </span>
                     )}
                     <span className="text-[11px] text-muted-foreground">
-                      {isSyncingCodex ? "同期中" : "約3秒ごとに同期"}
+                      {isSyncingCodex ? "同期中" : "約5秒ごとに同期"}
                     </span>
                   </div>
                   <div className="flex shrink-0 gap-2">
@@ -878,7 +939,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
                         {codexWaitingForAppSend
                           ? "Codex.appで送信されると、ここに同期ログが表示されます"
-                          : "Codex.app側の出力はまだ同期されていません"}
+                          : codexActivityError
+                            ? "Codex活動履歴を取得できません。更新を押すか、Codexで開いて確認してください"
+                            : "Codex.app側の出力はまだ同期されていません"}
                       </div>
                     )}
                   </div>

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { AiTask } from '@/types/ai-task'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
-const RUNNING_CODEX_REFRESH_INTERVAL_MS = 3_000
+const RUNNING_CODEX_REFRESH_INTERVAL_MS = 5_000
 const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
 const IDLE_REFRESH_INTERVAL_MS = 2 * 60_000
 

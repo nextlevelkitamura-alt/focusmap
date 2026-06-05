@@ -850,7 +850,7 @@ export function WishlistView({
   const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { calendars } = useCalendars()
-  const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
+  const { getBySourceId: getMemoAiTask, refresh: refreshMemoAiTasks } = useMemoAiTasks()
   const { pushAction } = useUndoRedo()
   const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
 
@@ -951,6 +951,7 @@ export function WishlistView({
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error || `起動失敗 (${res.status})`)
       }
+      await refreshMemoAiTasks()
     }
 
     if (isCodexManualHandoff) {
@@ -960,7 +961,7 @@ export function WishlistView({
     }
 
     await registerTask()
-  }, [buildMemoCodexHandoffText, openCodexHandoff, projects])
+  }, [buildMemoCodexHandoffText, openCodexHandoff, projects, refreshMemoAiTasks])
 
   // 自動実行を復活させる場合は launchAiForMemo(item, 'codex') を明示導線に分ける。
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])

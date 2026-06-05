@@ -23,6 +23,7 @@ export function startHeartbeatLoop(
   config: AgentConfig,
   runnerId: string,
   intervalMs = 10_000,
+  getCurrentTaskId: () => string | null = () => null,
 ): NodeJS.Timeout {
   let nextAllowedAt = 0;
   let backoffMs = intervalMs;
@@ -31,14 +32,17 @@ export function startHeartbeatLoop(
     const now = Date.now();
     if (now < nextAllowedAt) return;
     try {
+      const currentTaskId = getCurrentTaskId();
       await api.runnerHeartbeat({
         runner_id: runnerId,
         hostname: config.hostname,
         device_id: config.hostname,
         status: 'online',
+        current_task_id: currentTaskId,
         metadata: {
           app: 'focusmap-lite',
           heartbeat_kind: 'liveness',
+          agent_state: currentTaskId ? 'running' : 'idle',
         },
       });
       if (now - lastFullRegistrationAt >= FULL_REGISTRATION_INTERVAL_MS) {

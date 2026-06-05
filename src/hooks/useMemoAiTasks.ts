@@ -7,7 +7,7 @@ import { getCodexTaskUiState } from '@/lib/codex-run-state'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
 const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 const lastLocalSyncByTaskId = new Map<string, number>()

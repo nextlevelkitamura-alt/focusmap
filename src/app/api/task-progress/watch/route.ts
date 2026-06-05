@@ -30,6 +30,24 @@ function unavailable() {
   )
 }
 
+function emptyWatches(source = 'turso_not_configured') {
+  return NextResponse.json({
+    source,
+    server_time: new Date().toISOString(),
+    active_task_ids: [],
+    watches: [],
+  })
+}
+
+function noopWatchResponse(action: string | null, watcherId: string | null, source = 'turso_not_configured') {
+  return NextResponse.json({
+    ok: true,
+    source,
+    active: action !== 'close',
+    watch_id: watcherId,
+  })
+}
+
 function defaultWatcherId(auth: NonNullable<Awaited<ReturnType<typeof authenticateMonitoringRequest>>>) {
   if (auth.source === 'agent') return `agent:${auth.agent.token.id}`
   return `web:${auth.userId}`
@@ -52,7 +70,7 @@ async function cleanupExpiredWatchesIfDue() {
 export async function GET(request: NextRequest) {
   const auth = await authenticateMonitoringRequest(request)
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!isTursoConfigured()) return unavailable()
+  if (!isTursoConfigured()) return emptyWatches()
 
   const { searchParams } = new URL(request.url)
   const taskId = searchParams.get('task_id')?.trim() || null
@@ -82,7 +100,6 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await authenticateMonitoringRequest(request)
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!isTursoConfigured()) return unavailable()
 
   const body = await request.json().catch(() => null) as unknown
   if (!isRecord(body)) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
@@ -92,6 +109,7 @@ export async function POST(request: NextRequest) {
   const watcherId = compactString(body.watch_id, 160) ?? defaultWatcherId(auth)
   if (!taskId) return NextResponse.json({ error: 'task_id is required' }, { status: 400 })
   if (!action || !VALID_ACTIONS.has(action)) return NextResponse.json({ error: 'invalid action' }, { status: 400 })
+  if (!isTursoConfigured()) return noopWatchResponse(action, watcherId)
 
   try {
     await cleanupExpiredWatchesIfDue()

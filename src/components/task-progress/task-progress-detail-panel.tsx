@@ -22,8 +22,9 @@ import type {
   TaskProgressDetailResponse,
   TaskProgressSnapshotTask,
 } from "@/types/task-progress"
+import type { AiTaskActivityMessage } from "@/types/ai-task"
 
-const DETAIL_POLL_INTERVAL_MS = 3_000
+const DETAIL_POLL_INTERVAL_MS = 5_000
 const WATCH_PING_INTERVAL_MS = 10_000
 
 function statusClass(status: string | null | undefined) {
@@ -81,6 +82,24 @@ function activityLabel(value: string | null | undefined) {
   }
 }
 
+function activityMessageLabel(message: AiTaskActivityMessage) {
+  if (message.role === "user" || message.kind === "user_answer") return "Focusmap"
+  if (message.kind === "question") return "Codexから質問"
+  if (message.kind === "approval") return "Codex確認"
+  if (message.kind === "completed") return "Codex完了"
+  if (message.kind === "failed") return "接続失敗"
+  if (message.kind === "prompt_waiting") return "プロンプト待ち"
+  return message.role === "codex" ? "Codex" : "状態"
+}
+
+function activityMessageClass(message: AiTaskActivityMessage) {
+  if (message.role === "user" || message.kind === "user_answer") return "ml-auto bg-muted"
+  if (message.kind === "question" || message.kind === "approval") return "border-amber-500/30 bg-amber-500/10"
+  if (message.kind === "failed") return "border-red-500/30 bg-red-500/10"
+  if (message.kind === "completed") return "border-emerald-500/30 bg-emerald-500/10"
+  return "bg-background"
+}
+
 type TaskProgressDetailPanelProps = {
   open: boolean
   task: TaskProgressSnapshotTask | null
@@ -95,6 +114,8 @@ export function TaskProgressDetailPanel({
   onOpenChange,
 }: TaskProgressDetailPanelProps) {
   const [detail, setDetail] = useState<TaskProgressDetailResponse | null>(null)
+  const [activityMessages, setActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [activityError, setActivityError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const watchIdRef = useRef<string | null>(null)
@@ -145,20 +166,42 @@ export function TaskProgressDetailPanel({
     }
   }, [isFixtureTask, task, taskId])
 
+  const fetchActivity = useCallback(async () => {
+    if (!taskId || isFixtureTask) return
+    try {
+      const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(taskId)}/activity`, { cache: "no-store" })
+      const data = await response.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+      if (!response.ok) throw new Error(data.error || `activity fetch failed (${response.status})`)
+      setActivityMessages(Array.isArray(data.messages) ? data.messages : [])
+      setActivityError(null)
+    } catch (err) {
+      setActivityError(err instanceof Error ? err.message : "activity fetch failed")
+    }
+  }, [isFixtureTask, taskId])
+
   useEffect(() => {
     if (!open || !taskId) {
       setDetail(null)
+      setActivityMessages([])
+      setActivityError(null)
       setError(null)
       return
     }
     void fetchDetail()
-  }, [fetchDetail, open, taskId])
+    void fetchActivity()
+  }, [fetchActivity, fetchDetail, open, taskId])
 
   useEffect(() => {
     if (!open || !taskId || isFixtureTask) return
     const intervalId = window.setInterval(() => void fetchDetail(), DETAIL_POLL_INTERVAL_MS)
     return () => window.clearInterval(intervalId)
   }, [fetchDetail, isFixtureTask, open, taskId])
+
+  useEffect(() => {
+    if (!open || !taskId || isFixtureTask) return
+    const intervalId = window.setInterval(() => void fetchActivity(), DETAIL_POLL_INTERVAL_MS)
+    return () => window.clearInterval(intervalId)
+  }, [fetchActivity, isFixtureTask, open, taskId])
 
   useEffect(() => {
     if (!open || !taskId || isFixtureTask) return
@@ -283,6 +326,32 @@ export function TaskProgressDetailPanel({
                 {error}
               </div>
             )}
+
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-muted-foreground">Codexチャット / 活動</h3>
+                <span className="text-[11px] text-muted-foreground">5秒ごとに確認</span>
+              </div>
+              {activityMessages.length > 0 ? (
+                <div className="space-y-2">
+                  {activityMessages.slice(-12).map(message => (
+                    <article key={message.id} className={cn("max-w-[95%] rounded-lg border p-3", activityMessageClass(message))}>
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                        <span className="truncate font-medium text-foreground">{activityMessageLabel(message)}</span>
+                        <span className="shrink-0">{formatDateTime(message.created_at)}</span>
+                      </div>
+                      <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90">
+                        {message.body}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+                  {activityError ? "Codex activityを取得できません" : "Codex側の発話を待っています"}
+                </div>
+              )}
+            </section>
 
             <section>
               <div className="mb-2 flex items-center justify-between">

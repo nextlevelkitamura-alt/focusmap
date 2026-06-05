@@ -18,10 +18,14 @@ function unavailable() {
   )
 }
 
+function emptyHeartbeats(source = 'turso_not_configured') {
+  return NextResponse.json({ source, heartbeats: [] })
+}
+
 export async function GET(request: NextRequest) {
   const auth = await authenticateMonitoringRequest(request)
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!isTursoConfigured()) return unavailable()
+  if (!isTursoConfigured()) return emptyHeartbeats()
 
   const { searchParams } = new URL(request.url)
   const limit = Math.min(Math.max(Number.parseInt(searchParams.get('limit') || '20', 10) || 20, 1), 100)
@@ -46,6 +50,7 @@ export async function POST(request: NextRequest) {
 
   const runnerId = compactString(body.runner_id, 160) ?? compactString(body.hostname, 120)
   if (!runnerId) return NextResponse.json({ error: 'runner_id or hostname is required' }, { status: 400 })
+  const hasCurrentTaskId = Object.prototype.hasOwnProperty.call(body, 'current_task_id')
 
   try {
     const heartbeat = await upsertRunnerHeartbeat({
@@ -53,7 +58,7 @@ export async function POST(request: NextRequest) {
       user_id: auth.userId,
       device_id: compactString(body.device_id, 160),
       status: compactString(body.status, 40) ?? 'online',
-      current_task_id: compactString(body.current_task_id, 160),
+      ...(hasCurrentTaskId ? { current_task_id: compactString(body.current_task_id, 160) } : {}),
       version: compactString(body.version, 80),
       metadata_json: isRecord(body.metadata) ? body.metadata : {},
     })

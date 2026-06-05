@@ -604,6 +604,7 @@ export async function upsertRunnerHeartbeat(input: {
   metadata_json?: unknown
 }) {
   const seenAt = input.last_seen_at ?? nowIso()
+  const hasCurrentTaskId = Object.prototype.hasOwnProperty.call(input, 'current_task_id')
   await getTursoClient().execute({
     sql: `
       INSERT INTO runner_heartbeats (
@@ -615,7 +616,7 @@ export async function upsertRunnerHeartbeat(input: {
         device_id = excluded.device_id,
         status = excluded.status,
         last_seen_at = excluded.last_seen_at,
-        current_task_id = excluded.current_task_id,
+        current_task_id = CASE WHEN ? THEN excluded.current_task_id ELSE runner_heartbeats.current_task_id END,
         version = excluded.version,
         metadata_json = excluded.metadata_json,
         updated_at = excluded.updated_at
@@ -631,6 +632,7 @@ export async function upsertRunnerHeartbeat(input: {
       jsonOrNull(input.metadata_json),
       seenAt,
       seenAt,
+      hasCurrentTaskId ? 1 : 0,
     ],
   })
   return { last_seen_at: seenAt }

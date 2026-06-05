@@ -34,8 +34,8 @@ import { cn } from "@/lib/utils"
 import type { Task } from "@/types/database"
 import type { TaskProgressSnapshotTask } from "@/types/task-progress"
 
-const HEARTBEAT_ONLINE_WINDOW_MS = 5 * 60 * 1000
-const HEARTBEAT_POLL_INTERVAL_MS = 30_000
+const HEARTBEAT_ONLINE_WINDOW_MS = 20_000
+const HEARTBEAT_POLL_INTERVAL_MS = 5_000
 
 type SourceTaskInfo = Pick<Task, "id" | "status" | "title">
 
@@ -43,12 +43,15 @@ type RunnerHeartbeat = {
   status?: string | null
   last_seen_at?: string | null
   updated_at?: string | null
+  current_task_id?: string | null
+  metadata_json?: Record<string, unknown> | null
 }
 
 type RunnerConnectionState = {
   loading: boolean
   online: boolean
   lastSeenAt: string | null
+  activeTaskSeenAtById: ReadonlyMap<string, string>
 }
 
 type CodexKanbanLaneId = "unsent" | "running" | "review" | "connection_failed" | "done"
@@ -114,6 +117,7 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
     loading: true,
     online: false,
     lastSeenAt: null,
+    activeTaskSeenAtById: new Map(),
   })
 
   const refresh = useCallback(async () => {
@@ -135,11 +139,21 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
         lastSeenMs > 0 &&
         Date.now() - lastSeenMs < HEARTBEAT_ONLINE_WINDOW_MS &&
         latest.status !== "offline"
+      const activeTaskSeenAtById = new Map<string, string>()
+      for (const heartbeat of heartbeats) {
+        const seenAt = heartbeat.last_seen_at || heartbeat.updated_at || null
+        const taskId = heartbeat.current_task_id?.trim()
+        const seenMs = seenAt ? Date.parse(seenAt) : Number.NaN
+        if (!taskId || !seenAt || !Number.isFinite(seenMs)) continue
+        if (Date.now() - seenMs >= HEARTBEAT_ONLINE_WINDOW_MS) continue
+        activeTaskSeenAtById.set(taskId, seenAt)
+      }
 
       setState({
         loading: false,
         online,
         lastSeenAt: latest?.seenAt ?? null,
+        activeTaskSeenAtById,
       })
     } catch {
       setState(previous => ({ ...previous, loading: false }))
@@ -177,8 +191,8 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
 
 function relativePollLabel(pollIntervalMs: number, isDetailOpen: boolean) {
   const seconds = Math.round(pollIntervalMs / 1000)
-  if (isDetailOpen || seconds <= 3) return "詳細を高頻度更新中"
   if (seconds <= 5) return "5秒ごとに更新"
+  if (isDetailOpen) return "詳細を更新中"
   return `${seconds}秒ごとに更新`
 }
 
@@ -211,11 +225,13 @@ function KanbanCard({
   task,
   runnerState,
   isMobile,
+  nowMs,
   onOpen,
 }: {
   task: TaskProgressSnapshotTask
   runnerState: RunnerConnectionState
   isMobile: boolean
+  nowMs: number
   onOpen: (task: TaskProgressSnapshotTask) => void
 }) {
   const statusLabel = codexMonitorUiLabel(task.status)
@@ -223,6 +239,20 @@ function KanbanCard({
   const primary = uiStatus === "unsent" ? "" : compactCodexMonitorText(task.current_step, isMobile ? 42 : 74)
   const secondary = uiStatus === "unsent" ? "" : compactCodexMonitorText(task.summary, isMobile ? 56 : 96)
   const updatedAt = formatTaskProgressDateTime(task.updated_at)
+  const taskPulseSeenAt = runnerState.activeTaskSeenAtById.get(task.id) ?? null
+  const taskPulseMs = taskPulseSeenAt ? Date.parse(taskPulseSeenAt) : Number.NaN
+  const updatedMs = Date.parse(task.updated_at)
+  const hasRecentTaskPulse = nowMs > 0 && Number.isFinite(taskPulseMs) && nowMs - taskPulseMs < HEARTBEAT_ONLINE_WINDOW_MS
+  const hasFreshTaskUpdate = nowMs > 0 && Number.isFinite(updatedMs) && nowMs - updatedMs < HEARTBEAT_ONLINE_WINDOW_MS
+  const pulseLabel = uiStatus === "running"
+    ? hasRecentTaskPulse && hasFreshTaskUpdate
+      ? "5秒pulse"
+      : hasRecentTaskPulse
+        ? "Codex停止疑い"
+        : runnerState.online
+          ? "pulse待ち"
+          : "Mac offline"
+    : null
 
   return (
     <button
@@ -255,9 +285,16 @@ function KanbanCard({
         <RunnerChip state={runnerState} />
         {updatedAt && <span className="rounded-full bg-muted px-2 py-0.5">最終 {updatedAt}</span>}
         {uiStatus === "running" && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-700 dark:text-emerald-200">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
+              hasRecentTaskPulse && hasFreshTaskUpdate
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                : "bg-amber-500/10 text-amber-800 dark:text-amber-200",
+            )}
+          >
             <Loader2 className="h-3 w-3 animate-spin" />
-            更新中
+            {pulseLabel}
           </span>
         )}
       </div>
@@ -277,11 +314,13 @@ function KanbanLanes({
   lanes,
   runnerState,
   isMobile,
+  nowMs,
   onOpenTask,
 }: {
   lanes: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]>
   runnerState: RunnerConnectionState
   isMobile: boolean
+  nowMs: number
   onOpenTask: (task: TaskProgressSnapshotTask) => void
 }) {
   return (
@@ -311,6 +350,7 @@ function KanbanLanes({
                     task={task}
                     runnerState={runnerState}
                     isMobile={isMobile}
+                    nowMs={nowMs}
                     onOpen={onOpenTask}
                   />
                 ))
@@ -336,7 +376,13 @@ export function TaskProgressKanban({
 }: TaskProgressKanbanProps) {
   const [expanded, setExpanded] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const runnerState = useRunnerConnection()
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), HEARTBEAT_POLL_INTERVAL_MS)
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   const lanes = useMemo(() => {
     const grouped: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]> = {
@@ -364,7 +410,7 @@ export function TaskProgressKanban({
     }, { unsent: 0, running: 0, review: 0, connection_failed: 0, done: 0 })
   }, [lanes])
   const total = counts.unsent + counts.running + counts.review + counts.connection_failed + counts.done
-  const pollLabel = relativePollLabel(pollIntervalMs, pollIntervalMs <= 3_000)
+  const pollLabel = relativePollLabel(pollIntervalMs, pollIntervalMs <= 5_000)
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -424,7 +470,7 @@ export function TaskProgressKanban({
                   最新状態を確認中...
                 </div>
               ) : (
-                <KanbanLanes lanes={lanes} runnerState={runnerState} isMobile onOpenTask={onOpenTask} />
+                <KanbanLanes lanes={lanes} runnerState={runnerState} isMobile nowMs={nowMs} onOpenTask={onOpenTask} />
               )}
             </div>
           </SheetContent>
@@ -481,7 +527,7 @@ export function TaskProgressKanban({
               最新状態を確認中...
             </div>
           ) : (
-            <KanbanLanes lanes={lanes} runnerState={runnerState} isMobile={false} onOpenTask={onOpenTask} />
+            <KanbanLanes lanes={lanes} runnerState={runnerState} isMobile={false} nowMs={nowMs} onOpenTask={onOpenTask} />
           )}
         </div>
       )}

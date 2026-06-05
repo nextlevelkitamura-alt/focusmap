@@ -10,7 +10,7 @@
  *   2. Config 読み込み + 検証
  *   3. Focusmap API client 作成 (agent_token認証)
  *   4. ai_runners に登録 → runner_id 取得
- *   5. 10秒ごとに lightweight heartbeat ループ
+ *   5. 5秒ごとに lightweight heartbeat ループ
  *   6. 15秒ごとに claim_ai_task_for_runner で task pull
  *   7. claim したタスクを executor で実行
  *   8. SIGINT/SIGTERM でグレースフルシャットダウン
@@ -31,7 +31,7 @@ function intervalFromEnv(name: string, fallbackMs: number, minMs: number, maxMs:
   return Math.max(minMs, Math.min(maxMs, raw));
 }
 
-const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL_MS', 10_000, 10_000, 60_000);
+const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL_MS', 5_000, 5_000, 60_000);
 const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 15_000, 5_000, 60_000);
 const COMMAND_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_COMMAND_INTERVAL_MS', 15_000, 5_000, 60_000);
 
@@ -77,15 +77,22 @@ async function main(): Promise<void> {
   }
   info(`runner registered id=${runnerId}`);
 
-  // 5. Heartbeat ループ (10s lightweight Turso upsert by default)
-  const heartbeatTimer = startHeartbeatLoop(api, config, runnerId, HEARTBEAT_INTERVAL_MS);
+  let currentTaskId: string | null = null;
+
+  // 5. Heartbeat ループ (5s lightweight Turso upsert by default)
+  const heartbeatTimer = startHeartbeatLoop(api, config, runnerId, HEARTBEAT_INTERVAL_MS, () => currentTaskId);
 
   // 6. Claim ループ (15s by default)
   const claimTimer = startClaimLoop(
     api,
     runnerId,
     async (task) => {
-      await executeTask(task, api, config, runnerId);
+      currentTaskId = task.id;
+      try {
+        await executeTask(task, api, config, runnerId);
+      } finally {
+        currentTaskId = null;
+      }
     },
     CLAIM_INTERVAL_MS,
   );

@@ -35,10 +35,20 @@ function unavailable() {
   )
 }
 
+function emptySnapshot(source = 'turso_not_configured') {
+  const serverTime = new Date().toISOString()
+  return NextResponse.json({
+    source,
+    server_time: serverTime,
+    cursor: `${serverTime}|`,
+    tasks: [],
+  })
+}
+
 export async function GET(request: NextRequest) {
   const auth = await authenticateMonitoringRequest(request)
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!isTursoConfigured()) return unavailable()
+  if (!isTursoConfigured()) return emptySnapshot()
 
   const { searchParams } = new URL(request.url)
   const status = searchParams.get('status')?.trim() || null

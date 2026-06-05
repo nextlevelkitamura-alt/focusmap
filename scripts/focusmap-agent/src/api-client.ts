@@ -14,7 +14,6 @@ export class AgentApiClient {
   private readonly apiUrl: string;
   private readonly token: string;
   private readonly progressCache = new Map<string, { hash: string; sentAt: number }>();
-  private activeWatchCache: { taskIds: Set<string>; expiresAt: number } | null = null;
 
   constructor(config: AgentConfig) {
     this.apiUrl = normalizeApiUrl(config.api_url);
@@ -37,20 +36,6 @@ export class AgentApiClient {
     return data as T;
   }
 
-  private async get<T>(path: string): Promise<T> {
-    const res = await fetch(`${this.apiUrl}${path}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : `Focusmap API error ${res.status}`);
-    }
-    return data as T;
-  }
-
   private progressHash(body: Record<string, unknown>): string {
     const stable = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(stable);
@@ -62,23 +47,6 @@ export class AgentApiClient {
       );
     };
     return JSON.stringify(stable(body));
-  }
-
-  private async isTaskActivelyWatched(taskId: string): Promise<boolean> {
-    const now = Date.now();
-    if (this.activeWatchCache && this.activeWatchCache.expiresAt > now) {
-      return this.activeWatchCache.taskIds.has(taskId);
-    }
-    try {
-      const data = await this.get<{ active_task_ids?: string[] }>('/task-progress/watch?limit=200');
-      this.activeWatchCache = {
-        taskIds: new Set(Array.isArray(data.active_task_ids) ? data.active_task_ids : []),
-        expiresAt: now + 2_500,
-      };
-    } catch {
-      this.activeWatchCache = { taskIds: new Set(), expiresAt: now + 5_000 };
-    }
-    return this.activeWatchCache.taskIds.has(taskId);
   }
 
   private compactTaskResult(result: TaskResultJson | undefined): Record<string, unknown> | undefined {
@@ -119,8 +87,8 @@ export class AgentApiClient {
   private currentStepFromResult(result: TaskResultJson | undefined): string | undefined {
     if (!result) return undefined;
     if (result.executor === 'codex_app') {
-      const latestLog = this.compactLogLine(result.live_log || result.output || result.message, 600);
-      if (latestLog) return latestLog;
+      if (result.codex_run_state === 'awaiting_approval') return 'Codex実行が完了し確認待ちです';
+      return 'Codex.appが作業中です';
     }
     const lastStep = result.steps?.slice().reverse().find((step) => step.label || step.detail);
     if (lastStep) {
@@ -134,6 +102,11 @@ export class AgentApiClient {
     if (!result) return undefined;
     if (result.codex_run_state === 'awaiting_approval') {
       return 'Codex実行が完了し、Focusmapで承認待ちです。';
+    }
+    if (result.executor === 'codex_app') {
+      return result.last_activity_at
+        ? `Codex.appの稼働シグナルを確認中。最終活動 ${result.last_activity_at}`
+        : 'Codex.appの稼働シグナルを確認中。';
     }
     const latestLog = this.compactLogLine(result.live_log || result.output || result.message, 1_200);
     return latestLog ?? this.compactText(result.message, 1_200, true);
@@ -179,7 +152,7 @@ export class AgentApiClient {
     }
 
     const hash = this.progressHash(body);
-    const minIntervalMs = options.minIntervalMs ?? ((await this.isTaskActivelyWatched(taskId)) ? 3_000 : 5_000);
+    const minIntervalMs = options.minIntervalMs ?? 5_000;
     const cached = this.progressCache.get(taskId);
     const now = Date.now();
     if (!options.force && cached?.hash === hash) return false;

@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import QRCode from "react-qr-code"
 import { Terminal, Loader2, Smartphone, Copy, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Settings, ExternalLink, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage, AiTaskProgressState, AiTaskProgressSummary } from "@/types/ai-task"
 
 interface NoteClaudeRunnerProps {
@@ -291,9 +292,27 @@ export function NoteClaudeRunnerPanel({
   const [progressOverride, setProgressOverride] = useState<AiTaskProgressSummary | null>(null)
   const [activityMessages, setActivityMessages] = useState<AiTaskActivityMessage[]>([])
   const [activityError, setActivityError] = useState<string | null>(null)
+  const autoExpandedTaskIdRef = useRef<string | null>(null)
   const latestTaskId = latestTask?.id ?? null
   const latestExecutor = latestTask?.executor ?? null
+  const latestTaskStatus = latestTask?.status ?? null
+  const isLatestTaskActive = latestTaskStatus ? ACTIVE_STATUSES.has(latestTaskStatus) : false
   const isCodexTaskForActivity = latestExecutor === "codex" || latestExecutor === "codex_app"
+
+  useEffect(() => {
+    if (!latestTaskId) {
+      autoExpandedTaskIdRef.current = null
+      return
+    }
+    if (
+      isCodexTaskForActivity &&
+      isLatestTaskActive &&
+      autoExpandedTaskIdRef.current !== latestTaskId
+    ) {
+      setExpanded(true)
+      autoExpandedTaskIdRef.current = latestTaskId
+    }
+  }, [isCodexTaskForActivity, isLatestTaskActive, latestTaskId])
 
   useEffect(() => {
     setProgressOverride(null)
@@ -310,7 +329,7 @@ export function NoteClaudeRunnerPanel({
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch(`/api/ai-tasks/${latestTaskId}/activity`, { cache: "no-store" })
+        const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${latestTaskId}/activity`, { cache: "no-store" })
         const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
         if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
         if (!cancelled) {
@@ -323,16 +342,15 @@ export function NoteClaudeRunnerPanel({
     }
 
     void load()
-    const interval = latestTask?.result && typeof latestTask.result === "object" && !Array.isArray(latestTask.result)
-      && (latestTask.result as Record<string, unknown>).codex_run_state === "running"
-      ? window.setInterval(() => void load(), 3_000)
+    const interval = isLatestTaskActive
+      ? window.setInterval(() => void load(), 5_000)
       : null
 
     return () => {
       cancelled = true
       if (interval) window.clearInterval(interval)
     }
-  }, [expanded, isCodexTaskForActivity, latestTask?.result, latestTaskId])
+  }, [expanded, isCodexTaskForActivity, isLatestTaskActive, latestTask?.result, latestTaskId])
 
   if (!isProjectAssigned) return null
 
@@ -531,7 +549,7 @@ export function NoteClaudeRunnerPanel({
                   </div>
                   <p className="mt-0.5 text-[10px] text-muted-foreground">
                     {codexUiState?.state === "running"
-                      ? "実行中だけ約3秒ごとに状態を同期します"
+                      ? "実行中だけ約5秒ごとに状態を同期します"
                       : codexUiState?.state === "prompt_waiting"
                         ? "Codex側で送信されるまで待機しています"
                         : "最新の確認内容を優先して表示します"}
@@ -554,9 +572,21 @@ export function NoteClaudeRunnerPanel({
                 </div>
               )}
 
+              {latestTask.prompt && (
+                <div className="rounded-md border bg-background/80 px-2.5 py-2 text-[11px] leading-5">
+                  <div className="mb-1 flex items-center justify-between gap-2 text-muted-foreground">
+                    <span className="font-medium text-foreground">Focusmapから送信</span>
+                    <span className="text-[10px]">{latestTask.prompt.length}字</span>
+                  </div>
+                  <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words font-sans">
+                    {latestTask.prompt}
+                  </pre>
+                </div>
+              )}
+
               {visibleActivityMessages.length > 0 ? (
                 <div className="space-y-1.5">
-                  <div className="text-[10px] font-medium text-muted-foreground">最近の活動</div>
+                  <div className="text-[10px] font-medium text-muted-foreground">Codexチャット / 活動</div>
                   {visibleActivityMessages.map(message => (
                     <div key={message.id} className={cn("rounded-md border px-2.5 py-2 text-[11px] leading-5", activityTone(message))}>
                       <div className="mb-0.5 flex items-center justify-between gap-2 text-muted-foreground">
@@ -569,7 +599,7 @@ export function NoteClaudeRunnerPanel({
                 </div>
               ) : (
                 <div className="rounded bg-muted/20 px-2 py-1.5 text-[10px] text-muted-foreground italic">
-                  {codexUiState?.state === "awaiting_approval" ? codexReviewBody : codexCurrentStep || "まだ活動メッセージはありません"}
+                  {codexUiState?.state === "awaiting_approval" ? codexReviewBody : codexCurrentStep || "Codex側の発話を待っています"}
                 </div>
               )}
               {showActivityLoadHelp && (
@@ -769,8 +799,8 @@ export function NoteClaudeRunnerPanel({
             </div>
           )}
 
-          {/* 実際に AI に送られたプロンプト */}
-          {latestTask.prompt && (
+          {/* 実際に AI に送られたプロンプト（Codexは上のチャット枠にも常時表示する） */}
+          {!isCodexTask && latestTask.prompt && (
             <details className="text-[11px]">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
                 {isCodexTask ? "Codex" : "Claude"} に送られたプロンプト（{latestTask.prompt.length} 字）

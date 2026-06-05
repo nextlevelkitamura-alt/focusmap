@@ -10,7 +10,7 @@ import type { AgentConfig, AiTask, StepLog, TaskResultJson } from '../types.js';
 const WS_URL = 'ws://127.0.0.1:7878';
 const CONNECT_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MS = 15 * 60 * 1000;
-const LOG_FLUSH_MS = 1500;
+const LOG_FLUSH_MS = 5_000;
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 
 type RpcEnvelope = {
@@ -244,19 +244,11 @@ export async function runCodexAppTask(
   let threadId = task.codex_resume_thread_id || task.codex_thread_id || '';
   let lastActivityAt = new Date().toISOString();
 
-  const buildLiveLog = () => {
-    const active = [...activeAgentMessages.values()]
-      .filter(Boolean)
-      .map(text => `[assistant:streaming] ${text}`);
-    return [...logEntries, ...active].join('\n\n').slice(-80_000);
-  };
-
   const resultSnapshot = (extra: Record<string, unknown> = {}): TaskResultJson => ({
     executor: 'codex_app',
     steps,
-    output: buildLiveLog(),
-    live_log: buildLiveLog(),
-    message: buildLiveLog() || '(本文なし)',
+    output: '',
+    message: 'Codex.appが作業中です',
     codex_thread_id: threadId || undefined,
     codex_thread_url: threadId ? `codex://threads/${threadId}` : undefined,
     codex_run_state: 'running',
@@ -422,20 +414,18 @@ export async function runCodexAppTask(
       await sleep(1000);
     }
 
-    const finalLog = buildLiveLog();
     const statusKey = completedStatus.trim().toLowerCase();
     const hasError = Boolean(completedError) || statusKey.includes('fail') || statusKey.includes('error') || statusKey.includes('abort');
     if (hasError) {
       addStep(steps, `Codex実行失敗 (${completedStatus || 'unknown'})`, 'failed');
-      throw new Error(`Codex turn ${completedStatus || 'unknown'}: ${JSON.stringify(completedError ?? {}).slice(0, 500)} ${finalLog.slice(0, 500)}`);
+      throw new Error(`Codex turn ${completedStatus || 'unknown'}: ${JSON.stringify(completedError ?? {}).slice(0, 500)}`);
     }
 
     addStep(steps, `Codex実行完了 (${completedStatus || 'completed'})`);
     return {
       ...resultSnapshot({ codex_turn_status: completedStatus }),
-      output: finalLog,
-      live_log: finalLog,
-      message: finalLog || '(本文なし)',
+      output: '',
+      message: 'Codex実行が完了し確認待ちです。',
       codex_run_state: 'awaiting_approval',
       codex_review_reason: 'completed',
       awaiting_approval_at: new Date().toISOString(),

@@ -42,6 +42,7 @@ import { isTursoConfigured } from '../src/lib/turso/client'
 import {
   insertTaskEvent,
   listActiveTaskProgressWatches,
+  upsertRunnerHeartbeat,
   upsertTursoAiTask,
 } from '../src/lib/turso/codex-monitoring'
 
@@ -89,12 +90,11 @@ const LOCAL_USER_ID_FILE = path.join(os.homedir(), '.config', 'life-manager', 'f
 const CODEX_APP_WS_URL = 'ws://127.0.0.1:7878'
 const CODEX_APP_RPC_TIMEOUT_MS = 5_000
 const CODEX_APP_IDLE_REVIEW_MS = 2 * 60 * 1000
-const CODEX_LIVE_LOG_MAX_CHARS = 20_000
-const CODEX_ACTIVE_SYNC_INTERVAL_MS = 1_000
-const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 5
+const CODEX_ACTIVE_SYNC_INTERVAL_MS = 5_000
+const CODEX_ACTIVE_SYNC_EXTRA_PASSES = 11
 const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
 const CODEX_THREAD_MATCH_FAST_WINDOW_MS = 2 * 60_000
-const CODEX_AWAITING_RECHECK_MS = 1_000
+const CODEX_AWAITING_RECHECK_MS = 5_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
 const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
 
@@ -158,6 +158,8 @@ type MonitoredCodexTask = {
 type RunnerMonitorScope = {
   userId: string | null
   spaceIds: string[]
+  runnerId?: string | null
+  hostname?: string | null
 }
 
 type AiTaskMonitorQueryBuilder = {
@@ -278,6 +280,58 @@ function shouldWriteCodexProgressActivity(current: Record<string, unknown>, curr
 
   const lastProgressAtMs = parseTimeMs(current.codex_activity_last_progress_at)
   return lastProgressAtMs == null || nowMs - lastProgressAtMs >= CODEX_PROGRESS_ACTIVITY_INTERVAL_MS
+}
+
+function normalizeVisibleCodexText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function isPromptWaitingCodexText(value: string): boolean {
+  return /プロンプト待ち|送信待ち|Codex\.appで送信|Focusmapはthread状態|Focusmapは状態と出力だけを同期|プロンプトはコピー済み/u.test(value)
+}
+
+function isPromptEchoForCodexTask(value: string, task: Pick<MonitoredCodexTask, 'prompt'>): boolean {
+  const text = normalizeVisibleCodexText(value)
+  if (!text) return true
+  const prompt = normalizeVisibleCodexText(task.prompt)
+  const firstPromptLine = normalizeVisibleCodexText(task.prompt.split('\n').find(line => line.trim()) ?? '')
+  return text === prompt || (!!firstPromptLine && text === firstPromptLine)
+}
+
+function visibleCodexActivityEvent(
+  threadId: string,
+  preview: string | null | undefined,
+  parsed: ReturnType<typeof parseCodexRollout>,
+  task: MonitoredCodexTask,
+): {
+  role: AiTaskActivityRole
+  kind: AiTaskActivityKind
+  body: string
+  dedupeKey: string
+  importance?: 'normal' | 'important'
+} | null {
+  const candidates = [
+    { body: parsed.latestQuestion, kind: 'question' as const, importance: 'important' as const },
+    { body: parsed.latestAgentMessage, kind: 'progress' as const, importance: 'normal' as const },
+    { body: preview ?? '', kind: 'progress' as const, importance: 'normal' as const },
+  ]
+
+  for (const candidate of candidates) {
+    const body = compactCodexText(candidate.body, 2_000)
+    if (!body) continue
+    if (isPromptWaitingCodexText(body)) continue
+    if (isPromptEchoForCodexTask(body, task)) continue
+    const fingerprint = textFingerprint(body)
+    return {
+      role: 'codex',
+      kind: candidate.kind,
+      body,
+      dedupeKey: `thread:${threadId}:visible:${candidate.kind}:${fingerprint}`,
+      importance: candidate.importance,
+    }
+  }
+
+  return null
 }
 
 function codexReviewActivity(reason: CodexReviewReason): {
@@ -1513,12 +1567,6 @@ async function completeCodexTaskClosedFromApp(
   const completionNotice = opts.reason === 'archived'
     ? 'Codex thread がCodex.app側でアーカイブされたため、マップノードを完了にしました。'
     : 'Codex thread が削除されたため、マップノードを完了にしました。'
-  const baseLiveLog = opts.liveLog
-    || (typeof current.live_log === 'string' ? current.live_log : '')
-  const liveLog = mergeCodexLiveLogs([
-    baseLiveLog,
-    `[Codex] ${completionNotice}`,
-  ])
 
   if (task.source_task_id) {
     const { error } = await supabase
@@ -1545,8 +1593,8 @@ async function completeCodexTaskClosedFromApp(
         codex_review_reason: opts.reason,
         codex_source_task_completed: Boolean(task.source_task_id),
         codex_source_task_completed_at: task.source_task_id ? now : null,
-        live_log: liveLog,
-        message: liveLog,
+        live_log: typeof current.live_log === 'string' ? current.live_log : undefined,
+        message: completionNotice,
         last_activity_at: now,
       },
     })
@@ -1557,7 +1605,7 @@ async function completeCodexTaskClosedFromApp(
     status: 'completed',
     threadId: opts.threadId,
     currentStep: completionNotice,
-    summary: liveLog,
+    summary: completionNotice,
     eventType: 'completed',
     updatedAt: now,
     force: true,
@@ -1786,6 +1834,38 @@ function compactCodexText(value: string | null | undefined, maxChars: number): s
   return text.length > maxChars ? text.slice(-maxChars) : text
 }
 
+function codexPulseStep(state: CodexRunState | 'prompt_waiting', reason: CodexReviewReason): string {
+  if (state === 'running') return 'Codex.appが作業中です'
+  if (state === 'awaiting_approval') return `確認待ち（${reason}）`
+  return 'プロンプト待ち'
+}
+
+function codexPulseSummary(state: CodexRunState | 'prompt_waiting', reason: CodexReviewReason, lastActivityAt: string | null): string {
+  const activity = lastActivityAt ? `最終活動 ${lastActivityAt}` : '活動時刻未取得'
+  if (state === 'running') return `Codex.appの稼働シグナルを確認中。${activity}`
+  if (state === 'awaiting_approval') return `Codex.appは確認待ちです（${reason}）。${activity}`
+  return `Codex.appは送信待ちです。${activity}`
+}
+
+async function mirrorLegacyRunnerTaskPulse(scope: RunnerMonitorScope, task: MonitoredCodexTask): Promise<void> {
+  if (!isTursoConfigured() || !scope.runnerId) return
+  await upsertRunnerHeartbeat({
+    runner_id: scope.runnerId,
+    user_id: task.user_id,
+    device_id: scope.hostname ?? os.hostname(),
+    status: 'online',
+    current_task_id: task.id,
+    metadata_json: {
+      app: 'legacy-task-runner',
+      heartbeat_kind: 'codex_task_pulse',
+      agent_state: 'running',
+      executor: task.executor,
+    },
+  }).catch(error => {
+    console.warn('[codex-app] runner pulse mirror failed:', error instanceof Error ? error.message : error)
+  })
+}
+
 async function mirrorCodexTaskSnapshotToTurso(input: {
   task: MonitoredCodexTask
   status: string
@@ -1865,9 +1945,15 @@ async function syncCodexAppThreads(
     monitored: monitoredTasks.length,
     fastFollow: dueTasks.some(task => shouldFastFollowCodexTask(task, nowMs, activeWatchIds.has(task.id))),
   }
+  const runningPulseTask = dueTasks.find(task => {
+    const runState = codexTaskRunState(task)
+    return task.status === 'running' || task.status === 'pending' || runState === 'running'
+  })
+  if (runningPulseTask) {
+    await mirrorLegacyRunnerTaskPulse(scope, runningPulseTask)
+  }
 
   for (const task of dueTasks) {
-    const activeWatch = activeWatchIds.has(task.id)
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = codexTaskThreadId(task)
     const hadThreadId = Boolean(threadId)
@@ -2023,11 +2109,8 @@ async function syncCodexAppThreads(
       if (!liveLog) liveLog = fallbackLog
 
       const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
-      const currentStep = codexState === 'awaiting_approval'
-        ? `確認待ち（${reviewReason}）`
-        : codexState === 'running'
-          ? (parsed.currentStep || 'Codex.appで実行中')
-          : 'プロンプト待ち'
+      const currentStep = codexPulseStep(codexState, reviewReason)
+      const summary = codexPulseSummary(codexState, reviewReason, lastActivityAt)
       const shouldRecordProgress = codexState === 'running'
         && shouldWriteCodexProgressActivity(current, currentStep, nowMs)
 
@@ -2051,7 +2134,7 @@ async function syncCodexAppThreads(
 
       const baseResult: Record<string, unknown> = {
         ...current,
-        live_log: liveLog,
+        live_log: undefined,
         executor,
         codex_thread_id: threadId,
         codex_run_state: codexState,
@@ -2065,7 +2148,8 @@ async function syncCodexAppThreads(
         codex_sync_log: bridge.logBlocks,
         codex_thread_snapshot: {
           title: row.title ?? null,
-          preview: row.preview ?? null,
+          preview: null,
+          preview_chars: typeof row.preview === 'string' ? row.preview.length : 0,
           tokens_used: row.tokens_used ?? null,
           has_user_event: row.has_user_event ?? null,
           archived,
@@ -2093,7 +2177,7 @@ async function syncCodexAppThreads(
         updates.result = {
           ...baseResult,
           steps,
-          message: `Codex セッションは確認待ちです。内容を確認して完了にしてください。\n\n${liveLog}`,
+          message: 'Codex セッションは確認待ちです。内容を確認して完了にしてください。',
           session_health: reviewReason === 'approval_requested' ? 'waiting_on_approval' : 'stopped',
         }
       } else if (codexState === 'running' && task.status !== 'running') {
@@ -2115,7 +2199,6 @@ async function syncCodexAppThreads(
         resumedFromApproval ||
         previousRunState !== codexState ||
         current.current_step !== currentStep ||
-        current.live_log !== liveLog ||
         current.last_activity_at !== lastActivityAt ||
         shouldRecordProgress
 
@@ -2137,11 +2220,11 @@ async function syncCodexAppThreads(
           status: nextStatus,
           threadId,
           currentStep,
-          summary: liveLog,
+          summary,
           eventType: tursoEventType,
           updatedAt: lastActivityAt ?? nowIso,
           force: Boolean(tursoEventType),
-          minIntervalMs: activeWatch ? 3_000 : 5_000,
+          minIntervalMs: 5_000,
         }).catch(error => {
           console.warn('[codex-app] turso snapshot mirror failed:', error instanceof Error ? error.message : error)
         })
@@ -2198,6 +2281,11 @@ async function syncCodexAppThreads(
         })
       }
 
+      const visibleActivityEvent = visibleCodexActivityEvent(threadId, row.preview, parsed, task)
+      if (visibleActivityEvent && !activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
+        activityEvents.push(visibleActivityEvent)
+      }
+
       if (
         codexState === 'running' &&
         !resumedFromApproval &&
@@ -2252,9 +2340,8 @@ async function syncActiveCodexFollowUps(
  * 取り残しを掃除する。
  */
 /**
- * 実行中のCodexタスクのライブログを ai_tasks.result.live_log に書き込む。
- * 毎サイクル冒頭で呼ぶことで、UI から進行状況をリアルタイムに見られる。
- * Codex 専用（Claude は Remote Control 経由で見られるので不要）
+ * 旧 tmux Codex タスクの軽量pulseを ai_tasks.result に反映する。
+ * 本文ログはクラウドへ保存せず、ログファイルの更新時刻だけで作業中かを見せる。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function syncCodexLiveLogs(supabase: any, scope: RunnerMonitorScope): Promise<void> {
@@ -2277,13 +2364,23 @@ async function syncCodexLiveLogs(supabase: any, scope: RunnerMonitorScope): Prom
     const logPath = `/tmp/codex-exec-${task.id}.log`
     if (!fs.existsSync(logPath)) continue
     try {
-      const content = fs.readFileSync(logPath, 'utf-8')
-      // ANSI エスケープシーケンス除去
-      const cleaned = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      // UI で会話として読める範囲を残す
-      const tail = cleaned.slice(-CODEX_LIVE_LOG_MAX_CHARS)
-      // 既存 result (steps/codex_thread_id) を保持したまま live_log のみ差し替え
-      const merged = { ...(task.result ?? {}), executor: 'codex', live_log: tail }
+      const info = fs.statSync(logPath)
+      const lastActivityAt = info.mtime.toISOString()
+      const current = task.result ?? {}
+      if (
+        current.last_activity_at === lastActivityAt &&
+        current.current_step === 'Codex CLIが作業中です'
+      ) {
+        continue
+      }
+      const merged = {
+        ...current,
+        executor: 'codex',
+        live_log: undefined,
+        current_step: 'Codex CLIが作業中です',
+        last_activity_at: lastActivityAt,
+        codex_last_checked_at: new Date().toISOString(),
+      }
       await supabase
         .from('ai_tasks')
         .update({ result: merged })
@@ -2643,7 +2740,7 @@ async function resolveRunnerMonitorScope(supabase: any, hostname: string): Promi
   const userId = safeSupabaseFilterIdentifier(readLocalRunnerUserId())
   const spaceIds = new Set(readConfiguredRunnerSpaceIds())
   if (!userId) {
-    return { userId: null, spaceIds: [...spaceIds] }
+    return { userId: null, spaceIds: [...spaceIds], runnerId: null, hostname }
   }
 
   const { data: runner, error: runnerError } = await supabase
@@ -2674,7 +2771,7 @@ async function resolveRunnerMonitorScope(supabase: any, hostname: string): Promi
     }
   }
 
-  return { userId, spaceIds: [...spaceIds] }
+  return { userId, spaceIds: [...spaceIds], runnerId, hostname }
 }
 
 function commandExists(command: string): boolean {
@@ -2797,6 +2894,24 @@ async function heartbeatRunner(supabase: any, hostname: string): Promise<AiRunne
     console.error('[runner] heartbeat failed:', error.message)
     pauseRunnerForSupabaseRestriction(error.message)
     return null
+  }
+
+  if (isTursoConfigured()) {
+    await upsertRunnerHeartbeat({
+      runner_id: data.id,
+      user_id: data.user_id,
+      device_id: hostname,
+      status: 'online',
+      metadata_json: {
+        app: 'legacy-task-runner',
+        executors,
+        heartbeat_kind: 'liveness',
+        platform: process.platform,
+        pid: process.pid,
+      },
+    }).catch(tursoError => {
+      console.warn('[runner] turso heartbeat failed:', tursoError instanceof Error ? tursoError.message : tursoError)
+    })
   }
 
   await ensureRunnerSpaceOptIns(supabase, data.id, userId)
@@ -3337,6 +3452,8 @@ async function main() {
       : {
           userId: safeSupabaseFilterIdentifier(readLocalRunnerUserId()),
           spaceIds: readConfiguredRunnerSpaceIds(),
+          runnerId: null,
+          hostname,
         }
 
     // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
