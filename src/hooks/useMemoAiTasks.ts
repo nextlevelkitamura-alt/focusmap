@@ -17,6 +17,7 @@ function isCodexTask(task: AiTask) {
 
 function isRunningCodexTask(task: AiTask) {
   if (!isCodexTask(task)) return false
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'awaiting_approval' || task.status === 'needs_input') return false
   if (task.status === 'running') return true
   const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
     ? task.result as Record<string, unknown>

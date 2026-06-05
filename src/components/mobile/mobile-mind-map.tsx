@@ -12,6 +12,7 @@ import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-
 
 type MobileCustomDropPosition = "above" | "below" | "as-child"
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ["running", "awaiting_approval", "completed", "failed"]
+const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input"])
 
 function shouldUseTaskProgressFixture() {
     if (typeof window === "undefined") return false
@@ -58,7 +59,7 @@ export function MobileMindMap({
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
-    const { getBySourceId } = useMemoAiTasks()
+    const { bySourceId, getBySourceId } = useMemoAiTasks()
 
     const taskMap = useMemo(() => {
         const map = new Map<string, Task>()
@@ -89,12 +90,26 @@ export function MobileMindMap({
             }
         })
     }, [allMindMapTasks, taskProgressFixtureEnabled])
+    const taskProgressActivityHintKey = useMemo(() => {
+        const activeKeys: string[] = []
+        for (const task of bySourceId.values()) {
+            if (task.executor !== "codex" && task.executor !== "codex_app") continue
+            if (!TASK_PROGRESS_ACTIVITY_HINT_STATUSES.has(task.status)) continue
+            const result = task.result && typeof task.result === "object" && !Array.isArray(task.result)
+                ? task.result as Record<string, unknown>
+                : {}
+            const lastActivityAt = typeof result.last_activity_at === "string" ? result.last_activity_at : ""
+            activeKeys.push(`${task.id}:${task.status}:${task.started_at ?? ""}:${task.completed_at ?? ""}:${lastActivityAt}`)
+        }
+        return activeKeys.length > 0 ? activeKeys.sort().join("|") : null
+    }, [bySourceId])
 
     const {
         tasks: taskProgressTasks,
         getById: getTaskProgressById,
     } = useTaskProgressSnapshot({
         detailOpen: !!taskProgressPanelTaskId,
+        activityHintKey: taskProgressActivityHintKey,
         fixtureTasks: taskProgressFixtureTasks,
     })
 

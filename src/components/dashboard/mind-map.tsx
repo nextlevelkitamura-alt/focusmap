@@ -85,6 +85,7 @@ const fileToDataUrl = (file: File): Promise<string> =>
 
 const MINDMAP_CLIPBOARD_PREFIX = 'SHIKUMIKA_MINDMAP_NODE_V1:';
 const TASK_PROGRESS_FIXTURE_STATUSES: TaskProgressStatus[] = ['running', 'awaiting_approval', 'completed', 'failed'];
+const TASK_PROGRESS_ACTIVITY_HINT_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input']);
 
 type MindMapClipboardNode = {
     title: string;
@@ -197,6 +198,19 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             };
         });
     }, [groups, taskProgressFixtureEnabled, tasks]);
+    const taskProgressActivityHintKey = useMemo(() => {
+        const activeKeys: string[] = [];
+        for (const task of aiTasksBySourceId.values()) {
+            if (task.executor !== 'codex' && task.executor !== 'codex_app') continue;
+            if (!TASK_PROGRESS_ACTIVITY_HINT_STATUSES.has(task.status)) continue;
+            const result = task.result && typeof task.result === 'object' && !Array.isArray(task.result)
+                ? task.result as Record<string, unknown>
+                : {};
+            const lastActivityAt = typeof result.last_activity_at === 'string' ? result.last_activity_at : '';
+            activeKeys.push(`${task.id}:${task.status}:${task.started_at ?? ''}:${task.completed_at ?? ''}:${lastActivityAt}`);
+        }
+        return activeKeys.length > 0 ? activeKeys.sort().join('|') : null;
+    }, [aiTasksBySourceId]);
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null);
     const {
         tasks: taskProgressTasks,
@@ -205,6 +219,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         refresh: refreshTaskProgressSnapshot,
     } = useTaskProgressSnapshot({
         detailOpen: !!taskProgressPanelTaskId,
+        activityHintKey: taskProgressActivityHintKey,
         fixtureTasks: taskProgressFixtureTasks,
     });
     const [isRefreshingTaskProgressSnapshot, setIsRefreshingTaskProgressSnapshot] = useState(false);

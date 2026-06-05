@@ -7,6 +7,8 @@ import type { TaskProgressSnapshotResponse, TaskProgressSnapshotTask } from '@/t
 const RUNNING_POLL_INTERVAL_MS = 5_000
 const DETAIL_POLL_INTERVAL_MS = 3_000
 const IDLE_POLL_INTERVAL_MS = 45_000
+const ACTIVITY_HINT_POLL_INTERVAL_MS = 5_000
+const ACTIVITY_HINT_WARM_MS = 90_000
 const SNAPSHOT_LIMIT = 500
 
 function isPageVisible() {
@@ -33,12 +35,14 @@ function mergeTaskMap(
 type UseTaskProgressSnapshotOptions = {
   enabled?: boolean
   detailOpen?: boolean
+  activityHintKey?: string | null
   fixtureTasks?: TaskProgressSnapshotTask[]
 }
 
 export function useTaskProgressSnapshot({
   enabled = true,
   detailOpen = false,
+  activityHintKey = null,
   fixtureTasks,
 }: UseTaskProgressSnapshotOptions = {}) {
   const [tasksById, setTasksById] = useState<Map<string, TaskProgressSnapshotTask>>(() => new Map())
@@ -47,6 +51,7 @@ export function useTaskProgressSnapshot({
   const [serverTime, setServerTime] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
+  const [hasRecentActivityHint, setHasRecentActivityHint] = useState(false)
   const cursorRef = useRef<string | null>(null)
   const inFlightRef = useRef(false)
 
@@ -100,12 +105,24 @@ export function useTaskProgressSnapshot({
     void refresh({ reset: true })
   }, [enabled, fixtureTasks, refresh])
 
+  useEffect(() => {
+    if (!enabled || fixtureTasks || !activityHintKey) return
+    setHasRecentActivityHint(true)
+    void refresh()
+    const timeoutId = window.setTimeout(() => {
+      setHasRecentActivityHint(false)
+    }, ACTIVITY_HINT_WARM_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [activityHintKey, enabled, fixtureTasks, refresh])
+
   const tasks = useMemo(() => Array.from(tasksById.values()), [tasksById])
   const hasRunning = useMemo(() => tasks.some(isRunningTask), [tasks])
   const pollIntervalMs = detailOpen
     ? DETAIL_POLL_INTERVAL_MS
     : hasRunning
       ? RUNNING_POLL_INTERVAL_MS
+      : hasRecentActivityHint
+        ? ACTIVITY_HINT_POLL_INTERVAL_MS
       : IDLE_POLL_INTERVAL_MS
 
   useEffect(() => {

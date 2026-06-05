@@ -7,6 +7,8 @@ import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
+import { isTursoConfigured } from '@/lib/turso/client'
+import { upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 export const runtime = 'nodejs'
 
@@ -56,6 +58,17 @@ function requestImmediateCodexAppDispatch(taskId: string): void {
 function canUseLocalDispatch(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_DISPATCH === 'true') return true
   return isLocalCodexOpenHost(req.nextUrl.hostname)
+}
+
+function taskProgressSource(input: {
+  source_task_id?: string | null
+  source_note_id?: string | null
+  source_ideal_goal_id?: string | null
+}) {
+  if (input.source_task_id) return { source_type: 'mindmap', source_id: input.source_task_id }
+  if (input.source_note_id) return { source_type: 'note', source_id: input.source_note_id }
+  if (input.source_ideal_goal_id) return { source_type: 'ideal_goal', source_id: input.source_ideal_goal_id }
+  return { source_type: null, source_id: null }
 }
 
 // cronのバリデーション（5フィールド形式）
@@ -284,6 +297,34 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('[ai-tasks/schedule]', error.message)
     return NextResponse.json({ error: 'Database operation failed' }, { status: 500 })
+  }
+
+  if (isTursoConfigured()) {
+    try {
+      const source = taskProgressSource({
+        source_task_id: source_task_id || null,
+        source_note_id: source_note_id || null,
+        source_ideal_goal_id: source_ideal_goal_id || null,
+      })
+      await upsertTursoAiTask({
+        id: String(data.id),
+        user_id: user.id,
+        space_id: typeof data.space_id === 'string' ? data.space_id : null,
+        title: prompt.trim().slice(0, 140),
+        status: typeof data.status === 'string' ? data.status : manualCodexHandoff ? 'needs_input' : 'pending',
+        executor: resolvedExecutor,
+        dispatch_mode: dispatch_mode ?? null,
+        source_type: source.source_type,
+        source_id: source.source_id,
+        codex_thread_id: typeof data.codex_thread_id === 'string' ? data.codex_thread_id : null,
+        created_at: typeof data.created_at === 'string' ? data.created_at : nowIso,
+        updated_at: nowIso,
+        started_at: typeof data.started_at === 'string' ? data.started_at : null,
+        completed_at: typeof data.completed_at === 'string' ? data.completed_at : null,
+      })
+    } catch (tursoError) {
+      console.error('[ai-tasks/schedule turso mirror]', tursoError)
+    }
   }
 
   if (resolvedExecutor === 'codex' || resolvedExecutor === 'codex_app') {
