@@ -7,10 +7,15 @@ import { loadMonitoringEnv, missingMonitoringEnv } from './load-monitoring-env.m
 const MIGRATION = 'db/turso/migrations/20260605000000_codex_monitoring.sql'
 
 function splitSqlStatements(sqlText) {
-  return sqlText
+  const withoutLineComments = sqlText
+    .split(/\r?\n/)
+    .filter(line => !line.trimStart().startsWith('--'))
+    .join('\n')
+
+  return withoutLineComments
     .split(';')
     .map(statement => statement.trim())
-    .filter(statement => statement && !statement.startsWith('--'))
+    .filter(Boolean)
 }
 
 const env = loadMonitoringEnv()
