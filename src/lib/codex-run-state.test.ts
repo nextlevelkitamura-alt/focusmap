@@ -102,6 +102,28 @@ describe("parseCodexRollout", () => {
     expect(parsed.currentStep).toBe("どの方針で進めますか？")
   })
 
+  test("captures short mobile Codex replies that complete without task_started", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "user_message", message: "アンドラ" }, "2026-06-06T17:30:55.420Z"),
+      row({
+        type: "agent_message",
+        message: "アンドラについて、何を調べたいですか？\n\n例: 国の概要、旅行、税制、移住、場所、首都、治安、観光地など。",
+      }, "2026-06-06T17:31:01.798Z"),
+      row({
+        type: "task_complete",
+        last_agent_message: "アンドラについて、何を調べたいですか？\n\n例: 国の概要、旅行、税制、移住、場所、首都、治安、観光地など。",
+      }, "2026-06-06T17:31:01.846Z"),
+    ].join("\n"))
+
+    expect(parsed.state).toBe("awaiting_approval")
+    expect(parsed.reviewReason).toBe("completed")
+    expect(parsed.latestQuestion).toContain("アンドラについて")
+    expect(parsed.visibleMessages.map(message => `${message.role}:${message.kind}:${message.body.slice(0, 5)}`)).toEqual([
+      "user:user_answer:アンドラ",
+      "assistant:question:アンドラに",
+    ])
+  })
+
   test("moves to review when a turn is aborted or the thread is archived", () => {
     expect(parseCodexRollout(row({ type: "turn_aborted" })).reviewReason).toBe("aborted")
     expect(parseCodexRollout("", { archived: true, snapshot: { preview: "archived preview" } }).reviewReason).toBe("archived")

@@ -111,7 +111,7 @@ function compactStep(value: string, max = 240) {
 function looksLikeQuestion(value: string): boolean {
   const text = value.trim()
   if (!text) return false
-  if (/[?？]\s*$/.test(text)) return true
+  if (/[?？]/.test(text)) return true
   return /(確認してください|教えてください|選んでください|必要ですか|よいですか|しますか|どちら|どれ)/.test(text.slice(-160))
 }
 

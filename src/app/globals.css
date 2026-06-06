@@ -159,6 +159,12 @@
 }
 
 /* Custom Mind Map: Codex running state */
+@property --codex-node-orbit-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .codex-node-running-orbit {
   position: absolute;
   inset: -5px;
@@ -166,6 +172,7 @@
   pointer-events: none;
   border-radius: inherit;
   filter: drop-shadow(0 0 7px rgba(16, 185, 129, 0.55));
+  --codex-node-orbit-angle: 0deg;
 }
 
 .codex-node-running-orbit::before {
@@ -176,7 +183,7 @@
   padding: 2px;
   background:
     conic-gradient(
-      from 0deg,
+      from var(--codex-node-orbit-angle),
       rgba(16, 185, 129, 0) 0deg,
       rgba(16, 185, 129, 0) 205deg,
       rgba(16, 185, 129, 0.22) 248deg,
@@ -206,25 +213,25 @@
 
 @keyframes codexNodeOrbit {
   0% {
-    transform: rotate(0deg);
+    --codex-node-orbit-angle: 0deg;
     opacity: 0.72;
     animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   28% {
-    transform: rotate(168deg);
+    --codex-node-orbit-angle: 168deg;
     opacity: 1;
     animation-timing-function: cubic-bezier(0.36, 0, 0.66, -0.56);
   }
 
   52% {
-    transform: rotate(238deg);
+    --codex-node-orbit-angle: 238deg;
     opacity: 0.9;
     animation-timing-function: cubic-bezier(0.22, 0.62, 0.34, 1);
   }
 
   100% {
-    transform: rotate(360deg);
+    --codex-node-orbit-angle: 360deg;
     opacity: 0.72;
   }
 }

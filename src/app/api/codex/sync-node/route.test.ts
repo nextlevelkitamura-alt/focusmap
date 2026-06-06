@@ -12,6 +12,7 @@ const {
   setAiTask,
   setSourceTask,
   setThreadRow,
+  setRolloutRaw,
   getAiTaskUpdates,
   getSourceTaskUpdates,
   resetState,
@@ -22,6 +23,7 @@ const {
   let sourceTaskUpdateId: string | null = null
   const aiTaskUpdates: Record<string, unknown>[] = []
   const sourceTaskUpdates: Array<{ id: string | null; payload: Record<string, unknown> }> = []
+  let rolloutRaw = ''
 
   const thenable = <T,>(value: T) => ({
     then: (
@@ -97,7 +99,7 @@ const {
   return {
     mockExecFile,
     mockExistsSync: vi.fn(() => true),
-    mockReadFileSync: vi.fn(() => ''),
+    mockReadFileSync: vi.fn(() => rolloutRaw),
     mockInsertActivity: vi.fn(() => Promise.resolve({ inserted: true })),
     mockUpsertTursoAiTask: vi.fn(() => Promise.resolve()),
     mockInsertTaskEvent: vi.fn(() => Promise.resolve()),
@@ -105,6 +107,7 @@ const {
     setAiTask: (value: Record<string, unknown>) => { aiTask = value },
     setSourceTask: (value: Record<string, unknown> | null) => { sourceTask = value },
     setThreadRow: (value: Record<string, unknown> | null) => { threadRow = value },
+    setRolloutRaw: (value: string) => { rolloutRaw = value },
     getAiTaskUpdates: () => aiTaskUpdates,
     getSourceTaskUpdates: () => sourceTaskUpdates,
     resetState: () => {
@@ -114,6 +117,7 @@ const {
       sourceTaskUpdateId = null
       aiTaskUpdates.length = 0
       sourceTaskUpdates.length = 0
+      rolloutRaw = ''
       mockExecFile.mockClear()
       mockExistsSync.mockClear()
       mockReadFileSync.mockClear()
@@ -191,10 +195,13 @@ function baseTask(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function postRequest() {
-  return new NextRequest('http://localhost:3001/api/codex/sync-node', {
+function postRequest(
+  url = 'http://localhost:3001/api/codex/sync-node',
+  body: Record<string, unknown> = { ai_task_id: 'ai-task-1' },
+) {
+  return new NextRequest(url, {
     method: 'POST',
-    body: JSON.stringify({ ai_task_id: 'ai-task-1' }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -344,5 +351,84 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(getAiTaskUpdates()).toEqual([])
     expect(mockUpsertTursoAiTask).not.toHaveBeenCalled()
     expect(mockInsertActivity).not.toHaveBeenCalled()
+  })
+
+  test('syncs a short manual Codex reply from a Mac .local preview host', async () => {
+    process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_SYNC = 'false'
+    setAiTask(baseTask({
+      prompt: 'アンドラ',
+      codex_thread_id: null,
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: 'prompt_waiting',
+      },
+      status: 'needs_input',
+      started_at: '2026-06-07T02:30:55.000+09:00',
+      created_at: '2026-06-07T02:30:55.000+09:00',
+    }))
+    setThreadRow({
+      id: '019e9dfc-b4de-7033-a473-69f007ff0823',
+      title: 'アンドラ',
+      tokens_used: 78,
+      has_user_event: 0,
+      archived: 0,
+      updated_at_ms: Date.parse('2026-06-07T02:31:01.846+09:00'),
+      preview: 'アンドラ',
+      rollout_path: '/tmp/andorra-rollout.jsonl',
+      source: 'vscode',
+      cwd: '/repo',
+      first_user_message: 'アンドラ',
+    })
+    setRolloutRaw([
+      JSON.stringify({
+        timestamp: '2026-06-06T17:30:55.420Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'アンドラ' },
+      }),
+      JSON.stringify({
+        timestamp: '2026-06-06T17:31:01.798Z',
+        type: 'event_msg',
+        payload: {
+          type: 'agent_message',
+          message: 'アンドラについて、何を調べたいですか？\n\n例: 国の概要、旅行、税制、移住、場所、首都、治安、観光地など。',
+        },
+      }),
+      JSON.stringify({
+        timestamp: '2026-06-06T17:31:01.846Z',
+        type: 'event_msg',
+        payload: {
+          type: 'task_complete',
+          last_agent_message: 'アンドラについて、何を調べたいですか？\n\n例: 国の概要、旅行、税制、移住、場所、首都、治安、観光地など。',
+        },
+      }),
+    ].join('\n'))
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest('http://naononmac.local:3001/api/codex/sync-node', {
+      ai_task_id: 'ai-task-1',
+      include_visible_activity: true,
+    }))
+    const json = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(json.state).toBe('awaiting_approval')
+    expect(getAiTaskUpdates()[0]).toEqual(expect.objectContaining({
+      status: 'awaiting_approval',
+      codex_thread_id: '019e9dfc-b4de-7033-a473-69f007ff0823',
+    }))
+    expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
+      codex_run_state: 'awaiting_approval',
+      codex_review_reason: 'completed',
+      codex_visible_messages: [expect.objectContaining({
+        role: 'codex',
+        kind: 'question',
+        body: expect.stringContaining('アンドラについて'),
+      })],
+    }))
+    expect(mockInsertActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      kind: 'question',
+      body: expect.stringContaining('アンドラについて'),
+      createdAt: '2026-06-06T17:31:01.798Z',
+    }))
   })
 })

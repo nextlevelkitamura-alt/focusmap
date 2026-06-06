@@ -1016,6 +1016,7 @@ export async function POST(req: NextRequest) {
     body: string
     dedupeKey: string
     importance?: 'normal' | 'important'
+    createdAt?: string | null
   }> = []
 
   if (!hadThreadId && (!wasAwaitingApproval || resumedFromApproval)) {
@@ -1092,6 +1093,7 @@ export async function POST(req: NextRequest) {
     body: event.body,
     importance: event.importance,
     dedupeKey: event.dedupeKey,
+    createdAt: event.createdAt ?? undefined,
   })))
 
   return NextResponse.json({

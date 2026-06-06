@@ -15,14 +15,16 @@ afterEach(() => {
 })
 
 describe("isLocalCodexOpenHost", () => {
-  test("allows localhost and Cloudflare phone preview hosts", () => {
+  test("allows localhost, Mac Bonjour hosts, and Cloudflare phone preview hosts", () => {
     expect(isLocalCodexOpenHost("localhost")).toBe(true)
     expect(isLocalCodexOpenHost("127.0.0.1")).toBe(true)
+    expect(isLocalCodexOpenHost("naononmac.local")).toBe(true)
     expect(isLocalCodexOpenHost("abc-123.trycloudflare.com")).toBe(true)
   })
 
   test("does not allow production-style remote hosts", () => {
     expect(isLocalCodexOpenHost("focusmap.example.com")).toBe(false)
+    expect(isLocalCodexOpenHost("local.evil.example")).toBe(false)
     expect(isLocalCodexOpenHost("trycloudflare.com.evil.example")).toBe(false)
   })
 })
