@@ -59,6 +59,8 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - task-router が新規に作る計画は `docs/ai/plans/active/` に置く
 - 完了タスクは `docs/ai/task-archive/YYYY/MM.md`、完了計画は `docs/ai/plans/archive/YYYY/MM/` に月別で移す
 - 非自明な作業を始める時・計画を立てた時・完了前には task-router がこのボードを更新する
+- 作業実績は `docs/ai/task-runs.jsonl`、再発防止メモは `docs/ai/mistakes.md`、並列化判断の分析は `docs/ai/task-router-analysis.md` に置く
+- 毎回守るべき重要ルールは task-router Skill / workflow へ昇格し、状況依存・観察中の知見は analysis に留める
 
 ### 本番デプロイ運用（重要）
 - 本番 Cloud Run は **origin/main の内容だけ**を正とする
