@@ -101,6 +101,12 @@ function copyToMacClipboard(text: string): Promise<boolean> {
     }
     const child = spawn("/usr/bin/pbcopy", [], {
       stdio: ["pipe", "ignore", "ignore"],
+      env: {
+        ...process.env,
+        LANG: "en_US.UTF-8",
+        LC_ALL: "en_US.UTF-8",
+        LC_CTYPE: "UTF-8",
+      },
     })
     timeout = setTimeout(() => {
       child.kill()
@@ -109,7 +115,7 @@ function copyToMacClipboard(text: string): Promise<boolean> {
 
     child.on("error", () => finish(false))
     child.on("close", code => finish(code === 0))
-    child.stdin.end(text)
+    child.stdin.end(text, "utf8")
   })
 }
 
