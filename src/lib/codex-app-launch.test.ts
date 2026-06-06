@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import {
   appendCodexHandoffToken,
   buildChatGptCodexMobileAppUrl,
@@ -7,7 +7,12 @@ import {
   buildCodexOpenTarget,
   detectMobilePlatform,
   isLocalCodexOpenHost,
+  launchCodexViaLocalApi,
 } from "./codex-app-launch"
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe("isLocalCodexOpenHost", () => {
   test("allows localhost and Cloudflare phone preview hosts", () => {
@@ -68,5 +73,25 @@ describe("ChatGPT mobile open target", () => {
       .toBe("com.openai.chat://https://chatgpt.com/codex/mobile/")
     expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "android" }).url)
       .toBe("intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end")
+  })
+})
+
+describe("launchCodexViaLocalApi", () => {
+  test("rejects prompt handoff when the local API could not copy the prompt", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      copied_to_clipboard: false,
+    }), { status: 200 })))
+
+    await expect(launchCodexViaLocalApi({ prompt: "実行して", repoPath: "/repo" }))
+      .rejects.toThrow("プロンプトをクリップボードにコピーできませんでした")
+  })
+
+  test("allows repo-only open without a copied prompt", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      copied_to_clipboard: false,
+    }), { status: 200 })))
+
+    await expect(launchCodexViaLocalApi({ prompt: "   ", repoPath: "/repo" }))
+      .resolves.toEqual({ mode: "local-api", copiedToClipboard: false })
   })
 })

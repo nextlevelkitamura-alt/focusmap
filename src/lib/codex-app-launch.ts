@@ -211,8 +211,12 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
     throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
   }
   const data = await res.json().catch(() => ({})) as { copied_to_clipboard?: boolean }
+  const copiedToClipboard = data.copied_to_clipboard === true
+  if (normalizeCodexPrompt(payload.prompt) && !copiedToClipboard) {
+    throw new Error("プロンプトをクリップボードにコピーできませんでした")
+  }
 
-  return { mode: "local-api", copiedToClipboard: data.copied_to_clipboard === true }
+  return { mode: "local-api", copiedToClipboard }
 }
 
 export function launchFeedbackForMode(mode: CodexLaunchMode) {

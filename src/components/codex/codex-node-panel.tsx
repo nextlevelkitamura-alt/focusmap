@@ -675,6 +675,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         launchMode = launchOutcome.mode
         if (launchOutcome.copiedToClipboard) copiedToClipboard = true
       } else if (typeof window !== "undefined") {
+        if (!copiedToClipboard) {
+          throw new Error("プロンプトをクリップボードにコピーできませんでした")
+        }
         launchMode = openTarget.mode
         window.location.href = openTarget.url
       }

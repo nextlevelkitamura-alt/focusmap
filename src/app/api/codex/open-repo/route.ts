@@ -203,6 +203,12 @@ export async function POST(req: NextRequest) {
   try {
     const originUrl = typeof body.origin_url === "string" ? body.origin_url : null
     copiedToClipboard = await copyToMacClipboard(prompt)
+    if (prompt.trim() && !copiedToClipboard) {
+      return NextResponse.json(
+        { error: "プロンプトをクリップボードにコピーできませんでした" },
+        { status: 500 },
+      )
+    }
     if (!shouldOpenApp) {
       return NextResponse.json({
         ok: true,
