@@ -10,6 +10,7 @@ const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_app
 const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 const LINKED_TASK_LIMIT = 300
+const LOCAL_CODEX_SYNC_TARGET_LIMIT = 40
 const lastLocalSyncByTaskId = new Map<string, number>()
 
 type UseMemoAiTasksOptions = {
@@ -55,7 +56,7 @@ function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
     if (task.status === 'completed' || task.status === 'failed') continue
     result.push({ sourceId, task })
   }
-  return result.slice(0, 8)
+  return result.slice(0, LOCAL_CODEX_SYNC_TARGET_LIMIT)
 }
 
 function localSyncIntervalForTask(task: AiTask) {
@@ -79,6 +80,18 @@ function mergeAiTask(previous: AiTask | undefined, incoming: AiTask): AiTask {
       ...(incoming.result ?? {}),
     },
   }
+}
+
+function parseTaskTime(value: string | null | undefined) {
+  if (!value) return 0
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : 0
+}
+
+function shouldReplaceSourceTask(previous: AiTask | undefined, incoming: AiTask) {
+  if (!previous) return true
+  if (previous.id === incoming.id) return true
+  return parseTaskTime(incoming.created_at) >= parseTaskTime(previous.created_at)
 }
 
 /**
@@ -111,7 +124,10 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
           const key = sourceKeyForTask(task)
           if (!key) continue
           if (options.statusOnly) {
-            map.set(key, mergeAiTask(map.get(key), task))
+            const previous = map.get(key)
+            if (shouldReplaceSourceTask(previous, task)) {
+              map.set(key, previous?.id === task.id ? mergeAiTask(previous, task) : task)
+            }
           } else if (!map.has(key)) {
             map.set(key, task)
           }

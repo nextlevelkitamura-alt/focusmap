@@ -171,12 +171,45 @@ describe("CustomMindMapView keyboard operations", () => {
           state: "running",
           taskId: "ai-task-1",
           label: "実行中",
+          updatedAt: "2026-06-07T00:00:03.000Z",
         },
       },
     })
 
     expect(screen.getByText("実行中1")).toBeInTheDocument()
     expect(screen.getByLabelText("Codex 実行中")).toHaveClass("codex-node-running-orbit")
+  })
+
+  test("prioritizes ai task status over stale task progress on node badge", () => {
+    renderMap({
+      codexRunByNodeId: {
+        "root-1": {
+          state: "running",
+          taskId: "ai-task-1",
+          label: "実行中",
+          updatedAt: "2026-06-07T00:00:03.000Z",
+        },
+      },
+      taskProgressByNodeId: {
+        "root-1": {
+          id: "ai-task-1",
+          title: "Root task",
+          status: "awaiting_approval",
+          executor: "codex_app",
+          codex_thread_id: "thread-1",
+          current_step: "古いsnapshot",
+          progress_percent: null,
+          summary: null,
+          updated_at: "2026-06-07T00:00:00.000Z",
+          source_type: "mindmap",
+          source_id: "root-1",
+        },
+      },
+    })
+
+    const node = getNode("Root task", "root-1")
+    expect(within(node).getByRole("button", { name: "Codex状態: 実行中 を開く" })).toBeInTheDocument()
+    expect(within(node).queryByRole("button", { name: "Codex状態: 確認待ち を開く" })).not.toBeInTheDocument()
   })
 
   test("counts only visible map nodes in the Codex summary", () => {

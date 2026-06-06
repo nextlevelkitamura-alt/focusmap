@@ -75,6 +75,7 @@ type CodexNodeState = {
     taskId: string;
     label: string;
     lastActivityAt?: string | null;
+    updatedAt?: string | null;
 };
 
 const PADDING = 72;
@@ -164,6 +165,46 @@ type CustomEditRequestOptions = {
 
 function taskProgressStatusLabel(status: TaskProgressSnapshotTask["status"]) {
     return codexMonitorUiLabel(status);
+}
+
+function codexStateToTaskProgressStatus(state: CodexRunState): TaskProgressSnapshotTask["status"] {
+    if (state === "prompt_waiting") return "pending";
+    if (state === "running") return "running";
+    if (state === "connection_failed") return "failed";
+    return "awaiting_approval";
+}
+
+function parseStatusTimestamp(value: string | null | undefined) {
+    if (!value) return 0;
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+function buildCodexBadge(
+    codexState: CodexNodeState | null | undefined,
+    taskProgress: TaskProgressSnapshotTask | null | undefined,
+) {
+    const codexBadge = codexState
+        ? {
+            label: codexState.label,
+            status: codexStateToTaskProgressStatus(codexState.state),
+            title: `Codex ${codexState.label}`,
+        }
+        : null;
+    const progressBadge = taskProgress
+        ? {
+            label: taskProgressStatusLabel(taskProgress.status),
+            status: taskProgress.status,
+            title: `Codex ${taskProgressStatusLabel(taskProgress.status)}`,
+        }
+        : null;
+
+    if (!codexBadge) return progressBadge;
+    if (!progressBadge || !taskProgress) return codexBadge;
+
+    const codexMs = parseStatusTimestamp(codexState?.updatedAt ?? codexState?.lastActivityAt);
+    const progressMs = parseStatusTimestamp(taskProgress.updated_at);
+    return codexMs >= progressMs ? codexBadge : progressBadge;
 }
 
 type WebKitGestureEvent = Event & {
@@ -317,10 +358,7 @@ function CustomTaskNode({
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const [menuOpen, setMenuOpen] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
-    const isCodexPromptWaiting = codexState?.state === "prompt_waiting";
-    const isCodexConnectionFailed = codexState?.state === "connection_failed";
-    const showCodexStateBadge = !taskProgress &&
-        (codexState?.state === "prompt_waiting" || codexState?.state === "awaiting_approval" || codexState?.state === "connection_failed");
+    const nodeCodexBadge = buildCodexBadge(codexState, taskProgress);
     const scheduledLabel = formatDateShort(node.scheduledAt);
 
     useEffect(() => {
@@ -698,29 +736,14 @@ function CustomTaskNode({
                     aria-label="Codex 実行中"
                 />
             )}
-            {showCodexStateBadge && (
-                <div
-                    className={cn(
-                        "absolute -right-2 -top-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm",
-                        isCodexPromptWaiting
-                            ? "border-sky-400/80 bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-200"
-                            : isCodexConnectionFailed
-                                ? "border-red-400/80 bg-red-100 text-red-900 dark:bg-red-500/20 dark:text-red-200"
-                            : "border-amber-400/70 bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
-                    )}
-                    title={`Codex ${codexState.label}`}
-                >
-                    {codexState.label}
-                </div>
-            )}
-            {taskProgress && (
+            {nodeCodexBadge && taskProgress ? (
                 <button
                     type="button"
                     className={cn(
-                        "absolute -right-2 top-4 z-10 max-w-[112px] rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm transition-colors",
+                        "absolute -right-2 -top-2 z-10 max-w-[112px] rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm transition-colors",
                         "whitespace-nowrap hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
-                        codexMonitorToneClass(taskProgress.status),
-                        isMobile && "top-5 max-w-[96px]"
+                        codexMonitorToneClass(nodeCodexBadge.status),
+                        isMobile && "max-w-[96px]"
                     )}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
@@ -728,12 +751,25 @@ function CustomTaskNode({
                         event.stopPropagation();
                         onOpenTaskProgress?.(taskProgress);
                     }}
-                    title={`Codex ${taskProgressStatusLabel(taskProgress.status)}`}
-                    aria-label={`Codex進捗: ${taskProgressStatusLabel(taskProgress.status)} を開く`}
+                    title={nodeCodexBadge.title}
+                    aria-label={`Codex状態: ${nodeCodexBadge.label} を開く`}
                 >
-                    <span className="truncate">{taskProgressStatusLabel(taskProgress.status)}</span>
+                    <span className="truncate">{nodeCodexBadge.label}</span>
                 </button>
-            )}
+            ) : nodeCodexBadge ? (
+                <div
+                    className={cn(
+                        "absolute -right-2 -top-2 z-10 max-w-[112px] rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm",
+                        "whitespace-nowrap",
+                        codexMonitorToneClass(nodeCodexBadge.status),
+                        isMobile && "max-w-[96px]"
+                    )}
+                    title={nodeCodexBadge.title}
+                    aria-label={`Codex状態: ${nodeCodexBadge.label}`}
+                >
+                    <span className="truncate">{nodeCodexBadge.label}</span>
+                </div>
+            ) : null}
             <div className="flex items-center gap-1">
                 <button
                     type="button"

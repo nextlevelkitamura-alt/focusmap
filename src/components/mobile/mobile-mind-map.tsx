@@ -156,7 +156,7 @@ export function MobileMindMap({
     }, [taskProgressFallbackTasks, taskProgressTasks])
 
     const codexRunByNodeId = useMemo(() => {
-        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null }> = {}
+        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {}
         for (const task of allMindMapTasks) {
             const aiTask = getBySourceId(task.id)
             const uiState = getCodexTaskUiState(aiTask)
@@ -164,11 +164,13 @@ export function MobileMindMap({
             const aiResult = aiTask.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
                 ? aiTask.result as Record<string, unknown>
                 : {}
+            const lastActivityAt = typeof aiResult.last_activity_at === "string" ? aiResult.last_activity_at : null
             result[task.id] = {
                 state: uiState.state,
                 taskId: aiTask.id,
                 label: uiState.label,
-                lastActivityAt: typeof aiResult.last_activity_at === "string" ? aiResult.last_activity_at : null,
+                lastActivityAt,
+                updatedAt: lastActivityAt ?? aiTask.completed_at ?? aiTask.started_at ?? aiTask.created_at,
             }
         }
         return result
