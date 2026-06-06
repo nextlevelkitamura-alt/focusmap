@@ -10,6 +10,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import { canUseLocalCodexOpenApi } from "@/lib/codex-app-launch"
 import {
   codexMonitorToneClass,
   codexMonitorUiLabel,
@@ -23,8 +24,9 @@ import type {
 } from "@/types/task-progress"
 import type { AiTaskActivityMessage } from "@/types/ai-task"
 
-const DETAIL_POLL_INTERVAL_MS = 5_000
+const DETAIL_POLL_INTERVAL_MS = 3_000
 const WATCH_PING_INTERVAL_MS = 10_000
+const LOCAL_SYNC_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input", "completed"])
 
 function statusClass(status: string | null | undefined) {
   return codexMonitorToneClass(status)
@@ -103,6 +105,12 @@ export function TaskProgressDetailPanel({
   const watchIdRef = useRef<string | null>(null)
   const taskId = task?.id ?? null
   const isFixtureTask = !!taskId?.startsWith("fixture:")
+  const shouldSyncLocalCodex =
+    !!taskId &&
+    !isFixtureTask &&
+    canUseLocalCodexOpenApi() &&
+    (task?.executor === "codex" || task?.executor === "codex_app") &&
+    LOCAL_SYNC_STATUSES.has(task?.status ?? "")
 
   if (!watchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
     watchIdRef.current = `detail:${crypto.randomUUID()}`
@@ -190,6 +198,23 @@ export function TaskProgressDetailPanel({
     }
   }, [isFixtureTask, task, taskId])
 
+  const syncLocalCodex = useCallback(async () => {
+    if (!taskId || !shouldSyncLocalCodex) return
+    await fetchWithSupabaseAuth("/api/codex/sync-node", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ai_task_id: taskId }),
+    }).catch(() => undefined)
+  }, [shouldSyncLocalCodex, taskId])
+
+  const refreshPanel = useCallback(async () => {
+    await syncLocalCodex()
+    await Promise.all([
+      fetchDetail(),
+      fetchActivity(),
+    ])
+  }, [fetchActivity, fetchDetail, syncLocalCodex])
+
   useEffect(() => {
     if (!open || !taskId) {
       setDetail(null)
@@ -198,21 +223,14 @@ export function TaskProgressDetailPanel({
       setError(null)
       return
     }
-    void fetchDetail()
-    void fetchActivity()
-  }, [fetchActivity, fetchDetail, open, taskId])
+    void refreshPanel()
+  }, [open, refreshPanel, taskId])
 
   useEffect(() => {
     if (!open || !taskId || isFixtureTask) return
-    const intervalId = window.setInterval(() => void fetchDetail(), DETAIL_POLL_INTERVAL_MS)
+    const intervalId = window.setInterval(() => void refreshPanel(), DETAIL_POLL_INTERVAL_MS)
     return () => window.clearInterval(intervalId)
-  }, [fetchDetail, isFixtureTask, open, taskId])
-
-  useEffect(() => {
-    if (!open || !taskId || isFixtureTask) return
-    const intervalId = window.setInterval(() => void fetchActivity(), DETAIL_POLL_INTERVAL_MS)
-    return () => window.clearInterval(intervalId)
-  }, [fetchActivity, isFixtureTask, open, taskId])
+  }, [isFixtureTask, open, refreshPanel, taskId])
 
   useEffect(() => {
     if (!open || !taskId || isFixtureTask) return

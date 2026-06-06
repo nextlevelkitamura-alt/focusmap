@@ -47,6 +47,31 @@ const AI_TASK_LIST_SELECT = [
   'result_awaiting_approval_at:result->>awaiting_approval_at',
 ].join(', ')
 
+const AI_TASK_STATUS_SELECT = [
+  'id',
+  'user_id',
+  'space_id',
+  'status',
+  'error',
+  'created_at',
+  'started_at',
+  'completed_at',
+  'cwd',
+  'source_note_id',
+  'source_ideal_goal_id',
+  'source_task_id',
+  'executor',
+  'codex_thread_id',
+  'result_codex_run_state:result->>codex_run_state',
+  'result_codex_review_reason:result->>codex_review_reason',
+  'result_current_step:result->>current_step',
+  'result_last_activity_at:result->>last_activity_at',
+  'result_message:result->>message',
+  'result_progress_summary:result->progress_summary',
+  'result_codex_manual_handoff:result->codex_manual_handoff',
+  'result_awaiting_approval_at:result->>awaiting_approval_at',
+].join(', ')
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -84,6 +109,15 @@ function compactAiTask(row: Record<string, unknown>) {
   return compacted
 }
 
+function parseIdList(value: string | null) {
+  if (!value) return []
+  return value
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => /^[0-9a-fA-F-]{20,80}$/.test(item))
+    .slice(0, 300)
+}
+
 // GET /api/ai-tasks — 自分のAIタスク一覧取得
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -98,11 +132,14 @@ export async function GET(req: NextRequest) {
   const to = searchParams.get('to')
   const spaceId = searchParams.get('space_id')
   const source = searchParams.get('source')
+  const view = searchParams.get('view')
+  const sourceTaskIds = parseIdList(searchParams.get('source_task_ids'))
   const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '50', 10) || 50, 1), 500)
+  const selectColumns = view === 'status' ? AI_TASK_STATUS_SELECT : AI_TASK_LIST_SELECT
 
   let query = supabase
     .from('ai_tasks')
-    .select(AI_TASK_LIST_SELECT)
+    .select(selectColumns)
     .limit(limit)
 
   if (spaceId && spaceId !== '__unassigned__') {
@@ -124,7 +161,9 @@ export async function GET(req: NextRequest) {
   if (executor && ['claude', 'codex', 'codex_app'].includes(executor)) {
     query = query.eq('executor', executor)
   }
-  if (source === 'linked') {
+  if (sourceTaskIds.length > 0) {
+    query = query.in('source_task_id', sourceTaskIds)
+  } else if (source === 'linked') {
     query = query.or('source_note_id.not.is.null,source_ideal_goal_id.not.is.null,source_task_id.not.is.null')
   } else if (source === 'note') {
     query = query.not('source_note_id', 'is', null)

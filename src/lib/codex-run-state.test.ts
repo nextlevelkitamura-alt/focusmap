@@ -63,6 +63,20 @@ describe("parseCodexRollout", () => {
     expect(parsed.liveLog).toContain("確認待ち")
   })
 
+  test("keeps the final assistant message from task_complete", () => {
+    const parsed = parseCodexRollout([
+      row({ type: "task_started" }),
+      row({
+        type: "task_complete",
+        last_agent_message: "候補者名なら状況確認、タスクなら追加できます。",
+      }, "2026-05-30T08:02:00.000Z"),
+    ].join("\n"))
+
+    expect(parsed.state).toBe("awaiting_approval")
+    expect(parsed.latestAgentMessage).toBe("候補者名なら状況確認、タスクなら追加できます。")
+    expect(parsed.liveLog).toContain("[assistant] 候補者名なら状況確認")
+  })
+
   test("tracks user-visible questions", () => {
     const parsed = parseCodexRollout([
       row({ type: "task_started" }),

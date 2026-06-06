@@ -191,6 +191,7 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
 
 function relativePollLabel(pollIntervalMs: number, isDetailOpen: boolean) {
   const seconds = Math.round(pollIntervalMs / 1000)
+  if (seconds <= 3) return "3秒ごとに更新"
   if (seconds <= 5) return "5秒ごとに更新"
   if (isDetailOpen) return "詳細を更新中"
   return `${seconds}秒ごとに更新`
@@ -246,7 +247,7 @@ function KanbanCard({
   const hasFreshTaskUpdate = nowMs > 0 && Number.isFinite(updatedMs) && nowMs - updatedMs < HEARTBEAT_ONLINE_WINDOW_MS
   const pulseLabel = uiStatus === "running"
     ? hasRecentTaskPulse && hasFreshTaskUpdate
-      ? "5秒pulse"
+      ? "3秒更新"
       : hasRecentTaskPulse
         ? "Codex停止疑い"
         : runnerState.online

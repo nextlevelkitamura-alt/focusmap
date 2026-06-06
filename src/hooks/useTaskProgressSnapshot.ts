@@ -4,11 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 import type { TaskProgressSnapshotResponse, TaskProgressSnapshotTask } from '@/types/task-progress'
 
-const RUNNING_POLL_INTERVAL_MS = 5_000
-const DETAIL_POLL_INTERVAL_MS = 5_000
+const ACTIVE_POLL_INTERVAL_MS = 3_000
+const DETAIL_POLL_INTERVAL_MS = 3_000
 const IDLE_POLL_INTERVAL_MS = 45_000
-const ACTIVITY_HINT_POLL_INTERVAL_MS = 5_000
-const ACTIVITY_HINT_WARM_MS = 90_000
 const SNAPSHOT_LIMIT = 500
 
 function isPageVisible() {
@@ -17,6 +15,13 @@ function isPageVisible() {
 
 function isRunningTask(task: TaskProgressSnapshotTask) {
   return task.status === 'running'
+}
+
+function isActiveTask(task: TaskProgressSnapshotTask) {
+  return task.status === 'pending' ||
+    task.status === 'running' ||
+    task.status === 'awaiting_approval' ||
+    task.status === 'needs_input'
 }
 
 function mergeTaskMap(
@@ -51,7 +56,6 @@ export function useTaskProgressSnapshot({
   const [serverTime, setServerTime] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
-  const [hasRecentActivityHint, setHasRecentActivityHint] = useState(false)
   const cursorRef = useRef<string | null>(null)
   const inFlightRef = useRef(false)
 
@@ -107,22 +111,17 @@ export function useTaskProgressSnapshot({
 
   useEffect(() => {
     if (!enabled || fixtureTasks || !activityHintKey) return
-    setHasRecentActivityHint(true)
     void refresh()
-    const timeoutId = window.setTimeout(() => {
-      setHasRecentActivityHint(false)
-    }, ACTIVITY_HINT_WARM_MS)
-    return () => window.clearTimeout(timeoutId)
   }, [activityHintKey, enabled, fixtureTasks, refresh])
 
   const tasks = useMemo(() => Array.from(tasksById.values()), [tasksById])
   const hasRunning = useMemo(() => tasks.some(isRunningTask), [tasks])
+  const hasActive = useMemo(() => tasks.some(isActiveTask), [tasks])
+  const hasActiveHint = !!activityHintKey
   const pollIntervalMs = detailOpen
     ? DETAIL_POLL_INTERVAL_MS
-    : hasRunning
-      ? RUNNING_POLL_INTERVAL_MS
-      : hasRecentActivityHint
-        ? ACTIVITY_HINT_POLL_INTERVAL_MS
+    : hasRunning || hasActive || hasActiveHint
+      ? ACTIVE_POLL_INTERVAL_MS
       : IDLE_POLL_INTERVAL_MS
 
   useEffect(() => {
@@ -156,6 +155,7 @@ export function useTaskProgressSnapshot({
     isLoading,
     error,
     hasRunning,
+    hasActive,
     pollIntervalMs,
     refresh,
     getById,

@@ -7,10 +7,14 @@ import { getCodexTaskUiState } from '@/lib/codex-run-state'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 5_000
-const PENDING_CODEX_REFRESH_INTERVAL_MS = 30_000
+const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
+const LINKED_TASK_LIMIT = 300
 const lastLocalSyncByTaskId = new Map<string, number>()
+
+type UseMemoAiTasksOptions = {
+  sourceTaskIds?: string[]
+}
 
 function isCodexTask(task: AiTask) {
   return task.executor === 'codex' || task.executor === 'codex_app'
@@ -29,9 +33,13 @@ function hasRunningCodexTask(tasks: Map<string, AiTask>) {
   return false
 }
 
-function hasPendingCodexTask(tasks: Map<string, AiTask>) {
+function isActiveCodexTask(task: AiTask) {
+  return isCodexTask(task) && ACTIVE_STATUSES.includes(task.status)
+}
+
+function hasActiveCodexTask(tasks: Map<string, AiTask>) {
   for (const task of tasks.values()) {
-    if (isCodexTask(task) && task.status === 'pending') return true
+    if (isActiveCodexTask(task)) return true
   }
   return false
 }
@@ -51,51 +59,81 @@ function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
 }
 
 function localSyncIntervalForTask(task: AiTask) {
-  return isRunningCodexTask(task) ? ACTIVE_CODEX_REFRESH_INTERVAL_MS : IDLE_REFRESH_INTERVAL_MS
+  return isActiveCodexTask(task) || isRunningCodexTask(task)
+    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
+    : IDLE_REFRESH_INTERVAL_MS
+}
+
+function sourceKeyForTask(task: AiTask) {
+  return task.source_task_id ?? task.source_ideal_goal_id ?? task.source_note_id
+}
+
+function mergeAiTask(previous: AiTask | undefined, incoming: AiTask): AiTask {
+  if (!previous) return incoming
+  return {
+    ...previous,
+    ...incoming,
+    prompt: incoming.prompt ?? previous.prompt,
+    result: {
+      ...(previous.result ?? {}),
+      ...(incoming.result ?? {}),
+    },
+  }
 }
 
 /**
  * メモ（notes / ideal_goals）またはマインドマップタスクから起動された ai_tasks を取得する。
  * 各 source ごとに「最新の1件」だけを返す（status バッジ・Codex状態表示・重複防止判定用）。
  */
-export function useMemoAiTasks() {
+export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {}) {
   // Map<sourceId, AiTask> — sourceId は source_task_id / source_note_id / source_ideal_goal_id
   const [bySourceId, setBySourceId] = useState<Map<string, AiTask>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
+  const sourceTaskIdsKey = useMemo(() => (
+    Array.from(new Set(sourceTaskIds.filter(Boolean))).sort().join(',')
+  ), [sourceTaskIds])
 
-  const fetchInitial = useCallback(async () => {
+  const fetchInitial = useCallback(async (options: { statusOnly?: boolean } = {}) => {
     try {
-      const res = await fetchWithSupabaseAuth('/api/ai-tasks?source=linked&limit=300')
+      const params = new URLSearchParams({
+        source: 'linked',
+        limit: String(LINKED_TASK_LIMIT),
+      })
+      if (sourceTaskIdsKey) params.set('source_task_ids', sourceTaskIdsKey)
+      if (options.statusOnly) params.set('view', 'status')
+      const res = await fetchWithSupabaseAuth(`/api/ai-tasks?${params.toString()}`)
       if (!res.ok) return
       const data = await res.json() as AiTask[]
 
-      const map = new Map<string, AiTask>()
-      for (const task of (data ?? []) as AiTask[]) {
-        const key = task.source_task_id ?? task.source_ideal_goal_id ?? task.source_note_id
-        if (!key) continue
-        if (!map.has(key)) {
-          map.set(key, task)
+      setBySourceId(previous => {
+        const map = options.statusOnly ? new Map(previous) : new Map<string, AiTask>()
+        for (const task of (data ?? []) as AiTask[]) {
+          const key = sourceKeyForTask(task)
+          if (!key) continue
+          if (options.statusOnly) {
+            map.set(key, mergeAiTask(map.get(key), task))
+          } else if (!map.has(key)) {
+            map.set(key, task)
+          }
         }
-      }
-      setBySourceId(map)
+        return map
+      })
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [sourceTaskIdsKey])
 
   useEffect(() => {
     fetchInitial()
   }, [fetchInitial])
 
-  const refreshIntervalMs = hasRunningCodexTask(bySourceId)
+  const refreshIntervalMs = hasRunningCodexTask(bySourceId) || hasActiveCodexTask(bySourceId)
     ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
-    : hasPendingCodexTask(bySourceId)
-      ? PENDING_CODEX_REFRESH_INTERVAL_MS
     : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      if (isPageVisible()) void fetchInitial()
+      if (isPageVisible()) void fetchInitial({ statusOnly: true })
     }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
@@ -117,6 +155,7 @@ export function useMemoAiTasks() {
       return
     }
     const localSyncIntervalMs = hasRunningCodexTask(bySourceId)
+      || hasActiveCodexTask(bySourceId)
       ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
       : IDLE_REFRESH_INTERVAL_MS
 
@@ -146,13 +185,13 @@ export function useMemoAiTasks() {
             }),
           }).catch(() => undefined)
         )))
-        if (!cancelled) await fetchInitial()
+        if (!cancelled) await fetchInitial({ statusOnly: true })
       } finally {
         syncing = false
       }
     }
 
-    if (hasRunningLocalSyncTarget) void syncTargets()
+    if (hasRunningLocalSyncTarget || localSyncTargets.some(({ task }) => isActiveCodexTask(task))) void syncTargets()
     const intervalId = window.setInterval(() => void syncTargets(), localSyncIntervalMs)
     return () => {
       cancelled = true
@@ -162,7 +201,7 @@ export function useMemoAiTasks() {
 
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (isPageVisible()) void fetchInitial()
+      if (isPageVisible()) void fetchInitial({ statusOnly: true })
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
@@ -177,11 +216,14 @@ export function useMemoAiTasks() {
     return !!task && ACTIVE_STATUSES.includes(task.status)
   }, [bySourceId])
 
+  const refreshStatus = useCallback(() => fetchInitial({ statusOnly: true }), [fetchInitial])
+
   return {
     bySourceId,
     isLoading,
     getBySourceId,
     isActive,
     refresh: fetchInitial,
+    refreshStatus,
   }
 }

@@ -172,6 +172,12 @@ export function parseCodexRollout(
     }
 
     if (payloadType === "task_complete") {
+      const text = safeText(payload.last_agent_message)
+      if (text) {
+        latestAgentMessage = compactLine(text, 2_000)
+        if (looksLikeQuestion(text)) latestQuestion = latestAgentMessage
+        appendLog(logs, `[assistant] ${text}`)
+      }
       sawTerminalEvent = true
       state = "awaiting_approval"
       reviewReason = "completed"

@@ -62,14 +62,7 @@ export function MobileMindMap({
     const [taskProgressPanelTaskId, setTaskProgressPanelTaskId] = useState<string | null>(null)
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture())
     const handledFocusEditNodeIdRef = useRef<string | null>(null)
-    const memoAiTasks = useMemoAiTasks()
     const emptyAiTaskMap = useMemo(() => new Map<string, AiTask>(), [])
-    const bySourceId = memoAiTasks.bySourceId ?? emptyAiTaskMap
-    const getMemoAiTaskBySourceId = memoAiTasks.getBySourceId
-    const getBySourceId = useCallback((sourceId: string) => (
-        getMemoAiTaskBySourceId?.(sourceId) ?? null
-    ), [getMemoAiTaskBySourceId])
-
     const taskMap = useMemo(() => {
         const map = new Map<string, Task>()
         for (const task of [...groups, ...tasks]) {
@@ -78,6 +71,13 @@ export function MobileMindMap({
         return map
     }, [groups, tasks])
     const allMindMapTasks = useMemo(() => [...groups, ...tasks], [groups, tasks])
+    const codexSourceTaskIds = useMemo(() => allMindMapTasks.map(task => task.id).filter(Boolean), [allMindMapTasks])
+    const memoAiTasks = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds })
+    const bySourceId = memoAiTasks.bySourceId ?? emptyAiTaskMap
+    const getMemoAiTaskBySourceId = memoAiTasks.getBySourceId
+    const getBySourceId = useCallback((sourceId: string) => (
+        getMemoAiTaskBySourceId?.(sourceId) ?? null
+    ), [getMemoAiTaskBySourceId])
 
     const taskProgressFixtureTasks = useMemo<TaskProgressSnapshotTask[] | undefined>(() => {
         if (!taskProgressFixtureEnabled) return undefined

@@ -73,7 +73,7 @@ type CodexChatEntry = {
 
 const RUNNER_ONLINE_WINDOW_MS = 5 * 60 * 1000
 const RUNNER_STATUS_POLL_MS = 30_000
-const CODEX_PANEL_SYNC_INTERVAL_MS = 5_000
+const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
 const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 
@@ -266,7 +266,11 @@ function copyPromptToClipboard(prompt: string): Promise<boolean> {
 
 export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
-  const { getBySourceId: getAiTaskBySourceId, refresh: refreshAiTasks } = useMemoAiTasks()
+  const {
+    getBySourceId: getAiTaskBySourceId,
+    refresh: refreshAiTasks,
+    refreshStatus: refreshAiTaskStatus,
+  } = useMemoAiTasks({ sourceTaskIds: [node.taskId] })
   const [heading, setHeading] = useState(node.title)
   const [detail, setDetail] = useState(node.memo)
   const [error, setError] = useState<string | null>(null)
@@ -513,11 +517,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           ai_task_id: codexTask?.id,
         }),
       }).catch(() => undefined)
-      await refreshAiTasks()
+      await refreshAiTaskStatus()
     } finally {
       setIsSyncingCodex(false)
     }
-  }, [codexTask?.id, hasCodexRun, node.taskId, open, refreshAiTasks])
+  }, [codexTask?.id, hasCodexRun, node.taskId, open, refreshAiTaskStatus])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -792,7 +796,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       </span>
                     )}
                     <span className="text-[11px] text-muted-foreground">
-                      {isSyncingCodex ? "同期中" : "約5秒ごとに同期"}
+                      {isSyncingCodex ? "同期中" : "約3秒ごとに同期"}
                     </span>
                   </div>
                 </div>

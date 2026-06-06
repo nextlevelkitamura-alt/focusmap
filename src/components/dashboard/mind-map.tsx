@@ -165,12 +165,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         onRemoveOptimisticEvent,
     });
     const allTasksByIdForCodex = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task])), [groups, tasks]);
+    const codexSourceTaskIds = useMemo(() => [...groups, ...tasks].map(task => task.id).filter(Boolean), [groups, tasks]);
     const [taskProgressFixtureEnabled] = useState(() => shouldUseTaskProgressFixture());
     const {
         bySourceId: aiTasksBySourceId,
         getBySourceId: getAiTaskBySourceId,
         refresh: refreshAiTasks,
-    } = useMemoAiTasks();
+    } = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds });
     const taskProgressFixtureTasks = useMemo<TaskProgressSnapshotTask[] | undefined>(() => {
         if (!taskProgressFixtureEnabled) return undefined;
         const sourceTasks = [...groups, ...tasks].slice(0, TASK_PROGRESS_FIXTURE_STATUSES.length);

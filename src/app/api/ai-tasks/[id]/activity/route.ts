@@ -29,6 +29,49 @@ function kindFromEventType(eventType: string) {
   return 'progress'
 }
 
+function activityRole(value: unknown) {
+  return value === 'system' || value === 'codex' || value === 'user' || value === 'status'
+    ? value
+    : null
+}
+
+function activityKind(value: unknown) {
+  return value === 'prompt_waiting' ||
+    value === 'sent' ||
+    value === 'progress' ||
+    value === 'question' ||
+    value === 'approval' ||
+    value === 'resumed' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'user_answer'
+    ? value
+    : null
+}
+
+function activityImportance(value: unknown) {
+  return value === 'important' ? 'important' : 'normal'
+}
+
+function progressMessageFromTurso(item: Awaited<ReturnType<typeof listTaskProgress>>[number]) {
+  const progressJson = isRecord(item.progress_json) ? item.progress_json : {}
+  const mirroredActivity = progressJson.source === 'activity_message'
+  const metadata = isRecord(progressJson.metadata) ? progressJson.metadata : progressJson
+  const role = mirroredActivity ? activityRole(progressJson.role) ?? 'codex' : 'codex'
+  const kind = mirroredActivity ? activityKind(progressJson.kind) ?? 'progress' : 'progress'
+  return {
+    id: item.id,
+    task_id: item.task_id,
+    user_id: item.user_id,
+    role,
+    kind,
+    body: item.message || item.phase || '進捗更新',
+    importance: mirroredActivity ? activityImportance(progressJson.importance) : 'normal',
+    metadata,
+    created_at: item.created_at,
+  }
+}
+
 function fallbackMessagesFromTask(task: {
   id: string
   user_id: string
@@ -129,17 +172,7 @@ export async function GET(
           listTaskProgress(task.id, task.user_id, 50),
           listTaskEvents(task.id, task.user_id, 50),
         ])
-        const progressMessages = progress.map(item => ({
-          id: item.id,
-          task_id: item.task_id,
-          user_id: item.user_id,
-          role: 'codex',
-          kind: 'progress',
-          body: item.message || item.phase || '進捗更新',
-          importance: 'normal',
-          metadata: item.progress_json ?? {},
-          created_at: item.created_at,
-        }))
+        const progressMessages = progress.map(progressMessageFromTurso)
         const eventMessages = events.map(item => ({
           id: item.id,
           task_id: item.task_id,
