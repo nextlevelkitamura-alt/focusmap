@@ -54,6 +54,7 @@ flowchart TB
 - Supabase: `ai_tasks` のコマンド、最終状態、互換的な最新summaryの正。
 - Turso: 高頻度表示用の軽量snapshot/event/heartbeatの正。
 - ローカルファイル: raw sqlite、rollout、スクショ原本、実行ログの保管場所。クラウドへ全文保存しない。
+- Supabase/Tursoの保存境界は `docs/specs/codex-app-handoff-monitoring/03-backyard-sync-and-turso.md` を正とする。
 
 ## 方針
 
@@ -62,6 +63,7 @@ flowchart TB
 - Codex状態の通常writerは1つにする。`scripts/task-runner.ts` と `/api/codex/sync-node` は移行期間の互換/手動sync/debugに限定し、supervisor monitorが有効なtaskでは重複書き込みを避ける。
 - UIの3秒pollは読み取り専用にする。`/api/task-progress/snapshot` と `/api/ai-tasks/[id]/activity` を読み、sqlite/rollout探索やDB writeはローカルmonitor側だけが行う。
 - ローカル監視はactive task中だけ1〜5秒で確認してよいが、DB書き込みはhash/活動時刻/状態/新規activityが変わった時だけにする。heartbeatは5秒基準でよい。
+- Supabaseへはtask作成、thread初回検出、状態変化、完了/失敗/確認待ち、互換fallbackだけを書く。`codex_last_checked_at` だけの無変化poll、running中の同一pulse、raw log/full thread historyはSupabaseへ書かない。Tursoが使える時、activityはTursoを主にする。
 - macOS権限は機能別に明示する。全アプリ監視を暗黙に行わず、必要な時だけAccessibility、Screen Recording、Automation、Full Disk Accessを案内する。
 
 ## タスク分解

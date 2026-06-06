@@ -110,8 +110,8 @@ type SupabaseLike = any
 const ACTIVITY_DEDUPE_CACHE_MAX = 4_000
 const activityDedupeCache = new Map<string, number>()
 
-function tursoActivityPrimaryEnabled() {
-  return process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY === '1'
+export function tursoActivityPrimaryEnabled() {
+  return process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY !== '0'
 }
 
 function activityProgressId(input: InsertAiTaskActivityMessageInput, body: string) {

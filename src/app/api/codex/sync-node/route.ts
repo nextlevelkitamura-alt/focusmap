@@ -28,7 +28,6 @@ export const dynamic = 'force-dynamic'
 const execFileAsync = promisify(execFile)
 const SQLITE_BIN = '/usr/bin/sqlite3'
 const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
-const CODEX_LAST_CHECKED_WRITE_INTERVAL_MS = 30_000
 const MAX_CURRENT_STEP_CHARS = 600
 const MAX_SUMMARY_CHARS = 1_200
 
@@ -354,11 +353,6 @@ function codexPulseSummary(state: CodexRunState | 'prompt_waiting', reason: Code
   return `Codex.appは送信待ちです。${activity}`
 }
 
-function shouldWriteLastChecked(current: Record<string, unknown>, nowMs: number) {
-  const lastCheckedMs = parseTimeMs(current.codex_last_checked_at)
-  return lastCheckedMs == null || nowMs - lastCheckedMs >= CODEX_LAST_CHECKED_WRITE_INTERVAL_MS
-}
-
 function threadMovedSinceLastSync(current: Record<string, unknown>, row: CodexThreadRow) {
   const previousSnapshot = asRecord(current.codex_thread_snapshot)
   const previousUpdatedAt = parseTimeMs(previousSnapshot.updated_at_ms)
@@ -486,18 +480,14 @@ export async function POST(req: NextRequest) {
   if (!threadId) {
     threadId = await findMatchingCodexThread(dbPath, task)
     if (!threadId) {
-      if (shouldWriteLastChecked(current, nowMs)) {
-        await supabase
-          .from('ai_tasks')
-          .update({
-            result: {
-              ...current,
-              codex_last_checked_at: nowIso,
-            },
-          })
-          .eq('id', task.id)
-      }
-      return NextResponse.json({ task_id: task.id, thread_id: null, state: 'prompt_waiting', synced: true })
+      return NextResponse.json({
+        task_id: task.id,
+        thread_id: null,
+        state: 'prompt_waiting',
+        synced: true,
+        persisted: false,
+        checked_at: nowIso,
+      })
     }
   }
 
@@ -514,23 +504,37 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    await supabase
-      .from('ai_tasks')
-      .update({
-        status: 'awaiting_approval',
-        result: {
-          ...current,
-          codex_thread_id: threadId,
-          codex_run_state: 'awaiting_approval',
-          codex_review_reason: 'thread_deleted',
-          codex_last_checked_at: nowIso,
-          current_step: 'Codex threadが見つかりません',
-          live_log: undefined,
-          message: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
-        },
-      })
-      .eq('id', task.id)
-    return NextResponse.json({ task_id: task.id, thread_id: threadId, state: 'awaiting_approval', synced: true })
+    const alreadyPersisted =
+      task.status === 'awaiting_approval' &&
+      previousRunState === 'awaiting_approval' &&
+      current.codex_review_reason === 'thread_deleted' &&
+      codexTaskThreadId(task) === threadId
+
+    if (!alreadyPersisted) {
+      await supabase
+        .from('ai_tasks')
+        .update({
+          status: 'awaiting_approval',
+          result: {
+            ...current,
+            codex_thread_id: threadId,
+            codex_run_state: 'awaiting_approval',
+            codex_review_reason: 'thread_deleted',
+            codex_last_checked_at: nowIso,
+            current_step: 'Codex threadが見つかりません',
+            live_log: undefined,
+            message: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
+          },
+        })
+        .eq('id', task.id)
+    }
+    return NextResponse.json({
+      task_id: task.id,
+      thread_id: threadId,
+      state: 'awaiting_approval',
+      synced: true,
+      persisted: !alreadyPersisted,
+    })
   }
 
   let rolloutRaw = ''
@@ -578,6 +582,9 @@ export async function POST(req: NextRequest) {
   const shouldUpdateVisibleMessages =
     includeVisibleActivity &&
     visibleMessagesChanged(current.codex_visible_messages, compactVisibleMessages)
+  const shouldPersistVisibleMessagesFallback =
+    shouldUpdateVisibleMessages &&
+    !isTursoConfigured()
 
   const nextStatus =
     codexState === 'prompt_waiting'
@@ -611,7 +618,6 @@ export async function POST(req: NextRequest) {
   }
 
   const shouldRecordProgress = codexState === 'running' && shouldWriteProgressActivity(current, currentStep, nowMs)
-  const shouldPersistLastChecked = shouldWriteLastChecked(current, nowMs)
   const result = {
     ...current,
     executor: task.executor,
@@ -627,7 +633,7 @@ export async function POST(req: NextRequest) {
       ? 'Codex セッションは確認待ちです。内容を確認して完了にしてください。'
       : summary,
     current_step: currentStep,
-    ...(includeVisibleActivity
+    ...(shouldPersistVisibleMessagesFallback
       ? { codex_visible_messages: compactVisibleMessages }
       : Array.isArray(current.codex_visible_messages)
         ? { codex_visible_messages: current.codex_visible_messages }
@@ -662,9 +668,7 @@ export async function POST(req: NextRequest) {
     resumedFromApproval ||
     previousRunState !== codexState ||
     current.current_step !== currentStep ||
-    shouldUpdateVisibleMessages ||
-    shouldRecordProgress ||
-    shouldPersistLastChecked
+    shouldPersistVisibleMessagesFallback
 
   if (shouldUpdateSupabase) {
     await supabase

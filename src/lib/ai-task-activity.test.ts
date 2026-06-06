@@ -1,7 +1,8 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
   defaultAiTaskActivityImportance,
   selectAiTaskActivityMessageIdsToDelete,
+  tursoActivityPrimaryEnabled,
   type AiTaskActivityKind,
   type AiTaskActivityMessageForPrune,
 } from './ai-task-activity'
@@ -54,5 +55,26 @@ describe('selectAiTaskActivityMessageIdsToDelete', () => {
     for (const kind of protectedKinds) {
       expect(deleteIds).not.toContain(kind)
     }
+  })
+})
+
+describe('tursoActivityPrimaryEnabled', () => {
+  const original = process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY
+    else process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY = original
+  })
+
+  test('uses Turso as the activity primary store by default', () => {
+    delete process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY
+
+    expect(tursoActivityPrimaryEnabled()).toBe(true)
+  })
+
+  test('allows Supabase activity mirroring to be forced back on', () => {
+    process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY = '0'
+
+    expect(tursoActivityPrimaryEnabled()).toBe(false)
   })
 })
