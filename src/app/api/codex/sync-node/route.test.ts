@@ -281,4 +281,68 @@ describe('/api/codex/sync-node Codex thread closure', () => {
       dedupeKey: 'thread:thread-1:closed:thread_deleted',
     }))
   })
+
+  test('does not rewrite database rows after an archived thread closure is already persisted', async () => {
+    setAiTask(baseTask({
+      status: 'completed',
+      result: {
+        codex_thread_id: 'thread-1',
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: 'archived',
+        codex_source_task_completed: true,
+        codex_source_task_id: 'source-task-1',
+      },
+    }))
+    setThreadRow({
+      id: 'thread-1',
+      title: '調べて',
+      tokens_used: 10,
+      has_user_event: 1,
+      archived: 1,
+      updated_at_ms: Date.parse('2026-06-07T00:01:00.000Z'),
+      preview: 'done',
+      rollout_path: '/tmp/rollout.jsonl',
+      source: 'codex_app',
+      cwd: '/repo',
+      first_user_message: '調べて',
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest())
+    const json = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(json.state).toBe('completed')
+    expect(json.persisted).toBe(false)
+    expect(getSourceTaskUpdates()).toEqual([])
+    expect(getAiTaskUpdates()).toEqual([])
+    expect(mockUpsertTursoAiTask).not.toHaveBeenCalled()
+    expect(mockInsertActivity).not.toHaveBeenCalled()
+  })
+
+  test('does not rewrite database rows after a deleted thread closure with no source node is already persisted', async () => {
+    setAiTask(baseTask({
+      status: 'completed',
+      source_task_id: null,
+      result: {
+        codex_thread_id: 'thread-1',
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: 'thread_deleted',
+        codex_source_task_completed: false,
+      },
+    }))
+    setThreadRow(null)
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest())
+    const json = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(json.state).toBe('completed')
+    expect(json.persisted).toBe(false)
+    expect(getSourceTaskUpdates()).toEqual([])
+    expect(getAiTaskUpdates()).toEqual([])
+    expect(mockUpsertTursoAiTask).not.toHaveBeenCalled()
+    expect(mockInsertActivity).not.toHaveBeenCalled()
+  })
 })

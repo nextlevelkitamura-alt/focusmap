@@ -462,6 +462,20 @@ type SourceTaskCompletionResult = {
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
+function codexClosureAlreadyRecorded(input: {
+  task: CodexTaskRow
+  threadId: string
+  current: Record<string, unknown>
+  reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
+  sourceTaskId: string | null
+}) {
+  if (input.task.status !== 'completed') return false
+  if (input.current.codex_review_reason !== input.reason) return false
+  if (codexTaskThreadId(input.task) !== input.threadId) return false
+  if (!input.sourceTaskId) return true
+  return input.current.codex_source_task_completed === true || input.current.codex_source_task_missing === true
+}
+
 async function completeSourceMindmapTaskForCodexClosure(
   supabase: SupabaseServerClient,
   task: CodexTaskRow,
@@ -536,16 +550,20 @@ async function persistCodexThreadClosure(input: {
     row = null,
     visibleActivityEvents = [],
   } = input
-  const alreadyPersisted =
-    task.status === 'completed' &&
-    current.codex_review_reason === reason &&
-    current.codex_source_task_completed === true
+  const sourceTaskId = task.source_task_id?.trim() || null
+  const alreadyPersisted = codexClosureAlreadyRecorded({
+    task,
+    threadId,
+    current,
+    reason,
+    sourceTaskId,
+  })
 
   let sourceTaskCompletion: SourceTaskCompletionResult = {
-    sourceTaskId: task.source_task_id?.trim() || null,
+    sourceTaskId,
     completed: false,
-    alreadyCompleted: alreadyPersisted && !!task.source_task_id,
-    missing: false,
+    alreadyCompleted: alreadyPersisted && current.codex_source_task_completed === true,
+    missing: alreadyPersisted && current.codex_source_task_missing === true,
   }
 
   if (!alreadyPersisted) {
@@ -634,54 +652,54 @@ async function persistCodexThreadClosure(input: {
       .eq('id', task.id)
 
     if (updateError) throw updateError
+
+    try {
+      await mirrorCodexSyncToTurso({
+        task,
+        status: 'completed',
+        threadId,
+        currentStep,
+        summary: message,
+        codexState: 'awaiting_approval',
+        previousRunState,
+        hadThreadId,
+        resumedFromApproval: false,
+        completedAt: nowIso,
+      })
+    } catch (tursoError) {
+      console.error('[codex/sync-node turso closure]', tursoError)
+    }
+
+    const activityEvents: Array<{
+      role: AiTaskActivityRole
+      kind: AiTaskActivityKind
+      body: string
+      dedupeKey: string
+      importance?: 'normal' | 'important'
+      createdAt?: string | null
+    }> = [
+      ...visibleActivityEvents,
+      {
+        role: 'status',
+        kind: 'completed',
+        body: message,
+        dedupeKey: `thread:${threadId}:closed:${reason}`,
+        importance: 'important',
+        createdAt: nowIso,
+      },
+    ]
+
+    await Promise.all(activityEvents.map(event => insertAiTaskActivityMessage(supabase, {
+      taskId: task.id,
+      userId: task.user_id,
+      role: event.role,
+      kind: event.kind,
+      body: event.body,
+      importance: event.importance,
+      dedupeKey: event.dedupeKey,
+      createdAt: event.createdAt ?? undefined,
+    })))
   }
-
-  try {
-    await mirrorCodexSyncToTurso({
-      task,
-      status: 'completed',
-      threadId,
-      currentStep,
-      summary: message,
-      codexState: 'awaiting_approval',
-      previousRunState,
-      hadThreadId,
-      resumedFromApproval: false,
-      completedAt: nowIso,
-    })
-  } catch (tursoError) {
-    console.error('[codex/sync-node turso closure]', tursoError)
-  }
-
-  const activityEvents: Array<{
-    role: AiTaskActivityRole
-    kind: AiTaskActivityKind
-    body: string
-    dedupeKey: string
-    importance?: 'normal' | 'important'
-    createdAt?: string | null
-  }> = [
-    ...visibleActivityEvents,
-    {
-      role: 'status',
-      kind: 'completed',
-      body: message,
-      dedupeKey: `thread:${threadId}:closed:${reason}`,
-      importance: 'important',
-      createdAt: nowIso,
-    },
-  ]
-
-  await Promise.all(activityEvents.map(event => insertAiTaskActivityMessage(supabase, {
-    taskId: task.id,
-    userId: task.user_id,
-    role: event.role,
-    kind: event.kind,
-    body: event.body,
-    importance: event.importance,
-    dedupeKey: event.dedupeKey,
-    createdAt: event.createdAt ?? undefined,
-  })))
 
   return {
     persisted: !alreadyPersisted || shouldPersistVisibleMessagesFallback,
