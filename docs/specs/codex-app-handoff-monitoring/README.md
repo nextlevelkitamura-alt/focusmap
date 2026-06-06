@@ -2,7 +2,7 @@
 
 Status: living spec
 Created: 2026-06-05
-Updated: 2026-06-05
+Updated: 2026-06-06
 
 このフォルダは、Focusmap の Codex.app handoff + monitoring が目指す理想状態の正本です。
 

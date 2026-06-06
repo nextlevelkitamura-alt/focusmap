@@ -58,6 +58,7 @@ import {
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
+  copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
   launchCodexViaLocalApi,
@@ -864,15 +865,7 @@ export function WishlistView({
       }
     }
 
-    let copied = false
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(prompt)
-        copied = true
-      }
-    } catch {
-      copied = false
-    }
+    const copied = await copyPromptForCodexHandoff(prompt)
 
     const preferMobile = isLikelyMobileDevice()
     const target = buildCodexOpenTarget(
@@ -930,6 +923,7 @@ export function WishlistView({
     const prompt = isCodexManualHandoff
       ? appendCodexHandoffToken(basePrompt, handoffToken)
       : basePrompt
+    const clipboardPromise = isCodexManualHandoff ? copyPromptForCodexHandoff(prompt).catch(() => false) : null
 
     const registerTask = async () => {
       const res = await fetch("/api/ai-tasks/schedule", {
@@ -956,6 +950,7 @@ export function WishlistView({
 
     if (isCodexManualHandoff) {
       await registerTask()
+      await clipboardPromise
       await openCodexHandoff(prompt, repoPath ?? null)
       return
     }
@@ -968,12 +963,8 @@ export function WishlistView({
 
   const copyCodexPromptForMemo = useCallback(async (item: MemoItem) => {
     const text = await buildMemoCodexHandoffText(item)
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text)
-        return
-      }
-    } catch {}
+    const copied = await copyPromptForCodexHandoff(text)
+    if (copied) return
     throw new Error("クリップボードコピー失敗。手動でコピーしてください")
   }, [buildMemoCodexHandoffText])
 

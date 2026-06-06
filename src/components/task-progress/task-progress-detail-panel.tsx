@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertCircle, Clock, Loader2, Terminal } from "lucide-react"
+import { AlertCircle, Check, Clock, Copy, Loader2, Terminal } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -10,7 +10,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
-import { canUseLocalCodexOpenApi } from "@/lib/codex-app-launch"
+import { canUseLocalCodexOpenApi, copyPromptForCodexHandoff } from "@/lib/codex-app-launch"
 import {
   codexMonitorToneClass,
   codexMonitorUiLabel,
@@ -106,6 +106,8 @@ export function TaskProgressDetailPanel({
   const [activityError, setActivityError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isCopyingPrompt, setIsCopyingPrompt] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
   const watchIdRef = useRef<string | null>(null)
   const taskId = task?.id ?? null
   const isFixtureTask = !!taskId?.startsWith("fixture:")
@@ -227,6 +229,8 @@ export function TaskProgressDetailPanel({
       setActivityMessages([])
       setActivityError(null)
       setError(null)
+      setIsCopyingPrompt(false)
+      setPromptCopied(false)
       return
     }
     void refreshPanel()
@@ -266,6 +270,28 @@ export function TaskProgressDetailPanel({
   const status = taskForDisplay?.status
   const statusLabel = status ? codexMonitorUiLabel(status) : "不明"
   const latestStatusText = compactText(taskForDisplay?.current_step) || compactText(taskForDisplay?.summary)
+  const promptToCopy = activityMessages.find(message =>
+    (message.role === "user" || message.kind === "sent") &&
+    !!message.body.trim()
+  )?.body.trim() ?? ""
+  const canCopyPrompt = !!promptToCopy && getCodexMonitorUiStatus(status) !== "running"
+
+  const copyPrompt = useCallback(async () => {
+    if (!promptToCopy || isCopyingPrompt) return
+    setIsCopyingPrompt(true)
+    setPromptCopied(false)
+    setError(null)
+    try {
+      const copied = await copyPromptForCodexHandoff(promptToCopy)
+      if (!copied) throw new Error("クリップボードコピー失敗")
+      setPromptCopied(true)
+      window.setTimeout(() => setPromptCopied(false), 1600)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "クリップボードコピー失敗")
+    } finally {
+      setIsCopyingPrompt(false)
+    }
+  }, [isCopyingPrompt, promptToCopy])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -297,6 +323,23 @@ export function TaskProgressDetailPanel({
                 )}
               </SheetDescription>
             </div>
+            {canCopyPrompt && (
+              <button
+                type="button"
+                onClick={() => void copyPrompt()}
+                disabled={isCopyingPrompt}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-500/20 disabled:opacity-50 dark:text-sky-200"
+              >
+                {isCopyingPrompt ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : promptCopied ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+                {promptCopied ? "コピー済み" : "プロンプトをコピー"}
+              </button>
+            )}
           </div>
         </SheetHeader>
 

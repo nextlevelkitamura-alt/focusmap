@@ -1,7 +1,7 @@
 "use client"
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Bot, ExternalLink, Loader2, RefreshCw } from "lucide-react"
+import { Bot, Check, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -15,6 +15,7 @@ import {
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
+  copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
   launchCodexFromBrowser,
@@ -509,6 +510,8 @@ export function MindmapLinkedMemosDialog({
   const [draftMemo, setDraftMemo] = useState("")
   const [selectedRepoPath, setSelectedRepoPath] = useState("")
   const [justSentPrompt, setJustSentPrompt] = useState("")
+  const [isCopyingPrompt, setIsCopyingPrompt] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
   const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
   const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
   const codexWatchIdRef = useRef<string | null>(null)
@@ -533,6 +536,7 @@ export function MindmapLinkedMemosDialog({
   const codexManualHandoff = codexResult.codex_manual_handoff === true
   const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
   const codexSendConfirmed = !codexWaitingForAppSend && (!!codexThreadId || !codexManualHandoff)
+  const isCodexRunning = codexUiState?.state === "running" || codexTask?.status === "running"
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
   const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
@@ -633,6 +637,8 @@ export function MindmapLinkedMemosDialog({
     setDraftTitle("")
     setDraftMemo("")
     setJustSentPrompt("")
+    setIsCopyingPrompt(false)
+    setPromptCopied(false)
 
     async function loadTask() {
       try {
@@ -783,12 +789,11 @@ export function MindmapLinkedMemosDialog({
     const useLocalApi = canUseLocalCodexOpenApi()
     const handoffToken = buildCodexHandoffToken(task.id)
     const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
+    const clipboardPromise = copyPromptForCodexHandoff(prompt).catch(() => false)
     try {
       await saveDraft()
       await createCodexTask("manual", prompt, handoffToken)
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(prompt).catch(() => undefined)
-      }
+      await clipboardPromise
       setJustSentPrompt(prompt)
       await refreshAiTasks()
       if (useLocalApi) {
@@ -823,6 +828,25 @@ export function MindmapLinkedMemosDialog({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Codex.app を開けませんでした")
+    }
+  }
+
+  async function handleCopySentPrompt() {
+    const prompt = rawSentPrompt || justSentPrompt
+    if (!prompt || isCopyingPrompt) return
+
+    setIsCopyingPrompt(true)
+    setPromptCopied(false)
+    setError(null)
+    try {
+      const copied = await copyPromptForCodexHandoff(prompt)
+      if (!copied) throw new Error("クリップボードコピー失敗")
+      setPromptCopied(true)
+      window.setTimeout(() => setPromptCopied(false), 1600)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "クリップボードコピー失敗")
+    } finally {
+      setIsCopyingPrompt(false)
     }
   }
 
@@ -896,6 +920,25 @@ export function MindmapLinkedMemosDialog({
                     <RefreshCw className="h-3.5 w-3.5" />
                     ログ更新
                   </Button>
+                  {!isCodexRunning && rawSentPrompt && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleCopySentPrompt()}
+                      disabled={isCopyingPrompt}
+                      className="h-8 gap-1.5 border-sky-500/30 bg-sky-500/10 text-sky-700 hover:bg-sky-500/20 dark:text-sky-200"
+                    >
+                      {isCopyingPrompt ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : promptCopied ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                      {promptCopied ? "コピー済み" : "プロンプトをコピー"}
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     size="sm"

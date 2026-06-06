@@ -13,6 +13,7 @@ import {
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
+  copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
   launchCodexViaLocalApi,
@@ -24,7 +25,7 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Clock, ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
+import { Bot, Check, Clock, Copy, ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
   taskId: string
@@ -234,42 +235,6 @@ function parseCodexConversation(value: string, prompt: string): { entries: Codex
   return { entries, processLogs }
 }
 
-function copyPromptToClipboard(prompt: string): Promise<boolean> {
-  let copied = false
-
-  if (typeof document !== "undefined") {
-    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const textarea = document.createElement("textarea")
-    textarea.value = prompt
-    textarea.setAttribute("readonly", "")
-    textarea.style.position = "fixed"
-    textarea.style.top = "0"
-    textarea.style.left = "0"
-    textarea.style.width = "1px"
-    textarea.style.height = "1px"
-    textarea.style.opacity = "0"
-    document.body.appendChild(textarea)
-    textarea.focus()
-    textarea.select()
-    try {
-      copied = document.execCommand("copy")
-    } catch {
-      copied = false
-    } finally {
-      document.body.removeChild(textarea)
-      activeElement?.focus({ preventScroll: true })
-    }
-  }
-
-  if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(prompt)
-      .then(() => true)
-      .catch(() => copied)
-  }
-
-  return Promise.resolve(copied)
-}
-
 export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const {
@@ -287,6 +252,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
   const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
   const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
+  const [isCopyingCodexPrompt, setIsCopyingCodexPrompt] = useState(false)
+  const [codexPromptCopied, setCodexPromptCopied] = useState(false)
   const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
@@ -313,6 +280,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexRunnerStatus({ checked: false, ready: false })
     setCodexActivityMessages([])
     setCodexActivityError(null)
+    setIsCopyingCodexPrompt(false)
+    setCodexPromptCopied(false)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
   }, [open, node.taskId, node.title, node.memo])
@@ -481,6 +450,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const codexAiTaskId = codexTask?.id ?? null
   const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
+  const isCodexRunning = codexUiState?.state === "running" || codexTask?.status === "running"
+  const canCopyCodexPrompt = hasCodexRun && !!rawSentPrompt && !isCodexRunning
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
   const codexConversation = useMemo(
@@ -553,6 +524,23 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setIsSyncingCodex(false)
     }
   }, [codexAiTaskId, hasCodexRun, loadCodexActivity, node.taskId, open, refreshAiTaskStatus])
+
+  const handleCopyCodexPrompt = useCallback(async () => {
+    if (!rawSentPrompt || isCopyingCodexPrompt) return
+    setIsCopyingCodexPrompt(true)
+    setCodexPromptCopied(false)
+    try {
+      const copied = await copyPromptForCodexHandoff(rawSentPrompt)
+      if (!copied) throw new Error("クリップボードコピー失敗")
+      setCodexPromptCopied(true)
+      setCodexFeedback("プロンプトをコピーしました。Codex.app側で貼り付けて送信してください。")
+      window.setTimeout(() => setCodexPromptCopied(false), 1600)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "クリップボードコピー失敗")
+    } finally {
+      setIsCopyingCodexPrompt(false)
+    }
+  }, [isCopyingCodexPrompt, rawSentPrompt])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -651,7 +639,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexSendStatus("sending")
 
     try {
-      const clipboardPromise = copyPromptToClipboard(prompt)
+      const clipboardPromise = copyPromptForCodexHandoff(prompt)
       const dispatchMode = "manual"
       const savePromise = saveDraft(heading, detail)
       await savePromise
@@ -678,6 +666,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
         throw new Error(data.error || "このノードは既にCodexで実行中または確認待ちです")
       }
+      setJustSentPrompt(prompt)
+      void refreshAiTasks()
 
       let copiedToClipboard = await clipboardPromise
       if (useLocalApi) {
@@ -690,7 +680,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       }
 
       setCodexSendStatus("sent")
-      setJustSentPrompt(prompt)
       await refreshAiTasks()
       window.setTimeout(() => void syncCodexState(), 1200)
       window.setTimeout(() => void syncCodexState(), 3500)
@@ -843,6 +832,23 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       {isSyncingCodex ? "同期中" : "約3秒ごとに同期"}
                     </span>
                   </div>
+                  {canCopyCodexPrompt && (
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyCodexPrompt()}
+                      disabled={isCopyingCodexPrompt}
+                      className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-500/20 disabled:opacity-50 dark:text-sky-200"
+                    >
+                      {isCopyingCodexPrompt ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : codexPromptCopied ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                      {codexPromptCopied ? "コピー済み" : "プロンプトをコピー"}
+                    </button>
+                  )}
                 </div>
 
                 <div>

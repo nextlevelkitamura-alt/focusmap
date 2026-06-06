@@ -53,6 +53,43 @@ export function appendCodexHandoffToken(prompt: string, token: string | null | u
   return normalizedPrompt
 }
 
+export function copyTextToClipboard(text: string): Promise<boolean> {
+  const value = text.replace(/\r\n?/g, "\n")
+  let copied = false
+
+  if (typeof document !== "undefined") {
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const textarea = document.createElement("textarea")
+    textarea.value = value
+    textarea.setAttribute("readonly", "")
+    textarea.style.position = "fixed"
+    textarea.style.top = "0"
+    textarea.style.left = "0"
+    textarea.style.width = "1px"
+    textarea.style.height = "1px"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    try {
+      copied = document.execCommand("copy")
+    } catch {
+      copied = false
+    } finally {
+      document.body.removeChild(textarea)
+      activeElement?.focus({ preventScroll: true })
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(value)
+      .then(() => true)
+      .catch(() => copied)
+  }
+
+  return Promise.resolve(copied)
+}
+
 export function canUseLocalCodexOpenApi() {
   if (typeof window === "undefined") return false
   return isLocalCodexOpenHost(window.location.hostname)
@@ -70,6 +107,31 @@ export function detectMobilePlatform(userAgent: string, maxTouchPoints = 0): Mob
 export function isLikelyMobileDevice() {
   if (typeof navigator === "undefined") return false
   return detectMobilePlatform(navigator.userAgent || "", navigator.maxTouchPoints) !== "desktop"
+}
+
+export async function copyCodexPromptViaLocalApi(prompt: string): Promise<boolean> {
+  const res = await fetch("/api/codex/open-repo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: normalizeCodexPrompt(prompt),
+      repo_path: null,
+      open_app: false,
+      origin_url: typeof window !== "undefined" ? window.location.href : null,
+    }),
+  })
+  if (!res.ok) return false
+  const data = await res.json().catch(() => ({})) as { copied_to_clipboard?: boolean }
+  return data.copied_to_clipboard === true
+}
+
+export async function copyPromptForCodexHandoff(prompt: string): Promise<boolean> {
+  const copied = await copyTextToClipboard(prompt)
+  if (copied) return true
+  if (canUseLocalCodexOpenApi() && !isLikelyMobileDevice()) {
+    return copyCodexPromptViaLocalApi(prompt)
+  }
+  return false
 }
 
 export function getCurrentMobilePlatform(): MobilePlatform {
@@ -101,12 +163,10 @@ export function isLikelyMobileUserAgent(userAgent: string, maxTouchPoints = 0) {
   return detectMobilePlatform(userAgent, maxTouchPoints) !== "desktop"
 }
 
-export function buildCodexDeepLink({ prompt, repoPath, threadUrl, originUrl }: CodexLaunchPayload) {
+export function buildCodexDeepLink({ repoPath, threadUrl, originUrl }: CodexLaunchPayload) {
   if (threadUrl?.trim()) return threadUrl.trim()
 
   const url = new URL("codex://")
-  const normalizedPrompt = normalizeCodexPrompt(prompt)
-  if (normalizedPrompt) url.searchParams.set("prompt", normalizedPrompt)
   if (repoPath?.trim()) url.searchParams.set("path", repoPath.trim())
   if (originUrl?.trim()) url.searchParams.set("originUrl", originUrl.trim())
   return url.toString()

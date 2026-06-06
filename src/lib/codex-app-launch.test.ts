@@ -23,15 +23,15 @@ describe("isLocalCodexOpenHost", () => {
 })
 
 describe("buildCodexDeepLink", () => {
-  test("injects prompt and repository path into codex URL", () => {
+  test("opens the repo without putting the prompt in the codex URL", () => {
     const url = new URL(buildCodexDeepLink({
-      prompt: "  fix this\r\n\n",
+      prompt: "  日本語を直す\r\n\n",
       repoPath: "/Users/me/project",
       originUrl: "https://abc-123.trycloudflare.com/dashboard",
     }))
 
     expect(url.protocol).toBe("codex:")
-    expect(url.searchParams.get("prompt")).toBe("fix this")
+    expect(url.searchParams.get("prompt")).toBeNull()
     expect(url.searchParams.get("path")).toBe("/Users/me/project")
     expect(url.searchParams.get("originUrl")).toBe("https://abc-123.trycloudflare.com/dashboard")
   })

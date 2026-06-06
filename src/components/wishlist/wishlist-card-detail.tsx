@@ -2759,11 +2759,20 @@ export function WishlistCardDetail({
               : {}
             const codexPromptWaiting = (taskExecutor === "codex" || taskExecutor === "codex_app") && taskResult.codex_run_state === "prompt_waiting"
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
+            const isCodexExecutor = taskExecutor === "codex" || taskExecutor === "codex_app" || launchExecutor === "codex" || launchExecutor === "codex_app"
+            const isCodexRunning = isCodexExecutor && aiTask?.status === "running"
             const needsRepoConfig = !item.project_id || !repoConfigured
             const claudeDisabled = needsRepoConfig || !!active
-              const codexDisabled = !draftTitle.trim() || needsRepoConfig || (!!active && !codexPromptWaiting)
+              const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
+              const codexDraftItem = {
+                ...item,
+                title: draftTitle,
+                description: draftDescription || null,
+              } as IdealGoalWithItems
+              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || (!!active && !codexPromptWaiting)
               const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
               const showCodexDetails = isCodexPanelOpen || !!active || launchStep !== null || !!launchError || needsConfig
+              const showPromptCopyButton = !!onCopyCodexPrompt && showCodexDetails && !isCodexRunning && (codexPromptWaiting || !!active || launchStep !== null || !!launchError)
               return (
                 <div className="space-y-3 rounded-lg border bg-background/40 p-3">
                   {/* Codex 起動（codex に一本化。claude/codex_app は親から prop 未提供で非表示） */}
@@ -2807,7 +2816,7 @@ export function WishlistCardDetail({
                         setLaunchExecutor('codex')
                         setIsLaunchingCodex(true)
                         try {
-                          await onLaunchCodex(item)
+                          await onLaunchCodex(codexDraftItem)
                           setLaunchStep('sent')
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動失敗")
@@ -2855,17 +2864,17 @@ export function WishlistCardDetail({
                     </>
                   )}
 
-                  {showCodexDetails && onCopyCodexPrompt && (active || launchStep !== null) && (
+                  {showPromptCopyButton && (
                     <Button
                     type="button"
                     variant="secondary"
-                    disabled={!draftTitle.trim() || isCopyingCodexPrompt}
+                    disabled={!hasCodexPromptDraft || isCopyingCodexPrompt}
                       onClick={async () => {
                         setIsCodexPanelOpen(true)
                         setLaunchError(null)
                       setIsCopyingCodexPrompt(true)
                       try {
-                        await onCopyCodexPrompt(item)
+                        await onCopyCodexPrompt(codexDraftItem)
                         setLaunchStep('sent')
                         setLaunchExecutor('codex')
                       } catch (e) {
@@ -2881,7 +2890,7 @@ export function WishlistCardDetail({
                   </Button>
                 )}
 
-                {/* サブオプション: codex:// URL スキームで Codex.app に prefill だけ（送信は手動）*/}
+                {/* サブオプション: promptをコピーしてCodex.appを開く（送信は手動） */}
                   {showCodexDetails && onLaunchCodexApp && (
                     <button
                     type="button"
@@ -2893,7 +2902,7 @@ export function WishlistCardDetail({
                       setLaunchExecutor('codex_app')
                       setIsLaunchingCodex(true)
                       try {
-                        await onLaunchCodexApp(item)
+                        await onLaunchCodexApp(codexDraftItem)
                         setLaunchStep('sent')
                       } catch (e) {
                         setLaunchError(e instanceof Error ? e.message : "起動失敗")
@@ -2905,7 +2914,7 @@ export function WishlistCardDetail({
                     }}
                     className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
                   >
-                    ◎ Codex.app に prefill だけする（送信は手動・自分で内容を確認したい時）
+                    ◎ プロンプトをコピーしてCodex.appを開く（送信は手動）
                   </button>
                 )}
 

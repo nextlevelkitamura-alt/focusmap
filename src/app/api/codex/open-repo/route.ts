@@ -17,6 +17,7 @@ type OpenCodexBody = {
   prompt?: unknown
   codex_url?: unknown
   origin_url?: unknown
+  open_app?: unknown
 }
 
 async function activateCodexApp(): Promise<boolean> {
@@ -79,10 +80,8 @@ async function resolveGitRoot(repoPath: string): Promise<string | null> {
   }
 }
 
-function buildCodexChatUrl(prompt: string, repoPath: string | null, originUrl: string | null): string {
+function buildCodexChatUrl(repoPath: string | null, originUrl: string | null): string {
   const url = new URL("codex://")
-  const normalizedPrompt = prompt.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim()
-  if (normalizedPrompt) url.searchParams.set("prompt", normalizedPrompt)
   if (repoPath) url.searchParams.set("path", repoPath)
   if (originUrl?.trim()) url.searchParams.set("originUrl", originUrl.trim())
   return url.toString()
@@ -198,18 +197,29 @@ export async function POST(req: NextRequest) {
   }
 
   const prompt = typeof body.prompt === "string" ? body.prompt : ""
+  const shouldOpenApp = body.open_app !== false
   let copiedToClipboard = false
 
   try {
     const originUrl = typeof body.origin_url === "string" ? body.origin_url : null
     copiedToClipboard = await copyToMacClipboard(prompt)
+    if (!shouldOpenApp) {
+      return NextResponse.json({
+        ok: true,
+        repo_path: resolvedRepoPath,
+        git_root: gitRoot,
+        activated: false,
+        copied_to_clipboard: copiedToClipboard,
+        command: "copy prompt",
+      })
+    }
     if (codexUrl) {
       await execFileAsync("/usr/bin/open", [codexUrl], {
         timeout: 10_000,
         windowsHide: true,
       })
     } else if (prompt.trim() || resolvedRepoPath) {
-      await execFileAsync("/usr/bin/open", [buildCodexChatUrl(prompt, resolvedRepoPath, originUrl)], {
+      await execFileAsync("/usr/bin/open", [buildCodexChatUrl(resolvedRepoPath, originUrl)], {
         timeout: 10_000,
         windowsHide: true,
       })
