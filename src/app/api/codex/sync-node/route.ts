@@ -611,6 +611,7 @@ export async function POST(req: NextRequest) {
   }
 
   const shouldRecordProgress = codexState === 'running' && shouldWriteProgressActivity(current, currentStep, nowMs)
+  const shouldPersistLastChecked = shouldWriteLastChecked(current, nowMs)
   const result = {
     ...current,
     executor: task.executor,
@@ -659,13 +660,11 @@ export async function POST(req: NextRequest) {
     nextStatus !== task.status ||
     !hadThreadId ||
     resumedFromApproval ||
-    threadMoved ||
     previousRunState !== codexState ||
     current.current_step !== currentStep ||
-    current.last_activity_at !== lastActivityAt ||
     shouldUpdateVisibleMessages ||
     shouldRecordProgress ||
-    shouldWriteLastChecked(current, nowMs)
+    shouldPersistLastChecked
 
   if (shouldUpdateSupabase) {
     await supabase
@@ -682,7 +681,6 @@ export async function POST(req: NextRequest) {
   const shouldMirrorToTurso =
     !hadThreadId ||
     resumedFromApproval ||
-    threadMoved ||
     previousRunState !== codexState ||
     current.current_step !== currentStep
 
