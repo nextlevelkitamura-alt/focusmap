@@ -254,11 +254,12 @@ function visibleCodexActivityEvent(row: CodexThreadRow, parsed: ReturnType<typeo
   body: string
   dedupeKey: string
   importance?: 'normal' | 'important'
+  createdAt?: string | null
 } | null {
   const candidates = [
-    { body: parsed.latestQuestion, kind: 'question' as const, importance: 'important' as const },
-    { body: parsed.latestAgentMessage, kind: 'progress' as const, importance: 'normal' as const },
-    { body: row.preview ?? '', kind: 'progress' as const, importance: 'normal' as const },
+    { body: parsed.latestQuestion, kind: 'question' as const, importance: 'important' as const, createdAt: parsed.lastActivityAt },
+    { body: parsed.latestAgentMessage, kind: 'progress' as const, importance: 'normal' as const, createdAt: parsed.lastActivityAt },
+    { body: row.preview ?? '', kind: 'progress' as const, importance: 'normal' as const, createdAt: threadUpdatedAtIso(row) },
   ]
 
   for (const candidate of candidates) {
@@ -273,6 +274,7 @@ function visibleCodexActivityEvent(row: CodexThreadRow, parsed: ReturnType<typeo
       body,
       dedupeKey: `thread:${row.id}:visible:${candidate.kind}:${fingerprint}`,
       importance: candidate.importance,
+      createdAt: candidate.createdAt,
     }
   }
 
@@ -285,6 +287,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
   body: string
   dedupeKey: string
   importance?: 'normal' | 'important'
+  createdAt?: string | null
 }> {
   const events: Array<{
     role: AiTaskActivityRole
@@ -292,6 +295,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
     body: string
     dedupeKey: string
     importance?: 'normal' | 'important'
+    createdAt?: string | null
   }> = []
   const pushEvent = (event: {
     role: AiTaskActivityRole
@@ -299,6 +303,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
     body: string
     dedupeKey: string
     importance?: 'normal' | 'important'
+    createdAt?: string | null
   }) => {
     const fingerprint = textFingerprint(event.body)
     if (events.some(existing => textFingerprint(existing.body) === fingerprint)) return
@@ -323,6 +328,7 @@ function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<type
       body,
       dedupeKey: `thread:${row.id}:message:${message.role}:${message.createdAt ?? 'no-time'}:${textFingerprint(body)}`,
       importance: kind === 'progress' ? 'normal' : 'important',
+      createdAt: message.createdAt,
     })
   }
 
@@ -358,6 +364,22 @@ function threadMovedSinceLastSync(current: Record<string, unknown>, row: CodexTh
   const previousUpdatedAt = parseTimeMs(previousSnapshot.updated_at_ms)
   const nextUpdatedAt = parseTimeMs(row.updated_at_ms)
   return previousUpdatedAt != null && nextUpdatedAt != null && nextUpdatedAt > previousUpdatedAt
+}
+
+function visibleMessagesChanged(previous: unknown, next: Array<Record<string, unknown>>) {
+  const normalize = (messages: unknown[]) => messages.map(message => {
+    const record = asRecord(message)
+    return {
+      role: record.role ?? null,
+      kind: record.kind ?? null,
+      body: typeof record.body === 'string' ? record.body.trim() : '',
+    }
+  }).filter(message => message.body)
+
+  const previousMessages = Array.isArray(previous) ? normalize(previous) : []
+  const nextMessages = normalize(next)
+  if (previousMessages.length !== nextMessages.length) return true
+  return JSON.stringify(previousMessages) !== JSON.stringify(nextMessages)
 }
 
 async function mirrorCodexSyncToTurso(input: {
@@ -543,6 +565,19 @@ export async function POST(req: NextRequest) {
   const currentStep = codexPulseStep(codexState, reviewReason)
   const lastActivityAt = parsed.lastActivityAt ?? threadUpdatedAtIso(row) ?? (typeof current.last_activity_at === 'string' ? current.last_activity_at : nowIso)
   const summary = codexPulseSummary(codexState, reviewReason, lastActivityAt)
+  const visibleActivityEventsForResult = includeVisibleActivity
+    ? visibleCodexActivityEvents(row, parsed, task)
+    : []
+  const compactVisibleMessages = visibleActivityEventsForResult.map(event => ({
+    role: event.role,
+    kind: event.kind,
+    body: event.body,
+    importance: event.importance ?? 'normal',
+    created_at: event.createdAt ?? nowIso,
+  }))
+  const shouldUpdateVisibleMessages =
+    includeVisibleActivity &&
+    visibleMessagesChanged(current.codex_visible_messages, compactVisibleMessages)
 
   const nextStatus =
     codexState === 'prompt_waiting'
@@ -591,6 +626,11 @@ export async function POST(req: NextRequest) {
       ? 'Codex セッションは確認待ちです。内容を確認して完了にしてください。'
       : summary,
     current_step: currentStep,
+    ...(includeVisibleActivity
+      ? { codex_visible_messages: compactVisibleMessages }
+      : Array.isArray(current.codex_visible_messages)
+        ? { codex_visible_messages: current.codex_visible_messages }
+        : {}),
     session_health: codexState === 'running' ? 'active' : codexState === 'awaiting_approval' ? 'stopped' : 'unknown',
     awaiting_approval_at: codexState === 'awaiting_approval'
       ? (typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso)
@@ -623,6 +663,7 @@ export async function POST(req: NextRequest) {
     previousRunState !== codexState ||
     current.current_step !== currentStep ||
     current.last_activity_at !== lastActivityAt ||
+    shouldUpdateVisibleMessages ||
     shouldRecordProgress ||
     shouldWriteLastChecked(current, nowMs)
 
@@ -715,7 +756,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (includeVisibleActivity) {
-    for (const visibleActivityEvent of visibleCodexActivityEvents(row, parsed, task)) {
+    for (const visibleActivityEvent of visibleActivityEventsForResult) {
       if (!activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
         activityEvents.push(visibleActivityEvent)
       }

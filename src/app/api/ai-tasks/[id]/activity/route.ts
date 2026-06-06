@@ -86,6 +86,7 @@ function fallbackMessagesFromTask(task: {
     stringValue(result.live_log) ||
     stringValue(result.message) ||
     stringValue(result.current_step)
+  const visibleMessages = fallbackVisibleMessagesFromResult(task, result, createdAt)
 
   const sentPrompt = stringValue(task.prompt)
   const messages = sentPrompt
@@ -102,6 +103,7 @@ function fallbackMessagesFromTask(task: {
       }]
     : []
 
+  if (visibleMessages.length > 0) return [...messages, ...visibleMessages]
   if (!body) return messages
   const kind = stringValue(result.codex_run_state) === 'prompt_waiting'
     ? 'prompt_waiting'
@@ -120,6 +122,45 @@ function fallbackMessagesFromTask(task: {
     metadata: { source: 'ai_tasks.result' },
     created_at: createdAt,
   }]
+}
+
+function fallbackVisibleMessagesFromResult(
+  task: {
+    id: string
+    user_id: string
+    started_at?: string | null
+    created_at?: string | null
+  },
+  result: Record<string, unknown>,
+  fallbackCreatedAt?: string | null,
+) {
+  const rawMessages = Array.isArray(result.codex_visible_messages)
+    ? result.codex_visible_messages
+    : []
+  return rawMessages.flatMap((value, index) => {
+    if (!isRecord(value)) return []
+    const body = stringValue(value.body)
+    if (!body) return []
+    const role = activityRole(value.role) ?? 'codex'
+    const kind = activityKind(value.kind) ?? (role === 'user' ? 'user_answer' : 'progress')
+    const createdAt = stringValue(value.created_at) ||
+      fallbackCreatedAt ||
+      task.started_at ||
+      task.created_at ||
+      new Date().toISOString()
+
+    return [{
+      id: `result-visible:${task.id}:${index}`,
+      task_id: task.id,
+      user_id: task.user_id,
+      role,
+      kind,
+      body,
+      importance: activityImportance(value.importance),
+      metadata: { source: 'ai_tasks.result.codex_visible_messages' },
+      created_at: createdAt,
+    }]
+  })
 }
 
 function taskPromptMessage(task: {
@@ -193,7 +234,9 @@ export async function GET(
           ...eventMessages,
         ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).slice(-50)
 
-        if (messages.length > 0) return NextResponse.json({ source: 'turso', messages })
+        if (messages.some(message => !String(message.id).startsWith('prompt:'))) {
+          return NextResponse.json({ source: 'turso', messages })
+        }
       }
     } catch (tursoError) {
       console.error('[ai-tasks/activity turso]', tursoError)
@@ -230,9 +273,12 @@ export async function GET(
 
   const promptMessage = taskPromptMessage(task)
   const activityMessages = [...(data ?? [])].reverse()
+  const resultFallbackMessages = fallbackMessagesFromTask(task)
+    .filter(message => !String(message.id).startsWith('prompt:'))
   const messages = [
     ...(promptMessage && !hasUserSentMessage(activityMessages) ? [promptMessage] : []),
     ...activityMessages,
+    ...(activityMessages.length === 0 ? resultFallbackMessages : []),
   ]
   return NextResponse.json({ messages })
 }
