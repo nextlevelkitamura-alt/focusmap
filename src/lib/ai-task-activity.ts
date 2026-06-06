@@ -107,6 +107,9 @@ export function selectAiTaskActivityMessageIdsToDelete(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseLike = any
 
+const ACTIVITY_DEDUPE_CACHE_MAX = 4_000
+const activityDedupeCache = new Map<string, number>()
+
 function tursoActivityPrimaryEnabled() {
   return process.env.FOCUSMAP_TURSO_ACTIVITY_PRIMARY === '1'
 }
@@ -123,6 +126,16 @@ function activityProgressId(input: InsertAiTaskActivityMessageInput, body: strin
         body,
       ].join('\u001f')
   return `activity:${createHash('sha256').update(key).digest('hex')}`
+}
+
+function rememberActivityDedupe(key: string | null) {
+  if (!key) return
+  activityDedupeCache.set(key, Date.now())
+  while (activityDedupeCache.size > ACTIVITY_DEDUPE_CACHE_MAX) {
+    const oldestKey = activityDedupeCache.keys().next().value as string | undefined
+    if (!oldestKey) break
+    activityDedupeCache.delete(oldestKey)
+  }
 }
 
 function isMissingOptionalSupabaseTable(error: unknown) {
@@ -219,6 +232,30 @@ export async function insertAiTaskActivityMessage(
     ...(input.metadata ?? {}),
     ...(input.dedupeKey ? { dedupe_key: input.dedupeKey } : {}),
   }
+
+  const dedupeCacheKey = input.dedupeKey ? activityProgressId(input, body) : null
+  if (dedupeCacheKey && activityDedupeCache.has(dedupeCacheKey)) {
+    return { inserted: false }
+  }
+
+  if (input.dedupeKey && !tursoActivityPrimaryEnabled()) {
+    const { data: existing, error: existingError } = await supabase
+      .from('ai_task_activity_messages')
+      .select('id, task_id, user_id, role, kind, body, importance, metadata, created_at')
+      .eq('task_id', input.taskId)
+      .contains('metadata', { dedupe_key: input.dedupeKey })
+      .limit(1)
+      .maybeSingle()
+
+    if (existingError && !isMissingOptionalSupabaseTable(existingError)) {
+      return { inserted: false, error: existingError }
+    }
+    if (existing) {
+      rememberActivityDedupe(dedupeCacheKey)
+      return { inserted: false, message: existing as AiTaskActivityMessage }
+    }
+  }
+
   let tursoMessage: AiTaskActivityMessage | null = null
   try {
     tursoMessage = await mirrorAiTaskActivityToTurso(input, body, importance, metadata)
@@ -227,10 +264,11 @@ export async function insertAiTaskActivityMessage(
   }
 
   if (tursoMessage && tursoActivityPrimaryEnabled()) {
+    rememberActivityDedupe(dedupeCacheKey)
     return { inserted: true, message: tursoMessage }
   }
 
-  if (input.dedupeKey) {
+  if (input.dedupeKey && tursoActivityPrimaryEnabled()) {
     const { data: existing, error: existingError } = await supabase
       .from('ai_task_activity_messages')
       .select('id, task_id, user_id, role, kind, body, importance, metadata, created_at')
@@ -241,11 +279,15 @@ export async function insertAiTaskActivityMessage(
 
     if (existingError) {
       if (tursoMessage && isMissingOptionalSupabaseTable(existingError)) {
+        rememberActivityDedupe(dedupeCacheKey)
         return { inserted: true, message: tursoMessage }
       }
       return { inserted: false, error: existingError }
     }
-    if (existing) return { inserted: false, message: existing as AiTaskActivityMessage }
+    if (existing) {
+      rememberActivityDedupe(dedupeCacheKey)
+      return { inserted: false, message: existing as AiTaskActivityMessage }
+    }
   }
 
   const { data, error } = await supabase
@@ -265,12 +307,14 @@ export async function insertAiTaskActivityMessage(
 
   if (error) {
     if (tursoMessage && isMissingOptionalSupabaseTable(error)) {
+      rememberActivityDedupe(dedupeCacheKey)
       return { inserted: true, message: tursoMessage }
     }
     return { inserted: false, error }
   }
 
   const pruneResult = await pruneAiTaskActivityMessages(supabase, input.taskId)
+  rememberActivityDedupe(dedupeCacheKey)
   if (pruneResult.error) return { inserted: true, message: data as AiTaskActivityMessage, error: pruneResult.error }
   return { inserted: true, message: data as AiTaskActivityMessage }
 }

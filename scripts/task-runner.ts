@@ -334,6 +334,63 @@ function visibleCodexActivityEvent(
   return null
 }
 
+function visibleCodexActivityEvents(
+  threadId: string,
+  preview: string | null | undefined,
+  parsed: ReturnType<typeof parseCodexRollout>,
+  task: MonitoredCodexTask,
+): Array<{
+  role: AiTaskActivityRole
+  kind: AiTaskActivityKind
+  body: string
+  dedupeKey: string
+  importance?: 'normal' | 'important'
+}> {
+  const events: Array<{
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+  }> = []
+  const pushEvent = (event: {
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+  }) => {
+    const fingerprint = textFingerprint(event.body)
+    if (events.some(existing => textFingerprint(existing.body) === fingerprint)) return
+    events.push(event)
+  }
+
+  for (const message of parsed.visibleMessages.slice(-16)) {
+    const body = compactCodexText(message.body, 2_000)
+    if (!body) continue
+    if (isPromptWaitingCodexText(body)) continue
+    if (isPromptEchoForCodexTask(body, task)) continue
+    const kind: AiTaskActivityKind = message.role === 'user'
+      ? 'user_answer'
+      : message.kind === 'completed'
+        ? 'completed'
+        : message.kind === 'question'
+          ? 'question'
+          : 'progress'
+    pushEvent({
+      role: message.role === 'user' ? 'user' : 'codex',
+      kind,
+      body,
+      dedupeKey: `thread:${threadId}:message:${message.role}:${message.createdAt ?? 'no-time'}:${textFingerprint(body)}`,
+      importance: kind === 'progress' ? 'normal' : 'important',
+    })
+  }
+
+  const fallback = visibleCodexActivityEvent(threadId, preview, parsed, task)
+  if (fallback) pushEvent(fallback)
+  return events
+}
+
 function codexReviewActivity(reason: CodexReviewReason): {
   kind: AiTaskActivityKind
   role: AiTaskActivityRole
@@ -1954,6 +2011,7 @@ async function syncCodexAppThreads(
   }
 
   for (const task of dueTasks) {
+    const hasActiveWatch = activeWatchIds.has(task.id)
     // thread_id 未確定なら、プロンプト先頭でマッチング
     let threadId = codexTaskThreadId(task)
     const hadThreadId = Boolean(threadId)
@@ -2272,7 +2330,7 @@ async function syncCodexAppThreads(
         }
       }
 
-      if (codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
+      if (hasActiveWatch && codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
         activityEvents.push({
           role: 'codex',
           kind: 'question',
@@ -2281,9 +2339,12 @@ async function syncCodexAppThreads(
         })
       }
 
-      const visibleActivityEvent = visibleCodexActivityEvent(threadId, row.preview, parsed, task)
-      if (visibleActivityEvent && !activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
-        activityEvents.push(visibleActivityEvent)
+      if (hasActiveWatch) {
+        for (const visibleActivityEvent of visibleCodexActivityEvents(threadId, row.preview, parsed, task)) {
+          if (!activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
+            activityEvents.push(visibleActivityEvent)
+          }
+        }
       }
 
       if (

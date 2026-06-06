@@ -75,6 +75,7 @@ const RUNNER_ONLINE_WINDOW_MS = 5 * 60 * 1000
 const RUNNER_STATUS_POLL_MS = 30_000
 const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
 const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
+const CODEX_PANEL_WATCH_PING_INTERVAL_MS = 10_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -113,6 +114,10 @@ function normalizedKey(value: string) {
   return value.replace(/\s+/g, " ").trim()
 }
 
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+}
+
 function promptEchoKeys(prompt: string) {
   const keys = new Set<string>()
   const rawPrompt = normalizedKey(prompt)
@@ -132,7 +137,7 @@ function sanitizeCodexDisplayLog(value: string): string {
     .map(block => block.trim())
     .filter(block => block && !/^\[(developer|system)\]/i.test(block))
     .filter(block => !/^Focusmap同期ID:/i.test(block))
-    .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
+    .filter(block => !isGenericCodexPulseText(block))
     .filter(block => !/^プロンプト待ち。Codex\.appで送信されると/i.test(block))
     .filter(block => {
       const key = normalizedKey(block)
@@ -154,6 +159,7 @@ function activityMessagesToDisplayLog(messages: AiTaskActivityMessage[]): string
     .map((message) => {
       const body = message.body.trim()
       if (!body) return ""
+      if (isGenericCodexPulseText(body)) return ""
       if (message.role === "user" || message.kind === "user_answer") return `[user] ${body}`
       if (message.role === "codex" && (message.kind === "progress" || message.kind === "question" || message.kind === "approval" || message.kind === "completed")) {
         return `[assistant] ${body}`
@@ -286,6 +292,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const saveVersionRef = useRef(0)
+  const codexWatchIdRef = useRef<string | null>(null)
+
+  if (!codexWatchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    codexWatchIdRef.current = `node:${crypto.randomUUID()}`
+  }
 
   useEffect(() => {
     if (!open) return
@@ -468,6 +479,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
   const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
+  const codexAiTaskId = codexTask?.id ?? null
   const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
@@ -505,6 +517,23 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   )
   const codexHref = codexOpenTarget.url
 
+  const loadCodexActivity = useCallback(async () => {
+    const taskId = codexAiTaskId
+    if (!open || !taskId || !isCodexTask) return
+
+    try {
+      const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}/activity`, { cache: "no-store" })
+      const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+      if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+      setCodexActivityMessages(Array.isArray(data.messages)
+        ? data.messages.filter(message => !isGenericCodexPulseText(message.body))
+        : [])
+      setCodexActivityError(null)
+    } catch (err) {
+      setCodexActivityError(err instanceof Error ? err.message : "Codex活動履歴を取得できません")
+    }
+  }, [codexAiTaskId, isCodexTask, open])
+
   const syncCodexState = useCallback(async () => {
     if (!open || !hasCodexRun) return
     setIsSyncingCodex(true)
@@ -514,14 +543,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           source_task_id: node.taskId,
-          ai_task_id: codexTask?.id,
+          ai_task_id: codexAiTaskId,
+          include_visible_activity: true,
         }),
       }).catch(() => undefined)
       await refreshAiTaskStatus()
+      await loadCodexActivity()
     } finally {
       setIsSyncingCodex(false)
     }
-  }, [codexTask?.id, hasCodexRun, node.taskId, open, refreshAiTaskStatus])
+  }, [codexAiTaskId, hasCodexRun, loadCodexActivity, node.taskId, open, refreshAiTaskStatus])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -540,29 +571,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   }, [codexUiState?.state, hasCodexRun, open, syncCodexState])
 
   useEffect(() => {
-    const taskId = codexTask?.id
+    const taskId = codexAiTaskId
     if (!open || !taskId || !isCodexTask) {
       setCodexActivityMessages([])
       setCodexActivityError(null)
       return
     }
 
-    let cancelled = false
-    const loadActivity = async () => {
-      try {
-        const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}/activity`, { cache: "no-store" })
-        const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
-        if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
-        if (!cancelled) {
-          setCodexActivityMessages(Array.isArray(data.messages) ? data.messages : [])
-          setCodexActivityError(null)
-        }
-      } catch (err) {
-        if (!cancelled) setCodexActivityError(err instanceof Error ? err.message : "Codex活動履歴を取得できません")
-      }
-    }
+    void loadCodexActivity()
+    if (canUseLocalCodexOpenApi()) return
 
-    void loadActivity()
     const intervalMs = (
       codexUiState?.state === "running" ||
       codexUiState?.state === "prompt_waiting" ||
@@ -571,13 +589,39 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       ? CODEX_PANEL_SYNC_INTERVAL_MS
       : CODEX_PANEL_IDLE_SYNC_INTERVAL_MS
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") void loadActivity()
+      if (document.visibilityState === "visible") void loadCodexActivity()
     }, intervalMs)
     return () => {
-      cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [codexTask?.id, codexUiState?.state, isCodexTask, open])
+  }, [codexAiTaskId, codexUiState?.state, isCodexTask, loadCodexActivity, open])
+
+  useEffect(() => {
+    const taskId = codexAiTaskId
+    if (!open || !taskId || !isCodexTask) return
+
+    const watchId = codexWatchIdRef.current ?? `node:${taskId}`
+    const sendWatch = (action: "open" | "close" | "ping") => {
+      void fetchWithSupabaseAuth("/api/task-progress/watch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: action === "close",
+        body: JSON.stringify({
+          task_id: taskId,
+          action,
+          watch_id: watchId,
+          ttl_seconds: 20,
+        }),
+      }).catch(() => undefined)
+    }
+
+    sendWatch("open")
+    const intervalId = window.setInterval(() => sendWatch("ping"), CODEX_PANEL_WATCH_PING_INTERVAL_MS)
+    return () => {
+      window.clearInterval(intervalId)
+      sendWatch("close")
+    }
+  }, [codexAiTaskId, isCodexTask, open])
 
   const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const promptHeading = heading || node.title

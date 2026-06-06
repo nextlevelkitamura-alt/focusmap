@@ -24,6 +24,12 @@ describe("parseCodexRollout", () => {
     expect(parsed.reviewReason).toBe("started")
     expect(parsed.liveLog).toContain("作業を始めます")
     expect(parsed.liveLog.match(/作業を始めます/g)?.length).toBe(1)
+    expect(parsed.visibleMessages).toEqual([{
+      role: "assistant",
+      body: "作業を始めます",
+      kind: "progress",
+      createdAt: "2026-05-30T08:00:02.000Z",
+    }])
     expect(parsed.liveLog).not.toContain("[command:started] exec_command")
     expect(parsed.liveLog).not.toContain("internal instructions")
     expect(parsed.liveLog).not.toContain("AGENTS.md")
@@ -46,6 +52,10 @@ describe("parseCodexRollout", () => {
     expect(parsed.liveLog).toContain("[user] この方針で続けて")
     expect(parsed.liveLog).not.toContain("[command:started] npm test -- --run src/lib/codex-run-state.test.ts")
     expect(parsed.liveLog).toContain("[assistant] 続きの結果です")
+    expect(parsed.visibleMessages.map(message => `${message.role}:${message.body}`)).toEqual([
+      "user:この方針で続けて",
+      "assistant:続きの結果です",
+    ])
     expect(parsed.latestUserMessageAt).toBe("2026-05-30T08:00:01.000Z")
     expect(parsed.currentStep).toBe("続きの結果です")
     expect(parsed.lastActivityAt).toBe("2026-05-30T08:00:03.000Z")
@@ -75,6 +85,11 @@ describe("parseCodexRollout", () => {
     expect(parsed.state).toBe("awaiting_approval")
     expect(parsed.latestAgentMessage).toBe("候補者名なら状況確認、タスクなら追加できます。")
     expect(parsed.liveLog).toContain("[assistant] 候補者名なら状況確認")
+    expect(parsed.visibleMessages.at(-1)).toMatchObject({
+      role: "assistant",
+      body: "候補者名なら状況確認、タスクなら追加できます。",
+      kind: "completed",
+    })
   })
 
   test("tracks user-visible questions", () => {

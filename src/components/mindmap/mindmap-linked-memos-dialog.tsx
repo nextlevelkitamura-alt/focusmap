@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useEffect, useMemo, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Bot, ExternalLink, Loader2, RefreshCw } from "lucide-react"
 import {
   Dialog,
@@ -22,10 +22,14 @@ import {
   normalizeCodexPrompt,
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
+import type { AiTaskActivityMessage } from "@/types/ai-task"
 import type { Project, Task } from "@/types/database"
 
 const CODEX_DISPLAY_LOG_CHARS = 80_000
+const CODEX_ACTIVITY_SYNC_INTERVAL_MS = 3_000
+const CODEX_WATCH_PING_INTERVAL_MS = 10_000
 
 type LinkedMemoDialogTarget = {
   taskId: string
@@ -101,6 +105,10 @@ function taskErrorMessage(data: TaskResponse, fallback: string) {
   return fallback
 }
 
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+}
+
 function sanitizeCodexDisplayLog(value: string): string {
   const seen = new Set<string>()
   return value
@@ -108,7 +116,7 @@ function sanitizeCodexDisplayLog(value: string): string {
     .map(block => block.trim())
     .filter(block => block && !/^\[(developer|system)\]/i.test(block))
     .filter(block => !/^Focusmap同期ID:/i.test(block))
-    .filter(block => !/^Codex セッションは確認待ちです。/i.test(block))
+    .filter(block => !isGenericCodexPulseText(block))
     .filter(block => !/^Codex\.appでプロンプトを送信すると、Focusmapはthread状態とログだけ同期します。/i.test(block))
     .filter(block => {
       const key = block.replace(/\s+/g, " ")
@@ -135,6 +143,26 @@ function buildCodexDisplayLog(liveLog: string, message: string, preview: string)
     base,
     completionNotice && !base.includes(completionNotice) ? `[Codex] ${completionNotice}` : null,
   ].filter(Boolean).join("\n\n")).slice(-CODEX_DISPLAY_LOG_CHARS)
+}
+
+function activityMessagesToDisplayLog(messages: AiTaskActivityMessage[]): string {
+  return messages
+    .map(message => {
+      const body = message.body.trim()
+      if (!body || isGenericCodexPulseText(body)) return ""
+      if (message.role === "user" || message.kind === "user_answer") return `[user] ${body}`
+      if (message.role === "codex" && (
+        message.kind === "progress" ||
+        message.kind === "question" ||
+        message.kind === "approval" ||
+        message.kind === "completed"
+      )) {
+        return `[assistant] ${body}`
+      }
+      return `[Codex] ${body}`
+    })
+    .filter(Boolean)
+    .join("\n\n")
 }
 
 function normalizedKey(value: string) {
@@ -481,7 +509,14 @@ export function MindmapLinkedMemosDialog({
   const [draftMemo, setDraftMemo] = useState("")
   const [selectedRepoPath, setSelectedRepoPath] = useState("")
   const [justSentPrompt, setJustSentPrompt] = useState("")
+  const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
+  const codexWatchIdRef = useRef<string | null>(null)
   const { getBySourceId: getAiTaskBySourceId, refresh: refreshAiTasks } = useMemoAiTasks()
+
+  if (!codexWatchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    codexWatchIdRef.current = `linked:${crypto.randomUUID()}`
+  }
 
   const codexTask = target?.taskId ? getAiTaskBySourceId(target.taskId) : null
   const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
@@ -499,9 +534,10 @@ export function MindmapLinkedMemosDialog({
   const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
   const codexSendConfirmed = !codexWaitingForAppSend && (!!codexThreadId || !codexManualHandoff)
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
+  const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
   const rawSentPrompt = codexTask?.prompt?.trim() || justSentPrompt
   const sentPrompt = stripFocusmapSyncId(rawSentPrompt)
-  const codexConversation = getCodexConversation(codexDisplayLog, rawSentPrompt)
+  const codexConversation = getCodexConversation([codexActivityDisplayLog, codexDisplayLog].filter(Boolean).join("\n\n"), rawSentPrompt)
   const codexChatEntries = codexConversation.entries
   const codexAssistantEntries = codexChatEntries.filter(entry => entry.kind === "request")
   const codexUserEntries = codexChatEntries.filter(entry => entry.kind === "user")
@@ -533,6 +569,41 @@ export function MindmapLinkedMemosDialog({
     : codexUiState?.state === "running"
       ? "text-emerald-500"
       : "text-amber-500"
+  const codexAiTaskId = codexTask?.id ?? null
+
+  const loadCodexActivity = useCallback(async () => {
+    const taskId = codexAiTaskId
+    if (!target || !taskId || !isCodexTask) return
+
+    try {
+      const res = await fetchWithSupabaseAuth(`/api/ai-tasks/${taskId}/activity`, { cache: "no-store" })
+      const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+      if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+      setCodexActivityMessages(Array.isArray(data.messages)
+        ? data.messages.filter(message => !isGenericCodexPulseText(message.body))
+        : [])
+      setCodexActivityError(null)
+    } catch (err) {
+      setCodexActivityError(err instanceof Error ? err.message : "Codex活動履歴を取得できません")
+    }
+  }, [codexAiTaskId, isCodexTask, target])
+
+  const syncLinkedCodexState = useCallback(async () => {
+    const sourceTaskId = target?.taskId
+    if (!sourceTaskId || !hasCodexRun || !canUseLocalCodexOpenApi()) return
+
+    await fetchWithSupabaseAuth("/api/codex/sync-node", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_task_id: sourceTaskId,
+        ai_task_id: codexAiTaskId,
+        include_visible_activity: true,
+      }),
+    }).catch(() => undefined)
+    await refreshAiTasks()
+    await loadCodexActivity()
+  }, [codexAiTaskId, hasCodexRun, loadCodexActivity, refreshAiTasks, target?.taskId])
 
   const repoOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -590,6 +661,61 @@ export function MindmapLinkedMemosDialog({
       cancelled = true
     }
   }, [projects, refreshAiTasks, repoOptions, target])
+
+  useEffect(() => {
+    const taskId = codexAiTaskId
+    if (!target || !taskId || !isCodexTask) {
+      setCodexActivityMessages([])
+      setCodexActivityError(null)
+      return
+    }
+
+    void loadCodexActivity()
+    if (canUseLocalCodexOpenApi()) return
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadCodexActivity()
+    }, CODEX_ACTIVITY_SYNC_INTERVAL_MS)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [codexAiTaskId, isCodexTask, loadCodexActivity, target])
+
+  useEffect(() => {
+    if (!target || !hasCodexRun || !canUseLocalCodexOpenApi()) return
+    void syncLinkedCodexState()
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void syncLinkedCodexState()
+    }, CODEX_ACTIVITY_SYNC_INTERVAL_MS)
+    return () => window.clearInterval(intervalId)
+  }, [hasCodexRun, syncLinkedCodexState, target])
+
+  useEffect(() => {
+    const taskId = codexAiTaskId
+    if (!target || !taskId || !isCodexTask) return
+
+    const watchId = codexWatchIdRef.current ?? `linked:${taskId}`
+    const sendWatch = (action: "open" | "close" | "ping") => {
+      void fetchWithSupabaseAuth("/api/task-progress/watch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: action === "close",
+        body: JSON.stringify({
+          task_id: taskId,
+          action,
+          watch_id: watchId,
+          ttl_seconds: 20,
+        }),
+      }).catch(() => undefined)
+    }
+
+    sendWatch("open")
+    const intervalId = window.setInterval(() => sendWatch("ping"), CODEX_WATCH_PING_INTERVAL_MS)
+    return () => {
+      window.clearInterval(intervalId)
+      sendWatch("close")
+    }
+  }, [codexAiTaskId, isCodexTask, target])
 
   async function saveDraft() {
     if (!task) return
@@ -847,7 +973,9 @@ export function MindmapLinkedMemosDialog({
                     <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
                       {codexWaitingForAppSend
                         ? "Codexで送信されると、この欄に状態と出力が同期されます"
-                        : "Codex.app側の出力は未同期です"}
+                        : codexActivityError
+                          ? "チャットログを取得できません"
+                          : "Codex.app側の出力は未同期です"}
                     </div>
                   )}
                 </div>

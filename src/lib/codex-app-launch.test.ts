@@ -38,12 +38,13 @@ describe("buildCodexDeepLink", () => {
 })
 
 describe("Codex handoff token", () => {
-  test("builds a schedule-compatible token and appends it once", () => {
+  test("builds a schedule-compatible token without exposing it in the prompt", () => {
     const token = buildCodexHandoffToken("task-123")
     expect(token).toMatch(/^FM-[A-Za-z0-9._:-]{8,120}$/)
 
-    const prompt = appendCodexHandoffToken("Fix this", token)
-    expect(prompt).toContain(`Focusmap同期ID: ${token}`)
+    const prompt = appendCodexHandoffToken(" Fix this\n", token)
+    expect(prompt).toBe("Fix this")
+    expect(prompt).not.toContain("Focusmap同期ID")
     expect(appendCodexHandoffToken(prompt, token)).toBe(prompt)
   })
 })

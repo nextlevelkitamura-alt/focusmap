@@ -23,10 +23,18 @@ export type CodexThreadSnapshot = {
   cwd?: string | null
 }
 
+export type CodexRolloutVisibleMessage = {
+  role: "assistant" | "user"
+  body: string
+  kind: "progress" | "question" | "completed" | "user_answer"
+  createdAt: string | null
+}
+
 export type CodexRolloutSummary = {
   state: CodexRunState
   reviewReason: CodexReviewReason
   liveLog: string
+  visibleMessages: CodexRolloutVisibleMessage[]
   currentStep: string
   lastActivityAt: string | null
   latestUserMessageAt: string | null
@@ -125,11 +133,24 @@ function appendLog(logs: string[], line: string) {
   }
 }
 
+function appendVisibleMessage(
+  messages: CodexRolloutVisibleMessage[],
+  input: Omit<CodexRolloutVisibleMessage, "body"> & { body: string },
+) {
+  const body = compactLine(input.body, 2_000)
+  if (!body) return
+  const key = `${input.role}:${body.replace(/\s+/g, " ")}`
+  if (messages.some(message => `${message.role}:${message.body.replace(/\s+/g, " ")}` === key)) return
+  messages.push({ ...input, body })
+  while (messages.length > 40) messages.shift()
+}
+
 export function parseCodexRollout(
   rawJsonl: string,
   options: { archived?: boolean; snapshot?: CodexThreadSnapshot } = {},
 ): CodexRolloutSummary {
   const logs: string[] = []
+  const visibleMessages: CodexRolloutVisibleMessage[] = []
   let state: CodexRunState = options.archived ? "awaiting_approval" : "running"
   let reviewReason: CodexReviewReason = options.archived ? "archived" : "unknown"
   let lastActivityAt: string | null = timestampToIso(options.snapshot?.updated_at_ms ?? null)
@@ -177,6 +198,12 @@ export function parseCodexRollout(
         latestAgentMessage = compactLine(text, 2_000)
         if (looksLikeQuestion(text)) latestQuestion = latestAgentMessage
         appendLog(logs, `[assistant] ${text}`)
+        appendVisibleMessage(visibleMessages, {
+          role: "assistant",
+          body: text,
+          kind: looksLikeQuestion(text) ? "question" : "completed",
+          createdAt: eventTime,
+        })
       }
       sawTerminalEvent = true
       state = "awaiting_approval"
@@ -202,6 +229,12 @@ export function parseCodexRollout(
         currentStep = compactStep(text)
         if (looksLikeQuestion(text)) latestQuestion = latestAgentMessage
         appendLog(logs, `[assistant] ${text}`)
+        appendVisibleMessage(visibleMessages, {
+          role: "assistant",
+          body: text,
+          kind: looksLikeQuestion(text) ? "question" : "progress",
+          createdAt: eventTime,
+        })
       }
       continue
     }
@@ -211,6 +244,12 @@ export function parseCodexRollout(
       if (text && !isInternalUserMessage(text)) {
         latestUserMessageAt = eventTime
         appendLog(logs, `[user] ${text}`)
+        appendVisibleMessage(visibleMessages, {
+          role: "user",
+          body: text,
+          kind: "user_answer",
+          createdAt: eventTime,
+        })
       }
       continue
     }
@@ -224,6 +263,12 @@ export function parseCodexRollout(
           latestAgentMessage = compactLine(text, 2_000)
           currentStep = compactStep(text)
           if (looksLikeQuestion(text)) latestQuestion = latestAgentMessage
+          appendVisibleMessage(visibleMessages, {
+            role: "assistant",
+            body: text,
+            kind: looksLikeQuestion(text) ? "question" : "progress",
+            createdAt: eventTime,
+          })
         }
         appendLog(logs, `[${role}] ${text}`)
       }
@@ -265,6 +310,7 @@ export function parseCodexRollout(
     state,
     reviewReason,
     liveLog: logs.join("\n\n").slice(-MAX_LIVE_LOG_CHARS),
+    visibleMessages,
     currentStep,
     lastActivityAt,
     latestUserMessageAt,

@@ -35,6 +35,7 @@ const MAX_SUMMARY_CHARS = 1_200
 type SyncNodeBody = {
   source_task_id?: unknown
   ai_task_id?: unknown
+  include_visible_activity?: unknown
 }
 
 type CodexTaskRow = {
@@ -278,6 +279,58 @@ function visibleCodexActivityEvent(row: CodexThreadRow, parsed: ReturnType<typeo
   return null
 }
 
+function visibleCodexActivityEvents(row: CodexThreadRow, parsed: ReturnType<typeof parseCodexRollout>, task: CodexTaskRow): Array<{
+  role: AiTaskActivityRole
+  kind: AiTaskActivityKind
+  body: string
+  dedupeKey: string
+  importance?: 'normal' | 'important'
+}> {
+  const events: Array<{
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+  }> = []
+  const pushEvent = (event: {
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+  }) => {
+    const fingerprint = textFingerprint(event.body)
+    if (events.some(existing => textFingerprint(existing.body) === fingerprint)) return
+    events.push(event)
+  }
+
+  for (const message of parsed.visibleMessages.slice(-16)) {
+    const body = compactText(message.body, 2_000)
+    if (!body) continue
+    if (isPromptWaitingText(body)) continue
+    if (isPromptEcho(body, task)) continue
+    const kind: AiTaskActivityKind = message.role === 'user'
+      ? 'user_answer'
+      : message.kind === 'completed'
+        ? 'completed'
+        : message.kind === 'question'
+          ? 'question'
+          : 'progress'
+    pushEvent({
+      role: message.role === 'user' ? 'user' : 'codex',
+      kind,
+      body,
+      dedupeKey: `thread:${row.id}:message:${message.role}:${message.createdAt ?? 'no-time'}:${textFingerprint(body)}`,
+      importance: kind === 'progress' ? 'normal' : 'important',
+    })
+  }
+
+  const fallback = visibleCodexActivityEvent(row, parsed, task)
+  if (fallback) pushEvent(fallback)
+  return events
+}
+
 function threadUpdatedAtIso(row: CodexThreadRow) {
   return row.updated_at_ms ? new Date(row.updated_at_ms).toISOString() : null
 }
@@ -370,6 +423,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as SyncNodeBody
   const sourceTaskId = typeof body.source_task_id === 'string' ? body.source_task_id.trim() : ''
   const aiTaskId = typeof body.ai_task_id === 'string' ? body.ai_task_id.trim() : ''
+  const includeVisibleActivity = body.include_visible_activity === true
   if (!sourceTaskId && !aiTaskId) {
     return NextResponse.json({ error: 'source_task_id or ai_task_id required' }, { status: 400 })
   }
@@ -651,7 +705,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
+  if (includeVisibleActivity && codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
     activityEvents.push({
       role: 'codex',
       kind: 'question',
@@ -660,9 +714,12 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  const visibleActivityEvent = visibleCodexActivityEvent(row, parsed, task)
-  if (visibleActivityEvent && !activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
-    activityEvents.push(visibleActivityEvent)
+  if (includeVisibleActivity) {
+    for (const visibleActivityEvent of visibleCodexActivityEvents(row, parsed, task)) {
+      if (!activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
+        activityEvents.push(visibleActivityEvent)
+      }
+    }
   }
 
   if (

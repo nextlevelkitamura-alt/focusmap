@@ -65,6 +65,10 @@ function compactText(value: unknown): string {
   return ""
 }
 
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です/u.test(value.trim())
+}
+
 function activityMessageLabel(message: AiTaskActivityMessage) {
   if (message.role === "user" || message.kind === "user_answer" || message.kind === "sent") return "送信した内容"
   if (message.kind === "question") return "Codexから質問"
@@ -191,7 +195,9 @@ export function TaskProgressDetailPanel({
       const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(taskId)}/activity`, { cache: "no-store" })
       const data = await response.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
       if (!response.ok) throw new Error(data.error || `activity fetch failed (${response.status})`)
-      setActivityMessages(Array.isArray(data.messages) ? data.messages : [])
+      setActivityMessages(Array.isArray(data.messages)
+        ? data.messages.filter(message => !isGenericCodexPulseText(message.body))
+        : [])
       setActivityError(null)
     } catch (err) {
       setActivityError(err instanceof Error ? err.message : "activity fetch failed")
@@ -203,7 +209,7 @@ export function TaskProgressDetailPanel({
     await fetchWithSupabaseAuth("/api/codex/sync-node", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ai_task_id: taskId }),
+      body: JSON.stringify({ ai_task_id: taskId, include_visible_activity: true }),
     }).catch(() => undefined)
   }, [shouldSyncLocalCodex, taskId])
 
