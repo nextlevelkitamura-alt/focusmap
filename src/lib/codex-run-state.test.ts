@@ -190,6 +190,34 @@ describe("getCodexTaskUiState", () => {
     })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
   })
 
+  test("hides the node Codex badge after a closed thread completes the source task", () => {
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "completed",
+      result: {
+        codex_source_task_completed: true,
+        codex_review_reason: "archived",
+      },
+    })).toBeNull()
+
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "completed",
+      result: {
+        codex_source_task_completed: true,
+        codex_review_reason: "thread_deleted",
+      },
+    })).toBeNull()
+
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "completed",
+      result: {
+        codex_review_reason: "completed",
+      },
+    })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+  })
+
   test("keeps an opened but unsent Codex thread in prompt waiting", () => {
     expect(getCodexTaskUiState({
       executor: "codex_app",

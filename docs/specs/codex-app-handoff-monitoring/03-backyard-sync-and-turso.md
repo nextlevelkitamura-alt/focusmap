@@ -85,13 +85,14 @@ flowchart LR
 | `codex_thread_id` 初回検出 | 保存する | 保存する |
 | `pending/running/awaiting_approval/needs_input/completed/failed` の状態変化 | 保存する | 保存する |
 | 完了/失敗/確認待ちの最終summary | 保存する | 保存する |
+| Codex threadのアーカイブ/削除による元ノード完了 | `ai_tasks.completed_at` と `tasks.status='done'` を保存する | `completed` snapshot/eventを保存する |
 | `codex_last_checked_at` だけの更新 | 保存しない | 保存しない |
 | running中の同じpulse/current_step | 保存しない | dedupeつきactivityのみ |
 | runner heartbeat | 保存しない | 保存する |
 | 詳細open時の短いactivity | Turso未設定時だけfallback保存 | 保存する |
 | raw log / full rollout / full thread history | 保存しない | 保存しない |
 
-`/api/codex/sync-node` は移行中のfallbackだが、無変化pollではSupabaseへ書かない。thread未検出で「見に行っただけ」の時はresponseに `checked_at` を返すだけにし、`ai_tasks.result.codex_last_checked_at` は更新しない。thread削除などの異常も、すでに同じ確認待ち状態として保存済みなら再書き込みしない。
+`/api/codex/sync-node` は移行中のfallbackだが、無変化pollではSupabaseへ書かない。thread未検出で「見に行っただけ」の時はresponseに `checked_at` を返すだけにし、`ai_tasks.result.codex_last_checked_at` は更新しない。既存thread idがsqliteから読めなくなった `thread_deleted` と、sqlite上で `archived=1` になったthreadは、ユーザーがCodex側で片付けた合図として `ai_tasks.status='completed'` にし、`source_task_id` があれば元マインドマップノードも `done` にする。通常のCodex実行完了や承認待ちは、ユーザー確認前に元ノードを完了しない。
 
 activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定なら有効扱いで、Turso保存に成功したactivityはSupabaseへmirrorしない。明示的にSupabaseにもactivityを書きたい検証時だけ `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=0` を設定する。Turso未設定またはTurso保存失敗時は、既存互換のためSupabaseへfallbackする。
 

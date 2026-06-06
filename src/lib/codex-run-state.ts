@@ -414,6 +414,12 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
     return { state: "connection_failed", label: "接続失敗" }
   }
   if (task.status === "completed") {
+    if (
+      result.codex_source_task_completed === true &&
+      (result.codex_review_reason === "archived" || result.codex_review_reason === "thread_deleted")
+    ) {
+      return null
+    }
     return { state: "awaiting_approval", label: "確認待ち" }
   }
   if (task.status === "pending") {

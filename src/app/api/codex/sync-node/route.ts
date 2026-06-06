@@ -13,6 +13,7 @@ import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
 import {
   detectCodexResumeAfterApproval,
   parseCodexRollout,
+  shouldCompleteSourceTaskForCodexReview,
   type CodexReviewReason,
   type CodexRunState,
   type CodexThreadSnapshot,
@@ -40,6 +41,7 @@ type SyncNodeBody = {
 type CodexTaskRow = {
   id: string
   user_id: string
+  space_id: string | null
   prompt: string
   codex_thread_id: string | null
   cwd: string | null
@@ -47,6 +49,7 @@ type CodexTaskRow = {
   status: string
   started_at: string | null
   created_at: string | null
+  source_task_id: string | null
   executor: 'codex' | 'codex_app'
 }
 
@@ -353,6 +356,28 @@ function codexPulseSummary(state: CodexRunState | 'prompt_waiting', reason: Code
   return `Codex.appは送信待ちです。${activity}`
 }
 
+function codexClosureStep(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>): string {
+  return reason === 'archived'
+    ? 'Codex threadがアーカイブされたため完了しました'
+    : 'Codex threadが削除されたため完了しました'
+}
+
+function codexClosureMessage(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>): string {
+  return reason === 'archived'
+    ? 'Codex.app側でthreadがアーカイブされたため、Focusmapタスクを完了しました。'
+    : 'Codex.app側でthreadが削除されたため、Focusmapタスクを完了しました。'
+}
+
+function upsertStep(steps: unknown[], nextStep: Record<string, unknown>) {
+  const stepKey = typeof nextStep.key === 'string' ? nextStep.key : ''
+  if (!stepKey) return [...steps, nextStep]
+  const index = steps.findIndex(step => asRecord(step).key === stepKey)
+  if (index < 0) return [...steps, nextStep]
+  const next = [...steps]
+  next[index] = nextStep
+  return next
+}
+
 function threadMovedSinceLastSync(current: Record<string, unknown>, row: CodexThreadRow) {
   const previousSnapshot = asRecord(current.codex_thread_snapshot)
   const previousUpdatedAt = parseTimeMs(previousSnapshot.updated_at_ms)
@@ -378,7 +403,7 @@ function visibleMessagesChanged(previous: unknown, next: Array<Record<string, un
 
 async function mirrorCodexSyncToTurso(input: {
   task: CodexTaskRow
-  status: 'running' | 'awaiting_approval' | 'needs_input'
+  status: 'running' | 'awaiting_approval' | 'needs_input' | 'completed'
   threadId: string | null
   currentStep: string
   summary: string
@@ -386,27 +411,35 @@ async function mirrorCodexSyncToTurso(input: {
   previousRunState: string | null
   hadThreadId: boolean
   resumedFromApproval: boolean
+  completedAt?: string | null
 }) {
   if (!isTursoConfigured()) return
   await upsertTursoAiTask({
     id: input.task.id,
     user_id: input.task.user_id,
+    space_id: input.task.space_id,
+    title: compactText(input.task.prompt, 140),
     status: input.status,
     executor: input.task.executor,
+    source_type: input.task.source_task_id ? 'mindmap' : null,
+    source_id: input.task.source_task_id,
     codex_thread_id: input.threadId,
     current_step: compactText(input.currentStep, MAX_CURRENT_STEP_CHARS),
     summary: compactText(input.summary, MAX_SUMMARY_CHARS),
     updated_at: new Date().toISOString(),
     started_at: input.status === 'running' ? new Date().toISOString() : null,
+    completed_at: input.status === 'completed' ? (input.completedAt ?? new Date().toISOString()) : null,
   })
 
-  const eventType = !input.hadThreadId && input.threadId
-    ? 'thread_detected'
-    : input.resumedFromApproval
-      ? 'resumed'
-      : input.previousRunState !== input.codexState
-        ? input.status
-        : null
+  const eventType = input.status === 'completed' && input.task.status !== 'completed'
+    ? 'completed'
+    : !input.hadThreadId && input.threadId
+      ? 'thread_detected'
+      : input.resumedFromApproval
+        ? 'resumed'
+        : input.previousRunState !== input.codexState
+          ? input.status
+          : null
   if (eventType) {
     await insertTaskEvent({
       task_id: input.task.id,
@@ -417,6 +450,244 @@ async function mirrorCodexSyncToTurso(input: {
         codex_thread_id: input.threadId,
       },
     })
+  }
+}
+
+type SourceTaskCompletionResult = {
+  sourceTaskId: string | null
+  completed: boolean
+  alreadyCompleted: boolean
+  missing: boolean
+}
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
+
+async function completeSourceMindmapTaskForCodexClosure(
+  supabase: SupabaseServerClient,
+  task: CodexTaskRow,
+  nowIso: string,
+): Promise<SourceTaskCompletionResult> {
+  const sourceTaskId = task.source_task_id?.trim() || null
+  if (!sourceTaskId) {
+    return { sourceTaskId: null, completed: false, alreadyCompleted: false, missing: false }
+  }
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id, status, stage')
+    .eq('id', sourceTaskId)
+    .eq('user_id', task.user_id)
+    .is('deleted_at', null)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) {
+    return { sourceTaskId, completed: false, alreadyCompleted: false, missing: true }
+  }
+
+  const current = asRecord(data)
+  if (current.status === 'done' && current.stage === 'done') {
+    return { sourceTaskId, completed: false, alreadyCompleted: true, missing: false }
+  }
+
+  const { error: updateError } = await supabase
+    .from('tasks')
+    .update({
+      status: 'done',
+      stage: 'done',
+      updated_at: nowIso,
+    })
+    .eq('id', sourceTaskId)
+    .eq('user_id', task.user_id)
+    .is('deleted_at', null)
+
+  if (updateError) throw updateError
+  return { sourceTaskId, completed: true, alreadyCompleted: false, missing: false }
+}
+
+async function persistCodexThreadClosure(input: {
+  supabase: SupabaseServerClient
+  task: CodexTaskRow
+  threadId: string
+  current: Record<string, unknown>
+  reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
+  nowIso: string
+  previousRunState: string | null
+  hadThreadId: boolean
+  row?: CodexThreadRow | null
+  visibleActivityEvents?: Array<{
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+    createdAt?: string | null
+  }>
+}) {
+  const {
+    supabase,
+    task,
+    threadId,
+    current,
+    reason,
+    nowIso,
+    previousRunState,
+    hadThreadId,
+    row = null,
+    visibleActivityEvents = [],
+  } = input
+  const alreadyPersisted =
+    task.status === 'completed' &&
+    current.codex_review_reason === reason &&
+    current.codex_source_task_completed === true
+
+  let sourceTaskCompletion: SourceTaskCompletionResult = {
+    sourceTaskId: task.source_task_id?.trim() || null,
+    completed: false,
+    alreadyCompleted: alreadyPersisted && !!task.source_task_id,
+    missing: false,
+  }
+
+  if (!alreadyPersisted) {
+    sourceTaskCompletion = await completeSourceMindmapTaskForCodexClosure(supabase, task, nowIso)
+  }
+
+  const sourceTaskCompleted = sourceTaskCompletion.completed || sourceTaskCompletion.alreadyCompleted
+  const currentStep = codexClosureStep(reason)
+  const message = codexClosureMessage(reason)
+  const stepsBase = Array.isArray(current.steps) ? current.steps : []
+  const stepsWithThread = upsertStep(stepsBase, {
+    key: 'thread_visible',
+    label: `Codex.app thread検出 (${threadId.slice(0, 8)})`,
+    status: 'done',
+    at: nowIso,
+  })
+  const steps = upsertStep(stepsWithThread, {
+    key: 'source_task_completed',
+    label: sourceTaskCompleted ? 'Focusmapノード完了' : 'Codex thread終了',
+    status: sourceTaskCompleted ? 'done' : 'active',
+    at: nowIso,
+  })
+  const compactVisibleMessages = visibleActivityEvents.map(event => ({
+    role: event.role,
+    kind: event.kind,
+    body: event.body,
+    importance: event.importance ?? 'normal',
+    created_at: event.createdAt ?? nowIso,
+  }))
+  const shouldPersistVisibleMessagesFallback =
+    compactVisibleMessages.length > 0 &&
+    visibleMessagesChanged(current.codex_visible_messages, compactVisibleMessages) &&
+    !isTursoConfigured()
+
+  const result = {
+    ...current,
+    executor: task.executor,
+    codex_manual_handoff: current.codex_manual_handoff === true,
+    codex_thread_id: threadId,
+    codex_thread_url: `codex://threads/${threadId}`,
+    codex_run_state: 'awaiting_approval',
+    codex_review_reason: reason,
+    codex_source_task_completed: sourceTaskCompleted,
+    codex_source_task_id: sourceTaskCompletion.sourceTaskId,
+    codex_source_task_completion_reason: reason,
+    codex_source_task_missing: sourceTaskCompletion.missing,
+    codex_last_checked_at: nowIso,
+    last_activity_at: row ? threadUpdatedAtIso(row) ?? nowIso : nowIso,
+    live_log: undefined,
+    message,
+    current_step: currentStep,
+    ...(shouldPersistVisibleMessagesFallback
+      ? { codex_visible_messages: compactVisibleMessages }
+      : Array.isArray(current.codex_visible_messages)
+        ? { codex_visible_messages: current.codex_visible_messages }
+        : {}),
+    session_health: 'stopped',
+    awaiting_approval_at: typeof current.awaiting_approval_at === 'string' ? current.awaiting_approval_at : nowIso,
+    ...(row
+      ? {
+          codex_thread_snapshot: {
+            title: row.title ?? null,
+            preview: null,
+            preview_chars: typeof row.preview === 'string' ? row.preview.length : 0,
+            tokens_used: row.tokens_used ?? null,
+            has_user_event: row.has_user_event ?? null,
+            archived: row.archived === 1 || row.archived === true,
+            updated_at_ms: row.updated_at_ms ?? null,
+            source: row.source ?? null,
+            cwd: row.cwd ?? null,
+          },
+        }
+      : {}),
+    steps,
+  }
+
+  if (!alreadyPersisted || shouldPersistVisibleMessagesFallback) {
+    const { error: updateError } = await supabase
+      .from('ai_tasks')
+      .update({
+        status: 'completed',
+        completed_at: nowIso,
+        codex_thread_id: threadId,
+        result,
+      })
+      .eq('id', task.id)
+
+    if (updateError) throw updateError
+  }
+
+  try {
+    await mirrorCodexSyncToTurso({
+      task,
+      status: 'completed',
+      threadId,
+      currentStep,
+      summary: message,
+      codexState: 'awaiting_approval',
+      previousRunState,
+      hadThreadId,
+      resumedFromApproval: false,
+      completedAt: nowIso,
+    })
+  } catch (tursoError) {
+    console.error('[codex/sync-node turso closure]', tursoError)
+  }
+
+  const activityEvents: Array<{
+    role: AiTaskActivityRole
+    kind: AiTaskActivityKind
+    body: string
+    dedupeKey: string
+    importance?: 'normal' | 'important'
+    createdAt?: string | null
+  }> = [
+    ...visibleActivityEvents,
+    {
+      role: 'status',
+      kind: 'completed',
+      body: message,
+      dedupeKey: `thread:${threadId}:closed:${reason}`,
+      importance: 'important',
+      createdAt: nowIso,
+    },
+  ]
+
+  await Promise.all(activityEvents.map(event => insertAiTaskActivityMessage(supabase, {
+    taskId: task.id,
+    userId: task.user_id,
+    role: event.role,
+    kind: event.kind,
+    body: event.body,
+    importance: event.importance,
+    dedupeKey: event.dedupeKey,
+    createdAt: event.createdAt ?? undefined,
+  })))
+
+  return {
+    persisted: !alreadyPersisted || shouldPersistVisibleMessagesFallback,
+    sourceTaskCompleted,
+    sourceTaskId: sourceTaskCompletion.sourceTaskId,
+    sourceTaskMissing: sourceTaskCompletion.missing,
   }
 }
 
@@ -451,7 +722,7 @@ export async function POST(req: NextRequest) {
 
   let query = supabase
     .from('ai_tasks')
-    .select('id, user_id, prompt, codex_thread_id, cwd, result, status, started_at, created_at, executor')
+    .select('id, user_id, space_id, prompt, codex_thread_id, cwd, result, status, started_at, created_at, source_task_id, executor')
     .eq('user_id', user.id)
     .in('executor', ['codex', 'codex_app'])
     .order('created_at', { ascending: false })
@@ -493,48 +764,31 @@ export async function POST(req: NextRequest) {
 
   const row = await readCodexThread(dbPath, threadId)
   if (!row) {
-    if (!wasAwaitingApproval) {
-      await insertAiTaskActivityMessage(supabase, {
-        taskId: task.id,
-        userId: task.user_id,
-        role: 'status',
-        kind: 'failed',
-        body: 'Codex threadが見つかりません。Codex.app側の状態確認が必要です。',
-        dedupeKey: `thread:${threadId}:deleted`,
+    try {
+      const closure = await persistCodexThreadClosure({
+        supabase,
+        task,
+        threadId,
+        current,
+        reason: 'thread_deleted',
+        nowIso,
+        previousRunState,
+        hadThreadId,
       })
+      return NextResponse.json({
+        task_id: task.id,
+        thread_id: threadId,
+        state: 'completed',
+        synced: true,
+        persisted: closure.persisted,
+        source_task_completed: closure.sourceTaskCompleted,
+        source_task_id: closure.sourceTaskId,
+        source_task_missing: closure.sourceTaskMissing,
+      })
+    } catch (closureError) {
+      console.error('[codex/sync-node closure thread_deleted]', closureError)
+      return NextResponse.json({ error: 'Codex thread closure sync failed' }, { status: 500 })
     }
-
-    const alreadyPersisted =
-      task.status === 'awaiting_approval' &&
-      previousRunState === 'awaiting_approval' &&
-      current.codex_review_reason === 'thread_deleted' &&
-      codexTaskThreadId(task) === threadId
-
-    if (!alreadyPersisted) {
-      await supabase
-        .from('ai_tasks')
-        .update({
-          status: 'awaiting_approval',
-          result: {
-            ...current,
-            codex_thread_id: threadId,
-            codex_run_state: 'awaiting_approval',
-            codex_review_reason: 'thread_deleted',
-            codex_last_checked_at: nowIso,
-            current_step: 'Codex threadが見つかりません',
-            live_log: undefined,
-            message: 'Codex thread が見つかりません。Codex.app側の状態確認が必要です。',
-          },
-        })
-        .eq('id', task.id)
-    }
-    return NextResponse.json({
-      task_id: task.id,
-      thread_id: threadId,
-      state: 'awaiting_approval',
-      synced: true,
-      persisted: !alreadyPersisted,
-    })
   }
 
   let rolloutRaw = ''
@@ -544,6 +798,38 @@ export async function POST(req: NextRequest) {
 
   const archived = row.archived === 1 || row.archived === true
   const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
+  if (archived && shouldCompleteSourceTaskForCodexReview('archived')) {
+    const visibleActivityEventsForClosure = includeVisibleActivity
+      ? visibleCodexActivityEvents(row, parsed, task)
+      : []
+    try {
+      const closure = await persistCodexThreadClosure({
+        supabase,
+        task,
+        threadId,
+        current,
+        reason: 'archived',
+        nowIso,
+        previousRunState,
+        hadThreadId,
+        row,
+        visibleActivityEvents: visibleActivityEventsForClosure,
+      })
+      return NextResponse.json({
+        task_id: task.id,
+        thread_id: threadId,
+        state: 'completed',
+        synced: true,
+        persisted: closure.persisted,
+        source_task_completed: closure.sourceTaskCompleted,
+        source_task_id: closure.sourceTaskId,
+        source_task_missing: closure.sourceTaskMissing,
+      })
+    } catch (closureError) {
+      console.error('[codex/sync-node closure archived]', closureError)
+      return NextResponse.json({ error: 'Codex thread closure sync failed' }, { status: 500 })
+    }
+  }
   const sentInCodex = parsed.sawTaskStarted || parsed.sawTerminalEvent
   const resumedFromApproval = wasAwaitingApproval && detectCodexResumeAfterApproval(
     parsed,
