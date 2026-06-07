@@ -246,12 +246,14 @@ section "Project"
 if [[ ! -d ios || ! -d ios/Focusmap.xcworkspace ]]; then
   echo "ios/ がないため、Expo の iOS ネイティブプロジェクトを生成します。"
   npx expo prebuild --platform ios --no-install
-  npx pod-install ios
 fi
 
 if [[ ! -d ios/Focusmap.xcworkspace ]]; then
   fail "ios/Focusmap.xcworkspace を作成できませんでした。" 4
 fi
+
+echo "iOS native modules / Pods を同期します。"
+npx pod-install ios
 
 section "iPhone"
 DEVICE_INFO="$(detect_ios_device || true)"

@@ -83,10 +83,23 @@ function isExternalAuthUrl(value: string) {
   }
 }
 
-function openExternalUrl(url: string) {
-  Linking.openURL(url).catch(() => {
-    Alert.alert("開けませんでした", "このリンクを開くアプリが見つかりません。");
-  });
+function normalizeExternalUrlCandidates(primaryUrl: string, urls?: string[]) {
+  return [...new Set([primaryUrl, ...(urls || [])]
+    .map(url => url.trim())
+    .filter(Boolean))];
+}
+
+async function openExternalUrl(url: string, urls?: string[]) {
+  const candidates = normalizeExternalUrlCandidates(url, urls);
+  for (const candidate of candidates) {
+    try {
+      await Linking.openURL(candidate);
+      return;
+    } catch {
+      // Try the next candidate. The final fallback is usually the official web URL.
+    }
+  }
+  Alert.alert("開けませんでした", "このリンクを開くアプリが見つかりません。");
 }
 
 function copyTextToClipboard(text: string) {
@@ -95,11 +108,11 @@ function copyTextToClipboard(text: string) {
   Clipboard.setStringAsync(value).catch(() => undefined);
 }
 
-async function copyTextThenOpenExternal(text: string | undefined, url: string) {
+async function copyTextThenOpenExternal(text: string | undefined, url: string, urls?: string[]) {
   if (text) {
     await Clipboard.setStringAsync(text.replace(/\r\n?/g, "\n").trim()).catch(() => undefined);
   }
-  openExternalUrl(url);
+  void openExternalUrl(url, urls);
 }
 
 function withAppParams(url: URL) {
@@ -186,12 +199,12 @@ export default function App() {
     if (!request.url || request.url === "about:blank") return true;
 
     if (isExternalAuthUrl(request.url)) {
-      openExternalUrl(request.url);
+      void openExternalUrl(request.url);
       return false;
     }
 
     if (!isHttpUrl(request.url)) {
-      openExternalUrl(request.url);
+      void openExternalUrl(request.url);
       return false;
     }
 
@@ -227,7 +240,7 @@ export default function App() {
 
   const handleWebViewMessage = (event: WebViewMessageEvent) => {
     try {
-      const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string; text?: string };
+      const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string; urls?: string[]; text?: string };
       if (payload.type === "focusmap:web-content-ready") {
         markWebContentPresented();
         return;
@@ -237,11 +250,11 @@ export default function App() {
         return;
       }
       if (payload.type === "focusmap:copyAndOpenExternal" && payload.url) {
-        void copyTextThenOpenExternal(payload.text, payload.url);
+        void copyTextThenOpenExternal(payload.text, payload.url, Array.isArray(payload.urls) ? payload.urls : undefined);
         return;
       }
       if (payload.type === "focusmap:openExternal" && payload.url) {
-        openExternalUrl(payload.url);
+        void openExternalUrl(payload.url, Array.isArray(payload.urls) ? payload.urls : undefined);
       }
     } catch {
       // Ignore non-JSON messages from the embedded page.
@@ -297,7 +310,7 @@ export default function App() {
           <ErrorFallback
             error={error}
             onReload={handleReload}
-            onOpenBrowser={() => openExternalUrl(focusmapUrl)}
+            onOpenBrowser={() => void openExternalUrl(focusmapUrl)}
           />
         ) : (
           <>

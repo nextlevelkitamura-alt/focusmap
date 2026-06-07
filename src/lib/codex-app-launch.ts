@@ -30,12 +30,12 @@ declare global {
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".local", ".trycloudflare.com"]
 export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
-export const CHATGPT_CODEX_MOBILE_APP_URL = CHATGPT_CODEX_MOBILE_URL
+export const CHATGPT_CODEX_MOBILE_IOS_APP_URL = `com.openai.chat://${CHATGPT_CODEX_MOBILE_URL}`
 export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
 type FocusmapNativeAppMessage =
   | { type: "focusmap:copyText"; text: string }
-  | { type: "focusmap:openExternal"; url: string }
+  | { type: "focusmap:openExternal"; url: string; urls?: string[] }
 
 export function isLocalCodexOpenHost(hostname: string) {
   const normalized = hostname.trim().toLowerCase()
@@ -172,12 +172,28 @@ export function getCurrentMobilePlatform(): MobilePlatform {
   return detectMobilePlatform(navigator.userAgent || "", navigator.maxTouchPoints)
 }
 
+export function buildChatGptCodexMobileAppUrls(platform: MobilePlatform) {
+  if (platform === "android") {
+    return [buildChatGptCodexMobileAppUrl(platform), CHATGPT_CODEX_MOBILE_URL]
+  }
+  if (platform === "ios") {
+    return [
+      CHATGPT_CODEX_MOBILE_IOS_APP_URL,
+      "chatgpt://codex/mobile",
+      "chatgpt://",
+      CHATGPT_CODEX_MOBILE_URL,
+    ]
+  }
+  return [CHATGPT_CODEX_MOBILE_URL]
+}
+
 export function buildChatGptCodexMobileAppUrl(platform: MobilePlatform) {
   if (platform === "android") {
     const fallbackUrl = encodeURIComponent(CHATGPT_CODEX_MOBILE_URL)
     return `intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=${CHATGPT_ANDROID_PACKAGE};S.browser_fallback_url=${fallbackUrl};end`
   }
-  return CHATGPT_CODEX_MOBILE_APP_URL
+  if (platform === "ios") return CHATGPT_CODEX_MOBILE_IOS_APP_URL
+  return CHATGPT_CODEX_MOBILE_URL
 }
 
 export function buildChatGptCodexMobileWebUrl() {
@@ -185,7 +201,7 @@ export function buildChatGptCodexMobileWebUrl() {
 }
 
 export function isLikelyChatGptMobileAppTarget(url: string) {
-  return url === CHATGPT_CODEX_MOBILE_URL || url.startsWith("com.openai.chat:") || url.startsWith("intent://")
+  return url === CHATGPT_CODEX_MOBILE_URL || url.startsWith("com.openai.chat:") || url.startsWith("chatgpt:") || url.startsWith("intent://")
 }
 
 export function isLikelyChatGptMobileWebTarget(url: string) {
@@ -211,14 +227,19 @@ export function copyTextViaFocusmapNativeApp(text: string) {
   return postFocusmapNativeAppMessage({ type: "focusmap:copyText", text: value })
 }
 
-export function openExternalUrlViaFocusmapNativeApp(url: string) {
-  return postFocusmapNativeAppMessage({ type: "focusmap:openExternal", url })
+function uniqueUrls(urls: string[]) {
+  return [...new Set(urls.map(url => url.trim()).filter(Boolean))]
 }
 
-export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string) {
+export function openExternalUrlViaFocusmapNativeApp(url: string, urls?: string[]) {
+  const candidates = urls ? uniqueUrls([url, ...urls]) : undefined
+  return postFocusmapNativeAppMessage({ type: "focusmap:openExternal", url, urls: candidates })
+}
+
+export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string, urls?: string[]) {
   if (!isLikelyChatGptMobileAppTarget(url) && !isLikelyChatGptMobileWebTarget(url)) return false
   if (prompt) copyTextViaFocusmapNativeApp(prompt)
-  return openExternalUrlViaFocusmapNativeApp(url)
+  return openExternalUrlViaFocusmapNativeApp(url, urls)
 }
 
 export function isLikelyMobileUserAgent(userAgent: string, maxTouchPoints = 0) {
@@ -236,10 +257,13 @@ export function buildCodexDeepLink({ repoPath, threadUrl, originUrl }: CodexLaun
 
 export function buildCodexOpenTarget(payload: CodexLaunchPayload, options: { preferMobile?: boolean; mobilePlatform?: MobilePlatform } = {}) {
   if (options.preferMobile) {
+    const mobilePlatform = options.mobilePlatform ?? "mobile"
+    const urls = buildChatGptCodexMobileAppUrls(mobilePlatform)
     return {
       mode: "chatgpt-mobile" as const,
-      url: buildChatGptCodexMobileAppUrl(options.mobilePlatform ?? "mobile"),
+      url: urls[0],
       fallbackUrl: buildChatGptCodexMobileWebUrl(),
+      urls,
     }
   }
   return {

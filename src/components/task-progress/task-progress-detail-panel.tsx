@@ -303,7 +303,7 @@ export function TaskProgressDetailPanel({
     setError(null)
 
     if (isMobileOpenTarget) {
-      if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url, promptToCopy)) {
+      if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url, promptToCopy, "urls" in codexOpenTarget ? codexOpenTarget.urls : undefined)) {
         event?.preventDefault()
       }
       copyAttempt.finished
@@ -326,7 +326,7 @@ export function TaskProgressDetailPanel({
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [codexOpenTarget.url, isMobileOpenTarget, isOpeningCodex, promptToCopy])
+  }, [codexOpenTarget, isMobileOpenTarget, isOpeningCodex, promptToCopy])
 
   const copyPrompt = useCallback(async () => {
     if (!promptToCopy || isCopyingPrompt) return
