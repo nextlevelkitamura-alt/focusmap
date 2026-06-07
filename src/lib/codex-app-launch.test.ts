@@ -8,9 +8,11 @@ import {
   detectMobilePlatform,
   isLocalCodexOpenHost,
   launchCodexViaLocalApi,
+  openCodexMobileTargetViaFocusmapNativeApp,
 } from "./codex-app-launch"
 
 afterEach(() => {
+  delete window.ReactNativeWebView
   vi.unstubAllGlobals()
 })
 
@@ -75,6 +77,27 @@ describe("ChatGPT mobile open target", () => {
       .toBe("https://chatgpt.com/codex/mobile/")
     expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "android" }).url)
       .toBe("intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end")
+  })
+
+  test("posts the Codex mobile URL to the Focusmap native app bridge", () => {
+    const postMessage = vi.fn()
+    window.ReactNativeWebView = { postMessage }
+
+    expect(openCodexMobileTargetViaFocusmapNativeApp("https://chatgpt.com/codex/mobile/")).toBe(true)
+    expect(postMessage).toHaveBeenCalledWith(JSON.stringify({
+      type: "focusmap:openExternal",
+      url: "https://chatgpt.com/codex/mobile/",
+    }))
+  })
+
+  test("does not intercept unsupported URLs or missing native bridge", () => {
+    expect(openCodexMobileTargetViaFocusmapNativeApp("https://chatgpt.com/codex/mobile/")).toBe(false)
+
+    const postMessage = vi.fn()
+    window.ReactNativeWebView = { postMessage }
+
+    expect(openCodexMobileTargetViaFocusmapNativeApp("https://example.com/")).toBe(false)
+    expect(postMessage).not.toHaveBeenCalled()
   })
 })
 

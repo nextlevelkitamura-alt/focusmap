@@ -19,6 +19,14 @@ export type CodexPromptCopyAttempt = {
   finished: Promise<boolean>
 }
 
+declare global {
+  interface Window {
+    ReactNativeWebView?: {
+      postMessage: (message: string) => void
+    }
+  }
+}
+
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".local", ".trycloudflare.com"]
 export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
@@ -178,6 +186,27 @@ export function isLikelyChatGptMobileAppTarget(url: string) {
 
 export function isLikelyChatGptMobileWebTarget(url: string) {
   return url.startsWith("https://chatgpt.com/")
+}
+
+export function openExternalUrlViaFocusmapNativeApp(url: string) {
+  if (typeof window === "undefined") return false
+  const postMessage = window.ReactNativeWebView?.postMessage
+  if (!postMessage) return false
+
+  try {
+    postMessage(JSON.stringify({
+      type: "focusmap:openExternal",
+      url,
+    }))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function openCodexMobileTargetViaFocusmapNativeApp(url: string) {
+  if (!isLikelyChatGptMobileAppTarget(url) && !isLikelyChatGptMobileWebTarget(url)) return false
+  return openExternalUrlViaFocusmapNativeApp(url)
 }
 
 export function isLikelyMobileUserAgent(userAgent: string, maxTouchPoints = 0) {

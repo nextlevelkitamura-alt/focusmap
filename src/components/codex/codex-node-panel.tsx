@@ -20,6 +20,7 @@ import {
   launchCodexViaLocalApi,
   launchFeedbackForMode,
   normalizeCodexPrompt,
+  openCodexMobileTargetViaFocusmapNativeApp,
   type MobilePlatform,
   type CodexLaunchMode,
 } from "@/lib/codex-app-launch"
@@ -564,6 +565,10 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     )
     const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
     const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
+    const openedViaNativeApp = isMobileHandoff && target.url
+      ? openCodexMobileTargetViaFocusmapNativeApp(target.url)
+      : false
+    if (openedViaNativeApp) event?.preventDefault()
 
     setError(null)
     setCodexFeedback(null)
@@ -710,6 +715,10 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
     try {
       const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
+      const openedViaNativeApp = isMobileHandoff
+        ? openCodexMobileTargetViaFocusmapNativeApp(openTarget.url)
+        : false
+      if (openedViaNativeApp) event?.preventDefault()
       const dispatchMode = "manual"
       const savePromise = saveDraft(heading, detail)
       const scheduleCodexTask = async () => {

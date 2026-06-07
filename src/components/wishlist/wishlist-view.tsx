@@ -64,6 +64,7 @@ import {
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
   launchCodexViaLocalApi,
+  openCodexMobileTargetViaFocusmapNativeApp,
 } from "@/lib/codex-app-launch"
 import { buildImmediateMemoCodexPrompt, memoBodyForCodexExecution, type MemoCodexImageAttachment } from "@/lib/memo-codex-execution"
 import { WishlistCard } from "./wishlist-card"
@@ -877,7 +878,9 @@ export function WishlistView({
       { prompt, repoPath, originUrl: window.location.href },
       { preferMobile, mobilePlatform: getCurrentMobilePlatform() },
     )
-    window.location.href = target.url
+    if (!openCodexMobileTargetViaFocusmapNativeApp(target.url)) {
+      window.location.href = target.url
+    }
     const copied = await activeCopyAttempt.finished
     if (!copied) {
       throw new Error("クリップボードコピー失敗。Codex側でメモ本文を手動貼り付けしてください")

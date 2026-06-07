@@ -17,6 +17,7 @@ import {
   copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
+  openCodexMobileTargetViaFocusmapNativeApp,
 } from "@/lib/codex-app-launch"
 import {
   codexMonitorToneClass,
@@ -302,6 +303,9 @@ export function TaskProgressDetailPanel({
     setError(null)
 
     if (isMobileOpenTarget) {
+      if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url)) {
+        event?.preventDefault()
+      }
       copyAttempt.finished
         .then(copied => {
           setPromptCopied(copied)

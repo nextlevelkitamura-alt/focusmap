@@ -22,6 +22,7 @@ import {
   launchCodexFromBrowser,
   launchCodexViaLocalApi,
   normalizeCodexPrompt,
+  openCodexMobileTargetViaFocusmapNativeApp,
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
@@ -88,6 +89,7 @@ function openCodexFromLinkedDialog(prompt: string, repoPath: string | null, thre
       { prompt, repoPath, threadUrl: threadUrl || null },
       { preferMobile: true, mobilePlatform: getCurrentMobilePlatform() },
     )
+    if (openCodexMobileTargetViaFocusmapNativeApp(target.url)) return
     window.location.href = target.url
     return
   }
@@ -838,6 +840,9 @@ export function MindmapLinkedMemosDialog({
       const isMobileHandoff = isLikelyMobileDevice()
       if (normalizeCodexPrompt(prompt) && isMobileHandoff) {
         void beginCopyPromptForCodexHandoff(prompt).finished
+        if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url)) {
+          event?.preventDefault()
+        }
         return
       }
       event?.preventDefault()
