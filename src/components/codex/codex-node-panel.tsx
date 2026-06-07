@@ -438,7 +438,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const promptHeadingForCodex = heading || node.title
   const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail)
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
-  const canAutoDispatchCodex = !!codexRepoPath && (codexRunnerStatus.ready || canUseLocalCodexOpenApi())
   const codexTask = getAiTaskBySourceId(node.taskId)
   const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
   const codexUiState = getCodexTaskUiState(codexTask)
@@ -735,10 +734,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       },
       { preferMobile: isMobileOpenTarget, mobilePlatform },
     )
-    const dispatchMode: "auto" | "manual" = canAutoDispatchCodex ? "auto" : "manual"
-    const isManualHandoff = dispatchMode === "manual"
-    const useLocalApi = isManualHandoff && canUseLocalCodexOpenApi() && !isMobileOpenTarget
-    const isMobileHandoff = isManualHandoff && isMobileOpenTarget && typeof window !== "undefined"
+    const dispatchMode = "manual" as const
+    const useLocalApi = canUseLocalCodexOpenApi() && !isMobileOpenTarget
+    const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
     if (!isMobileHandoff) event?.preventDefault()
     let launchMode: CodexLaunchMode | null = null
     setError(null)
@@ -760,7 +758,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
             scheduled_at: new Date().toISOString(),
             executor: "codex_app",
             dispatch_mode: dispatchMode,
-            codex_handoff_token: isManualHandoff ? handoffToken : undefined,
+            codex_handoff_token: handoffToken,
           }),
         })
         if (!scheduleRes.ok && scheduleRes.status !== 409) {
@@ -776,19 +774,6 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       const schedulePromise = isMobileHandoff
         ? scheduleCodexTask()
         : savePromise.then(scheduleCodexTask)
-
-      if (!isManualHandoff) {
-        await savePromise
-        await schedulePromise
-        setJustSentPrompt(prompt)
-        setCodexSendStatus("sent")
-        await refreshAiTasks()
-        await refreshAiTaskStatus()
-        setCodexFeedback("Codex実行をキューに追加しました。実行状態と返答は開いている間、約3秒ごとに更新します。")
-        window.setTimeout(() => void syncCodexState(), 1200)
-        window.setTimeout(() => void syncCodexState(), 3500)
-        return
-      }
 
       const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
 
@@ -870,7 +855,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       const dispatchFeedback = isMobileOpenTarget
           ? "ChatGPTアプリのCodex画面で貼り付けて開始してください。"
           : repoPath
-          ? "Macセットアップ未完了のため、今回はCodex.appで貼り付けて開始してください。"
+          ? "Codex.appで内容を確認して送信してください。"
           : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
       setCodexFeedback(
         `${launchFeedbackForMode(launchMode ?? "browser-deep-link")} ${copyFeedback} ${dispatchFeedback}`,
@@ -879,7 +864,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [canAutoDispatchCodex, candidates, detail, heading, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTaskStatus, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [candidates, detail, heading, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
@@ -939,19 +924,17 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                     onClick={sendToCodex}
                     aria-disabled={codexSendStatus === "sending"}
                     className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
-                    aria-label={canAutoDispatchCodex ? "Codexに送る" : isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
-                    title={canAutoDispatchCodex ? "Mac側のCodexで自動実行する" : isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
+                    aria-label={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
+                    title={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
                   >
                     {codexSendStatus === "sending" ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : canAutoDispatchCodex ? (
-                      <Bot className="h-4 w-4" />
                     ) : isMobileOpenTarget ? (
                       <Smartphone className="h-4 w-4" />
                     ) : (
                       <ExternalLink className="h-4 w-4" />
                     )}
-                    {canAutoDispatchCodex ? "Codexに送る" : isMobileOpenTarget ? "Codexを開く" : "Codexに送る"}
+                    Codexを開く
                   </a>
                 )}
                 <button

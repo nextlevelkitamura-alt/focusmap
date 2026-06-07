@@ -11,7 +11,9 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import {
+  appendCodexHandoffToken,
   beginCopyPromptForCodexHandoff,
+  buildCodexHandoffToken,
   buildCodexOpenTarget,
   canUseLocalCodexOpenApi,
   copyPromptForCodexHandoff,
@@ -802,18 +804,49 @@ export function MindmapLinkedMemosDialog({
     setIsSending(true)
     setIsSaving(true)
     setError(null)
-    const prompt = basePrompt
+    const handoffToken = buildCodexHandoffToken(task.id)
+    const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
     try {
       await saveDraft()
-      await createCodexTask("auto", prompt)
+      const createdTask = await createCodexTask("manual", prompt, handoffToken)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
+      const isMobileHandoff = isLikelyMobileDevice()
+      if (isMobileHandoff) {
+        trackManualHandoff({ taskId: createdTask.id })
+        const target = buildCodexOpenTarget(
+          {
+            prompt,
+            repoPath: selectedRepoPath,
+            originUrl: typeof window !== "undefined" ? window.location.href : null,
+          },
+          { preferMobile: true, mobilePlatform: getCurrentMobilePlatform() },
+        )
+        const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
+        if (openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined)) {
+          markScreenSwitched("external_app_opened")
+        } else {
+          const copied = await copyAttempt.finished
+          if (!copied) throw new Error("プロンプトをクリップボードにコピーできませんでした")
+          window.location.href = target.url
+        }
+      } else if (canUseLocalCodexOpenApi()) {
+        await launchCodexViaLocalApi({
+          prompt,
+          repoPath: selectedRepoPath,
+          originUrl: typeof window !== "undefined" ? window.location.href : null,
+        })
+      } else {
+        const copied = await beginCopyPromptForCodexHandoff(prompt).finished
+        if (!copied) throw new Error("プロンプトをクリップボードにコピーできませんでした")
+        openCodexFromLinkedDialog(prompt, selectedRepoPath)
+      }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
       setError(err instanceof Error
-        ? `Codexへ送信できませんでした。${err.message}`
-        : "Codexへ送信できませんでした")
+        ? `Codexを開けませんでした。${err.message}`
+        : "Codexを開けませんでした")
     } finally {
       setIsSaving(false)
       setIsSending(false)
@@ -887,7 +920,7 @@ export function MindmapLinkedMemosDialog({
   const title = task?.title || draftTitle || "ノード詳細"
   const description = hasCodexRun
     ? (codexWaitingForAppSend ? "未送信" : codexCompleted || codexUiState?.state === "awaiting_approval" ? "確認待ち" : "Codexで続行中")
-    : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
+    : "メモ見出しとメモ詳細を整えてからCodexを開きます"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
   const isMobileOpenTarget = isLikelyMobileDevice()
   const codexOpenPrompt = rawSentPrompt || buildCodexPrompt(draftTitle, draftMemo)
@@ -1139,7 +1172,7 @@ export function MindmapLinkedMemosDialog({
                     className="w-full gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     {isSending || isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
-                    Codexに送る
+                    Codexを開く
                   </Button>
                 </div>
               </div>

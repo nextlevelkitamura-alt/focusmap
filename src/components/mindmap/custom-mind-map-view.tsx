@@ -898,7 +898,7 @@ function CustomTaskNode({
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
                                         <Bot className="h-4 w-4" />
-                                        Codexに送る
+                                        Codexを開く
                                     </button>
                                     {taskProgress && (
                                         <button
@@ -982,7 +982,7 @@ function CustomTaskNode({
                                         onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
                                     >
                                         <Bot className="h-4 w-4" />
-                                        Codexに送る
+                                        Codexを開く
                                     </button>
                                     {taskProgress && (
                                         <button

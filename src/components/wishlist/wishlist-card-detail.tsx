@@ -113,7 +113,7 @@ interface WishlistCardDetailProps {
   onLaunchCodex?: (item: IdealGoalWithItems) => Promise<void>
   onCopyCodexPrompt?: (item: IdealGoalWithItems) => Promise<void>
   onReadyForAttachments?: (id: string) => Promise<void>
-  /** Codex.app を Mac で起動（codex:// URL 経由）。スマホからも呼べる */
+  /** Codex.app を手動handoffとして起動（codex:// URL 経由）。スマホからも呼べる */
   onLaunchCodexApp?: (item: IdealGoalWithItems) => Promise<void>
   /** GLM対話のツールがメモを更新/新規作成したとき呼ばれる（一覧リフレッシュ用）*/
   onMemoChanged?: () => void
@@ -2758,12 +2758,6 @@ export function WishlistCardDetail({
               ? aiTask.result as Record<string, unknown>
               : {}
             const codexPromptWaiting = (taskExecutor === "codex" || taskExecutor === "codex_app") && taskResult.codex_run_state === "prompt_waiting"
-            const codexThreadId = typeof aiTask?.codex_thread_id === "string" && aiTask.codex_thread_id.trim()
-              ? aiTask.codex_thread_id.trim()
-              : typeof taskResult.codex_thread_id === "string" && taskResult.codex_thread_id.trim()
-                ? taskResult.codex_thread_id.trim()
-                : null
-            const codexManualHandoff = taskExecutor === "codex_app" && taskResult.codex_manual_handoff === true
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
             const isCodexExecutor = taskExecutor === "codex" || taskExecutor === "codex_app" || launchExecutor === "codex" || launchExecutor === "codex_app"
             const isCodexRunning = isCodexExecutor && aiTask?.status === "running"
@@ -2775,18 +2769,13 @@ export function WishlistCardDetail({
                 title: draftTitle,
                 description: draftDescription || null,
               } as IdealGoalWithItems
-              const canPromoteManualCodexHandoff =
-                !!active &&
-                codexManualHandoff &&
-                !codexThreadId &&
-                (aiTask?.status === "awaiting_approval" || aiTask?.status === "needs_input")
-              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || (!!active && !codexPromptWaiting && !canPromoteManualCodexHandoff)
+              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active
               const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
               const showCodexDetails = isCodexPanelOpen || !!active || launchStep !== null || !!launchError || needsConfig
               const showPromptCopyButton = !!onCopyCodexPrompt && showCodexDetails && !isCodexRunning && (codexPromptWaiting || !!active || launchStep !== null || !!launchError)
               return (
                 <div className="space-y-3 rounded-lg border bg-background/40 p-3">
-                  {/* Codex 送信。codex_app は手動handoff fallbackとして親から渡された時だけ表示する。 */}
+                  {/* Codex handoff。Focusmapは追跡task作成と起動補助まで行い、送信はCodex側で行う。 */}
                   <div className="grid grid-cols-1 gap-2">
                     {onLaunchClaude && (
                     <Button
@@ -2816,31 +2805,31 @@ export function WishlistCardDetail({
                       </Button>
                     )}
                     {onLaunchCodex && (
-                    <Button
-                      type="button"
-                      variant="outline"
+                      <Button
+                        type="button"
+                        variant="outline"
                         disabled={codexDisabled || isLaunchingCodex}
                         onClick={async () => {
                           setIsCodexPanelOpen(true)
                           setLaunchError(null)
                           setLaunchStep('sending')
-                        setLaunchExecutor('codex')
-                        setIsLaunchingCodex(true)
-                        try {
-                          await onLaunchCodex(codexDraftItem)
-                          setLaunchStep('sent')
-                        } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "起動失敗")
-                          setLaunchStep(null)
-                          setLaunchExecutor(null)
-                        } finally {
-                          setIsLaunchingCodex(false)
-                        }
+                          setLaunchExecutor('codex_app')
+                          setIsLaunchingCodex(true)
+                          try {
+                            await onLaunchCodex(codexDraftItem)
+                            setLaunchStep('sent')
+                          } catch (e) {
+                            setLaunchError(e instanceof Error ? e.message : "起動失敗")
+                            setLaunchStep(null)
+                            setLaunchExecutor(null)
+                          } finally {
+                            setIsLaunchingCodex(false)
+                          }
                         }}
                         className="min-h-[48px] gap-2 border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                       >
                         {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                        <span className="font-semibold">{canPromoteManualCodexHandoff ? "Macへ再送" : "Codexに送る"}</span>
+                        <span className="font-semibold">Codexを開く</span>
                       </Button>
                     )}
                   </div>
@@ -2858,12 +2847,10 @@ export function WishlistCardDetail({
                         {active
                           ? codexPromptWaiting
                             ? "Codexはプロンプト待ちです。必要なら下から再コピーできます"
-                            : canPromoteManualCodexHandoff
-                              ? "スマホのChatGPT/Codexアプリ履歴はFocusmapから直接取得できません。Mac側Codexで実行し直すと、開いている間に約3秒ごとに状態と返答を同期します"
-                            : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
+                            : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中または確認待ちです（下に進行状況）`
                           : needsConfig
                             ? "プロジェクトまたはリポジトリパスが未設定です"
-                            : "オンラインAIタスクに追加し、MacのCodexへ送ります"}
+                            : "追跡taskを作成し、プロンプトをコピーしてCodexを開きます。送信はCodex側で行います"}
                       </p>
                       {needsConfig && (
                         <Link
@@ -2879,161 +2866,156 @@ export function WishlistCardDetail({
 
                   {showPromptCopyButton && (
                     <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!hasCodexPromptDraft || isCopyingCodexPrompt}
+                      type="button"
+                      variant="secondary"
+                      disabled={!hasCodexPromptDraft || isCopyingCodexPrompt}
                       onClick={async () => {
                         setIsCodexPanelOpen(true)
                         setLaunchError(null)
-                      setIsCopyingCodexPrompt(true)
-                      try {
-                        await onCopyCodexPrompt(codexDraftItem)
-                        setLaunchStep('sent')
-                        setLaunchExecutor('codex')
-                      } catch (e) {
-                        setLaunchError(e instanceof Error ? e.message : "コピー失敗")
-                      } finally {
-                        setIsCopyingCodexPrompt(false)
-                      }
-                    }}
-                    className="min-h-[44px] w-full justify-center gap-2 text-xs"
-                  >
-                    {isCopyingCodexPrompt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
-                    プロンプト/画像を再コピー
-                  </Button>
-                )}
+                        setIsCopyingCodexPrompt(true)
+                        try {
+                          await onCopyCodexPrompt(codexDraftItem)
+                          setLaunchStep('sent')
+                          setLaunchExecutor('codex_app')
+                        } catch (e) {
+                          setLaunchError(e instanceof Error ? e.message : "コピー失敗")
+                        } finally {
+                          setIsCopyingCodexPrompt(false)
+                        }
+                      }}
+                      className="min-h-[44px] w-full justify-center gap-2 text-xs"
+                    >
+                      {isCopyingCodexPrompt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                      プロンプト/画像を再コピー
+                    </Button>
+                  )}
 
-                {/* サブオプション: promptをコピーしてCodex.appを開く（送信は手動） */}
-                  {showCodexDetails && onLaunchCodexApp && (
+                  {/* サブオプション: promptをコピーしてCodex.appを開く（送信は手動） */}
+                  {showCodexDetails && onLaunchCodexApp && !active && (
                     <button
-                    type="button"
-                    disabled={!draftTitle.trim() || isLaunchingCodex}
+                      type="button"
+                      disabled={!draftTitle.trim() || isLaunchingCodex}
                       onClick={async () => {
                         setIsCodexPanelOpen(true)
                         setLaunchError(null)
-                      setLaunchStep('sending')
-                      setLaunchExecutor('codex_app')
-                      setIsLaunchingCodex(true)
-                      try {
-                        await onLaunchCodexApp(codexDraftItem)
-                        setLaunchStep('sent')
-                      } catch (e) {
-                        setLaunchError(e instanceof Error ? e.message : "起動失敗")
-                        setLaunchStep(null)
-                        setLaunchExecutor(null)
-                      } finally {
-                        setIsLaunchingCodex(false)
-                      }
-                    }}
-                    className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
-                  >
-                    ◎ Codexを開く（プロンプトをコピー）
-                  </button>
-                )}
+                        setLaunchStep('sending')
+                        setLaunchExecutor('codex_app')
+                        setIsLaunchingCodex(true)
+                        try {
+                          await onLaunchCodexApp(codexDraftItem)
+                          setLaunchStep('sent')
+                        } catch (e) {
+                          setLaunchError(e instanceof Error ? e.message : "起動失敗")
+                          setLaunchStep(null)
+                          setLaunchExecutor(null)
+                        } finally {
+                          setIsLaunchingCodex(false)
+                        }
+                      }}
+                      className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
+                    >
+                      ◎ Codexを開く（プロンプトをコピー）
+                    </button>
+                  )}
 
                   {showCodexDetails && launchError && (
                     <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
-                    {launchError}
-                  </div>
-                )}
-
-                {/* ステップログ */}
-                  {showCodexDetails && launchStep !== null && (() => {
-                  const sessionUrl = aiTask?.remote_session_url ?? null
-                  const isCodex = launchExecutor === 'codex' || launchExecutor === 'codex_app'
-                  const executorLabel = launchExecutor === 'claude' ? 'Claude Code' : 'Codex'
-                  const copyStepText = launchExecutor === 'codex_app'
-                    ? (launchStep === 'sending' ? 'プロンプトを準備しています...' : 'プロンプトをコピーしました')
-                    : launchExecutor === 'codex'
-                      ? (launchStep === 'sending' ? 'Codex実行を準備しています...' : 'Codex実行をキューに追加しました')
-                      : (launchStep === 'sending' ? `${executorLabel}に送信しています...` : `${executorLabel}に送信しました`)
-                  return (
-                    <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-[12px]">
-                      {/* Step 1: コピー/送信 */}
-                      <div className="flex items-center gap-2">
-                        {launchStep === 'sending'
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
-                          : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                        <span className={launchStep === 'sending' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
-                          {copyStepText}
-                        </span>
-                      </div>
-                      {/* Step 2: 接続/起動 */}
-                      {launchStep !== 'sending' && (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            {launchStep === 'sent'
-                              ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
-                              : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                            <span className={launchStep === 'sent' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}>
-                              {launchStep === 'sent'
-                                ? `${launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Mac送信待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
-                                : (launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Mac送信済み' : '接続しました')}
-                            </span>
-                          </div>
-                          {launchStep === 'sent' && (
-                            <div className="pl-5 space-y-1 text-[11px] text-muted-foreground">
-                              <p>{launchExecutor === 'codex_app' ? 'Codex側で内容を確認して送信してください' : isCodex ? 'オンラインAIタスクをMac runnerが拾い、Codex.appへ送信します' : '通常15〜45秒かかります'}</p>
-                              {(() => {
-                                const status = aiTask?.status
-                                if (status === 'running') return <p className="text-blue-500 dark:text-blue-400 font-medium">▶ {executorLabel} が実行中です{isCodex ? '' : ' — URLを取得中...'}</p>
-                                if (status === 'pending') return <p>Mac でエージェントの起動を待っています...</p>
-                                return null
-                              })()}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {/* Claude: QRコード + URL */}
-                      {!isCodex && (launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
-                        <div className="flex flex-col sm:flex-row gap-3 pt-1">
-                          <div className="shrink-0 rounded-md border bg-white p-2 self-start">
-                            <QRCode value={sessionUrl} size={80} />
-                          </div>
-                          <div className="flex-1 min-w-0 space-y-2">
-                            <p className="text-muted-foreground">QRを読み取るかボタンで開く:</p>
-                            <a
-                              href={sessionUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-                            >
-                              <Wifi className="h-3.5 w-3.5" />
-                              このデバイスで開く
-                            </a>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                await navigator.clipboard.writeText(sessionUrl).catch(() => {})
-                                setCopiedUrl(true)
-                                setTimeout(() => setCopiedUrl(false), 1500)
-                              }}
-                              className="ml-2 inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1.5 text-[11px] hover:bg-muted"
-                            >
-                              {copiedUrl ? 'コピー済' : 'URLコピー'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {/* Codex: 起動完了メッセージ */}
-                      {isCodex && (launchStep === 'connected' || launchStep === 'completed') && (
-                        <div className="pl-1 text-[11px] text-muted-foreground space-y-0.5">
-                          {launchExecutor === 'codex_app'
-                            ? <p>✓ Codex.app が開きました。Mac で Enter を押すと実行開始します。</p>
-                            : <p>✓ Codex実行をキューに追加しました。Mac側が実行し、下のパネルに状態が同期されます。</p>
-                          }
-                        </div>
-                      )}
-                      {/* 完了 */}
-                      {launchStep === 'completed' && (
-                        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-medium">
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          完了しました — メモ一覧に戻ります
-                        </div>
-                      )}
+                      {launchError}
                     </div>
-                  )
-                })()}
+                  )}
+
+                  {/* ステップログ */}
+                  {showCodexDetails && launchStep !== null && (() => {
+                    const sessionUrl = aiTask?.remote_session_url ?? null
+                    const isCodex = launchExecutor === 'codex' || launchExecutor === 'codex_app'
+                    const executorLabel = launchExecutor === 'claude' ? 'Claude Code' : 'Codex'
+                    const copyStepText = isCodex
+                      ? (launchStep === 'sending' ? 'プロンプトを準備しています...' : 'プロンプトをコピーしました')
+                      : (launchStep === 'sending' ? `${executorLabel}に送信しています...` : `${executorLabel}に送信しました`)
+                    return (
+                      <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-[12px]">
+                        {/* Step 1: コピー/送信 */}
+                        <div className="flex items-center gap-2">
+                          {launchStep === 'sending'
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
+                            : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                          <span className={launchStep === 'sending' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
+                            {copyStepText}
+                          </span>
+                        </div>
+                        {/* Step 2: 接続/起動 */}
+                        {launchStep !== 'sending' && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              {launchStep === 'sent'
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
+                                : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                              <span className={launchStep === 'sent' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}>
+                                {launchStep === 'sent'
+                                  ? `${isCodex ? 'プロンプト待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
+                                  : (isCodex ? 'プロンプト待ち' : '接続しました')}
+                              </span>
+                            </div>
+                            {launchStep === 'sent' && (
+                              <div className="pl-5 space-y-1 text-[11px] text-muted-foreground">
+                                <p>{isCodex ? 'Codex側で内容を確認して送信してください' : '通常15〜45秒かかります'}</p>
+                                {(() => {
+                                  const status = aiTask?.status
+                                  if (status === 'running') return <p className="text-blue-500 dark:text-blue-400 font-medium">▶ {executorLabel} が実行中です{isCodex ? '' : ' — URLを取得中...'}</p>
+                                  if (status === 'pending') return <p>Mac でエージェントの起動を待っています...</p>
+                                  return null
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {/* Claude: QRコード + URL */}
+                        {!isCodex && (launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
+                          <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                            <div className="shrink-0 rounded-md border bg-white p-2 self-start">
+                              <QRCode value={sessionUrl} size={80} />
+                            </div>
+                            <div className="flex-1 min-w-0 space-y-2">
+                              <p className="text-muted-foreground">QRを読み取るかボタンで開く:</p>
+                              <a
+                                href={sessionUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+                              >
+                                <Wifi className="h-3.5 w-3.5" />
+                                このデバイスで開く
+                              </a>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await navigator.clipboard.writeText(sessionUrl).catch(() => {})
+                                  setCopiedUrl(true)
+                                  setTimeout(() => setCopiedUrl(false), 1500)
+                                }}
+                                className="ml-2 inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1.5 text-[11px] hover:bg-muted"
+                              >
+                                {copiedUrl ? 'コピー済' : 'URLコピー'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {/* Codex: 起動完了メッセージ */}
+                        {isCodex && (launchStep === 'connected' || launchStep === 'completed') && (
+                          <div className="pl-1 text-[11px] text-muted-foreground space-y-0.5">
+                            <p>✓ Codexを開きました。内容を確認してCodex側で送信してください。</p>
+                          </div>
+                        )}
+                        {/* 完了 */}
+                        {launchStep === 'completed' && (
+                          <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-medium">
+                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                            完了しました — メモ一覧に戻ります
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   {showCodexDetails && (
                     <NoteClaudeRunnerPanel

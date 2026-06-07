@@ -375,7 +375,7 @@ describe("CustomMindMapView keyboard operations", () => {
     const node = getNode("Root task", "root-1")
     fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))
 
-    expect(within(node).getByRole("button", { name: "Codexに送る" })).toBeInTheDocument()
+    expect(within(node).getByRole("button", { name: "Codexを開く" })).toBeInTheDocument()
     expect(within(node).getByRole("button", { name: "日時を指定する" })).toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "メモを開く" })).not.toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "子を追加" })).not.toBeInTheDocument()
@@ -383,7 +383,7 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(within(node).queryByRole("button", { name: "編集" })).not.toBeInTheDocument()
     expect(within(node).queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
 
-    fireEvent.click(within(node).getByRole("button", { name: "Codexに送る" }))
+    fireEvent.click(within(node).getByRole("button", { name: "Codexを開く" }))
     expect(onRunCodex).toHaveBeenCalledWith("root-1")
 
     fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))

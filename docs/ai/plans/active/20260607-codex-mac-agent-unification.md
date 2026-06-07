@@ -59,7 +59,7 @@ flowchart TB
 ## 方針
 
 - Macアプリ起動中は、Focusmap連携に必要なローカル要素も基本的に起動している状態を目指す。起動できない時は「Next」「agent」「Codex app-server」「権限」のどれが足りないかを一つのstatusで見せる。
-- Mac/desktopでlocal supervisor、作業cwd、Codex app-serverが揃う時は `dispatch_mode='auto'` を優先する。manual handoffはスマホ、ローカル未起動、cwd不明、clipboard失敗、明示手動時のfallbackとして残す。
+- メモ詳細・マップノード詳細・リンクメモ詳細の標準Codex導線は `dispatch_mode='manual'` にする。Focusmapは handoff task 作成、promptコピー、Codex.app/ChatGPT Codex入口の起動、状態監視を担当し、Codex.appで最終送信するのは人間。`dispatch_mode='auto'` は明示的な自動実行導線だけで使い、通常ボタンや既存manual handoffの再操作から暗黙に昇格しない。
 - Codex状態の通常writerは1つにする。`scripts/task-runner.ts` と `/api/codex/sync-node` は移行期間の互換/手動sync/debugに限定し、supervisor monitorが有効なtaskでは重複書き込みを避ける。
 - UIの3秒pollは読み取り専用にする。`/api/task-progress/snapshot` と `/api/ai-tasks/[id]/activity` を読み、sqlite/rollout探索やDB writeはローカルmonitor側だけが行う。
 - ローカル監視はactive task中だけ1〜5秒で確認してよいが、DB書き込みはhash/活動時刻/状態/新規activityが変わった時だけにする。heartbeatは5秒基準でよい。
@@ -91,8 +91,8 @@ flowchart TB
 
 ### Phase 3: Dispatch Mode整理
 
-- Mac supervisor online、cwdあり、Codex app-server readyの時は、デスクトップUIの標準を `dispatch_mode='auto'` に寄せる。
-- local条件を満たさない場合は従来通りmanual handoffへ落とす。
+- 標準UIはMac supervisor online/cwd/Codex app-server readyに関係なく `dispatch_mode='manual'` の手動handoffを使う。
+- `dispatch_mode='auto'` は明示的な自動実行導線だけで使い、ラベルも「Macで自動実行」のように人間が違いを判断できるものにする。
 - manual handoffの再コピー、Codexで開く、未送信表示は維持する。
 
 ### Phase 4: UI Polling簡素化
@@ -119,8 +119,8 @@ flowchart TB
 ### Phase 7: 検証/移行
 
 - ローカル `npm run mac:dev` で3001、agent、Codex app-serverの起動状態を確認する。
-- 自動実行taskを作り、初回runningが5秒以内にUIへ出ることを確認する。
-- manual handoff taskを作り、再コピーとthread検出fallbackが維持されることを確認する。
+- manual handoff taskを作り、通常ボタンでは `needs_input` / `prompt_waiting` になり、Codex.appへの `turn/start` が自動送信されないことを確認する。
+- 明示的なauto taskを作る場合だけ、初回runningが5秒以内にUIへ出ることを確認する。
 - 複数panelを開いても同一taskに重複snapshot/eventが増えないことを確認する。
 - 3秒UI pollがDB writeを増やさないことを確認する。
 

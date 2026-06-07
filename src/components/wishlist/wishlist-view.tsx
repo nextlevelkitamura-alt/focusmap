@@ -914,19 +914,18 @@ export function WishlistView({
   }, [loadMemoCodexImages])
 
   // メモから AI エージェント（Claude / Codex）を起動
-  // Codex の標準導線はオンライン ai_tasks に積み、常駐Mac runnerがCodex.appへ送る。
-  // 手動handoffはMac runnerを使えない時のfallbackとして残す。
+  // Codex の標準導線は manual handoff。Focusmap は追跡 task を作り、
+  // prompt のコピーと Codex 起動だけを補助し、最終送信は Codex 側で人間が行う。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
-    const isCodexAutoRun = executor === 'codex'
-    const isCodexManualHandoff = executor === 'codex_app'
-    if (!repoPath && (executor === 'claude' || isCodexAutoRun)) {
+    const isCodexManualHandoff = executor === 'codex' || executor === 'codex_app'
+    if (!repoPath && executor === 'claude') {
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
     const isMobileManualHandoff = isCodexManualHandoff && isLikelyMobileDevice()
-    const basePrompt = (isCodexAutoRun || isCodexManualHandoff)
+    const basePrompt = isCodexManualHandoff
       ? isMobileManualHandoff
         ? buildImmediateMemoCodexPrompt(
             memoBodyForCodexExecution({ title: item.title, body: item.description }),
@@ -934,7 +933,7 @@ export function WishlistView({
           )
         : await buildMemoCodexHandoffText(item)
       : item.description?.trim() || item.title
-    const scheduleExecutor = (isCodexAutoRun || isCodexManualHandoff) ? 'codex_app' : executor
+    const scheduleExecutor = isCodexManualHandoff ? 'codex_app' : executor
     const handoffToken = isCodexManualHandoff ? buildCodexHandoffToken(item.id) : undefined
     const prompt = isCodexManualHandoff
       ? appendCodexHandoffToken(basePrompt, handoffToken)
@@ -982,7 +981,6 @@ export function WishlistView({
   }, [buildMemoCodexHandoffText, openCodexHandoff, projects, refreshMemoAiTasks])
 
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
-  const launchCodexManualForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
 
   const copyCodexPromptForMemo = useCallback(async (item: MemoItem) => {
     const text = await buildMemoCodexHandoffText(item)
@@ -3120,7 +3118,6 @@ export function WishlistView({
         calendars={calendars}
         tagColors={tagColors}
         onLaunchCodex={launchCodexForMemo}
-        onLaunchCodexApp={launchCodexManualForMemo}
         onCopyCodexPrompt={copyCodexPromptForMemo}
         onReadyForAttachments={waitForMemoPersistence}
         onMemoChanged={fetchItems}

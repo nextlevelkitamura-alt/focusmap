@@ -127,7 +127,7 @@ describe('WishlistCardDetail', () => {
     expect(screen.queryByRole('button', { name: /メモを保存/ })).not.toBeInTheDocument()
   })
 
-  test('手動Codexハンドオフ確認待ちはMac再送へ切り替えられる', async () => {
+  test('手動Codexハンドオフ確認待ちは通常ボタンでMac自動再送へ昇格しない', async () => {
     memoAiTaskMock.task = {
       id: 'ai-task-1',
       executor: 'codex_app',
@@ -166,15 +166,14 @@ describe('WishlistCardDetail', () => {
       />,
     )
 
-    const resendButton = await screen.findByRole('button', { name: /Macへ再送/ })
-    expect(resendButton).toBeEnabled()
-    expect(screen.getByText(/スマホのChatGPT\/Codexアプリ履歴はFocusmapから直接取得できません/)).toBeInTheDocument()
+    const openButton = await screen.findByRole('button', { name: /Codexを開く/ })
+    expect(openButton).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /Macへ再送/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/Codex 実行中または確認待ちです/)).toBeInTheDocument()
 
-    fireEvent.click(resendButton)
+    fireEvent.click(openButton)
 
-    await waitFor(() => {
-      expect(onLaunchCodex).toHaveBeenCalledTimes(1)
-    })
+    expect(onLaunchCodex).not.toHaveBeenCalled()
   })
 
   test('日付を選択するとカレンダーPopoverを閉じる', async () => {
