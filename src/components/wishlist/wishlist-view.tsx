@@ -55,10 +55,12 @@ import { cn } from "@/lib/utils"
 import { colorToRgba, getTagColor } from "@/lib/color-utils"
 import {
   appendCodexHandoffToken,
+  beginCopyPromptForCodexHandoff,
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
   copyPromptForCodexHandoff,
+  type CodexPromptCopyAttempt,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
   launchCodexViaLocalApi,
@@ -855,8 +857,13 @@ export function WishlistView({
   const { pushAction } = useUndoRedo()
   const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
 
-  const openCodexHandoff = useCallback(async (prompt: string, repoPath: string | null) => {
-    if (canUseLocalCodexOpenApi() && !isLikelyMobileDevice()) {
+  const openCodexHandoff = useCallback(async (
+    prompt: string,
+    repoPath: string | null,
+    copyAttempt?: CodexPromptCopyAttempt,
+  ) => {
+    const preferMobile = isLikelyMobileDevice()
+    if (canUseLocalCodexOpenApi() && !preferMobile) {
       try {
         await launchCodexViaLocalApi({ prompt, repoPath, originUrl: window.location.href })
         return
@@ -865,14 +872,13 @@ export function WishlistView({
       }
     }
 
-    const copied = await copyPromptForCodexHandoff(prompt)
-
-    const preferMobile = isLikelyMobileDevice()
+    const activeCopyAttempt = copyAttempt ?? beginCopyPromptForCodexHandoff(prompt)
     const target = buildCodexOpenTarget(
       { prompt, repoPath, originUrl: window.location.href },
       { preferMobile, mobilePlatform: getCurrentMobilePlatform() },
     )
     window.location.href = target.url
+    const copied = await activeCopyAttempt.finished
     if (!copied) {
       throw new Error("クリップボードコピー失敗。Codex側でメモ本文を手動貼り付けしてください")
     }
@@ -923,7 +929,7 @@ export function WishlistView({
     const prompt = isCodexManualHandoff
       ? appendCodexHandoffToken(basePrompt, handoffToken)
       : basePrompt
-    const clipboardPromise = isCodexManualHandoff ? copyPromptForCodexHandoff(prompt).catch(() => false) : null
+    const copyAttempt = isCodexManualHandoff ? beginCopyPromptForCodexHandoff(prompt) : null
 
     const registerTask = async () => {
       const res = await fetch("/api/ai-tasks/schedule", {
@@ -949,9 +955,16 @@ export function WishlistView({
     }
 
     if (isCodexManualHandoff) {
-      await registerTask()
-      await clipboardPromise
-      await openCodexHandoff(prompt, repoPath ?? null)
+      const preferMobile = isLikelyMobileDevice()
+      const registerTaskPromise = registerTask()
+      if (preferMobile) {
+        registerTaskPromise.catch(() => undefined)
+        await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined)
+        await registerTaskPromise
+        return
+      }
+      await registerTaskPromise
+      await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined)
       return
     }
 

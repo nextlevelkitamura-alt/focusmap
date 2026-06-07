@@ -10,6 +10,7 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import {
   appendCodexHandoffToken,
+  beginCopyPromptForCodexHandoff,
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
@@ -632,6 +633,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       { preferMobile: isMobileOpenTarget, mobilePlatform },
     )
     const useLocalApi = canUseLocalCodexOpenApi() && !isMobileOpenTarget
+    const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
     event?.preventDefault()
     let launchMode: CodexLaunchMode | null = null
     setError(null)
@@ -639,42 +641,55 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexSendStatus("sending")
 
     try {
-      const clipboardPromise = copyPromptForCodexHandoff(prompt)
+      const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
       const dispatchMode = "manual"
       const savePromise = saveDraft(heading, detail)
+      const scheduleCodexTask = async () => {
+        const scheduleRes = await fetch("/api/ai-tasks/schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          keepalive: prompt.length < 50_000,
+          body: JSON.stringify({
+            prompt,
+            cwd: repoPath || null,
+            approval_type: "auto",
+            source_task_id: node.taskId,
+            scheduled_at: new Date().toISOString(),
+            executor: "codex_app",
+            dispatch_mode: dispatchMode,
+            codex_handoff_token: handoffToken,
+          }),
+        })
+        if (!scheduleRes.ok && scheduleRes.status !== 409) {
+          const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
+          throw new Error(data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`)
+        }
+        if (scheduleRes.status === 409) {
+          const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
+          throw new Error(data.error || "このノードは既にCodexで実行中または確認待ちです")
+        }
+      }
+      const schedulePromise = isMobileHandoff
+        ? scheduleCodexTask()
+        : savePromise.then(scheduleCodexTask)
+      schedulePromise.catch(() => undefined)
+
+      if (isMobileHandoff) {
+        launchMode = openTarget.mode
+        window.location.href = openTarget.url
+      }
+
       await savePromise
-      const scheduleRes = await fetch("/api/ai-tasks/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        keepalive: prompt.length < 50_000,
-        body: JSON.stringify({
-          prompt,
-          cwd: repoPath || null,
-          approval_type: "auto",
-          source_task_id: node.taskId,
-          scheduled_at: new Date().toISOString(),
-          executor: "codex_app",
-          dispatch_mode: dispatchMode,
-          codex_handoff_token: handoffToken,
-        }),
-      })
-      if (!scheduleRes.ok && scheduleRes.status !== 409) {
-        const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
-        throw new Error(data.error || `Codex送信準備に失敗しました (${scheduleRes.status})`)
-      }
-      if (scheduleRes.status === 409) {
-        const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
-        throw new Error(data.error || "このノードは既にCodexで実行中または確認待ちです")
-      }
+      await schedulePromise
       setJustSentPrompt(prompt)
       void refreshAiTasks()
 
-      let copiedToClipboard = await clipboardPromise
+      let copiedToClipboard = await copyAttempt.finished
       if (useLocalApi) {
         const launchOutcome = await launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
         launchMode = launchOutcome.mode
         if (launchOutcome.copiedToClipboard) copiedToClipboard = true
-      } else if (typeof window !== "undefined") {
+      } else if (typeof window !== "undefined" && !isMobileHandoff) {
         if (!copiedToClipboard) {
           throw new Error("プロンプトをクリップボードにコピーできませんでした")
         }

@@ -14,10 +14,15 @@ export type CodexLaunchResult = {
   copiedToClipboard?: boolean
 }
 
+export type CodexPromptCopyAttempt = {
+  copiedSynchronously: boolean
+  finished: Promise<boolean>
+}
+
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".local", ".trycloudflare.com"]
 export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
-export const CHATGPT_CODEX_MOBILE_APP_URL = `com.openai.chat://${CHATGPT_CODEX_MOBILE_URL}`
+export const CHATGPT_CODEX_MOBILE_APP_URL = CHATGPT_CODEX_MOBILE_URL
 export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
 export function isLocalCodexOpenHost(hostname: string) {
@@ -53,11 +58,11 @@ export function appendCodexHandoffToken(prompt: string, token: string | null | u
   return normalizedPrompt
 }
 
-export function copyTextToClipboard(text: string): Promise<boolean> {
+export function beginCopyTextToClipboard(text: string): CodexPromptCopyAttempt {
   const value = text.replace(/\r\n?/g, "\n")
   let copied = false
 
-  if (typeof document !== "undefined") {
+  if (typeof document !== "undefined" && document.body) {
     const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const textarea = document.createElement("textarea")
     textarea.value = value
@@ -67,11 +72,14 @@ export function copyTextToClipboard(text: string): Promise<boolean> {
     textarea.style.left = "0"
     textarea.style.width = "1px"
     textarea.style.height = "1px"
+    textarea.style.fontSize = "16px"
     textarea.style.opacity = "0"
+    textarea.style.pointerEvents = "none"
     document.body.appendChild(textarea)
-    textarea.focus()
-    textarea.select()
     try {
+      textarea.focus({ preventScroll: true })
+      textarea.select()
+      textarea.setSelectionRange(0, value.length)
       copied = document.execCommand("copy")
     } catch {
       copied = false
@@ -81,13 +89,17 @@ export function copyTextToClipboard(text: string): Promise<boolean> {
     }
   }
 
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(value)
+  const finished = typeof navigator !== "undefined" && navigator.clipboard?.writeText
+    ? navigator.clipboard.writeText(value)
       .then(() => true)
       .catch(() => copied)
-  }
+    : Promise.resolve(copied)
 
-  return Promise.resolve(copied)
+  return { copiedSynchronously: copied, finished }
+}
+
+export function copyTextToClipboard(text: string): Promise<boolean> {
+  return beginCopyTextToClipboard(text).finished
 }
 
 export function canUseLocalCodexOpenApi() {
@@ -125,13 +137,22 @@ export async function copyCodexPromptViaLocalApi(prompt: string): Promise<boolea
   return data.copied_to_clipboard === true
 }
 
-export async function copyPromptForCodexHandoff(prompt: string): Promise<boolean> {
-  const copied = await copyTextToClipboard(prompt)
-  if (copied) return true
-  if (canUseLocalCodexOpenApi() && !isLikelyMobileDevice()) {
-    return copyCodexPromptViaLocalApi(prompt)
+export function beginCopyPromptForCodexHandoff(prompt: string): CodexPromptCopyAttempt {
+  const attempt = beginCopyTextToClipboard(prompt)
+  return {
+    copiedSynchronously: attempt.copiedSynchronously,
+    finished: attempt.finished.then(async copied => {
+      if (copied) return true
+      if (canUseLocalCodexOpenApi() && !isLikelyMobileDevice()) {
+        return copyCodexPromptViaLocalApi(prompt).catch(() => false)
+      }
+      return false
+    }),
   }
-  return false
+}
+
+export async function copyPromptForCodexHandoff(prompt: string): Promise<boolean> {
+  return beginCopyPromptForCodexHandoff(prompt).finished
 }
 
 export function getCurrentMobilePlatform(): MobilePlatform {
@@ -152,7 +173,7 @@ export function buildChatGptCodexMobileWebUrl() {
 }
 
 export function isLikelyChatGptMobileAppTarget(url: string) {
-  return url.startsWith("com.openai.chat:") || url.startsWith("intent://")
+  return url === CHATGPT_CODEX_MOBILE_URL || url.startsWith("com.openai.chat:") || url.startsWith("intent://")
 }
 
 export function isLikelyChatGptMobileWebTarget(url: string) {

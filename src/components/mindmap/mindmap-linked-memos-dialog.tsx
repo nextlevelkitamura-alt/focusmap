@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   appendCodexHandoffToken,
+  beginCopyPromptForCodexHandoff,
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
@@ -786,19 +787,31 @@ export function MindmapLinkedMemosDialog({
     setIsSending(true)
     setIsSaving(true)
     setError(null)
-    const useLocalApi = canUseLocalCodexOpenApi()
+    const isMobileHandoff = isLikelyMobileDevice()
+    const useLocalApi = canUseLocalCodexOpenApi() && !isMobileHandoff
     const handoffToken = buildCodexHandoffToken(task.id)
     const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
-    const clipboardPromise = copyPromptForCodexHandoff(prompt).catch(() => false)
+    const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
     try {
-      await saveDraft()
-      await createCodexTask("manual", prompt, handoffToken)
-      await clipboardPromise
+      const savePromise = saveDraft()
+      const taskPromise = isMobileHandoff
+        ? createCodexTask("manual", prompt, handoffToken)
+        : savePromise.then(() => createCodexTask("manual", prompt, handoffToken))
+      savePromise.catch(() => undefined)
+      taskPromise.catch(() => undefined)
+
+      if (isMobileHandoff) {
+        openCodexFromLinkedDialog(prompt, selectedRepoPath)
+      }
+
+      await savePromise
+      await taskPromise
+      await copyAttempt.finished
       setJustSentPrompt(prompt)
       await refreshAiTasks()
       if (useLocalApi) {
         await launchCodexViaLocalApi({ prompt, repoPath: selectedRepoPath })
-      } else {
+      } else if (!isMobileHandoff) {
         openCodexFromLinkedDialog(prompt, selectedRepoPath)
       }
       window.setTimeout(() => void refreshAiTasks(), 1200)
@@ -821,7 +834,11 @@ export function MindmapLinkedMemosDialog({
     }
 
     try {
-      if (canUseLocalCodexOpenApi()) {
+      const isMobileHandoff = isLikelyMobileDevice()
+      if (normalizeCodexPrompt(prompt) && isMobileHandoff) {
+        void beginCopyPromptForCodexHandoff(prompt).finished
+      }
+      if (canUseLocalCodexOpenApi() && !isMobileHandoff) {
         await launchCodexViaLocalApi({ prompt, repoPath: codexRepoPath, threadUrl: codexThreadUrl || null })
       } else {
         openCodexFromLinkedDialog(prompt, codexRepoPath || null, codexThreadUrl || null)

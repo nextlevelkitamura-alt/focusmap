@@ -63,8 +63,8 @@ describe("ChatGPT mobile open target", () => {
     expect(detectMobilePlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)", 5)).toBe("ios")
   })
 
-  test("uses ChatGPT app scheme on iOS and Android intent on Android", () => {
-    expect(buildChatGptCodexMobileAppUrl("ios")).toBe("com.openai.chat://https://chatgpt.com/codex/mobile/")
+  test("uses ChatGPT universal link on iOS and Android intent on Android", () => {
+    expect(buildChatGptCodexMobileAppUrl("ios")).toBe("https://chatgpt.com/codex/mobile/")
     expect(buildChatGptCodexMobileAppUrl("android")).toBe(
       "intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end",
     )
@@ -72,7 +72,7 @@ describe("ChatGPT mobile open target", () => {
 
   test("prefers app links instead of browser URL for mobile Codex", () => {
     expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "ios" }).url)
-      .toBe("com.openai.chat://https://chatgpt.com/codex/mobile/")
+      .toBe("https://chatgpt.com/codex/mobile/")
     expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "android" }).url)
       .toBe("intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end")
   })
