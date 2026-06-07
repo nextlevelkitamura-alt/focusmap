@@ -2758,6 +2758,12 @@ export function WishlistCardDetail({
               ? aiTask.result as Record<string, unknown>
               : {}
             const codexPromptWaiting = (taskExecutor === "codex" || taskExecutor === "codex_app") && taskResult.codex_run_state === "prompt_waiting"
+            const codexThreadId = typeof aiTask?.codex_thread_id === "string" && aiTask.codex_thread_id.trim()
+              ? aiTask.codex_thread_id.trim()
+              : typeof taskResult.codex_thread_id === "string" && taskResult.codex_thread_id.trim()
+                ? taskResult.codex_thread_id.trim()
+                : null
+            const codexManualHandoff = taskExecutor === "codex_app" && taskResult.codex_manual_handoff === true
             const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
             const isCodexExecutor = taskExecutor === "codex" || taskExecutor === "codex_app" || launchExecutor === "codex" || launchExecutor === "codex_app"
             const isCodexRunning = isCodexExecutor && aiTask?.status === "running"
@@ -2769,7 +2775,12 @@ export function WishlistCardDetail({
                 title: draftTitle,
                 description: draftDescription || null,
               } as IdealGoalWithItems
-              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || (!!active && !codexPromptWaiting)
+              const canPromoteManualCodexHandoff =
+                !!active &&
+                codexManualHandoff &&
+                !codexThreadId &&
+                (aiTask?.status === "awaiting_approval" || aiTask?.status === "needs_input")
+              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || (!!active && !codexPromptWaiting && !canPromoteManualCodexHandoff)
               const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
               const showCodexDetails = isCodexPanelOpen || !!active || launchStep !== null || !!launchError || needsConfig
               const showPromptCopyButton = !!onCopyCodexPrompt && showCodexDetails && !isCodexRunning && (codexPromptWaiting || !!active || launchStep !== null || !!launchError)
@@ -2829,7 +2840,7 @@ export function WishlistCardDetail({
                         className="min-h-[48px] gap-2 border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                       >
                         {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                        <span className="font-semibold">Codexに送る</span>
+                        <span className="font-semibold">{canPromoteManualCodexHandoff ? "Macへ再送" : "Codexに送る"}</span>
                       </Button>
                     )}
                   </div>
@@ -2847,6 +2858,8 @@ export function WishlistCardDetail({
                         {active
                           ? codexPromptWaiting
                             ? "Codexはプロンプト待ちです。必要なら下から再コピーできます"
+                            : canPromoteManualCodexHandoff
+                              ? "スマホのChatGPT/Codexアプリ履歴はFocusmapから直接取得できません。Mac側Codexで実行し直すと、開いている間に約3秒ごとに状態と返答を同期します"
                             : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
                           : needsConfig
                             ? "プロジェクトまたはリポジトリパスが未設定です"

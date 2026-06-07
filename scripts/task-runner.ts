@@ -1856,6 +1856,10 @@ type CodexSyncStats = {
   fastFollow: boolean
 }
 
+const CODEX_MONITOR_SELECT_COLUMNS =
+  'id, user_id, space_id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id'
+const CODEX_MONITOR_ACTIVE_STATUSES = ['pending', 'running', 'awaiting_approval', 'needs_input']
+
 const codexTursoSnapshotCache = new Map<string, { hash: string; sentAt: number }>()
 
 function stableJson(value: unknown): string {
@@ -1883,6 +1887,62 @@ async function activeTaskProgressWatchIds(scope: RunnerMonitorScope): Promise<Se
     console.warn('[codex-app] active watch lookup failed:', error instanceof Error ? error.message : error)
     return new Set()
   }
+}
+
+function mergeMonitoredCodexTasks(taskGroups: Array<MonitoredCodexTask[]>): MonitoredCodexTask[] {
+  const byId = new Map<string, MonitoredCodexTask>()
+  for (const tasks of taskGroups) {
+    for (const task of tasks) byId.set(task.id, task)
+  }
+  return [...byId.values()]
+}
+
+function safeActiveWatchTaskIds(activeWatchIds: Set<string>): string[] {
+  return [...activeWatchIds]
+    .map(id => safeSupabaseFilterIdentifier(id))
+    .filter((id): id is string => !!id)
+    .slice(0, 80)
+}
+
+async function fetchMonitoredCodexTasks(
+  supabase: SupabaseClient,
+  scope: RunnerMonitorScope,
+  activeWatchIds: Set<string>,
+): Promise<MonitoredCodexTask[]> {
+  let activeQuery = supabase
+    .from('ai_tasks')
+    .select(CODEX_MONITOR_SELECT_COLUMNS)
+    .in('executor', ['codex_app', 'codex'])
+    .in('status', CODEX_MONITOR_ACTIVE_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(80)
+  activeQuery = applyAiTaskMonitorScope(activeQuery, scope)
+  const { data: activeTasks, error: activeError } = await activeQuery
+  if (activeError) {
+    console.error('[codex-app] monitor task scan failed:', activeError.message)
+  }
+
+  const watchedIds = safeActiveWatchTaskIds(activeWatchIds)
+  if (watchedIds.length === 0) {
+    return mergeMonitoredCodexTasks([(activeTasks ?? []) as MonitoredCodexTask[]])
+  }
+
+  let watchedQuery = supabase
+    .from('ai_tasks')
+    .select(CODEX_MONITOR_SELECT_COLUMNS)
+    .in('executor', ['codex_app', 'codex'])
+    .in('id', watchedIds)
+    .limit(watchedIds.length)
+  watchedQuery = applyAiTaskMonitorScope(watchedQuery, scope)
+  const { data: watchedTasks, error: watchedError } = await watchedQuery
+  if (watchedError) {
+    console.error('[codex-app] active watch task scan failed:', watchedError.message)
+  }
+
+  return mergeMonitoredCodexTasks([
+    (activeTasks ?? []) as MonitoredCodexTask[],
+    (watchedTasks ?? []) as MonitoredCodexTask[],
+  ])
 }
 
 function compactCodexText(value: string | null | undefined, maxChars: number): string | null {
@@ -1980,23 +2040,13 @@ async function syncCodexAppThreads(
   const dbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite')
   if (!fs.existsSync(dbPath)) return { monitored: 0, fastFollow: false }
 
-  // codex_app / codex 両 executor の実行中・確認待ちタスクを監視する。
-  // 実行中は細かく追い、確認待ち以降は codex_last_checked_at で間引く。
-  let query = supabase
-    .from('ai_tasks')
-    .select('id, user_id, space_id, prompt, codex_thread_id, started_at, created_at, cwd, executor, result, status, source_task_id')
-    .in('executor', ['codex_app', 'codex'])
-    .in('status', ['running', 'awaiting_approval', 'needs_input'])
-    .limit(50)
-  query = applyAiTaskMonitorScope(query, scope)
-  const { data: tasks } = await query
-
-  if (!tasks || tasks.length === 0) return { monitored: 0, fastFollow: false }
-
-  const monitoredTasks = tasks as MonitoredCodexTask[]
   const nowMs = Date.now()
   const nowIso = new Date(nowMs).toISOString()
   const activeWatchIds = await activeTaskProgressWatchIds(scope)
+  const monitoredTasks = await fetchMonitoredCodexTasks(supabase, scope, activeWatchIds)
+
+  if (monitoredTasks.length === 0) return { monitored: 0, fastFollow: false }
+
   const dueTasks = monitoredTasks.filter(task => shouldSyncCodexTaskNow(task, nowMs, activeWatchIds.has(task.id)))
   const stats: CodexSyncStats = {
     monitored: monitoredTasks.length,

@@ -1,12 +1,16 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { IdealGoalWithItems } from '@/types/database'
+import type { IdealGoalWithItems, Project } from '@/types/database'
 import { WishlistCardDetail } from './wishlist-card-detail'
 import { useState } from 'react'
 
+const memoAiTaskMock = vi.hoisted(() => ({
+  task: null as Record<string, unknown> | null,
+}))
+
 vi.mock('@/hooks/useMemoAiTasks', () => ({
   useMemoAiTasks: () => ({
-    getBySourceId: () => null,
+    getBySourceId: () => memoAiTaskMock.task,
   }),
 }))
 
@@ -72,6 +76,7 @@ function DetailHarness() {
 describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    memoAiTaskMock.task = null
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: undefined,
@@ -120,6 +125,56 @@ describe('WishlistCardDetail', () => {
 
     expect(screen.queryByText('作成中')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /メモを保存/ })).not.toBeInTheDocument()
+  })
+
+  test('手動Codexハンドオフ確認待ちはMac再送へ切り替えられる', async () => {
+    memoAiTaskMock.task = {
+      id: 'ai-task-1',
+      executor: 'codex_app',
+      status: 'awaiting_approval',
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: 'external_app_handoff',
+      },
+    }
+    const onLaunchCodex = vi.fn(async () => undefined)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={onLaunchCodex}
+      />,
+    )
+
+    const resendButton = await screen.findByRole('button', { name: /Macへ再送/ })
+    expect(resendButton).toBeEnabled()
+    expect(screen.getByText(/スマホのChatGPT\/Codexアプリ履歴はFocusmapから直接取得できません/)).toBeInTheDocument()
+
+    fireEvent.click(resendButton)
+
+    await waitFor(() => {
+      expect(onLaunchCodex).toHaveBeenCalledTimes(1)
+    })
   })
 
   test('日付を選択するとカレンダーPopoverを閉じる', async () => {
