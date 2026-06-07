@@ -174,6 +174,17 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({
       executor: "codex_app",
       status: "pending",
+      result: {
+        codex_manual_handoff: false,
+        codex_run_state: "running",
+        codex_review_reason: "queued",
+        last_activity_at: new Date().toISOString(),
+        message: "Codex.app app-server で実行待ちです。",
+      },
+    })).toEqual({ state: "running", label: "実行中" })
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "pending",
       codex_thread_id: "019e9811-3f91-79c1-84b2-b5d0803fea8e",
       result: {
         codex_run_state: "prompt_waiting",

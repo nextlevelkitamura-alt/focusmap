@@ -19,6 +19,7 @@ type MockSupabaseChain = Record<string, unknown> & {
 }
 
 let latestRealtimeHandler: ((payload: unknown) => void) | null = null
+let latestSubscribeStatusHandler: ((status: string) => void) | null = null
 
 const mockSupabaseChain = () => {
   const chain = {} as MockSupabaseChain
@@ -27,7 +28,10 @@ const mockSupabaseChain = () => {
       latestRealtimeHandler = handler
       return channel
     }),
-    subscribe: vi.fn().mockReturnThis(),
+    subscribe: vi.fn((handler?: (status: string) => void) => {
+      latestSubscribeStatusHandler = handler ?? null
+      return channel
+    }),
   }
   chain.from = vi.fn().mockReturnValue(chain)
   chain.channel = vi.fn().mockReturnValue(channel)
@@ -156,6 +160,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   uuidCounter = 0
   latestRealtimeHandler = null
+  latestSubscribeStatusHandler = null
   mockChain = mockSupabaseChain()
   mockFetch.mockResolvedValue({
     ok: true,
@@ -291,6 +296,44 @@ describe('useMindMapSync', () => {
       })
 
       expect(result.current.groups).toHaveLength(0)
+    })
+
+    test('realtime接続失敗時は3秒ごとにサーバーから再取得する', async () => {
+      vi.useFakeTimers()
+      const onSyncError = vi.fn()
+      const serverTask = createMockRootTask({ id: 'server-1', title: 'Server Root', project_id: 'project-1' })
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, tasks: [serverTask] }),
+        text: () => Promise.resolve(''),
+      })
+
+      try {
+        const { result } = renderHook(() =>
+          useMindMapSync({
+            projectId: 'project-1',
+            userId: 'user-1',
+            initialRootTasks: EMPTY_ROOT_TASKS,
+            initialTasks: EMPTY_TASKS,
+            onSyncError,
+          })
+        )
+
+        await act(async () => {
+          latestSubscribeStatusHandler?.('CHANNEL_ERROR')
+        })
+
+        expect(onSyncError).toHaveBeenCalledWith('リアルタイム同期に接続できませんでした。3秒ごとに再取得します')
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3000)
+        })
+
+        expect(mockFetch).toHaveBeenCalledWith('/api/tasks?project_id=project-1')
+        expect(result.current.groups.find(task => task.id === 'server-1')?.title).toBe('Server Root')
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     test('作成直後の保存中ノードはrealtime INSERTで入力中タイトルを上書きしない', async () => {

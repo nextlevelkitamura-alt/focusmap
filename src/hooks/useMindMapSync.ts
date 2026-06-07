@@ -36,7 +36,7 @@ interface UseMindMapSyncReturn {
     isLoading: boolean
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
-    refreshFromServer: (options?: { force?: boolean; staleMs?: number }) => Promise<void>
+    refreshFromServer: (options?: { force?: boolean; staleMs?: number; silent?: boolean }) => Promise<void>
     undo: () => Promise<string | null>
     redo: () => Promise<string | null>
     canUndo: () => boolean
@@ -61,6 +61,13 @@ type DeletedTaskMemoRepairSnapshot = {
     structured_links?: Array<Record<string, unknown>>
     memo_items?: Array<Record<string, unknown>>
     wishlist_items?: Array<Record<string, unknown> & { id?: unknown }>
+}
+
+const REALTIME_FALLBACK_POLL_INTERVAL_MS = 3_000
+const REALTIME_FALLBACK_STATUSES = new Set(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'])
+
+function isPageVisible() {
+    return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
 function withoutGoogleEventId(task: Task) {
@@ -88,6 +95,7 @@ export function useMindMapSync({
         ...initialTasks
     ])
     const [isLoading, setIsLoading] = useState(false)
+    const [realtimeFallbackActive, setRealtimeFallbackActive] = useState(false)
     const { pushAction, undo, redo, canUndo, canRedo, clear } = useUndoRedo()
 
     // INSERT の Promise を追跡（親の INSERT 完了を子が待機するため）
@@ -102,6 +110,7 @@ export function useMindMapSync({
     const taskUpdateVersions = useRef(new Map<string, number>())
     const lastServerRefreshAt = useRef(Date.now())
     const refreshInFlight = useRef<Promise<void> | null>(null)
+    const realtimeFallbackActiveRef = useRef(false)
 
     // 最新の allTasks を参照するための ref（callback の依存配列から除外するため）
     const allTasksRef = useRef(allTasks)
@@ -289,6 +298,8 @@ export function useMindMapSync({
         taskUpdateVersions.current.clear()
         lastServerRefreshAt.current = 0
         refreshInFlight.current = null
+        realtimeFallbackActiveRef.current = false
+        setRealtimeFallbackActive(false)
     }, [projectId, clear])
 
     useEffect(() => {
@@ -307,9 +318,18 @@ export function useMindMapSync({
                 payload => handleRealtimeTaskEvent(payload as TaskRealtimePayload)
             )
             .subscribe(status => {
-                if (status === 'CHANNEL_ERROR') {
+                if (status === 'SUBSCRIBED') {
+                    realtimeFallbackActiveRef.current = false
+                    setRealtimeFallbackActive(false)
+                    return
+                }
+                if (REALTIME_FALLBACK_STATUSES.has(status)) {
                     console.warn('[Sync] realtime channel error:', projectId)
-                    onSyncError?.('リアルタイム同期に接続できませんでした。更新時に再取得します')
+                    if (!realtimeFallbackActiveRef.current) {
+                        realtimeFallbackActiveRef.current = true
+                        onSyncError?.('リアルタイム同期に接続できませんでした。3秒ごとに再取得します')
+                    }
+                    setRealtimeFallbackActive(true)
                 }
             })
 
@@ -1514,7 +1534,7 @@ export function useMindMapSync({
     }, [supabase])
 
     // サーバーからタスクを再取得（ビュー切り替え時など外部でタスクが追加された場合）
-    const refreshFromServer = useCallback(async (options?: { force?: boolean; staleMs?: number }) => {
+    const refreshFromServer = useCallback(async (options?: { force?: boolean; staleMs?: number; silent?: boolean }) => {
         if (!projectId) return
         const staleMs = options?.staleMs ?? 0
         if (!options?.force && staleMs > 0 && Date.now() - lastServerRefreshAt.current < staleMs) {
@@ -1523,8 +1543,9 @@ export function useMindMapSync({
         if (refreshInFlight.current) return refreshInFlight.current
 
         const refreshProjectId = projectId
+        const showLoading = options?.silent !== true
         const refresh = (async () => {
-            setIsLoading(true)
+            if (showLoading) setIsLoading(true)
             let data: Task[] = []
             try {
                 const response = await fetch(`/api/tasks?project_id=${encodeURIComponent(refreshProjectId)}`)
@@ -1570,9 +1591,19 @@ export function useMindMapSync({
             console.error('[Sync] refreshFromServer failed:', e)
         } finally {
             if (refreshInFlight.current === refresh) refreshInFlight.current = null
-            setIsLoading(false)
+            if (showLoading) setIsLoading(false)
         }
     }, [projectId, supabase])
+
+    useEffect(() => {
+        if (!projectId || !realtimeFallbackActive) return
+
+        void refreshFromServer({ force: true, silent: true })
+        const intervalId = window.setInterval(() => {
+            if (isPageVisible()) void refreshFromServer({ force: true, silent: true })
+        }, REALTIME_FALLBACK_POLL_INTERVAL_MS)
+        return () => window.clearInterval(intervalId)
+    }, [projectId, realtimeFallbackActive, refreshFromServer])
 
     return {
         groups,

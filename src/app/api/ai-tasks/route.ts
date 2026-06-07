@@ -297,6 +297,24 @@ export async function POST(req: NextRequest) {
               },
             ],
           }
+        : selectedExecutor === 'codex_app'
+          ? {
+              executor: 'codex_app',
+              codex_manual_handoff: false,
+              codex_run_state: 'running',
+              codex_review_reason: 'queued',
+              live_log: 'Mac の task-runner が Codex.app app-server で実行開始します。',
+              message: 'Codex.app app-server で実行待ちです。',
+              last_activity_at: nowIso,
+              steps: [
+                {
+                  key: 'queued',
+                  label: 'Codex.app 自動実行待ち',
+                  status: 'active',
+                  at: nowIso,
+                },
+              ],
+            }
         : null,
     })
     .select()
