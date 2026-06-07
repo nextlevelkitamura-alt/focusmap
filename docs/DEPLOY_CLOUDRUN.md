@@ -27,6 +27,7 @@
 ### Cloud Run 環境変数（必須）
 - `NEXTAUTH_URL=https://shikumika-app-364jgme3ja-an.a.run.app`
 - `NEXTAUTH_SECRET=<固定値>`
+- `SUPABASE_SERVICE_ROLE_KEY=<Supabase service role key>`（agent token検証・runner heartbeat登録用。GitHub Secrets経由で渡す）
 - `GOOGLE_CLIENT_ID=<Google OAuth Client ID>`
 - `GOOGLE_CLIENT_SECRET=<Google OAuth Client Secret>`
 - `GOOGLE_REDIRECT_URI=https://shikumika-app-364jgme3ja-an.a.run.app/api/calendar/callback`

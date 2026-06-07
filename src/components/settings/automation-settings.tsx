@@ -84,7 +84,8 @@ function MacConnectionItem({
 function agentDetail(status: FocusmapDesktopAutomationStatus | null) {
   const agent = status?.agent
   if (!agent) return "Macアプリから状態を取得していません。"
-  if (agent.ready) return "このMacアプリからfocusmap-agentを起動しています。"
+  if (agent.ready && agent.managed) return `このMacアプリからfocusmap-agentを起動しています。接続先: ${agent.apiUrl ?? "config"}`
+  if (agent.ready && agent.external) return "launchdなど外部のfocusmap-agentが動いています。"
   if (!agent.configured) return "~/.focusmap/config.json がまだありません。"
   if (!agent.available) return "focusmap-agentのビルドが見つかりません。"
   return "停止中です。接続で起動できます。"
@@ -105,6 +106,16 @@ function appDetail(status: FocusmapDesktopAutomationStatus | null) {
   if (!app) return "Macアプリから状態を取得していません。"
   if (app.ready) return `${app.origin ?? "localhost"} をMacアプリが管理しています。`
   return "ローカルWebのhealth確認ができていません。"
+}
+
+function runnerDetail(status: FocusmapDesktopAutomationStatus | null) {
+  const runner = status?.runner
+  if (!runner) return "Macアプリから状態を取得していません。"
+  if (!runner.available) return "task-runner起動スクリプトが見つかりません。"
+  if (runner.paused) return runner.pauseReason ? `一時停止中: ${runner.pauseReason}` : "一時停止中です。接続で復旧を試します。"
+  if (runner.managed) return "監視runnerはこのMacアプリから実行中です。"
+  if (runner.lastKickAt) return `監視runnerを起動済み。最終: ${formatStatusTime(runner.lastKickAt)}`
+  return "監視runnerは接続時に起動確認します。"
 }
 
 function MacCodexConnectionPanel() {
@@ -184,8 +195,13 @@ function MacCodexConnectionPanel() {
               {bridgeAvailable ? (connected ? "MacBookに接続中" : "MacBookは一部未接続") : "Macアプリ未接続"}
             </h2>
             <p className="mt-1 text-sm leading-6 text-zinc-400">
-              Focusmap Macアプリ、focusmap-agent、Codex app-server の状態を同じ場所で確認します。
+              Macアプリを開いている間、Focusmap Web、agent、Codex app-server、runnerを自動確認します。
             </p>
+            {status?.keepAwake?.active && (
+              <p className="mt-1 text-xs text-emerald-300">
+                Macアプリのバックグラウンド停止を抑制中です。
+              </p>
+            )}
           </div>
         </div>
 
@@ -196,7 +212,7 @@ function MacCodexConnectionPanel() {
             disabled={!bridgeAvailable || action !== null}
           >
             <Power className="h-4 w-4" />
-            {action === "connect" ? "接続中..." : "接続"}
+            {action === "connect" ? "接続中..." : "接続/復旧"}
           </Button>
           <Button
             variant="outline"
@@ -219,14 +235,19 @@ function MacCodexConnectionPanel() {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MacConnectionItem icon={Laptop} label="Focusmap 3001" ready={status?.app.ready} detail={appDetail(status)} />
         <MacConnectionItem icon={Workflow} label="focusmap-agent" ready={status?.agent.ready} detail={agentDetail(status)} />
         <MacConnectionItem icon={Bot} label="Codex app-server" ready={status?.codex.ready} detail={codexDetail(status)} />
+        <MacConnectionItem icon={Terminal} label="Codex監視runner" ready={status?.runner?.ready} detail={runnerDetail(status)} />
       </div>
 
       <div className="mt-3 flex flex-col gap-2 text-xs leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">
-        <span>{bridgeAvailable ? `最終診断: ${formatStatusTime(status?.timestamp)}` : "Focusmap Macアプリ内で開くと接続/切断できます。"}</span>
+        <span>
+          {bridgeAvailable
+            ? `最終診断: ${formatStatusTime(status?.timestamp)} / 自動確認: ${status?.supervisor?.enabled ? "有効" : "停止"}`
+            : "Focusmap Macアプリ内で開くと接続/切断できます。"}
+        </span>
         {message && <span className="text-zinc-300">{message}</span>}
       </div>
     </section>

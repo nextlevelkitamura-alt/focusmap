@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -57,6 +57,12 @@ function loadDesktopEnv(repoRoot) {
 
 const REPO_ROOT = resolveRepoRoot();
 const DESKTOP_ENV = loadDesktopEnv(REPO_ROOT);
+const AUTOMATION_SUPERVISOR_INTERVAL_MS = Math.max(
+  15_000,
+  Number(process.env.FOCUSMAP_DESKTOP_SUPERVISOR_INTERVAL_MS || DESKTOP_ENV.FOCUSMAP_DESKTOP_SUPERVISOR_INTERVAL_MS || 30_000) || 30_000,
+);
+const RUNNER_KICK_COOLDOWN_MS = 5 * 60_000;
+const RUNNER_RECOVERY_COOLDOWN_MS = 15 * 60_000;
 const WEB_AUTH_ORIGIN = (
   process.env.FOCUSMAP_WEB_AUTH_ORIGIN ||
   DESKTOP_ENV.FOCUSMAP_WEB_AUTH_ORIGIN ||
@@ -74,6 +80,8 @@ const AGENT_CLI = app.isPackaged
 const CODEX_SERVER_SCRIPT = app.isPackaged
   ? path.join(RESOURCE_ROOT, 'run-codex-app-server.sh')
   : path.join(REPO_ROOT, 'scripts', 'run-codex-app-server.sh');
+const TASK_RUNNER_SCRIPT = path.join(REPO_ROOT, 'scripts', 'run-task-runner.sh');
+const TASK_RUNNER_PAUSE_FILE = path.join(REPO_ROOT, 'scripts', 'task-runner.paused');
 const APP_ICON_PATH = app.isPackaged
   ? path.join(process.resourcesPath, 'icon.icns')
   : path.join(__dirname, 'assets', 'icon.png');
@@ -86,11 +94,20 @@ const managedProcesses = {
   next: null,
   agent: null,
   codex: null,
+  runner: null,
 };
 const hasSingleInstance = app.requestSingleInstanceLock();
 let lastExternalAuthUrl = '';
 let lastExternalAuthAt = 0;
 let dashboardLoadAttemptedAt = 0;
+let automationSupervisorEnabled = false;
+let automationSupervisorTimer = null;
+let automationEnsurePromise = null;
+let isQuitting = false;
+let keepAwakeBlockerId = null;
+let lastTaskRunnerKickAt = null;
+let lastTaskRunnerKickMessage = null;
+let lastRunnerRecoveryAttemptAt = 0;
 
 function focusWindow(win) {
   if (!win || win.isDestroyed()) return false;
@@ -148,6 +165,9 @@ function attachProcessLifecycle(scope, child, processKey) {
   child.once('exit', (code, signal) => {
     log(scope, `stopped code=${code ?? 'null'} signal=${signal ?? 'null'}`);
     if (managedProcesses[processKey] === child) managedProcesses[processKey] = null;
+    if (!isQuitting && automationSupervisorEnabled && (processKey === 'agent' || processKey === 'codex')) {
+      scheduleAutomationEnsure(`${processKey}-exit`, 2_000);
+    }
   });
 }
 
@@ -185,12 +205,141 @@ function stopManagedProcess(processKey, label) {
   }
 }
 
+function desktopAutoConnectEnabled() {
+  const raw = process.env.FOCUSMAP_DESKTOP_AUTO_CONNECT || DESKTOP_ENV.FOCUSMAP_DESKTOP_AUTO_CONNECT;
+  return raw !== '0' && raw !== 'false';
+}
+
+function ensureKeepAwake() {
+  if (keepAwakeBlockerId !== null && powerSaveBlocker.isStarted(keepAwakeBlockerId)) return;
+  try {
+    keepAwakeBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    log('power', `started prevent-app-suspension blocker id=${keepAwakeBlockerId}`);
+  } catch (error) {
+    log('power', `powerSaveBlocker start failed: ${error instanceof Error ? error.message : String(error)}`);
+    keepAwakeBlockerId = null;
+  }
+}
+
+function stopKeepAwake() {
+  if (keepAwakeBlockerId === null) return;
+  try {
+    if (powerSaveBlocker.isStarted(keepAwakeBlockerId)) powerSaveBlocker.stop(keepAwakeBlockerId);
+    log('power', `stopped prevent-app-suspension blocker id=${keepAwakeBlockerId}`);
+  } catch (error) {
+    log('power', `powerSaveBlocker stop failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    keepAwakeBlockerId = null;
+  }
+}
+
+function keepAwakeStatus() {
+  return {
+    active: keepAwakeBlockerId !== null && powerSaveBlocker.isStarted(keepAwakeBlockerId),
+    id: keepAwakeBlockerId,
+    type: 'prevent-app-suspension',
+  };
+}
+
+function processRunning(pattern) {
+  return new Promise((resolve) => {
+    execFile('/usr/bin/pgrep', ['-f', pattern], { timeout: 3000 }, (error, stdout) => {
+      resolve(!error && stdout.trim().length > 0);
+    });
+  });
+}
+
 function commandExists(command) {
   return new Promise((resolve) => {
     execFile('/usr/bin/env', ['which', command], { timeout: 3000 }, (error) => {
       resolve(!error);
     });
   });
+}
+
+function readTaskRunnerPauseStatus() {
+  if (!fs.existsSync(TASK_RUNNER_PAUSE_FILE)) {
+    return {
+      ready: fs.existsSync(TASK_RUNNER_SCRIPT),
+      available: fs.existsSync(TASK_RUNNER_SCRIPT),
+      paused: false,
+      pauseFile: TASK_RUNNER_PAUSE_FILE,
+      scriptPath: TASK_RUNNER_SCRIPT,
+      lastKickAt: lastTaskRunnerKickAt,
+      lastKickMessage: lastTaskRunnerKickMessage,
+    };
+  }
+
+  let raw = '';
+  try {
+    raw = fs.readFileSync(TASK_RUNNER_PAUSE_FILE, 'utf8');
+  } catch {
+    raw = '';
+  }
+  const reason = raw.split(/\r?\n/).find((line) => line.startsWith('Reason:'))?.replace(/^Reason:\s*/, '') || null;
+  const pausedAt = raw.split(/\r?\n/).find((line) => line.startsWith('Paused at'))?.replace(/^Paused at\s*/, '') || null;
+  return {
+    ready: false,
+    available: fs.existsSync(TASK_RUNNER_SCRIPT),
+    paused: true,
+    pauseFile: TASK_RUNNER_PAUSE_FILE,
+    scriptPath: TASK_RUNNER_SCRIPT,
+    pausedAt,
+    pauseReason: reason,
+    lastKickAt: lastTaskRunnerKickAt,
+    lastKickMessage: lastTaskRunnerKickMessage,
+  };
+}
+
+function clearTaskRunnerPauseFile() {
+  if (!fs.existsSync(TASK_RUNNER_PAUSE_FILE)) return false;
+  fs.rmSync(TASK_RUNNER_PAUSE_FILE, { force: true });
+  log('runner', `removed pause file ${TASK_RUNNER_PAUSE_FILE}`);
+  return true;
+}
+
+function kickTaskRunnerOnce(reason) {
+  if (isChildRunning(managedProcesses.runner)) {
+    const message = `task-runnerは実行中です (${reason})`;
+    lastTaskRunnerKickAt = new Date().toISOString();
+    lastTaskRunnerKickMessage = message;
+    return serviceResult(true, message);
+  }
+
+  if (!fs.existsSync(TASK_RUNNER_SCRIPT)) {
+    const message = `task-runner起動スクリプトがありません: ${TASK_RUNNER_SCRIPT}`;
+    lastTaskRunnerKickAt = new Date().toISOString();
+    lastTaskRunnerKickMessage = message;
+    return serviceResult(false, message);
+  }
+
+  const env = {
+    ...DESKTOP_ENV,
+    ...process.env,
+    PATH: CHILD_PATH,
+  };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.CLAUDECODE;
+
+  try {
+    const child = spawn('/bin/bash', [TASK_RUNNER_SCRIPT], {
+      cwd: REPO_ROOT,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    managedProcesses.runner = child;
+    attachProcessLifecycle('runner', child, 'runner');
+    lastTaskRunnerKickAt = new Date().toISOString();
+    lastTaskRunnerKickMessage = `task-runnerを起動しました (${reason})`;
+    log('runner', lastTaskRunnerKickMessage);
+    return serviceResult(true, lastTaskRunnerKickMessage);
+  } catch (error) {
+    const message = `task-runner起動失敗: ${error instanceof Error ? error.message : String(error)}`;
+    lastTaskRunnerKickAt = new Date().toISOString();
+    lastTaskRunnerKickMessage = message;
+    log('runner', message);
+    return serviceResult(false, message);
+  }
 }
 
 function tcpReady(host, port, timeoutMs = 800) {
@@ -469,7 +618,16 @@ function preferredAgentApiUrl() {
   if (process.env.FOCUSMAP_DESKTOP_AGENT_API_URL) {
     return process.env.FOCUSMAP_DESKTOP_AGENT_API_URL.replace(/\/$/, '');
   }
-  if (!app.isPackaged && isLocalAppOrigin()) return `${APP_ORIGIN}/api`;
+  if (DESKTOP_ENV.FOCUSMAP_DESKTOP_AGENT_API_URL) {
+    return DESKTOP_ENV.FOCUSMAP_DESKTOP_AGENT_API_URL.replace(/\/$/, '');
+  }
+  if (isLocalAppOrigin() && (
+    !app.isPackaged ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    DESKTOP_ENV.SUPABASE_SERVICE_ROLE_KEY
+  )) {
+    return `${APP_ORIGIN}/api`;
+  }
   return null;
 }
 
@@ -717,51 +875,35 @@ async function startCodexServer() {
   return { ok: true, message: 'Codex app-serverを起動しました' };
 }
 
-async function getAutomationStatus() {
-  const [appReady, codexReady, codexCommandAvailable] = await Promise.all([
-    desktopHealthReady(800).catch(() => false),
-    tcpReady('127.0.0.1', 7878, 500),
-    commandExists('codex'),
-  ]);
-  const agentManaged = isChildRunning(managedProcesses.agent);
-  const codexManaged = isChildRunning(managedProcesses.codex);
+function maybeRecoverTaskRunner(reason) {
+  const pause = readTaskRunnerPauseStatus();
+  if (!pause.paused) {
+    if (lastTaskRunnerKickAt) {
+      const lastKickMs = Date.parse(lastTaskRunnerKickAt);
+      if (Number.isFinite(lastKickMs) && Date.now() - lastKickMs < RUNNER_KICK_COOLDOWN_MS) {
+        return serviceResult(true, 'task-runnerは直近で起動確認済みです。');
+      }
+    }
+    return kickTaskRunnerOnce(reason);
+  }
 
-  return {
-    ok: true,
-    available: true,
-    connected: Boolean(appReady && agentManaged && codexReady),
-    timestamp: new Date().toISOString(),
-    app: {
-      ready: appReady,
-      managed: isChildRunning(managedProcesses.next),
-      origin: APP_ORIGIN,
-      port: APP_PORT,
-    },
-    agent: {
-      ready: agentManaged,
-      managed: agentManaged,
-      configured: fs.existsSync(CONFIG_PATH),
-      available: fs.existsSync(AGENT_CLI),
-      configPath: CONFIG_PATH,
-      cliPath: AGENT_CLI,
-    },
-    codex: {
-      ready: codexReady,
-      managed: codexManaged,
-      available: fs.existsSync(CODEX_APP_BIN) || codexCommandAvailable,
-      scriptAvailable: fs.existsSync(CODEX_SERVER_SCRIPT),
-      scriptPath: CODEX_SERVER_SCRIPT,
-      port: 7878,
-    },
-    paths: {
-      repoRoot: REPO_ROOT,
-      logPath: path.join(os.homedir(), '.focusmap', 'logs', 'desktop-app.log'),
-    },
-  };
+  const now = Date.now();
+  if (now - lastRunnerRecoveryAttemptAt < RUNNER_RECOVERY_COOLDOWN_MS) {
+    return serviceResult(true, 'task-runnerはpause中です。直近で復旧を試したため、再試行を抑制しています。');
+  }
+
+  lastRunnerRecoveryAttemptAt = now;
+  try {
+    clearTaskRunnerPauseFile();
+  } catch (error) {
+    return serviceResult(false, `task-runner pause解除に失敗: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return kickTaskRunnerOnce(`${reason}:recover-paused-runner`);
 }
 
-async function connectAutomation() {
+async function ensureAutomationServices(reason, options = {}) {
   const results = {};
+  ensureKeepAwake();
 
   try {
     await ensureFocusmapApp();
@@ -785,8 +927,17 @@ async function connectAutomation() {
     results.codex = serviceResult(false, message);
   }
 
+  if (options.recoverRunner !== false) {
+    try {
+      results.runner = maybeRecoverTaskRunner(reason);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      results.runner = serviceResult(false, message);
+    }
+  }
+
   const status = await getAutomationStatus();
-  const ok = Boolean(results.app?.ok && results.agent?.ok && results.codex?.ok);
+  const ok = Boolean(results.app?.ok && results.agent?.ok && results.codex?.ok && results.runner?.ok !== false);
   const failed = Object.values(results).filter((result) => result && result.ok === false);
   return {
     ok,
@@ -798,10 +949,111 @@ async function connectAutomation() {
   };
 }
 
+function scheduleAutomationEnsure(reason, delayMs = 0) {
+  if (!automationSupervisorEnabled || isQuitting) return;
+  if (automationEnsurePromise) return;
+  const run = () => {
+    if (!automationSupervisorEnabled || isQuitting || automationEnsurePromise) return;
+    automationEnsurePromise = ensureAutomationServices(reason, { recoverRunner: true })
+      .catch((error) => {
+        log('supervisor', error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        automationEnsurePromise = null;
+      });
+  };
+  if (delayMs > 0) setTimeout(run, delayMs);
+  else run();
+}
+
+function startAutomationSupervisor(reason) {
+  automationSupervisorEnabled = true;
+  ensureKeepAwake();
+  if (!automationSupervisorTimer) {
+    automationSupervisorTimer = setInterval(() => {
+      scheduleAutomationEnsure('interval');
+    }, AUTOMATION_SUPERVISOR_INTERVAL_MS);
+  }
+  scheduleAutomationEnsure(reason);
+}
+
+function stopAutomationSupervisor() {
+  automationSupervisorEnabled = false;
+  if (automationSupervisorTimer) {
+    clearInterval(automationSupervisorTimer);
+    automationSupervisorTimer = null;
+  }
+  stopKeepAwake();
+}
+
+async function getAutomationStatus() {
+  const [appReady, codexReady, codexCommandAvailable, externalAgentRunning] = await Promise.all([
+    desktopHealthReady(800).catch(() => false),
+    tcpReady('127.0.0.1', 7878, 500),
+    commandExists('codex'),
+    processRunning('focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start').catch(() => false),
+  ]);
+  const agentManaged = isChildRunning(managedProcesses.agent);
+  const codexManaged = isChildRunning(managedProcesses.codex);
+  const agentReady = agentManaged || externalAgentRunning;
+  const runner = readTaskRunnerPauseStatus();
+  runner.ready = runner.available && !runner.paused;
+  runner.managed = isChildRunning(managedProcesses.runner);
+
+  return {
+    ok: true,
+    available: true,
+    connected: Boolean(appReady && agentReady && codexReady && !runner.paused),
+    timestamp: new Date().toISOString(),
+    supervisor: {
+      enabled: automationSupervisorEnabled,
+      intervalMs: AUTOMATION_SUPERVISOR_INTERVAL_MS,
+      autoConnectEnabled: desktopAutoConnectEnabled(),
+    },
+    keepAwake: keepAwakeStatus(),
+    app: {
+      ready: appReady,
+      managed: isChildRunning(managedProcesses.next),
+      origin: APP_ORIGIN,
+      port: APP_PORT,
+    },
+    agent: {
+      ready: agentReady,
+      managed: agentManaged,
+      external: externalAgentRunning,
+      configured: fs.existsSync(CONFIG_PATH),
+      available: fs.existsSync(AGENT_CLI),
+      configPath: CONFIG_PATH,
+      cliPath: AGENT_CLI,
+      apiUrl: preferredAgentApiUrl() || 'config',
+    },
+    codex: {
+      ready: codexReady,
+      managed: codexManaged,
+      available: fs.existsSync(CODEX_APP_BIN) || codexCommandAvailable,
+      scriptAvailable: fs.existsSync(CODEX_SERVER_SCRIPT),
+      scriptPath: CODEX_SERVER_SCRIPT,
+      port: 7878,
+    },
+    runner,
+    paths: {
+      repoRoot: REPO_ROOT,
+      logPath: path.join(os.homedir(), '.focusmap', 'logs', 'desktop-app.log'),
+    },
+  };
+}
+
+async function connectAutomation() {
+  startAutomationSupervisor('manual-connect');
+  return ensureAutomationServices('manual-connect', { recoverRunner: true });
+}
+
 async function disconnectAutomation() {
+  stopAutomationSupervisor();
   const results = {
     agent: stopManagedProcess('agent', 'focusmap-agent'),
     codex: stopManagedProcess('codex', 'Codex app-server'),
+    runner: stopManagedProcess('runner', 'task-runner'),
   };
   await new Promise((resolve) => setTimeout(resolve, 250));
   const status = await getAutomationStatus();
@@ -958,6 +1210,8 @@ ipcMain.handle('focusmap-desktop:connectAutomation', connectAutomation);
 ipcMain.handle('focusmap-desktop:disconnectAutomation', disconnectAutomation);
 
 app.on('before-quit', () => {
+  isQuitting = true;
+  stopAutomationSupervisor();
   for (const name of Object.keys(managedProcesses)) {
     if (isChildRunning(managedProcesses[name])) managedProcesses[name].kill('SIGTERM');
   }
@@ -980,6 +1234,7 @@ app.whenReady().then(async () => {
   buildMenu();
   try {
     await createMainWindow();
+    if (desktopAutoConnectEnabled()) startAutomationSupervisor('app-ready');
   } catch (error) {
     log('app', error instanceof Error ? error.message : String(error));
   }

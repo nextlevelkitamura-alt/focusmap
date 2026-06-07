@@ -76,6 +76,7 @@ jobs:
             --port 3000 \
             --set-env-vars NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
             --set-env-vars NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }} \
+            --set-env-vars SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
             --set-env-vars NEXT_PUBLIC_SITE_URL=${PUBLIC_URL} \
             --set-env-vars GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }} \
             --set-env-vars GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }} \

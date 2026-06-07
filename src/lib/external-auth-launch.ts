@@ -43,14 +43,22 @@ export type FocusmapDesktopAuthSession = {
 export type FocusmapDesktopAutomationServiceStatus = {
   ready?: boolean
   managed?: boolean
+  external?: boolean
   configured?: boolean
   available?: boolean
   scriptAvailable?: boolean
+  paused?: boolean
+  pausedAt?: string | null
+  pauseReason?: string | null
   origin?: string
   port?: number
   configPath?: string
   cliPath?: string
   scriptPath?: string
+  pauseFile?: string
+  apiUrl?: string
+  lastKickAt?: string | null
+  lastKickMessage?: string | null
 }
 
 export type FocusmapDesktopAutomationStatus = {
@@ -58,9 +66,20 @@ export type FocusmapDesktopAutomationStatus = {
   available: boolean
   connected: boolean
   timestamp: string
+  supervisor?: {
+    enabled?: boolean
+    intervalMs?: number
+    autoConnectEnabled?: boolean
+  }
+  keepAwake?: {
+    active?: boolean
+    id?: number | null
+    type?: string
+  }
   app: FocusmapDesktopAutomationServiceStatus
   agent: FocusmapDesktopAutomationServiceStatus
   codex: FocusmapDesktopAutomationServiceStatus
+  runner?: FocusmapDesktopAutomationServiceStatus
   paths?: {
     repoRoot?: string
     logPath?: string

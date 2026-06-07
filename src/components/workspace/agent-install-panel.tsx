@@ -11,12 +11,37 @@ interface AgentInstallPanelProps {
 
 export function AgentInstallPanel({ spaceId }: AgentInstallPanelProps) {
   const [copied, setCopied] = useState(false);
+  const [command, setCommand] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // 注: 本番では agent_token 発行APIを叩いて取得する。MVP では space_id をそのまま使うサンプル
-  const command = `curl -sSL https://focusmap-official.com/install.sh | sh -s -- ${spaceId}`;
+  const generateCommand = async () => {
+    setGenerating(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/agents/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ space_id: spaceId, name: 'Focusmap Agent' }),
+      });
+      const data = await response.json().catch(() => ({})) as { install_command?: string; error?: string };
+      if (!response.ok || !data.install_command) {
+        throw new Error(data.error || `トークン発行に失敗しました (${response.status})`);
+      }
+      setCommand(data.install_command);
+      return data.install_command;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'インストールコマンドを生成できませんでした';
+      setError(message);
+      throw err;
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(command);
+    const installCommand = command || await generateCommand();
+    await navigator.clipboard.writeText(installCommand);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -37,17 +62,19 @@ export function AgentInstallPanel({ spaceId }: AgentInstallPanelProps) {
 
         <div className="relative">
           <pre className="overflow-x-auto rounded-md border border-border/40 bg-muted/60 px-3 py-2.5 text-xs font-mono">
-            {command}
+            {command || 'クリックでインストールコマンドを生成します'}
           </pre>
           <Button
             size="icon"
             variant="ghost"
             className="absolute right-1 top-1 h-7 w-7"
             onClick={handleCopy}
+            disabled={generating}
           >
             {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
           </Button>
         </div>
+        {error && <p className="text-xs text-red-500">{error}</p>}
 
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer select-none font-medium hover:text-foreground">

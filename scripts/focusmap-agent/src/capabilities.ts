@@ -9,6 +9,20 @@ import type { AgentConfig } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function hasCommand(command: string): Promise<boolean> {
   try {
     await execFileAsync('/usr/bin/env', ['which', command], { timeout: 3000 });
@@ -145,16 +159,22 @@ export async function collectCapabilities(config: AgentConfig) {
   const browserProfileReady = await hasPath(join(homedir(), '.focusmap', 'browser-profile'));
   const gwsAuthReady = await hasPath(join(homedir(), '.config', 'gws'));
   const authDirReady = await hasPath(join(homedir(), '.focusmap', 'auth'));
-  const googleDriveDiscovery = await discoverGoogleDriveRoots();
+  const googleDriveDiscovery = await withTimeout(
+    discoverGoogleDriveRoots(),
+    8_000,
+    { roots: [], inaccessibleRoots: ['google_drive_discovery_timeout'] },
+  );
   const googleDriveRoots = googleDriveDiscovery.roots;
   const cloudStorageRoot = join(homedir(), 'Library', 'CloudStorage');
-  const cloudStorageStatus = await pathAccessStatus(cloudStorageRoot);
-  const googleDriveStatuses = await Promise.all(googleDriveRoots.map(pathAccessStatus));
+  const cloudStorageStatus = await withTimeout(pathAccessStatus(cloudStorageRoot), 2_000, 'denied' as const);
+  const googleDriveStatuses = await Promise.all(
+    googleDriveRoots.map(root => withTimeout(pathAccessStatus(root), 2_000, 'denied' as const)),
+  );
   const folderAccess = {
-    home: await pathAccessStatus(homedir()),
-    desktop: await pathAccessStatus(join(homedir(), 'Desktop')),
-    documents: await pathAccessStatus(join(homedir(), 'Documents')),
-    downloads: await pathAccessStatus(join(homedir(), 'Downloads')),
+    home: await withTimeout(pathAccessStatus(homedir()), 2_000, 'denied' as const),
+    desktop: await withTimeout(pathAccessStatus(join(homedir(), 'Desktop')), 2_000, 'denied' as const),
+    documents: await withTimeout(pathAccessStatus(join(homedir(), 'Documents')), 2_000, 'denied' as const),
+    downloads: await withTimeout(pathAccessStatus(join(homedir(), 'Downloads')), 2_000, 'denied' as const),
     cloud_storage: cloudStorageStatus,
     google_drive: googleDriveStatuses.length > 0
       ? googleDriveStatuses.includes('denied') ? 'denied' : 'ok'

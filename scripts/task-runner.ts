@@ -96,6 +96,7 @@ const CODEX_PROGRESS_ACTIVITY_INTERVAL_MS = 2 * 60_000
 const CODEX_THREAD_MATCH_FAST_WINDOW_MS = 2 * 60_000
 const CODEX_AWAITING_RECHECK_MS = 5_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
+const CODEX_LIVE_LOG_MAX_CHARS = 16_000
 const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
 
 function pauseRunnerForSupabaseRestriction(message: string): boolean {
