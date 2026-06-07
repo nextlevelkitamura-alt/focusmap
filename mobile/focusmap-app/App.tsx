@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -86,6 +87,19 @@ function openExternalUrl(url: string) {
   Linking.openURL(url).catch(() => {
     Alert.alert("開けませんでした", "このリンクを開くアプリが見つかりません。");
   });
+}
+
+function copyTextToClipboard(text: string) {
+  const value = text.replace(/\r\n?/g, "\n").trim();
+  if (!value) return;
+  Clipboard.setStringAsync(value).catch(() => undefined);
+}
+
+async function copyTextThenOpenExternal(text: string | undefined, url: string) {
+  if (text) {
+    await Clipboard.setStringAsync(text.replace(/\r\n?/g, "\n").trim()).catch(() => undefined);
+  }
+  openExternalUrl(url);
 }
 
 function withAppParams(url: URL) {
@@ -213,9 +227,17 @@ export default function App() {
 
   const handleWebViewMessage = (event: WebViewMessageEvent) => {
     try {
-      const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string };
+      const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string; text?: string };
       if (payload.type === "focusmap:web-content-ready") {
         markWebContentPresented();
+        return;
+      }
+      if (payload.type === "focusmap:copyText" && typeof payload.text === "string") {
+        copyTextToClipboard(payload.text);
+        return;
+      }
+      if (payload.type === "focusmap:copyAndOpenExternal" && payload.url) {
+        void copyTextThenOpenExternal(payload.text, payload.url);
         return;
       }
       if (payload.type === "focusmap:openExternal" && payload.url) {

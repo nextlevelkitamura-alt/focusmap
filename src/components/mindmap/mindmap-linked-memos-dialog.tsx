@@ -89,7 +89,7 @@ function openCodexFromLinkedDialog(prompt: string, repoPath: string | null, thre
       { prompt, repoPath, threadUrl: threadUrl || null },
       { preferMobile: true, mobilePlatform: getCurrentMobilePlatform() },
     )
-    if (openCodexMobileTargetViaFocusmapNativeApp(target.url)) return
+    if (openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt)) return
     window.location.href = target.url
     return
   }
@@ -840,7 +840,7 @@ export function MindmapLinkedMemosDialog({
       const isMobileHandoff = isLikelyMobileDevice()
       if (normalizeCodexPrompt(prompt) && isMobileHandoff) {
         void beginCopyPromptForCodexHandoff(prompt).finished
-        if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url)) {
+        if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url, prompt)) {
           event?.preventDefault()
         }
         return

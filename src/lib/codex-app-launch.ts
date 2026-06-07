@@ -33,6 +33,10 @@ export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
 export const CHATGPT_CODEX_MOBILE_APP_URL = CHATGPT_CODEX_MOBILE_URL
 export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
+type FocusmapNativeAppMessage =
+  | { type: "focusmap:copyText"; text: string }
+  | { type: "focusmap:openExternal"; url: string }
+
 export function isLocalCodexOpenHost(hostname: string) {
   const normalized = hostname.trim().toLowerCase()
   if (!normalized) return false
@@ -188,24 +192,32 @@ export function isLikelyChatGptMobileWebTarget(url: string) {
   return url.startsWith("https://chatgpt.com/")
 }
 
-export function openExternalUrlViaFocusmapNativeApp(url: string) {
+function postFocusmapNativeAppMessage(payload: FocusmapNativeAppMessage) {
   if (typeof window === "undefined") return false
   const postMessage = window.ReactNativeWebView?.postMessage
   if (!postMessage) return false
 
   try {
-    postMessage(JSON.stringify({
-      type: "focusmap:openExternal",
-      url,
-    }))
+    postMessage(JSON.stringify(payload))
     return true
   } catch {
     return false
   }
 }
 
-export function openCodexMobileTargetViaFocusmapNativeApp(url: string) {
+export function copyTextViaFocusmapNativeApp(text: string) {
+  const value = normalizeCodexPrompt(text)
+  if (!value) return false
+  return postFocusmapNativeAppMessage({ type: "focusmap:copyText", text: value })
+}
+
+export function openExternalUrlViaFocusmapNativeApp(url: string) {
+  return postFocusmapNativeAppMessage({ type: "focusmap:openExternal", url })
+}
+
+export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string) {
   if (!isLikelyChatGptMobileAppTarget(url) && !isLikelyChatGptMobileWebTarget(url)) return false
+  if (prompt) copyTextViaFocusmapNativeApp(prompt)
   return openExternalUrlViaFocusmapNativeApp(url)
 }
 

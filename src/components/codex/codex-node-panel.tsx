@@ -566,7 +566,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
     const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
     const openedViaNativeApp = isMobileHandoff && target.url
-      ? openCodexMobileTargetViaFocusmapNativeApp(target.url)
+      ? openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt)
       : false
     if (openedViaNativeApp) event?.preventDefault()
 
@@ -716,7 +716,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     try {
       const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
       const openedViaNativeApp = isMobileHandoff
-        ? openCodexMobileTargetViaFocusmapNativeApp(openTarget.url)
+        ? openCodexMobileTargetViaFocusmapNativeApp(openTarget.url, prompt)
         : false
       if (openedViaNativeApp) event?.preventDefault()
       const dispatchMode = "manual"

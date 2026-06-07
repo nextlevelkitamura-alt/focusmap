@@ -90,6 +90,21 @@ describe("ChatGPT mobile open target", () => {
     }))
   })
 
+  test("posts native clipboard text before opening Codex in the Focusmap app", () => {
+    const postMessage = vi.fn()
+    window.ReactNativeWebView = { postMessage }
+
+    expect(openCodexMobileTargetViaFocusmapNativeApp("https://chatgpt.com/codex/mobile/", "  実行して\r\n")).toBe(true)
+    expect(postMessage).toHaveBeenNthCalledWith(1, JSON.stringify({
+      type: "focusmap:copyText",
+      text: "実行して",
+    }))
+    expect(postMessage).toHaveBeenNthCalledWith(2, JSON.stringify({
+      type: "focusmap:openExternal",
+      url: "https://chatgpt.com/codex/mobile/",
+    }))
+  })
+
   test("does not intercept unsupported URLs or missing native bridge", () => {
     expect(openCodexMobileTargetViaFocusmapNativeApp("https://chatgpt.com/codex/mobile/")).toBe(false)
 

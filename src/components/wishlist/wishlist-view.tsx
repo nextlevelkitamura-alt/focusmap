@@ -878,7 +878,7 @@ export function WishlistView({
       { prompt, repoPath, originUrl: window.location.href },
       { preferMobile, mobilePlatform: getCurrentMobilePlatform() },
     )
-    if (!openCodexMobileTargetViaFocusmapNativeApp(target.url)) {
+    if (!openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt)) {
       window.location.href = target.url
     }
     const copied = await activeCopyAttempt.finished

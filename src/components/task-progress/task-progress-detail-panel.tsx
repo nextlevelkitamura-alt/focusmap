@@ -303,7 +303,7 @@ export function TaskProgressDetailPanel({
     setError(null)
 
     if (isMobileOpenTarget) {
-      if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url)) {
+      if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url, promptToCopy)) {
         event?.preventDefault()
       }
       copyAttempt.finished
