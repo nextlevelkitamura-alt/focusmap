@@ -26,8 +26,9 @@ import {
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
+import { useCodexManualHandoffConfirmation } from "@/hooks/useCodexManualHandoffConfirmation"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
-import type { AiTaskActivityMessage } from "@/types/ai-task"
+import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import type { Project, Task } from "@/types/database"
 
 const CODEX_DISPLAY_LOG_CHARS = 80_000
@@ -537,8 +538,12 @@ export function MindmapLinkedMemosDialog({
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
   const codexManualHandoff = codexResult.codex_manual_handoff === true
-  const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
-  const codexSendConfirmed = !codexWaitingForAppSend && (!!codexThreadId || !codexManualHandoff)
+  const codexWaitingForAppSend = codexManualHandoff && codexUiState?.state === "prompt_waiting"
+  const codexSendConfirmed = !codexWaitingForAppSend && (
+    !!codexThreadId ||
+    !codexManualHandoff ||
+    codexUiState?.state === "awaiting_approval"
+  )
   const isCodexRunning = codexUiState?.state === "running" || codexTask?.status === "running"
   const codexDisplayLog = buildCodexDisplayLog(codexLiveLog, codexMessage, codexPreview)
   const codexActivityDisplayLog = activityMessagesToDisplayLog(codexActivityMessages)
@@ -559,6 +564,8 @@ export function MindmapLinkedMemosDialog({
       ? "接続失敗"
       : codexUiState?.state === "running"
         ? "Codex実行中"
+        : codexUiState?.state === "awaiting_approval" || codexTask?.status === "awaiting_approval"
+          ? "確認待ち"
         : codexManualHandoff && codexThreadId
           ? "送信確認済み"
         : "Codexで確認"
@@ -611,6 +618,13 @@ export function MindmapLinkedMemosDialog({
     await refreshAiTasks()
     await loadCodexActivity()
   }, [codexAiTaskId, hasCodexRun, loadCodexActivity, refreshAiTasks, target?.taskId])
+
+  const { trackManualHandoff, confirmManualHandoffNow } = useCodexManualHandoffConfirmation({
+    onConfirmed: async () => {
+      await refreshAiTasks()
+      window.setTimeout(() => void loadCodexActivity(), 250)
+    },
+  })
 
   const repoOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -752,7 +766,7 @@ export function MindmapLinkedMemosDialog({
   }
 
   async function createCodexTask(dispatchMode: "manual" | "auto", prompt: string, handoffToken?: string) {
-    const res = await fetch("/api/ai-tasks/schedule", {
+    const res = await fetchWithSupabaseAuth("/api/ai-tasks/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       keepalive: prompt.length < 50_000,
@@ -772,6 +786,7 @@ export function MindmapLinkedMemosDialog({
       const data = await res.json().catch(() => ({})) as { error?: string }
       throw new Error(data.error || `Codex送信に失敗しました (${res.status})`)
     }
+    return await res.json() as AiTask
   }
 
   async function handleStartInCodexApp() {
@@ -793,17 +808,46 @@ export function MindmapLinkedMemosDialog({
     const useLocalApi = canUseLocalCodexOpenApi() && !isMobileHandoff
     const handoffToken = buildCodexHandoffToken(task.id)
     const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
-    const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
     try {
       const savePromise = saveDraft()
       const taskPromise = isMobileHandoff
         ? createCodexTask("manual", prompt, handoffToken)
         : savePromise.then(() => createCodexTask("manual", prompt, handoffToken))
       savePromise.catch(() => undefined)
-      taskPromise.catch(() => undefined)
+      const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
 
       if (isMobileHandoff) {
-        openCodexFromLinkedDialog(prompt, selectedRepoPath)
+        const trackedTaskPromise = taskPromise
+          .then(createdTask => {
+            setJustSentPrompt(prompt)
+            void refreshAiTasks()
+            return createdTask
+          })
+          .catch((taskError: unknown) => {
+            if (document.visibilityState === "visible") {
+              setError(taskError instanceof Error ? taskError.message : "Codex送信準備に失敗しました")
+            }
+            return null
+          })
+        trackManualHandoff({ taskPromise: trackedTaskPromise })
+        const target = buildCodexOpenTarget(
+          { prompt, repoPath: selectedRepoPath, threadUrl: null },
+          { preferMobile: true, mobilePlatform: getCurrentMobilePlatform() },
+        )
+        const openedViaNativeApp = openCodexMobileTargetViaFocusmapNativeApp(
+          target.url,
+          prompt,
+          "urls" in target ? target.urls : undefined,
+        )
+        if (!openedViaNativeApp) {
+          void trackedTaskPromise.then(createdTask => {
+            if (createdTask) window.location.href = target.url
+          })
+        }
+        await copyAttempt.finished.catch(() => false)
+        await trackedTaskPromise
+        await refreshAiTasks()
+        return
       }
 
       await savePromise
@@ -839,9 +883,23 @@ export function MindmapLinkedMemosDialog({
     try {
       const isMobileHandoff = isLikelyMobileDevice()
       if (normalizeCodexPrompt(prompt) && isMobileHandoff) {
+        const shouldConfirmManualHandoff = !!codexAiTaskId && codexUiState?.state === "prompt_waiting"
+        if (shouldConfirmManualHandoff && codexAiTaskId) {
+          trackManualHandoff({ taskId: codexAiTaskId })
+        }
         void beginCopyPromptForCodexHandoff(prompt).finished
         if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url, prompt, "urls" in codexOpenTarget ? codexOpenTarget.urls : undefined)) {
           event?.preventDefault()
+        } else {
+          event?.preventDefault()
+          const navigate = () => {
+            window.location.href = codexOpenTarget.url
+          }
+          if (shouldConfirmManualHandoff && codexAiTaskId) {
+            void confirmManualHandoffNow(codexAiTaskId, "screen_switched").finally(navigate)
+          } else {
+            navigate()
+          }
         }
         return
       }
@@ -877,7 +935,7 @@ export function MindmapLinkedMemosDialog({
 
   const title = task?.title || draftTitle || "ノード詳細"
   const description = hasCodexRun
-    ? (codexWaitingForAppSend ? "未送信" : codexCompleted ? "確認待ち" : "Codexで続行中")
+    ? (codexWaitingForAppSend ? "未送信" : codexCompleted || codexUiState?.state === "awaiting_approval" ? "確認待ち" : "Codexで続行中")
     : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
   const isMobileOpenTarget = isLikelyMobileDevice()
@@ -928,6 +986,10 @@ export function MindmapLinkedMemosDialog({
                   ) : codexWaitingForAppSend ? (
                     <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                       未送信
+                    </span>
+                  ) : codexManualHandoff ? (
+                    <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                      外部アプリ確認待ち
                     </span>
                   ) : (
                     <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -996,6 +1058,8 @@ export function MindmapLinkedMemosDialog({
                       <div className="text-muted-foreground">
                         {codexWaitingForAppSend
                           ? "プロンプトはコピー済みです。Codex側で貼り付けて送信すると、Focusmapがthreadとログを同期します。"
+                          : codexManualHandoff && !codexThreadId
+                            ? "ChatGPT/Codexアプリ側で返答を確認してください。Focusmapは送信済み状態と確認待ちだけを同期します。"
                           : "このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。"}
                       </div>
                     </div>
@@ -1046,6 +1110,8 @@ export function MindmapLinkedMemosDialog({
                     <div className="flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
                       {codexWaitingForAppSend
                         ? "Codexで送信されると、この欄に状態と出力が同期されます"
+                        : codexManualHandoff && !codexThreadId
+                          ? "ChatGPT/Codexアプリ側の返答を確認してください"
                         : codexActivityError
                           ? "チャットログを取得できません"
                           : "Codex.app側の出力は未同期です"}

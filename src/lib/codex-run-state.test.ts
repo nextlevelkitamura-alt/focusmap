@@ -210,6 +210,16 @@ describe("getCodexTaskUiState", () => {
         codex_thread_id: "019e7961-30b1-7a82-ab25-da26ad30d8ed",
       },
     })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "awaiting_approval",
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: "awaiting_approval",
+        codex_review_reason: "external_app_handoff",
+      },
+    })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
   })
 
   test("hides the node Codex badge after a closed thread completes the source task", () => {

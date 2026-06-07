@@ -9,6 +9,7 @@ export type CodexReviewReason =
   | "thread_deleted"
   | "approval_requested"
   | "monitoring_lost"
+  | "external_app_handoff"
   | "unknown"
 
 export type CodexThreadSnapshot = {
@@ -432,13 +433,14 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
     return { state: "prompt_waiting", label: "未送信" }
   }
 
+  if (rawState === "awaiting_approval") {
+    return { state: "awaiting_approval", label: "確認待ち" }
+  }
+
   if (isManualHandoff && !hasThreadId) {
     return { state: "prompt_waiting", label: "未送信" }
   }
 
-  if (rawState === "awaiting_approval") {
-    return { state: "awaiting_approval", label: "確認待ち" }
-  }
   if (task.status === "awaiting_approval" || task.status === "needs_input") {
     return { state: "awaiting_approval", label: "確認待ち" }
   }

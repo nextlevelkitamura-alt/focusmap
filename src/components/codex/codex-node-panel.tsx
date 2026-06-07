@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
+import { useCodexManualHandoffConfirmation } from "@/hooks/useCodexManualHandoffConfirmation"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import {
   appendCodexHandoffToken,
@@ -26,7 +27,7 @@ import {
 } from "@/lib/codex-app-launch"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
-import type { AiTaskActivityMessage } from "@/types/ai-task"
+import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import { Bot, Check, Clock, Copy, ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
 
 type NodeInfo = {
@@ -447,7 +448,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     stringValue(codexResult.codex_thread_id)
   const codexManualHandoff = codexResult.codex_manual_handoff === true
   const hasCodexRun = isCodexTask || !!justSentPrompt
-  const codexWaitingForAppSend = codexManualHandoff && !codexThreadId
+  const codexWaitingForAppSend = codexManualHandoff && codexUiState?.state === "prompt_waiting"
   const codexMessage = stringValue(codexResult.message)
   const codexLiveLog = stringValue(codexResult.live_log)
   const codexPreview = stringValue(codexSnapshot.preview)
@@ -529,6 +530,14 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }
   }, [codexAiTaskId, hasCodexRun, loadCodexActivity, node.taskId, open, refreshAiTaskStatus])
 
+  const { trackManualHandoff, confirmManualHandoffNow } = useCodexManualHandoffConfirmation({
+    onConfirmed: async () => {
+      await refreshAiTasks()
+      await refreshAiTaskStatus()
+      window.setTimeout(() => void loadCodexActivity(), 250)
+    },
+  })
+
   const handleCopyCodexPrompt = useCallback(async () => {
     if (!rawSentPrompt || isCopyingCodexPrompt) return
     setIsCopyingCodexPrompt(true)
@@ -564,11 +573,16 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       { preferMobile: isMobileOpenTarget, mobilePlatform },
     )
     const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
+    const shouldConfirmManualHandoff = isMobileHandoff && !!codexAiTaskId && codexUiState?.state === "prompt_waiting"
+    if (shouldConfirmManualHandoff) {
+      trackManualHandoff({ taskId: codexAiTaskId })
+    }
     const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
     const openedViaNativeApp = isMobileHandoff && target.url
       ? openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined)
       : false
     if (openedViaNativeApp) event?.preventDefault()
+    if (isMobileHandoff && !openedViaNativeApp) event?.preventDefault()
 
     setError(null)
     setCodexFeedback(null)
@@ -585,7 +599,19 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         .catch(() => {
           setCodexFeedback("ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
         })
-        .finally(() => setIsOpeningCodex(false))
+        .finally(() => {
+          setIsOpeningCodex(false)
+          if (!openedViaNativeApp && typeof window !== "undefined") {
+            const navigate = () => {
+              window.location.href = target.url
+            }
+            if (shouldConfirmManualHandoff && codexAiTaskId) {
+              void confirmManualHandoffNow(codexAiTaskId, "screen_switched").finally(navigate)
+            } else {
+              navigate()
+            }
+          }
+        })
       return
     }
 
@@ -614,7 +640,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [codexPrompt, codexRepoPath, isMobileOpenTarget, mobilePlatform, node.codexThreadUrl, rawSentPrompt])
+  }, [codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -714,15 +740,10 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexSendStatus("sending")
 
     try {
-      const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
-      const openedViaNativeApp = isMobileHandoff
-        ? openCodexMobileTargetViaFocusmapNativeApp(openTarget.url, prompt, "urls" in openTarget ? openTarget.urls : undefined)
-        : false
-      if (openedViaNativeApp) event?.preventDefault()
       const dispatchMode = "manual"
       const savePromise = saveDraft(heading, detail)
       const scheduleCodexTask = async () => {
-        const scheduleRes = await fetch("/api/ai-tasks/schedule", {
+        const scheduleRes = await fetchWithSupabaseAuth("/api/ai-tasks/schedule", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           keepalive: prompt.length < 50_000,
@@ -745,16 +766,36 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           const data = await scheduleRes.json().catch(() => ({})) as { error?: string }
           throw new Error(data.error || "このノードは既にCodexで実行中または確認待ちです")
         }
+        return await scheduleRes.json() as AiTask
       }
       const schedulePromise = isMobileHandoff
         ? scheduleCodexTask()
         : savePromise.then(scheduleCodexTask)
-      schedulePromise.catch(() => undefined)
+      const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
 
       if (isMobileHandoff) {
+        const trackedSchedulePromise = schedulePromise
+          .then((task) => {
+            setJustSentPrompt(prompt)
+            void refreshAiTasks()
+            return task
+          })
+          .catch((scheduleError: unknown) => {
+            if (document.visibilityState === "visible") {
+              setCodexSendStatus("idle")
+              setError(scheduleError instanceof Error ? scheduleError.message : "Codex送信準備に失敗しました")
+            }
+            return null
+          })
+        trackManualHandoff({ taskPromise: trackedSchedulePromise })
+        const openedViaNativeApp = openCodexMobileTargetViaFocusmapNativeApp(
+          openTarget.url,
+          prompt,
+          "urls" in openTarget ? openTarget.urls : undefined,
+        )
+        event?.preventDefault()
         launchMode = openTarget.mode
         setJustSentPrompt(prompt)
-        void refreshAiTasks()
         copyAttempt.finished
           .then(copied => {
             setCodexPromptCopied(copied)
@@ -767,6 +808,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           })
           .finally(() => {
             setCodexSendStatus("sent")
+            if (!openedViaNativeApp && typeof window !== "undefined") {
+              void trackedSchedulePromise.then(task => {
+                if (task) window.location.href = openTarget.url
+              })
+            }
             window.setTimeout(() => void syncCodexState(), 1200)
             window.setTimeout(() => void syncCodexState(), 3500)
           })
@@ -808,7 +854,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState])
+  }, [candidates, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
@@ -937,7 +983,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       </span>
                     ) : (
                       <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                        {codexWaitingForAppSend ? "未送信" : "thread検出待ち"}
+                        {codexWaitingForAppSend ? "未送信" : codexManualHandoff ? "外部アプリ確認待ち" : "thread検出待ち"}
                       </span>
                     )}
                     <span className="text-[11px] text-muted-foreground">
@@ -1027,6 +1073,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed bg-muted/10 px-3 py-8 text-sm text-muted-foreground">
                         {codexWaitingForAppSend
                           ? "Codex.appで送信されると、ここに返答が表示されます"
+                          : codexManualHandoff && !codexThreadId
+                            ? "ChatGPT/Codexアプリ側の返答を確認してください"
                           : codexActivityError
                             ? "チャットログを取得できません"
                             : "Codex側の返答を待っています"}
