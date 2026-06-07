@@ -51,6 +51,7 @@ function loadDesktopEnv(repoRoot) {
   return [
     path.join(repoRoot, '.env'),
     path.join(repoRoot, '.env.local'),
+    path.join(repoRoot, '.env.monitoring.local'),
     path.join(os.homedir(), '.focusmap', 'desktop.env'),
   ].reduce((merged, filePath) => ({ ...merged, ...parseEnvFile(filePath) }), {});
 }

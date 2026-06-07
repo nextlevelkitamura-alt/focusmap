@@ -10,7 +10,7 @@
  *   2. Config 読み込み + 検証
  *   3. Focusmap API client 作成 (agent_token認証)
  *   4. ai_runners に登録 → runner_id 取得
- *   5. 5秒ごとに lightweight heartbeat ループ
+ *   5. 実行中は5秒、アイドル時は30秒基準で lightweight heartbeat ループ
  *   6. 15秒ごとに claim_ai_task_for_runner で task pull
  *   7. claim したタスクを executor で実行
  *   8. SIGINT/SIGTERM でグレースフルシャットダウン
@@ -32,6 +32,7 @@ function intervalFromEnv(name: string, fallbackMs: number, minMs: number, maxMs:
 }
 
 const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL_MS', 5_000, 5_000, 60_000);
+const IDLE_HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_IDLE_HEARTBEAT_INTERVAL_MS', 30_000, 5_000, 5 * 60_000);
 const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 15_000, 5_000, 60_000);
 const COMMAND_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_COMMAND_INTERVAL_MS', 15_000, 5_000, 60_000);
 
@@ -79,8 +80,15 @@ async function main(): Promise<void> {
 
   let currentTaskId: string | null = null;
 
-  // 5. Heartbeat ループ (5s lightweight Turso upsert by default)
-  const heartbeatTimer = startHeartbeatLoop(api, config, runnerId, HEARTBEAT_INTERVAL_MS, () => currentTaskId);
+  // 5. Heartbeat ループ (runningは5s、idleは30sのlightweight Turso upsert by default)
+  const heartbeatTimer = startHeartbeatLoop(
+    api,
+    config,
+    runnerId,
+    HEARTBEAT_INTERVAL_MS,
+    () => currentTaskId,
+    IDLE_HEARTBEAT_INTERVAL_MS,
+  );
 
   // 6. Claim ループ (15s by default)
   const claimTimer = startClaimLoop(
@@ -99,7 +107,7 @@ async function main(): Promise<void> {
   const commandTimer = startCommandLoop(api, runnerId, config, COMMAND_INTERVAL_MS);
 
   info(
-    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s`,
+    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s active / ${IDLE_HEARTBEAT_INTERVAL_MS / 1000}s idle / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s`,
   );
 
   // 7. Shutdown
