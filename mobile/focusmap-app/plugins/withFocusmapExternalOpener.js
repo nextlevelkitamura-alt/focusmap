@@ -1,0 +1,109 @@
+const fs = require("fs");
+const path = require("path");
+const { IOSConfig, withXcodeProject } = require("expo/config-plugins");
+
+const SWIFT_FILE_NAME = "FocusmapExternalOpener.swift";
+const OBJC_FILE_NAME = "FocusmapExternalOpener.m";
+const BRIDGING_HEADER_FILE_NAME = "Focusmap-Bridging-Header.h";
+const BRIDGING_IMPORT = "#import <React/RCTBridgeModule.h>";
+
+const SWIFT_SOURCE = `import Foundation
+import UIKit
+
+@objc(FocusmapExternalOpener)
+class FocusmapExternalOpener: NSObject {
+  @objc
+  static func requiresMainQueueSetup() -> Bool {
+    return true
+  }
+
+  @objc(openUniversalLink:resolver:rejecter:)
+  func openUniversalLink(
+    urlString: String,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    guard let url = URL(string: urlString) else {
+      reject("invalid_url", "Invalid URL", nil)
+      return
+    }
+
+    DispatchQueue.main.async {
+      UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { success in
+        if success {
+          resolve(true)
+        } else {
+          reject("universal_link_unavailable", "Universal link was not handled by an installed app", nil)
+        }
+      }
+    }
+  }
+}
+`;
+
+const OBJC_SOURCE = `${BRIDGING_IMPORT}
+
+@interface RCT_EXTERN_MODULE(FocusmapExternalOpener, NSObject)
+
+RCT_EXTERN_METHOD(openUniversalLink:(NSString *)urlString
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+@end
+`;
+
+function ensureContainsLine(filePath, line) {
+  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  if (existing.includes(line)) return;
+
+  const next = existing.trim()
+    ? `${existing.trimEnd()}\n${line}\n`
+    : `//\n// Use this file to import your target's public headers that you would like to expose to Swift.\n//\n${line}\n`;
+  fs.writeFileSync(filePath, next);
+}
+
+function ensureSourceFile(project, projectName, fileName) {
+  const projectRelativePath = path.join(projectName, fileName);
+  if (project.hasFile(projectRelativePath)) return;
+
+  IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
+    filepath: projectRelativePath,
+    groupName: projectName,
+    project,
+  });
+}
+
+function ensureSwiftBuildSettings(project, projectName) {
+  const buildConfigurations = project.pbxXCBuildConfigurationSection();
+  const bridgingHeaderPath = `${projectName}/${BRIDGING_HEADER_FILE_NAME}`;
+  const infoPlistPath = `${projectName}/Info.plist`;
+
+  for (const [key, config] of Object.entries(buildConfigurations)) {
+    if (key.endsWith("_comment") || !config.buildSettings) continue;
+    if (config.buildSettings.INFOPLIST_FILE !== infoPlistPath) continue;
+
+    config.buildSettings.SWIFT_OBJC_BRIDGING_HEADER = `"${bridgingHeaderPath}"`;
+    config.buildSettings.SWIFT_VERSION = config.buildSettings.SWIFT_VERSION || "5.0";
+  }
+}
+
+function withFocusmapExternalOpener(config) {
+  return withXcodeProject(config, config => {
+    const projectName = config.modRequest.projectName;
+    const iosRoot = config.modRequest.platformProjectRoot;
+    const sourceRoot = path.join(iosRoot, projectName);
+
+    fs.mkdirSync(sourceRoot, { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, SWIFT_FILE_NAME), SWIFT_SOURCE);
+    fs.writeFileSync(path.join(sourceRoot, OBJC_FILE_NAME), OBJC_SOURCE);
+    ensureContainsLine(path.join(sourceRoot, BRIDGING_HEADER_FILE_NAME), BRIDGING_IMPORT);
+
+    ensureSourceFile(config.modResults, projectName, SWIFT_FILE_NAME);
+    ensureSourceFile(config.modResults, projectName, OBJC_FILE_NAME);
+    ensureSwiftBuildSettings(config.modResults, projectName);
+
+    return config;
+  });
+}
+
+module.exports = withFocusmapExternalOpener;

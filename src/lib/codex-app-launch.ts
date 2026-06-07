@@ -30,7 +30,6 @@ declare global {
 const LOCAL_CODEX_API_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 const LOCAL_CODEX_PREVIEW_HOST_SUFFIXES = [".local", ".trycloudflare.com"]
 export const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/"
-export const CHATGPT_CODEX_MOBILE_IOS_APP_URL = `com.openai.chat://${CHATGPT_CODEX_MOBILE_URL}`
 export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
 type FocusmapNativeAppMessage =
@@ -178,10 +177,12 @@ export function buildChatGptCodexMobileAppUrls(platform: MobilePlatform) {
   }
   if (platform === "ios") {
     return [
-      CHATGPT_CODEX_MOBILE_IOS_APP_URL,
-      "chatgpt://codex/mobile",
-      "chatgpt://",
       CHATGPT_CODEX_MOBILE_URL,
+      "chatgpt://codex/mobile",
+      "chatgpt://codex",
+      "com.openai.chat://codex/mobile",
+      "chatgpt://",
+      "com.openai.chat://",
     ]
   }
   return [CHATGPT_CODEX_MOBILE_URL]
@@ -192,7 +193,7 @@ export function buildChatGptCodexMobileAppUrl(platform: MobilePlatform) {
     const fallbackUrl = encodeURIComponent(CHATGPT_CODEX_MOBILE_URL)
     return `intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=${CHATGPT_ANDROID_PACKAGE};S.browser_fallback_url=${fallbackUrl};end`
   }
-  if (platform === "ios") return CHATGPT_CODEX_MOBILE_IOS_APP_URL
+  if (platform === "ios") return CHATGPT_CODEX_MOBILE_URL
   return CHATGPT_CODEX_MOBILE_URL
 }
 

@@ -7,6 +7,8 @@ import {
   AppState,
   type AppStateStatus,
   Linking,
+  NativeModules,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -16,6 +18,7 @@ import {
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
 const DEFAULT_FOCUSMAP_URL = "https://focusmap-official.com/dashboard";
+const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/";
 const EXTERNAL_AUTH_HOSTS = new Set(["accounts.google.com", "oauth2.googleapis.com"]);
 const STARTUP_OVERLAY_MAX_MS = 1200;
 const CONTENT_READY_SCRIPT = `
@@ -54,6 +57,12 @@ const APP_RESUME_SCRIPT = `
 })();
 `;
 
+type FocusmapExternalOpenerModule = {
+  openUniversalLink?: (url: string) => Promise<boolean>;
+};
+
+const focusmapExternalOpener = NativeModules.FocusmapExternalOpener as FocusmapExternalOpenerModule | undefined;
+
 function buildFocusmapUrl() {
   const configuredUrl = process.env.EXPO_PUBLIC_FOCUSMAP_URL?.trim() || DEFAULT_FOCUSMAP_URL;
 
@@ -89,14 +98,36 @@ function normalizeExternalUrlCandidates(primaryUrl: string, urls?: string[]) {
     .filter(Boolean))];
 }
 
+function shouldOpenAsUniversalLinkOnly(url: string) {
+  if (Platform.OS !== "ios") return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "chatgpt.com" && parsed.pathname.startsWith("/codex/mobile");
+  } catch {
+    return false;
+  }
+}
+
 async function openExternalUrl(url: string, urls?: string[]) {
   const candidates = normalizeExternalUrlCandidates(url, urls);
   for (const candidate of candidates) {
     try {
+      if (shouldOpenAsUniversalLinkOnly(candidate) && focusmapExternalOpener?.openUniversalLink) {
+        await focusmapExternalOpener.openUniversalLink(candidate);
+        return;
+      }
       await Linking.openURL(candidate);
       return;
     } catch {
       // Try the next candidate. The final fallback is usually the official web URL.
+    }
+  }
+  if (candidates.some(candidate => candidate === CHATGPT_CODEX_MOBILE_URL)) {
+    try {
+      await Linking.openURL(CHATGPT_CODEX_MOBILE_URL);
+      return;
+    } catch {
+      // Fall through to the alert below.
     }
   }
   Alert.alert("開けませんでした", "このリンクを開くアプリが見つかりません。");

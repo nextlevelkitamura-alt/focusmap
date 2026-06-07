@@ -31,6 +31,7 @@
       }
     },
     "plugins": [
+      "./plugins/withFocusmapExternalOpener",
       [
         "expo-splash-screen",
         {

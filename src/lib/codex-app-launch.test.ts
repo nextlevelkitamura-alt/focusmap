@@ -66,13 +66,15 @@ describe("ChatGPT mobile open target", () => {
     expect(detectMobilePlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)", 5)).toBe("ios")
   })
 
-  test("uses ChatGPT app scheme first on iOS and Android intent on Android", () => {
-    expect(buildChatGptCodexMobileAppUrl("ios")).toBe("com.openai.chat://https://chatgpt.com/codex/mobile/")
+  test("uses the official Codex mobile URL first on iOS and Android intent on Android", () => {
+    expect(buildChatGptCodexMobileAppUrl("ios")).toBe("https://chatgpt.com/codex/mobile/")
     expect(buildChatGptCodexMobileAppUrls("ios")).toEqual([
-      "com.openai.chat://https://chatgpt.com/codex/mobile/",
-      "chatgpt://codex/mobile",
-      "chatgpt://",
       "https://chatgpt.com/codex/mobile/",
+      "chatgpt://codex/mobile",
+      "chatgpt://codex",
+      "com.openai.chat://codex/mobile",
+      "chatgpt://",
+      "com.openai.chat://",
     ])
     expect(buildChatGptCodexMobileAppUrl("android")).toBe(
       "intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end",
@@ -81,7 +83,7 @@ describe("ChatGPT mobile open target", () => {
 
   test("prefers app links instead of browser URL for mobile Codex", () => {
     expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "ios" }).url)
-      .toBe("com.openai.chat://https://chatgpt.com/codex/mobile/")
+      .toBe("https://chatgpt.com/codex/mobile/")
     expect(buildCodexOpenTarget({ prompt: "hello", repoPath: null }, { preferMobile: true, mobilePlatform: "android" }).url)
       .toBe("intent://chatgpt.com/codex/mobile/#Intent;scheme=https;package=com.openai.chatgpt;S.browser_fallback_url=https%3A%2F%2Fchatgpt.com%2Fcodex%2Fmobile%2F;end")
   })
@@ -94,7 +96,7 @@ describe("ChatGPT mobile open target", () => {
     expect(openCodexMobileTargetViaFocusmapNativeApp(urls[0], undefined, urls)).toBe(true)
     expect(postMessage).toHaveBeenCalledWith(JSON.stringify({
       type: "focusmap:openExternal",
-      url: "com.openai.chat://https://chatgpt.com/codex/mobile/",
+      url: "https://chatgpt.com/codex/mobile/",
       urls,
     }))
   })
@@ -111,7 +113,7 @@ describe("ChatGPT mobile open target", () => {
     }))
     expect(postMessage).toHaveBeenNthCalledWith(2, JSON.stringify({
       type: "focusmap:openExternal",
-      url: "com.openai.chat://https://chatgpt.com/codex/mobile/",
+      url: "https://chatgpt.com/codex/mobile/",
       urls,
     }))
   })

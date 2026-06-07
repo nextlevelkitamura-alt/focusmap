@@ -39,7 +39,14 @@ const devices = data.result?.devices || [];
 const candidates = devices.filter((device) => {
   const platform = device.hardwareProperties?.platform;
   const state = device.connectionProperties?.tunnelState;
-  return platform === 'iOS' && (state === 'available' || state === 'connected');
+  const transport = device.connectionProperties?.transportType;
+  const pairingState = device.connectionProperties?.pairingState;
+  return platform === 'iOS' && (
+    state === 'available' ||
+    state === 'connected' ||
+    state === 'connecting' ||
+    (transport === 'wired' && pairingState === 'paired')
+  );
 });
 
 const selected = preferred
@@ -75,6 +82,19 @@ json_field() {
     const key = process.argv[2];
     process.stdout.write(value[key] ? String(value[key]) : "");
   ' "$1" "$2"
+}
+
+warm_ios_device_connection() {
+  local device_id="$1"
+
+  for _ in 1 2 3 4 5; do
+    if xcrun devicectl device info details --device "$device_id" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  return 1
 }
 
 app_bundle_id() {
@@ -286,6 +306,11 @@ DEVICE_DEVELOPER_MODE="$(json_field "$DEVICE_INFO" developerModeStatus)"
 printf "Install target: %s (%s, %s)\n" "$DEVICE_NAME" "$DEVICE_MODEL" "$DEVICE_STATE"
 if [[ "$DEVICE_DEVELOPER_MODE" != "enabled" ]]; then
   printf "WARN Developer Mode is not reported as enabled. iPhone側で有効化が必要な場合があります。\n"
+fi
+if warm_ios_device_connection "$DEVICE_ID"; then
+  printf "OK   devicectl tunnel is ready\n"
+else
+  printf "WARN devicectl tunnel readiness could not be confirmed; continuing with xcodebuild/device install.\n"
 fi
 
 section "Code Signing"
