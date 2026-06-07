@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Bot, Check, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react"
 import {
   Dialog,
@@ -826,9 +826,10 @@ export function MindmapLinkedMemosDialog({
     }
   }
 
-  async function handleOpenCodexThread() {
-    const prompt = sentPrompt || buildCodexPrompt(draftTitle, draftMemo)
+  async function handleOpenCodexThread(event?: MouseEvent<HTMLAnchorElement>) {
+    const prompt = rawSentPrompt || buildCodexPrompt(draftTitle, draftMemo)
     if (!codexRepoPath && !codexThreadUrl) {
+      event?.preventDefault()
       setError("Codex.appで開くリポジトリを設定してください")
       return
     }
@@ -837,7 +838,9 @@ export function MindmapLinkedMemosDialog({
       const isMobileHandoff = isLikelyMobileDevice()
       if (normalizeCodexPrompt(prompt) && isMobileHandoff) {
         void beginCopyPromptForCodexHandoff(prompt).finished
+        return
       }
+      event?.preventDefault()
       if (canUseLocalCodexOpenApi() && !isMobileHandoff) {
         await launchCodexViaLocalApi({ prompt, repoPath: codexRepoPath, threadUrl: codexThreadUrl || null })
       } else {
@@ -872,6 +875,12 @@ export function MindmapLinkedMemosDialog({
     ? (codexWaitingForAppSend ? "未送信" : codexCompleted ? "確認待ち" : "Codexで続行中")
     : "メモ見出しとメモ詳細を整えてからCodexへ送信します"
   const canSend = !!task && !!selectedRepoPath && !isSending && !hasCodexRun
+  const isMobileOpenTarget = isLikelyMobileDevice()
+  const codexOpenPrompt = rawSentPrompt || buildCodexPrompt(draftTitle, draftMemo)
+  const codexOpenTarget = buildCodexOpenTarget(
+    { prompt: codexOpenPrompt, repoPath: codexRepoPath || null, threadUrl: codexThreadUrl || null },
+    { preferMobile: isMobileOpenTarget, mobilePlatform: getCurrentMobilePlatform() },
+  )
 
   return (
     <Dialog open={!!target} onOpenChange={onOpenChange}>
@@ -956,16 +965,15 @@ export function MindmapLinkedMemosDialog({
                       {promptCopied ? "コピー済み" : "プロンプトをコピー"}
                     </Button>
                   )}
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => void handleOpenCodexThread()}
-                    disabled={!codexThreadUrl && !codexManualHandoff}
-                    className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                  <a
+                    href={codexOpenTarget.url}
+                    onClick={(event) => void handleOpenCodexThread(event)}
+                    aria-disabled={!codexThreadUrl && !codexManualHandoff}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700 aria-disabled:pointer-events-none aria-disabled:opacity-50"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    {codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
-                  </Button>
+                    {isMobileOpenTarget ? "Codexを開く" : codexThreadUrl ? "Codexで開く" : "Codex.appを開く"}
+                  </a>
                 </div>
               </div>
 
@@ -1109,7 +1117,7 @@ export function MindmapLinkedMemosDialog({
                     className="w-full gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
                   >
                     {isSending || isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
-                    Codexで開始
+                    {isMobileOpenTarget ? "Codexを開く" : "Codexで開始"}
                   </Button>
                 </div>
               </div>

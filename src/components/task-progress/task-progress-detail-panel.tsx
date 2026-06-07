@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertCircle, Check, Clock, Copy, Loader2, Terminal } from "lucide-react"
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react"
+import { AlertCircle, Check, Clock, Copy, ExternalLink, Loader2, Smartphone, Terminal } from "lucide-react"
 import {
   Sheet,
   SheetContent,
@@ -10,7 +10,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
-import { canUseLocalCodexOpenApi, copyPromptForCodexHandoff } from "@/lib/codex-app-launch"
+import {
+  beginCopyPromptForCodexHandoff,
+  buildCodexOpenTarget,
+  canUseLocalCodexOpenApi,
+  copyPromptForCodexHandoff,
+  getCurrentMobilePlatform,
+  isLikelyMobileDevice,
+} from "@/lib/codex-app-launch"
 import {
   codexMonitorToneClass,
   codexMonitorUiLabel,
@@ -107,6 +114,7 @@ export function TaskProgressDetailPanel({
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isCopyingPrompt, setIsCopyingPrompt] = useState(false)
+  const [isOpeningCodex, setIsOpeningCodex] = useState(false)
   const [promptCopied, setPromptCopied] = useState(false)
   const watchIdRef = useRef<string | null>(null)
   const taskId = task?.id ?? null
@@ -275,6 +283,46 @@ export function TaskProgressDetailPanel({
     !!message.body.trim()
   )?.body.trim() ?? ""
   const canCopyPrompt = !!promptToCopy && getCodexMonitorUiStatus(status) !== "running"
+  const isMobileOpenTarget = isMobile || isLikelyMobileDevice()
+  const codexThreadUrl = taskForDisplay?.codex_thread_id ? `codex://threads/${taskForDisplay.codex_thread_id}` : null
+  const codexOpenTarget = buildCodexOpenTarget(
+    { prompt: promptToCopy, repoPath: null, threadUrl: codexThreadUrl },
+    { preferMobile: isMobileOpenTarget, mobilePlatform: getCurrentMobilePlatform() },
+  )
+
+  const openCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
+    if (!promptToCopy || isOpeningCodex) {
+      event?.preventDefault()
+      return
+    }
+
+    const copyAttempt = beginCopyPromptForCodexHandoff(promptToCopy)
+    setIsOpeningCodex(true)
+    setPromptCopied(false)
+    setError(null)
+
+    if (isMobileOpenTarget) {
+      copyAttempt.finished
+        .then(copied => {
+          setPromptCopied(copied)
+          if (!copied) setError("クリップボードコピー失敗。Focusmapに戻って再コピーしてください")
+        })
+        .catch(() => setError("クリップボードコピー失敗。Focusmapに戻って再コピーしてください"))
+        .finally(() => setIsOpeningCodex(false))
+      return
+    }
+
+    event?.preventDefault()
+    try {
+      const copied = await copyAttempt.finished
+      if (!copied) throw new Error("クリップボードコピー失敗")
+      if (typeof window !== "undefined") window.location.href = codexOpenTarget.url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Codexを開けませんでした")
+    } finally {
+      setIsOpeningCodex(false)
+    }
+  }, [codexOpenTarget.url, isMobileOpenTarget, isOpeningCodex, promptToCopy])
 
   const copyPrompt = useCallback(async () => {
     if (!promptToCopy || isCopyingPrompt) return
@@ -324,21 +372,38 @@ export function TaskProgressDetailPanel({
               </SheetDescription>
             </div>
             {canCopyPrompt && (
-              <button
-                type="button"
-                onClick={() => void copyPrompt()}
-                disabled={isCopyingPrompt}
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-500/20 disabled:opacity-50 dark:text-sky-200"
-              >
-                {isCopyingPrompt ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : promptCopied ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
-                {promptCopied ? "コピー済み" : "プロンプトをコピー"}
-              </button>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <a
+                  href={codexOpenTarget.url}
+                  onClick={(event) => void openCodex(event)}
+                  aria-disabled={isOpeningCodex}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-200"
+                >
+                  {isOpeningCodex ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : isMobileOpenTarget ? (
+                    <Smartphone className="h-3.5 w-3.5" />
+                  ) : (
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  )}
+                  Codexを開く
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void copyPrompt()}
+                  disabled={isCopyingPrompt}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-500/20 disabled:opacity-50 dark:text-sky-200"
+                >
+                  {isCopyingPrompt ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : promptCopied ? (
+                    <Check className="h-3.5 w-3.5" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                  {promptCopied ? "コピー済み" : "再コピー"}
+                </button>
+              </div>
             )}
           </div>
         </SheetHeader>

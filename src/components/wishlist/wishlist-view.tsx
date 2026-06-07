@@ -921,8 +921,14 @@ export function WishlistView({
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
+    const isMobileManualHandoff = isCodexManualHandoff && isLikelyMobileDevice()
     const basePrompt = (isCodexAutoRun || isCodexManualHandoff)
-      ? await buildMemoCodexHandoffText(item)
+      ? isMobileManualHandoff
+        ? buildImmediateMemoCodexPrompt(
+            memoBodyForCodexExecution({ title: item.title, body: item.description }),
+            [],
+          )
+        : await buildMemoCodexHandoffText(item)
       : item.description?.trim() || item.title
     const scheduleExecutor = (isCodexAutoRun || isCodexManualHandoff) ? 'codex_app' : executor
     const handoffToken = isCodexManualHandoff ? buildCodexHandoffToken(item.id) : undefined

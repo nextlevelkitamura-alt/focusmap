@@ -2829,7 +2829,7 @@ export function WishlistCardDetail({
                         className="min-h-[48px] gap-2 border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                       >
                         {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                        <span className="font-semibold">Codexにプロンプトを送る</span>
+                        <span className="font-semibold">Codexを開く</span>
                       </Button>
                     )}
                   </div>
@@ -2850,7 +2850,7 @@ export function WishlistCardDetail({
                             : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
                           : needsConfig
                             ? "プロジェクトまたはリポジトリパスが未設定です"
-                            : "メモ本文をCodex.appへ送って実行します"}
+                            : "プロンプトをコピーしてCodexを開きます"}
                       </p>
                       {needsConfig && (
                         <Link
@@ -2914,7 +2914,7 @@ export function WishlistCardDetail({
                     }}
                     className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
                   >
-                    ◎ プロンプトをコピーしてCodex.appを開く（送信は手動）
+                    ◎ Codexを開く（プロンプトをコピー）
                   </button>
                 )}
 

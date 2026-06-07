@@ -254,6 +254,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
   const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
   const [isCopyingCodexPrompt, setIsCopyingCodexPrompt] = useState(false)
+  const [isOpeningCodex, setIsOpeningCodex] = useState(false)
   const [codexPromptCopied, setCodexPromptCopied] = useState(false)
   const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
@@ -282,6 +283,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexActivityMessages([])
     setCodexActivityError(null)
     setIsCopyingCodexPrompt(false)
+    setIsOpeningCodex(false)
     setCodexPromptCopied(false)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
@@ -484,7 +486,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
           : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
   const codexOpenTarget = buildCodexOpenTarget(
-    { prompt: codexPrompt, repoPath: codexRepoPath || null },
+    { prompt: rawSentPrompt || codexPrompt, repoPath: codexRepoPath || null, threadUrl: node.codexThreadUrl || null },
     { preferMobile: isMobileOpenTarget, mobilePlatform },
   )
   const codexHref = codexOpenTarget.url
@@ -542,6 +544,72 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setIsCopyingCodexPrompt(false)
     }
   }, [isCopyingCodexPrompt, rawSentPrompt])
+
+  const handleOpenCodexWithPrompt = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
+    const prompt = rawSentPrompt || codexPrompt
+    if (!normalizeCodexPrompt(prompt)) {
+      event?.preventDefault()
+      setError("Codexに渡す内容を入力してください")
+      return
+    }
+
+    const target = buildCodexOpenTarget(
+      {
+        prompt,
+        repoPath: codexRepoPath || null,
+        threadUrl: node.codexThreadUrl || null,
+        originUrl: typeof window !== "undefined" ? window.location.href : null,
+      },
+      { preferMobile: isMobileOpenTarget, mobilePlatform },
+    )
+    const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
+    const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
+
+    setError(null)
+    setCodexFeedback(null)
+    setIsOpeningCodex(true)
+
+    if (isMobileHandoff) {
+      copyAttempt.finished
+        .then(copied => {
+          setCodexPromptCopied(copied)
+          setCodexFeedback(copied
+            ? "プロンプトをコピーしました。ChatGPTアプリのCodex画面で貼り付けて開始してください。"
+            : "ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+        })
+        .catch(() => {
+          setCodexFeedback("ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+        })
+        .finally(() => setIsOpeningCodex(false))
+      return
+    }
+
+    event?.preventDefault()
+    try {
+      let copiedToClipboard = await copyAttempt.finished
+      if (canUseLocalCodexOpenApi()) {
+        const launchOutcome = await launchCodexViaLocalApi({
+          prompt,
+          repoPath: codexRepoPath || null,
+          threadUrl: node.codexThreadUrl || null,
+        })
+        if (launchOutcome.copiedToClipboard) copiedToClipboard = true
+        setCodexFeedback(`${launchFeedbackForMode(launchOutcome.mode)} ${copiedToClipboard ? "プロンプトはコピー済みです。" : ""}`)
+        return
+      }
+      if (!copiedToClipboard) {
+        throw new Error("プロンプトをクリップボードにコピーできませんでした")
+      }
+      if (typeof window !== "undefined") {
+        window.location.href = target.url
+      }
+      setCodexFeedback(`${launchFeedbackForMode(target.mode)} プロンプトはコピー済みです。`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Codexを開けませんでした")
+    } finally {
+      setIsOpeningCodex(false)
+    }
+  }, [codexPrompt, codexRepoPath, isMobileOpenTarget, mobilePlatform, node.codexThreadUrl, rawSentPrompt])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -634,7 +702,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     )
     const useLocalApi = canUseLocalCodexOpenApi() && !isMobileOpenTarget
     const isMobileHandoff = isMobileOpenTarget && typeof window !== "undefined"
-    event?.preventDefault()
+    if (!isMobileHandoff) event?.preventDefault()
     let launchMode: CodexLaunchMode | null = null
     setError(null)
     setCodexFeedback(null)
@@ -676,7 +744,24 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
 
       if (isMobileHandoff) {
         launchMode = openTarget.mode
-        window.location.href = openTarget.url
+        setJustSentPrompt(prompt)
+        void refreshAiTasks()
+        copyAttempt.finished
+          .then(copied => {
+            setCodexPromptCopied(copied)
+            setCodexFeedback(copied
+              ? "プロンプトをコピーしました。ChatGPTアプリのCodex画面で貼り付けて開始してください。"
+              : "ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+          })
+          .catch(() => {
+            setCodexFeedback("ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+          })
+          .finally(() => {
+            setCodexSendStatus("sent")
+            window.setTimeout(() => void syncCodexState(), 1200)
+            window.setTimeout(() => void syncCodexState(), 3500)
+          })
+        return
       }
 
       await savePromise
@@ -784,7 +869,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                     ) : (
                       <ExternalLink className="h-4 w-4" />
                     )}
-                    {isMobileOpenTarget ? "ChatGPTでCodex" : "Codexに送る"}
+                    {isMobileOpenTarget ? "Codexを開く" : "Codexに送る"}
                   </a>
                 )}
                 <button
@@ -850,6 +935,25 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       {isSyncingCodex ? "同期中" : "約3秒ごとに同期"}
                     </span>
                   </div>
+                  {hasCodexRun && !!(rawSentPrompt || codexPrompt) && !isCodexRunning && (
+                    <a
+                      href={codexHref}
+                      onClick={(event) => void handleOpenCodexWithPrompt(event)}
+                      aria-disabled={isOpeningCodex}
+                      className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-200"
+                      aria-label={isMobileOpenTarget ? "プロンプトをコピーしてChatGPTのCodexを開く" : "プロンプトをコピーしてCodexを開く"}
+                      title={isMobileOpenTarget ? "プロンプトをコピーしてChatGPTのCodexを開く" : "プロンプトをコピーしてCodexを開く"}
+                    >
+                      {isOpeningCodex ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : isMobileOpenTarget ? (
+                        <Smartphone className="h-3.5 w-3.5" />
+                      ) : (
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      )}
+                      Codexを開く
+                    </a>
+                  )}
                   {canCopyCodexPrompt && (
                     <button
                       type="button"
@@ -864,7 +968,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       ) : (
                         <Copy className="h-3.5 w-3.5" />
                       )}
-                      {codexPromptCopied ? "コピー済み" : "プロンプトをコピー"}
+                      {codexPromptCopied ? "コピー済み" : "再コピー"}
                     </button>
                   )}
                 </div>
