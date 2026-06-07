@@ -530,7 +530,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     }
   }, [codexAiTaskId, hasCodexRun, loadCodexActivity, node.taskId, open, refreshAiTaskStatus])
 
-  const { trackManualHandoff, confirmManualHandoffNow } = useCodexManualHandoffConfirmation({
+  const { trackManualHandoff, confirmManualHandoffNow, markScreenSwitched } = useCodexManualHandoffConfirmation({
     onConfirmed: async () => {
       await refreshAiTasks()
       await refreshAiTaskStatus()
@@ -583,6 +583,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       : false
     if (openedViaNativeApp) event?.preventDefault()
     if (isMobileHandoff && !openedViaNativeApp) event?.preventDefault()
+    if (shouldConfirmManualHandoff && openedViaNativeApp) {
+      markScreenSwitched("external_app_opened")
+    }
 
     setError(null)
     setCodexFeedback(null)
@@ -640,7 +643,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
+  }, [codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -794,6 +797,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           "urls" in openTarget ? openTarget.urls : undefined,
         )
         event?.preventDefault()
+        if (openedViaNativeApp) {
+          markScreenSwitched("external_app_opened")
+        }
         launchMode = openTarget.mode
         setJustSentPrompt(prompt)
         copyAttempt.finished
@@ -810,7 +816,10 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
             setCodexSendStatus("sent")
             if (!openedViaNativeApp && typeof window !== "undefined") {
               void trackedSchedulePromise.then(task => {
-                if (task) window.location.href = openTarget.url
+                if (task) {
+                  markScreenSwitched("external_app_opened")
+                  window.location.href = openTarget.url
+                }
               })
             }
             window.setTimeout(() => void syncCodexState(), 1200)
@@ -854,7 +863,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, detail, heading, isMobileOpenTarget, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [candidates, detail, heading, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&

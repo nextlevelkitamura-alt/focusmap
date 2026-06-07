@@ -619,7 +619,7 @@ export function MindmapLinkedMemosDialog({
     await loadCodexActivity()
   }, [codexAiTaskId, hasCodexRun, loadCodexActivity, refreshAiTasks, target?.taskId])
 
-  const { trackManualHandoff, confirmManualHandoffNow } = useCodexManualHandoffConfirmation({
+  const { trackManualHandoff, confirmManualHandoffNow, markScreenSwitched } = useCodexManualHandoffConfirmation({
     onConfirmed: async () => {
       await refreshAiTasks()
       window.setTimeout(() => void loadCodexActivity(), 250)
@@ -839,9 +839,15 @@ export function MindmapLinkedMemosDialog({
           prompt,
           "urls" in target ? target.urls : undefined,
         )
+        if (openedViaNativeApp) {
+          markScreenSwitched("external_app_opened")
+        }
         if (!openedViaNativeApp) {
           void trackedTaskPromise.then(createdTask => {
-            if (createdTask) window.location.href = target.url
+            if (createdTask) {
+              markScreenSwitched("external_app_opened")
+              window.location.href = target.url
+            }
           })
         }
         await copyAttempt.finished.catch(() => false)
@@ -890,6 +896,9 @@ export function MindmapLinkedMemosDialog({
         void beginCopyPromptForCodexHandoff(prompt).finished
         if (openCodexMobileTargetViaFocusmapNativeApp(codexOpenTarget.url, prompt, "urls" in codexOpenTarget ? codexOpenTarget.urls : undefined)) {
           event?.preventDefault()
+          if (shouldConfirmManualHandoff) {
+            markScreenSwitched("external_app_opened")
+          }
         } else {
           event?.preventDefault()
           const navigate = () => {
