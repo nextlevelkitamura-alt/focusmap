@@ -13,6 +13,7 @@ const {
   setSourceTask,
   setThreadRow,
   setRolloutRaw,
+  setAiTaskUpdateError,
   getAiTaskUpdates,
   getSourceTaskUpdates,
   resetState,
@@ -21,6 +22,7 @@ const {
   let sourceTask: Record<string, unknown> | null = null
   let threadRow: Record<string, unknown> | null = null
   let sourceTaskUpdateId: string | null = null
+  let aiTaskUpdateError: { message: string } | null = null
   const aiTaskUpdates: Record<string, unknown>[] = []
   const sourceTaskUpdates: Array<{ id: string | null; payload: Record<string, unknown> }> = []
   let rolloutRaw = ''
@@ -48,7 +50,7 @@ const {
     update: (payload: Record<string, unknown>) => {
       aiTaskUpdates.push(payload)
       const builder: Record<string, unknown> = {}
-      builder.eq = () => thenable({ error: null })
+      builder.eq = () => thenable({ error: aiTaskUpdateError })
       return builder
     },
   }
@@ -108,6 +110,7 @@ const {
     setSourceTask: (value: Record<string, unknown> | null) => { sourceTask = value },
     setThreadRow: (value: Record<string, unknown> | null) => { threadRow = value },
     setRolloutRaw: (value: string) => { rolloutRaw = value },
+    setAiTaskUpdateError: (value: { message: string } | null) => { aiTaskUpdateError = value },
     getAiTaskUpdates: () => aiTaskUpdates,
     getSourceTaskUpdates: () => sourceTaskUpdates,
     resetState: () => {
@@ -115,6 +118,7 @@ const {
       sourceTask = null
       threadRow = null
       sourceTaskUpdateId = null
+      aiTaskUpdateError = null
       aiTaskUpdates.length = 0
       sourceTaskUpdates.length = 0
       rolloutRaw = ''
@@ -198,9 +202,11 @@ function baseTask(overrides: Record<string, unknown> = {}) {
 function postRequest(
   url = 'http://localhost:3001/api/codex/sync-node',
   body: Record<string, unknown> = { ai_task_id: 'ai-task-1' },
+  headers: Record<string, string> = {},
 ) {
   return new NextRequest(url, {
     method: 'POST',
+    headers,
     body: JSON.stringify(body),
   })
 }
@@ -419,6 +425,11 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
       codex_run_state: 'awaiting_approval',
       codex_review_reason: 'completed',
+      progress_summary: expect.objectContaining({
+        state: 'needs_review',
+        current_step: '完了確認',
+        can_mark_completed: true,
+      }),
       codex_visible_messages: [expect.objectContaining({
         role: 'codex',
         kind: 'question',
@@ -430,5 +441,146 @@ describe('/api/codex/sync-node Codex thread closure', () => {
       body: expect.stringContaining('アンドラについて'),
       createdAt: '2026-06-06T17:31:01.798Z',
     }))
+  })
+
+  test('allows local sync through the Host header when nextUrl is a dev bind host', async () => {
+    process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_SYNC = 'false'
+    setThreadRow({
+      id: 'thread-1',
+      title: '調べて',
+      tokens_used: 10,
+      has_user_event: 1,
+      archived: 0,
+      updated_at_ms: Date.parse('2026-06-07T00:01:00.000Z'),
+      preview: 'done',
+      rollout_path: '/tmp/rollout.jsonl',
+      source: 'codex_app',
+      cwd: '/repo',
+      first_user_message: '調べて',
+    })
+    setRolloutRaw(JSON.stringify({
+      timestamp: '2026-06-07T00:01:00.000Z',
+      type: 'event_msg',
+      payload: { type: 'agent_message', message: '作業中です' },
+    }))
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest('http://0.0.0.0:3001/api/codex/sync-node', {
+      ai_task_id: 'ai-task-1',
+    }, {
+      host: 'localhost:3001',
+    }))
+    const json = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(json.synced).toBe(true)
+  })
+
+  test('refreshes stale progress summary even when status and thread are unchanged', async () => {
+    setAiTask(baseTask({
+      status: 'awaiting_approval',
+      codex_thread_id: 'thread-1',
+      result: {
+        codex_manual_handoff: true,
+        codex_thread_id: 'thread-1',
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: 'completed',
+        current_step: '完了確認',
+        progress_summary: {
+          state: 'needs_review',
+          current_step: 'ChatGPT/Codexアプリで確認待ち',
+          summary: '古いhandoff文',
+          can_mark_completed: false,
+          last_activity_at: '2026-06-07T09:04:03.000Z',
+          session_health: 'transcript_only',
+        },
+      },
+    }))
+    setThreadRow({
+      id: 'thread-1',
+      title: '調べて',
+      tokens_used: 10,
+      has_user_event: 1,
+      archived: 0,
+      updated_at_ms: Date.parse('2026-06-07T09:04:16.000Z'),
+      preview: '調べて',
+      rollout_path: '/tmp/rollout.jsonl',
+      source: 'codex_app',
+      cwd: '/repo',
+      first_user_message: '調べて',
+    })
+    setRolloutRaw(JSON.stringify({
+      timestamp: '2026-06-07T09:04:16.000Z',
+      type: 'event_msg',
+      payload: { type: 'task_complete', last_agent_message: '調査しました。' },
+    }))
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest('http://localhost:3001/api/codex/sync-node', {
+      ai_task_id: 'ai-task-1',
+      include_visible_activity: true,
+    }))
+
+    expect(response.status).toBe(200)
+    expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
+      progress_summary: expect.objectContaining({
+        current_step: '完了確認',
+        summary: expect.stringContaining('Codex.appは確認待ちです'),
+        can_mark_completed: true,
+        session_health: 'stopped',
+      }),
+    }))
+  })
+
+  test('returns an error instead of pretending sync succeeded when ai_tasks update fails', async () => {
+    setAiTask(baseTask({
+      codex_thread_id: null,
+      result: {
+        codex_manual_handoff: true,
+        codex_run_state: 'awaiting_approval',
+        awaiting_approval_at: '2026-06-07T09:04:03.000Z',
+      },
+      status: 'awaiting_approval',
+    }))
+    setThreadRow({
+      id: 'thread-1',
+      title: '調べて',
+      tokens_used: 10,
+      has_user_event: 1,
+      archived: 0,
+      updated_at_ms: Date.parse('2026-06-07T09:04:16.000Z'),
+      preview: '調べて',
+      rollout_path: '/tmp/rollout.jsonl',
+      source: 'codex_app',
+      cwd: '/repo',
+      first_user_message: '調べて',
+    })
+    setRolloutRaw([
+      JSON.stringify({
+        timestamp: '2026-06-07T09:04:11.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started' },
+      }),
+      JSON.stringify({
+        timestamp: '2026-06-07T09:04:16.000Z',
+        type: 'event_msg',
+        payload: { type: 'agent_message', message: '調査しました。' },
+      }),
+    ].join('\n'))
+    setAiTaskUpdateError({ message: 'Service for this project is restricted' })
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest('http://localhost:3001/api/codex/sync-node', {
+      ai_task_id: 'ai-task-1',
+      include_visible_activity: true,
+    }))
+    const json = await response.json()
+
+    expect(response.status).toBe(500)
+    expect(json.error).toBe('Codex state update failed')
+    expect(getAiTaskUpdates()[0]).toEqual(expect.objectContaining({
+      codex_thread_id: 'thread-1',
+    }))
+    expect(mockInsertActivity).not.toHaveBeenCalled()
   })
 })

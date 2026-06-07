@@ -9,7 +9,7 @@ import {
   type AiTaskActivityKind,
   type AiTaskActivityRole,
 } from '@/lib/ai-task-activity'
-import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
+import { isLocalCodexOpenRequestHost } from '@/lib/codex-app-launch'
 import {
   detectCodexResumeAfterApproval,
   parseCodexRollout,
@@ -60,7 +60,11 @@ type CodexThreadRow = CodexThreadSnapshot & {
 
 function canUseLocalSync(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_SYNC === 'true') return true
-  return isLocalCodexOpenHost(req.nextUrl.hostname)
+  return isLocalCodexOpenRequestHost({
+    nextHostname: req.nextUrl.hostname,
+    host: req.headers.get('host'),
+    forwardedHost: req.headers.get('x-forwarded-host'),
+  })
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -356,6 +360,48 @@ function codexPulseSummary(state: CodexRunState | 'prompt_waiting', reason: Code
   return `Codex.appは送信待ちです。${activity}`
 }
 
+function codexProgressSummary(input: {
+  current: Record<string, unknown>
+  state: CodexRunState | 'prompt_waiting'
+  currentStep: string
+  summary: string
+  lastActivityAt: string | null
+  nowIso: string
+}) {
+  const previous = asRecord(input.current.progress_summary)
+  const previousProgressPercent = typeof previous.progress_percent === 'number'
+    ? previous.progress_percent
+    : null
+  const state = input.state === 'running'
+    ? 'running'
+    : input.state === 'awaiting_approval'
+      ? 'needs_review'
+      : 'not_started'
+  return {
+    ...previous,
+    state,
+    progress_percent: input.state === 'awaiting_approval'
+      ? 100
+      : input.state === 'running'
+        ? Math.max(10, Math.min(previousProgressPercent ?? 50, 95))
+        : 0,
+    summary: input.summary,
+    current_step: input.currentStep,
+    evidence: 'Focusmap synced the Codex.app thread and rollout from the local Codex state.',
+    recommended_action: input.state === 'running'
+      ? 'Codex.app側の実行完了を待ってください。'
+      : input.state === 'awaiting_approval'
+        ? 'Codexの返答を確認してください。'
+        : 'Codex.appでプロンプトを送信してください。',
+    can_mark_completed: input.state === 'awaiting_approval',
+    confidence: typeof previous.confidence === 'number' ? Math.max(previous.confidence, 0.8) : 0.8,
+    checked_at: input.nowIso,
+    source: 'rule',
+    last_activity_at: input.lastActivityAt,
+    session_health: input.state === 'running' ? 'active' : input.state === 'awaiting_approval' ? 'stopped' : 'unknown',
+  }
+}
+
 function codexClosureStep(reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>): string {
   return reason === 'archived'
     ? 'Codex threadがアーカイブされたため完了しました'
@@ -399,6 +445,16 @@ function visibleMessagesChanged(previous: unknown, next: Array<Record<string, un
   const nextMessages = normalize(next)
   if (previousMessages.length !== nextMessages.length) return true
   return JSON.stringify(previousMessages) !== JSON.stringify(nextMessages)
+}
+
+function progressSummaryChanged(previous: unknown, next: Record<string, unknown>) {
+  const current = asRecord(previous)
+  return current.state !== next.state ||
+    current.current_step !== next.current_step ||
+    current.summary !== next.summary ||
+    current.last_activity_at !== next.last_activity_at ||
+    current.can_mark_completed !== next.can_mark_completed ||
+    current.session_health !== next.session_health
 }
 
 async function mirrorCodexSyncToTurso(input: {
@@ -922,6 +978,14 @@ export async function POST(req: NextRequest) {
   }
 
   const shouldRecordProgress = codexState === 'running' && shouldWriteProgressActivity(current, currentStep, nowMs)
+  const nextProgressSummary = codexProgressSummary({
+    current,
+    state: codexState,
+    currentStep,
+    summary,
+    lastActivityAt,
+    nowIso,
+  })
   const result = {
     ...current,
     executor: task.executor,
@@ -937,6 +1001,7 @@ export async function POST(req: NextRequest) {
       ? 'Codex セッションは確認待ちです。内容を確認して完了にしてください。'
       : summary,
     current_step: currentStep,
+    progress_summary: nextProgressSummary,
     ...(shouldPersistVisibleMessagesFallback
       ? { codex_visible_messages: compactVisibleMessages }
       : Array.isArray(current.codex_visible_messages)
@@ -972,10 +1037,11 @@ export async function POST(req: NextRequest) {
     resumedFromApproval ||
     previousRunState !== codexState ||
     current.current_step !== currentStep ||
+    progressSummaryChanged(current.progress_summary, nextProgressSummary) ||
     shouldPersistVisibleMessagesFallback
 
   if (shouldUpdateSupabase) {
-    await supabase
+    const { error: updateError } = await supabase
       .from('ai_tasks')
       .update({
         status: nextStatus,
@@ -984,6 +1050,11 @@ export async function POST(req: NextRequest) {
         result,
       })
       .eq('id', task.id)
+
+    if (updateError) {
+      console.error('[codex/sync-node update]', updateError.message)
+      return NextResponse.json({ error: 'Codex state update failed' }, { status: 500 })
+    }
   }
 
   const shouldMirrorToTurso =

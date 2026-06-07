@@ -8,6 +8,7 @@ import {
   buildCodexOpenTarget,
   detectMobilePlatform,
   isLocalCodexOpenHost,
+  isLocalCodexOpenRequestHost,
   launchCodexViaLocalApi,
   openCodexMobileTargetViaFocusmapNativeApp,
 } from "./codex-app-launch"
@@ -20,8 +21,11 @@ afterEach(() => {
 describe("isLocalCodexOpenHost", () => {
   test("allows localhost, Mac Bonjour hosts, and Cloudflare phone preview hosts", () => {
     expect(isLocalCodexOpenHost("localhost")).toBe(true)
+    expect(isLocalCodexOpenHost("localhost:3001")).toBe(true)
     expect(isLocalCodexOpenHost("127.0.0.1")).toBe(true)
+    expect(isLocalCodexOpenHost("http://127.0.0.1:3001")).toBe(true)
     expect(isLocalCodexOpenHost("naononmac.local")).toBe(true)
+    expect(isLocalCodexOpenHost("naononmac.local:3001")).toBe(true)
     expect(isLocalCodexOpenHost("abc-123.trycloudflare.com")).toBe(true)
   })
 
@@ -29,6 +33,24 @@ describe("isLocalCodexOpenHost", () => {
     expect(isLocalCodexOpenHost("focusmap.example.com")).toBe(false)
     expect(isLocalCodexOpenHost("local.evil.example")).toBe(false)
     expect(isLocalCodexOpenHost("trycloudflare.com.evil.example")).toBe(false)
+  })
+
+  test("checks request host headers when Next normalizes nextUrl to a bind host", () => {
+    expect(isLocalCodexOpenRequestHost({
+      nextHostname: "0.0.0.0",
+      host: "localhost:3001",
+      forwardedHost: null,
+    })).toBe(true)
+    expect(isLocalCodexOpenRequestHost({
+      nextHostname: "0.0.0.0",
+      host: null,
+      forwardedHost: "naononmac.local:3001",
+    })).toBe(true)
+    expect(isLocalCodexOpenRequestHost({
+      nextHostname: "0.0.0.0",
+      host: "focusmap.example.com",
+      forwardedHost: null,
+    })).toBe(false)
   })
 })
 

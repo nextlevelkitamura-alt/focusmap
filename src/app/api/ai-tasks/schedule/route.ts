@@ -3,7 +3,7 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { insertAiTaskActivityMessage } from '@/lib/ai-task-activity'
-import { isLocalCodexOpenHost } from '@/lib/codex-app-launch'
+import { isLocalCodexOpenRequestHost } from '@/lib/codex-app-launch'
 import { createClient } from '@/utils/supabase/server'
 import { normalizeVisibility, resolveAiTaskSpaceId } from '@/lib/space-access'
 import { authenticateSupabaseRequest } from '@/lib/auth/verify-supabase-jwt'
@@ -57,7 +57,11 @@ function requestImmediateCodexAppDispatch(taskId: string): void {
 
 function canUseLocalDispatch(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_DISPATCH === 'true') return true
-  return isLocalCodexOpenHost(req.nextUrl.hostname)
+  return isLocalCodexOpenRequestHost({
+    nextHostname: req.nextUrl.hostname,
+    host: req.headers.get('host'),
+    forwardedHost: req.headers.get('x-forwarded-host'),
+  })
 }
 
 function taskProgressSource(input: {

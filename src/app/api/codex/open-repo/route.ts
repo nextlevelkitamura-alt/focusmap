@@ -4,7 +4,7 @@ import os from "os"
 import path from "path"
 import { promisify } from "util"
 import { NextRequest, NextResponse } from "next/server"
-import { isLocalCodexOpenHost } from "@/lib/codex-app-launch"
+import { isLocalCodexOpenRequestHost } from "@/lib/codex-app-launch"
 import { createClient } from "@/utils/supabase/server"
 
 export const runtime = "nodejs"
@@ -40,7 +40,11 @@ async function activateCodexApp(): Promise<boolean> {
 
 function canOpenLocalApp(req: NextRequest): boolean {
   if (process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_APP_OPEN === "true") return true
-  return isLocalCodexOpenHost(req.nextUrl.hostname)
+  return isLocalCodexOpenRequestHost({
+    nextHostname: req.nextUrl.hostname,
+    host: req.headers.get("host"),
+    forwardedHost: req.headers.get("x-forwarded-host"),
+  })
 }
 
 function expandHome(input: string): string {

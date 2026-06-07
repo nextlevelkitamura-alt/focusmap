@@ -37,10 +37,40 @@ type FocusmapNativeAppMessage =
   | { type: "focusmap:openExternal"; url: string; urls?: string[] }
 
 export function isLocalCodexOpenHost(hostname: string) {
-  const normalized = hostname.trim().toLowerCase()
+  const normalized = normalizeHostForCodexOpen(hostname)
   if (!normalized) return false
   if (LOCAL_CODEX_API_HOSTS.has(normalized)) return true
   return LOCAL_CODEX_PREVIEW_HOST_SUFFIXES.some(suffix => normalized.endsWith(suffix))
+}
+
+export function normalizeHostForCodexOpen(hostnameOrHost: string | null | undefined) {
+  const first = (hostnameOrHost ?? "").split(",")[0]?.trim().toLowerCase() ?? ""
+  if (!first) return ""
+
+  const withoutProtocol = first.includes("://")
+    ? (() => {
+        try {
+          return new URL(first).host
+        } catch {
+          return first.replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+        }
+      })()
+    : first
+
+  if (withoutProtocol.startsWith("[")) {
+    const end = withoutProtocol.indexOf("]")
+    return end > 0 ? withoutProtocol.slice(1, end) : withoutProtocol
+  }
+
+  return withoutProtocol.split(":")[0] ?? ""
+}
+
+export function isLocalCodexOpenRequestHost(input: {
+  nextHostname?: string | null
+  host?: string | null
+  forwardedHost?: string | null
+}) {
+  return [input.nextHostname, input.host, input.forwardedHost].some(value => isLocalCodexOpenHost(value ?? ""))
 }
 
 export function normalizeCodexPrompt(value: string) {
