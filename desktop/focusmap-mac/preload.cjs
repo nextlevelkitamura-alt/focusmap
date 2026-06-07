@@ -8,4 +8,7 @@ contextBridge.exposeInMainWorld('focusmapDesktop', {
   saveAuthSession: (session) => ipcRenderer.invoke('focusmap-desktop:saveAuthSession', session),
   loadAuthSession: () => ipcRenderer.invoke('focusmap-desktop:loadAuthSession'),
   clearAuthSession: () => ipcRenderer.invoke('focusmap-desktop:clearAuthSession'),
+  getAutomationStatus: () => ipcRenderer.invoke('focusmap-desktop:getAutomationStatus'),
+  connectAutomation: () => ipcRenderer.invoke('focusmap-desktop:connectAutomation'),
+  disconnectAutomation: () => ipcRenderer.invoke('focusmap-desktop:disconnectAutomation'),
 });

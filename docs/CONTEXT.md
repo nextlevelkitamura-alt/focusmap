@@ -227,6 +227,7 @@ Goals → Projects → TaskGroups → Tasks
 #### Codex/Macローカル連携 一本化方針
 
 - Focusmap MacアプリをローカルSupervisorにする。起動時にNext 3001、`focusmap-agent`、Codex app-server `ws://127.0.0.1:7878`、ローカルログ `~/.focusmap/logs/`、必要権限を確認し、足りないものは一つの状態として見せる。
+- 設定 > 自動化の先頭には `Mac / Codex Connection` カードを置く。Focusmap Macアプリ内ではElectron preloadの `window.focusmapDesktop.getAutomationStatus()` / `connectAutomation()` / `disconnectAutomation()` で、Next 3001、Macアプリ管理下の `focusmap-agent`、Codex app-serverを5秒ごとに診断し、接続/切断を一発操作できる。通常ブラウザ・Cloud Run・スマホではこのIPCは存在しないため、ローカルMacを停止/起動するAPIを公開せず、従来のrunner heartbeat表示と手動ハンドオフを維持する。
 - Codex状態の通常writerはMac側の単一monitorに寄せる。monitorはapp-server通知、`~/.codex/state_5.sqlite`、rollout JSONLを観測し、`codex_thread_id`、status、current_step、summary、activityを軽量payloadでTurso/Supabaseへ反映する。同じtaskに対して複数monitorが書かないようlock/leaseを持つ。
 - UIはCodex内部ファイルを直接監視しない。通常の3秒更新は `/api/task-progress/snapshot` と `/api/ai-tasks/[id]/activity` の読み取り専用にし、表示中であることを理由にsqlite/rollout探索やDB writeを起こさない。
 - `/api/codex/sync-node` と `scripts/task-runner.ts` のCodex監視は移行期間の互換、手動sync now、debug fallbackとして扱う。Mac supervisor monitorが所有するtaskでは重複書き込みを避ける。

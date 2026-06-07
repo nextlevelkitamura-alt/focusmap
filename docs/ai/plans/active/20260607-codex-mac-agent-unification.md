@@ -1,7 +1,7 @@
 # Codex/Macローカル連携 一本化計画
 
 - Task ID: `TASK-20260607-004`
-- Status: `planned`
+- Status: `in_progress`
 - Created: `2026-06-07`
 - Board: `docs/ai/task-board.md`
 - Parent chat: task-router parent chat
@@ -153,6 +153,10 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 - `npm run mac:dev`
 - `curl http://127.0.0.1:3001/api/desktop/health`
 - `git diff --check`
+
+## Progress
+
+- 2026-06-07: Phase 1の設定UI入り口として、Focusmap MacアプリのElectron IPCに `getAutomationStatus` / `connectAutomation` / `disconnectAutomation` を追加し、設定 > 自動化の先頭へ `Mac / Codex Connection` カードを追加した。カードはNext 3001、Macアプリ管理下の `focusmap-agent`、Codex app-serverを5秒ごとに診断し、Macアプリ内だけで接続/切断できる。通常ブラウザ、Cloud Run、スマホからローカルMacを制御するAPIは追加していない。
 
 ## リスク
 

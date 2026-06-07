@@ -3,12 +3,12 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import type { ComponentType, ReactNode } from "react"
-import { CheckCircle2, Chrome, Clipboard, Cloud, DownloadCloud, KeyRound, Play, RefreshCw, ShieldCheck, Terminal, Workflow } from "lucide-react"
+import { Bot, CheckCircle2, Chrome, Clipboard, Cloud, DownloadCloud, KeyRound, Laptop, Play, Power, PowerOff, RefreshCw, ShieldCheck, Terminal, WifiOff, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AutomationStatusPanel } from "@/components/chat/automation-status-panel"
 import { ScanSettingsSection } from "@/components/settings/scan-settings-section"
 import { AgentStatusBadge } from "@/components/settings/agent-status-badge"
-import { startCalendarOAuth } from "@/lib/external-auth-launch"
+import { startCalendarOAuth, type FocusmapDesktopAutomationStatus } from "@/lib/external-auth-launch"
 
 interface SpaceOption {
   id: string
@@ -39,6 +39,196 @@ function SettingBlock({
         </div>
       </div>
       {children && <div className="mt-4">{children}</div>}
+    </section>
+  )
+}
+
+function formatStatusTime(value: string | null | undefined) {
+  if (!value) return "未取得"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "未取得"
+  return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+}
+
+function statusTone(ready: boolean | undefined) {
+  return ready
+    ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+    : "border-zinc-700 bg-black/30 text-zinc-400"
+}
+
+function MacConnectionItem({
+  icon: Icon,
+  label,
+  ready,
+  detail,
+}: {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  ready: boolean | undefined
+  detail: string
+}) {
+  return (
+    <div className={`rounded-md border p-3 ${statusTone(ready)}`}>
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 truncate text-sm font-medium text-zinc-100">{label}</span>
+        <span className="ml-auto shrink-0 rounded-full bg-black/25 px-2 py-0.5 text-[10px]">
+          {ready ? "接続中" : "未接続"}
+        </span>
+      </div>
+      <p className="mt-2 min-h-8 text-xs leading-4 text-zinc-400">{detail}</p>
+    </div>
+  )
+}
+
+function agentDetail(status: FocusmapDesktopAutomationStatus | null) {
+  const agent = status?.agent
+  if (!agent) return "Macアプリから状態を取得していません。"
+  if (agent.ready) return "このMacアプリからfocusmap-agentを起動しています。"
+  if (!agent.configured) return "~/.focusmap/config.json がまだありません。"
+  if (!agent.available) return "focusmap-agentのビルドが見つかりません。"
+  return "停止中です。接続で起動できます。"
+}
+
+function codexDetail(status: FocusmapDesktopAutomationStatus | null) {
+  const codex = status?.codex
+  if (!codex) return "Macアプリから状態を取得していません。"
+  if (codex.ready && codex.managed) return "このMacアプリからCodex app-serverを起動しています。"
+  if (codex.ready) return "Codex app-serverに接続できます。"
+  if (!codex.available) return "Codex.app または codex CLI が見つかりません。"
+  if (!codex.scriptAvailable) return "起動スクリプトが見つかりません。"
+  return "停止中です。接続で起動できます。"
+}
+
+function appDetail(status: FocusmapDesktopAutomationStatus | null) {
+  const app = status?.app
+  if (!app) return "Macアプリから状態を取得していません。"
+  if (app.ready) return `${app.origin ?? "localhost"} をMacアプリが管理しています。`
+  return "ローカルWebのhealth確認ができていません。"
+}
+
+function MacCodexConnectionPanel() {
+  const [status, setStatus] = useState<FocusmapDesktopAutomationStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [bridgeAvailable, setBridgeAvailable] = useState(false)
+  const [action, setAction] = useState<"connect" | "disconnect" | "refresh" | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const loadStatus = async (silent = false) => {
+    if (typeof window === "undefined") return
+    const bridge = window.focusmapDesktop
+    if (!bridge?.getAutomationStatus) {
+      setBridgeAvailable(false)
+      setLoading(false)
+      return
+    }
+
+    setBridgeAvailable(true)
+    if (!silent) setLoading(true)
+    try {
+      const next = await bridge.getAutomationStatus()
+      setStatus(next)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Mac連携状態の取得に失敗しました")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadStatus()
+    const id = window.setInterval(() => void loadStatus(true), 5_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const runDesktopAction = async (nextAction: "connect" | "disconnect" | "refresh") => {
+    if (typeof window === "undefined") return
+    const bridge = window.focusmapDesktop
+    setAction(nextAction)
+    setMessage(null)
+    try {
+      if (nextAction === "refresh") {
+        await loadStatus(true)
+        setMessage("Mac連携状態を更新しました。")
+        return
+      }
+      const handler = nextAction === "connect" ? bridge?.connectAutomation : bridge?.disconnectAutomation
+      if (!handler) {
+        setMessage("Focusmap Macアプリから開くと操作できます。")
+        return
+      }
+      const result = await handler()
+      if (result.status) setStatus(result.status)
+      setMessage(result.message)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Mac連携操作に失敗しました")
+    } finally {
+      setAction(null)
+      setLoading(false)
+    }
+  }
+
+  const connected = Boolean(status?.connected)
+  const canDisconnect = Boolean(status?.agent.managed || status?.codex.managed)
+
+  return (
+    <section className="rounded-lg border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${connected ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-800 text-zinc-300"}`}>
+            {connected ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
+          </span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium uppercase text-zinc-500">Mac / Codex Connection</p>
+            <h2 className="text-base font-semibold text-zinc-50">
+              {bridgeAvailable ? (connected ? "MacBookに接続中" : "MacBookは一部未接続") : "Macアプリ未接続"}
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-zinc-400">
+              Focusmap Macアプリ、focusmap-agent、Codex app-server の状態を同じ場所で確認します。
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            className="h-11 gap-1.5"
+            onClick={() => void runDesktopAction("connect")}
+            disabled={!bridgeAvailable || action !== null}
+          >
+            <Power className="h-4 w-4" />
+            {action === "connect" ? "接続中..." : "接続"}
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 gap-1.5"
+            onClick={() => void runDesktopAction("disconnect")}
+            disabled={!bridgeAvailable || !canDisconnect || action !== null}
+          >
+            <PowerOff className="h-4 w-4" />
+            {action === "disconnect" ? "切断中..." : "切断"}
+          </Button>
+          <Button
+            variant="outline"
+            className="h-11 gap-1.5"
+            onClick={() => void runDesktopAction("refresh")}
+            disabled={!bridgeAvailable || action !== null}
+          >
+            <RefreshCw className={`h-4 w-4 ${action === "refresh" || loading ? "animate-spin" : ""}`} />
+            診断更新
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <MacConnectionItem icon={Laptop} label="Focusmap 3001" ready={status?.app.ready} detail={appDetail(status)} />
+        <MacConnectionItem icon={Workflow} label="focusmap-agent" ready={status?.agent.ready} detail={agentDetail(status)} />
+        <MacConnectionItem icon={Bot} label="Codex app-server" ready={status?.codex.ready} detail={codexDetail(status)} />
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2 text-xs leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">
+        <span>{bridgeAvailable ? `最終診断: ${formatStatusTime(status?.timestamp)}` : "Focusmap Macアプリ内で開くと接続/切断できます。"}</span>
+        {message && <span className="text-zinc-300">{message}</span>}
+      </div>
     </section>
   )
 }
@@ -148,6 +338,8 @@ function FocusmapLiteInstallPanel() {
 export function AutomationSettings() {
   return (
     <div className="space-y-5">
+      <MacCodexConnectionPanel />
+
       {/* 常駐エージェントの最上位ステータス (5秒polling) */}
       <AgentStatusBadge />
 

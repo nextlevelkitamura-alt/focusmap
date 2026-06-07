@@ -16,43 +16,6 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_U
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '')
 
-declare global {
-    interface Window {
-        focusmapDesktop?: {
-            openExternal?: (url: string) => Promise<unknown>
-            getWebAuthOrigin?: () => Promise<string>
-            consumeAuthSession?: (nonce: string, origin?: string) => Promise<{
-                ok: boolean
-                status: number
-                payload?: {
-                    error?: string
-                    access_token?: string
-                    refresh_token?: string
-                    user_id?: string
-                    status?: string
-                } | null
-            }>
-            saveAuthSession?: (session: {
-                access_token: string
-                refresh_token: string
-                expires_at?: number | null
-                user_id?: string | null
-            }) => Promise<{ ok: boolean; error?: string }>
-            loadAuthSession?: () => Promise<{
-                ok: boolean
-                error?: string
-                session?: {
-                    access_token: string
-                    refresh_token: string
-                    expires_at?: number | null
-                    user_id?: string | null
-                } | null
-            }>
-            clearAuthSession?: () => Promise<{ ok: boolean; error?: string }>
-        }
-    }
-}
-
 function getAuthCallbackUrl(options?: { desktop?: boolean; nativeApp?: 'ios'; nonce?: string; next?: string }) {
     const origin = options?.desktop ? location.origin : SITE_URL || location.origin
     const url = new URL('/auth/callback', origin)

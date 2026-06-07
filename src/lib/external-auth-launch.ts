@@ -5,6 +5,16 @@ declare global {
     focusmapDesktop?: {
       openExternal?: (url: string) => Promise<unknown>
       getWebAuthOrigin?: () => Promise<string>
+      getAutomationStatus?: () => Promise<FocusmapDesktopAutomationStatus>
+      connectAutomation?: () => Promise<FocusmapDesktopAutomationActionResult>
+      disconnectAutomation?: () => Promise<FocusmapDesktopAutomationActionResult>
+      saveAuthSession?: (session: FocusmapDesktopAuthSession) => Promise<{ ok: boolean; error?: string }>
+      loadAuthSession?: () => Promise<{
+        ok: boolean
+        error?: string
+        session?: FocusmapDesktopAuthSession | null
+      }>
+      clearAuthSession?: () => Promise<{ ok: boolean; error?: string }>
       consumeAuthSession?: (nonce: string, origin?: string) => Promise<{
         ok: boolean
         status: number
@@ -21,6 +31,47 @@ declare global {
       postMessage: (message: string) => void
     }
   }
+}
+
+export type FocusmapDesktopAuthSession = {
+  access_token: string
+  refresh_token: string
+  expires_at?: number | null
+  user_id?: string | null
+}
+
+export type FocusmapDesktopAutomationServiceStatus = {
+  ready?: boolean
+  managed?: boolean
+  configured?: boolean
+  available?: boolean
+  scriptAvailable?: boolean
+  origin?: string
+  port?: number
+  configPath?: string
+  cliPath?: string
+  scriptPath?: string
+}
+
+export type FocusmapDesktopAutomationStatus = {
+  ok: boolean
+  available: boolean
+  connected: boolean
+  timestamp: string
+  app: FocusmapDesktopAutomationServiceStatus
+  agent: FocusmapDesktopAutomationServiceStatus
+  codex: FocusmapDesktopAutomationServiceStatus
+  paths?: {
+    repoRoot?: string
+    logPath?: string
+  }
+}
+
+export type FocusmapDesktopAutomationActionResult = {
+  ok: boolean
+  message: string
+  status?: FocusmapDesktopAutomationStatus
+  results?: Record<string, { ok: boolean; message: string }>
 }
 
 function currentSearchParams() {

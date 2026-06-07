@@ -162,6 +162,29 @@ function isChildRunning(child) {
   return Boolean(child && child.exitCode === null && !child.killed);
 }
 
+function serviceResult(ok, message, extra = {}) {
+  return { ok, message, ...extra };
+}
+
+function stopManagedProcess(processKey, label) {
+  const child = managedProcesses[processKey];
+  if (!isChildRunning(child)) {
+    managedProcesses[processKey] = null;
+    return serviceResult(true, `${label}はこのMacアプリからは起動していません`);
+  }
+
+  try {
+    child.kill('SIGTERM');
+    managedProcesses[processKey] = null;
+    log(processKey, `${label}を停止しました`);
+    return serviceResult(true, `${label}を停止しました`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(processKey, `${label}停止失敗: ${message}`);
+    return serviceResult(false, `${label}停止失敗: ${message}`);
+  }
+}
+
 function commandExists(command) {
   return new Promise((resolve) => {
     execFile('/usr/bin/env', ['which', command], { timeout: 3000 }, (error) => {
@@ -694,6 +717,102 @@ async function startCodexServer() {
   return { ok: true, message: 'Codex app-serverを起動しました' };
 }
 
+async function getAutomationStatus() {
+  const [appReady, codexReady, codexCommandAvailable] = await Promise.all([
+    desktopHealthReady(800).catch(() => false),
+    tcpReady('127.0.0.1', 7878, 500),
+    commandExists('codex'),
+  ]);
+  const agentManaged = isChildRunning(managedProcesses.agent);
+  const codexManaged = isChildRunning(managedProcesses.codex);
+
+  return {
+    ok: true,
+    available: true,
+    connected: Boolean(appReady && agentManaged && codexReady),
+    timestamp: new Date().toISOString(),
+    app: {
+      ready: appReady,
+      managed: isChildRunning(managedProcesses.next),
+      origin: APP_ORIGIN,
+      port: APP_PORT,
+    },
+    agent: {
+      ready: agentManaged,
+      managed: agentManaged,
+      configured: fs.existsSync(CONFIG_PATH),
+      available: fs.existsSync(AGENT_CLI),
+      configPath: CONFIG_PATH,
+      cliPath: AGENT_CLI,
+    },
+    codex: {
+      ready: codexReady,
+      managed: codexManaged,
+      available: fs.existsSync(CODEX_APP_BIN) || codexCommandAvailable,
+      scriptAvailable: fs.existsSync(CODEX_SERVER_SCRIPT),
+      scriptPath: CODEX_SERVER_SCRIPT,
+      port: 7878,
+    },
+    paths: {
+      repoRoot: REPO_ROOT,
+      logPath: path.join(os.homedir(), '.focusmap', 'logs', 'desktop-app.log'),
+    },
+  };
+}
+
+async function connectAutomation() {
+  const results = {};
+
+  try {
+    await ensureFocusmapApp();
+    results.app = serviceResult(true, 'FocusmapローカルWebは起動済みです');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    results.app = serviceResult(false, message);
+  }
+
+  try {
+    results.agent = await startAgent();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    results.agent = serviceResult(false, message);
+  }
+
+  try {
+    results.codex = await startCodexServer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    results.codex = serviceResult(false, message);
+  }
+
+  const status = await getAutomationStatus();
+  const ok = Boolean(results.app?.ok && results.agent?.ok && results.codex?.ok);
+  const failed = Object.values(results).filter((result) => result && result.ok === false);
+  return {
+    ok,
+    message: ok
+      ? 'Mac連携を開始しました'
+      : `Mac連携の開始に失敗した項目があります: ${failed.map((result) => result.message).join(' / ')}`,
+    results,
+    status,
+  };
+}
+
+async function disconnectAutomation() {
+  const results = {
+    agent: stopManagedProcess('agent', 'focusmap-agent'),
+    codex: stopManagedProcess('codex', 'Codex app-server'),
+  };
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const status = await getAutomationStatus();
+  return {
+    ok: Object.values(results).every((result) => result.ok),
+    message: 'このMacアプリが起動したAgent/Codex接続を停止しました',
+    results,
+    status,
+  };
+}
+
 async function consumeExternalAuthSession(_event, nonce, originInput) {
   if (typeof nonce !== 'string' || !nonce || nonce.length > 128) {
     return { ok: false, status: 400, payload: { error: 'nonce is required' } };
@@ -834,6 +953,9 @@ ipcMain.handle('focusmap-desktop:consumeAuthSession', consumeExternalAuthSession
 ipcMain.handle('focusmap-desktop:saveAuthSession', saveDesktopAuthSession);
 ipcMain.handle('focusmap-desktop:loadAuthSession', loadDesktopAuthSession);
 ipcMain.handle('focusmap-desktop:clearAuthSession', clearDesktopAuthSession);
+ipcMain.handle('focusmap-desktop:getAutomationStatus', getAutomationStatus);
+ipcMain.handle('focusmap-desktop:connectAutomation', connectAutomation);
+ipcMain.handle('focusmap-desktop:disconnectAutomation', disconnectAutomation);
 
 app.on('before-quit', () => {
   for (const name of Object.keys(managedProcesses)) {
