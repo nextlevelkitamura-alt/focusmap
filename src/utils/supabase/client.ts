@@ -16,10 +16,13 @@ let localDevSessionPromise: Promise<LocalDevSession | null> | null = null
 
 function isLocalDevBrowserHost() {
     if (typeof window === 'undefined') return false
+    const allowTunnel = process.env.NEXT_PUBLIC_FOCUSMAP_DEV_AUTH_ALLOW_TUNNEL === '1' ||
+        process.env.NEXT_PUBLIC_FOCUSMAP_DEV_AUTH_ALLOW_TUNNEL === 'true'
     return window.location.hostname === 'localhost' ||
         window.location.hostname === '127.0.0.1' ||
         window.location.hostname === '::1' ||
-        window.location.hostname.endsWith('.localhost')
+        window.location.hostname.endsWith('.localhost') ||
+        (allowTunnel && window.location.hostname.endsWith('.trycloudflare.com'))
 }
 
 async function getLocalDevSession() {

@@ -11,10 +11,8 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import {
-  appendCodexHandoffToken,
   beginCopyPromptForCodexHandoff,
   buildCodexOpenTarget,
-  buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
   copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
@@ -804,74 +802,18 @@ export function MindmapLinkedMemosDialog({
     setIsSending(true)
     setIsSaving(true)
     setError(null)
-    const isMobileHandoff = isLikelyMobileDevice()
-    const useLocalApi = canUseLocalCodexOpenApi() && !isMobileHandoff
-    const handoffToken = buildCodexHandoffToken(task.id)
-    const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
+    const prompt = basePrompt
     try {
-      const savePromise = saveDraft()
-      const taskPromise = isMobileHandoff
-        ? createCodexTask("manual", prompt, handoffToken)
-        : savePromise.then(() => createCodexTask("manual", prompt, handoffToken))
-      savePromise.catch(() => undefined)
-      const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
-
-      if (isMobileHandoff) {
-        const trackedTaskPromise = taskPromise
-          .then(createdTask => {
-            setJustSentPrompt(prompt)
-            void refreshAiTasks()
-            return createdTask
-          })
-          .catch((taskError: unknown) => {
-            if (document.visibilityState === "visible") {
-              setError(taskError instanceof Error ? taskError.message : "Codex送信準備に失敗しました")
-            }
-            return null
-          })
-        trackManualHandoff({ taskPromise: trackedTaskPromise })
-        const target = buildCodexOpenTarget(
-          { prompt, repoPath: selectedRepoPath, threadUrl: null },
-          { preferMobile: true, mobilePlatform: getCurrentMobilePlatform() },
-        )
-        const openedViaNativeApp = openCodexMobileTargetViaFocusmapNativeApp(
-          target.url,
-          prompt,
-          "urls" in target ? target.urls : undefined,
-        )
-        if (openedViaNativeApp) {
-          markScreenSwitched("external_app_opened")
-        }
-        if (!openedViaNativeApp) {
-          void trackedTaskPromise.then(createdTask => {
-            if (createdTask) {
-              markScreenSwitched("external_app_opened")
-              window.location.href = target.url
-            }
-          })
-        }
-        await copyAttempt.finished.catch(() => false)
-        await trackedTaskPromise
-        await refreshAiTasks()
-        return
-      }
-
-      await savePromise
-      await taskPromise
-      await copyAttempt.finished
+      await saveDraft()
+      await createCodexTask("auto", prompt)
       setJustSentPrompt(prompt)
       await refreshAiTasks()
-      if (useLocalApi) {
-        await launchCodexViaLocalApi({ prompt, repoPath: selectedRepoPath })
-      } else if (!isMobileHandoff) {
-        openCodexFromLinkedDialog(prompt, selectedRepoPath)
-      }
       window.setTimeout(() => void refreshAiTasks(), 1200)
       window.setTimeout(() => void refreshAiTasks(), 3500)
     } catch (err) {
       setError(err instanceof Error
-        ? `Codex.appで開始できませんでした。${err.message}`
-        : "Codex.appで開始できませんでした")
+        ? `Codexへ送信できませんでした。${err.message}`
+        : "Codexへ送信できませんでした")
     } finally {
       setIsSaving(false)
       setIsSending(false)
@@ -1044,7 +986,7 @@ export function MindmapLinkedMemosDialog({
                   <a
                     href={codexOpenTarget.url}
                     onClick={(event) => void handleOpenCodexThread(event)}
-                    aria-disabled={!codexThreadUrl && !codexManualHandoff}
+                    aria-disabled={!codexThreadUrl && !codexManualHandoff && !rawSentPrompt}
                     className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 text-sm font-medium text-white hover:bg-emerald-700 aria-disabled:pointer-events-none aria-disabled:opacity-50"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
@@ -1196,8 +1138,8 @@ export function MindmapLinkedMemosDialog({
                     disabled={!canSend}
                     className="w-full gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
                   >
-                    {isSending || isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
-                    {isMobileOpenTarget ? "Codexを開く" : "Codexで開始"}
+                    {isSending || isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
+                    Codexに送る
                   </Button>
                 </div>
               </div>

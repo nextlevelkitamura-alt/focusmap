@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+const PHONE_PREVIEW_HOST_SUFFIXES = ['.trycloudflare.com']
 
 export type LocalDevAuthUser = {
   id: string
@@ -42,7 +43,14 @@ export function isLocalDevAuthEnabled() {
 
 export function isLocalDevAuthHost(host: string | null | undefined) {
   const normalized = normalizeHost(host)
-  return LOCAL_HOSTS.has(normalized) || normalized.endsWith('.localhost')
+  if (LOCAL_HOSTS.has(normalized) || normalized.endsWith('.localhost')) return true
+  if (
+    enabled(process.env.FOCUSMAP_DEV_AUTH_ALLOW_TUNNEL) ||
+    enabled(process.env.NEXT_PUBLIC_FOCUSMAP_DEV_AUTH_ALLOW_TUNNEL)
+  ) {
+    return PHONE_PREVIEW_HOST_SUFFIXES.some(suffix => normalized.endsWith(suffix))
+  }
+  return false
 }
 
 export function getLocalDevAuthUser() {

@@ -914,7 +914,8 @@ export function WishlistView({
   }, [loadMemoCodexImages])
 
   // メモから AI エージェント（Claude / Codex）を起動
-  // Codex.app の標準導線は手動handoff。Focusmapはpromptと追跡taskだけ作る。
+  // Codex の標準導線はオンライン ai_tasks に積み、常駐Mac runnerがCodex.appへ送る。
+  // 手動handoffはMac runnerを使えない時のfallbackとして残す。
   const launchAiForMemo = useCallback(async (item: MemoItem, executor: 'claude' | 'codex' | 'codex_app' = 'claude') => {
     const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
     const repoPath = project?.repo_path
@@ -980,8 +981,8 @@ export function WishlistView({
     await registerTask()
   }, [buildMemoCodexHandoffText, openCodexHandoff, projects, refreshMemoAiTasks])
 
-  // 自動実行を復活させる場合は launchAiForMemo(item, 'codex') を明示導線に分ける。
-  const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
+  const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
+  const launchCodexManualForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex_app'), [launchAiForMemo])
 
   const copyCodexPromptForMemo = useCallback(async (item: MemoItem) => {
     const text = await buildMemoCodexHandoffText(item)
@@ -3119,6 +3120,7 @@ export function WishlistView({
         calendars={calendars}
         tagColors={tagColors}
         onLaunchCodex={launchCodexForMemo}
+        onLaunchCodexApp={launchCodexManualForMemo}
         onCopyCodexPrompt={copyCodexPromptForMemo}
         onReadyForAttachments={waitForMemoPersistence}
         onMemoChanged={fetchItems}

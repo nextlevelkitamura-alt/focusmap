@@ -2775,7 +2775,7 @@ export function WishlistCardDetail({
               const showPromptCopyButton = !!onCopyCodexPrompt && showCodexDetails && !isCodexRunning && (codexPromptWaiting || !!active || launchStep !== null || !!launchError)
               return (
                 <div className="space-y-3 rounded-lg border bg-background/40 p-3">
-                  {/* Codex 起動（codex に一本化。claude/codex_app は親から prop 未提供で非表示） */}
+                  {/* Codex 送信。codex_app は手動handoff fallbackとして親から渡された時だけ表示する。 */}
                   <div className="grid grid-cols-1 gap-2">
                     {onLaunchClaude && (
                     <Button
@@ -2829,7 +2829,7 @@ export function WishlistCardDetail({
                         className="min-h-[48px] gap-2 border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
                       >
                         {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                        <span className="font-semibold">Codexを開く</span>
+                        <span className="font-semibold">Codexに送る</span>
                       </Button>
                     )}
                   </div>
@@ -2850,7 +2850,7 @@ export function WishlistCardDetail({
                             : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中です（下に進行状況）`
                           : needsConfig
                             ? "プロジェクトまたはリポジトリパスが未設定です"
-                            : "プロンプトをコピーしてCodexを開きます"}
+                            : "オンラインAIタスクに追加し、MacのCodexへ送ります"}
                       </p>
                       {needsConfig && (
                         <Link
@@ -2954,13 +2954,13 @@ export function WishlistCardDetail({
                               : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
                             <span className={launchStep === 'sent' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}>
                               {launchStep === 'sent'
-                                ? `${launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Codex起動待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
-                                : (launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Codex起動済み' : '接続しました')}
+                                ? `${launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Mac送信待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
+                                : (launchExecutor === 'codex_app' ? 'プロンプト待ち' : isCodex ? 'Mac送信済み' : '接続しました')}
                             </span>
                           </div>
                           {launchStep === 'sent' && (
                             <div className="pl-5 space-y-1 text-[11px] text-muted-foreground">
-                              <p>{launchExecutor === 'codex_app' ? 'Codex側で内容を確認して送信してください' : isCodex ? 'Mac runnerがCodex.appへ送信します' : '通常15〜45秒かかります'}</p>
+                              <p>{launchExecutor === 'codex_app' ? 'Codex側で内容を確認して送信してください' : isCodex ? 'オンラインAIタスクをMac runnerが拾い、Codex.appへ送信します' : '通常15〜45秒かかります'}</p>
                               {(() => {
                                 const status = aiTask?.status
                                 if (status === 'running') return <p className="text-blue-500 dark:text-blue-400 font-medium">▶ {executorLabel} が実行中です{isCodex ? '' : ' — URLを取得中...'}</p>
@@ -3007,7 +3007,7 @@ export function WishlistCardDetail({
                         <div className="pl-1 text-[11px] text-muted-foreground space-y-0.5">
                           {launchExecutor === 'codex_app'
                             ? <p>✓ Codex.app が開きました。Mac で Enter を押すと実行開始します。</p>
-                            : <p>✓ プロンプトはコピー済みです。Codex側で送信すると、下のパネルに状態が同期されます。</p>
+                            : <p>✓ Codex実行をキューに追加しました。Mac側が実行し、下のパネルに状態が同期されます。</p>
                           }
                         </div>
                       )}

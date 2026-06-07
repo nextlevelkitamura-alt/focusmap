@@ -34,8 +34,9 @@ import { cn } from "@/lib/utils"
 import type { Task } from "@/types/database"
 import type { TaskProgressSnapshotTask } from "@/types/task-progress"
 
-const HEARTBEAT_ONLINE_WINDOW_MS = 20_000
-const HEARTBEAT_POLL_INTERVAL_MS = 5_000
+const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
+const HEARTBEAT_POLL_INTERVAL_MS = 30_000
+const HEARTBEAT_POLL_LABEL = "Mac状態30秒ごとに確認"
 
 type SourceTaskInfo = Pick<Task, "id" | "status" | "title">
 
@@ -218,6 +219,32 @@ function RunnerChip({ state }: { state: RunnerConnectionState }) {
     >
       {state.online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
       {state.online ? "Mac online" : "Mac offline"}
+    </span>
+  )
+}
+
+function RunnerCompactStatus({ state }: { state: RunnerConnectionState }) {
+  if (state.loading) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-muted bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        確認中
+      </span>
+    )
+  }
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px]",
+        state.online
+          ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+          : "border-amber-400/50 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      )}
+      title={state.lastSeenAt ? `最終heartbeat: ${formatTaskProgressDateTime(state.lastSeenAt)}` : "heartbeat未取得"}
+    >
+      {state.online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+      {state.online ? "online" : "offline"}
     </span>
   )
 }
@@ -427,10 +454,11 @@ export function TaskProgressKanban({
           type="button"
           className="absolute bottom-[calc(env(safe-area-inset-bottom)+76px)] right-3 z-40 inline-flex min-h-11 items-center gap-2 rounded-full border bg-background/95 px-3 text-xs font-semibold shadow-lg backdrop-blur"
           onClick={() => setMobileOpen(true)}
-          aria-label="Codex看板を開く"
+          aria-label={`Codex看板を開く。Mac状態は${runnerState.loading ? "確認中" : runnerState.online ? "オンライン" : "オフライン"}です`}
         >
           <Bot className="h-4 w-4 text-emerald-600" />
           Codex
+          <RunnerCompactStatus state={runnerState} />
           {total > 0 && <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{total}</span>}
         </button>
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -457,6 +485,7 @@ export function TaskProgressKanban({
               </div>
               <div className="flex flex-wrap gap-1.5 pt-2">
                 <RunnerChip state={runnerState} />
+                <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">{HEARTBEAT_POLL_LABEL}</span>
                 <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">{pollLabel}</span>
               </div>
             </SheetHeader>
@@ -501,6 +530,7 @@ export function TaskProgressKanban({
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               <RunnerChip state={runnerState} />
+              <span>{HEARTBEAT_POLL_LABEL}</span>
               <span>{pollLabel}</span>
               {error && <span className="text-red-600 dark:text-red-300">snapshot取得エラー</span>}
             </div>
