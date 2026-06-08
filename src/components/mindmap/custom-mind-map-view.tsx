@@ -261,20 +261,24 @@ function CustomBranchPath({
     target,
     offsetX,
     offsetY,
+    branchX: preferredBranchX,
 }: {
     source: MindMapModelNode;
     target: MindMapModelNode;
     offsetX: number;
     offsetY: number;
+    branchX?: number;
 }) {
     const sourceX = Math.round(source.x + offsetX + source.width);
     const sourceY = Math.round(source.y + offsetY + source.height / 2);
     const targetX = Math.round(target.x + offsetX);
     const targetY = Math.round(target.y + offsetY + target.height / 2);
     const gap = targetX - sourceX;
-    const branchX = gap > 24
-        ? Math.round(sourceX + gap / 2)
-        : Math.round(sourceX + Math.max(8, gap / 2));
+    const branchX = preferredBranchX == null
+        ? (gap > 24
+            ? Math.round(sourceX + gap / 2)
+            : Math.round(sourceX + Math.max(8, gap / 2)))
+        : Math.round(preferredBranchX);
     const path = `M ${sourceX} ${sourceY} L ${branchX} ${sourceY} L ${branchX} ${targetY} L ${targetX} ${targetY}`;
 
     return <path d={path} stroke="currentColor" strokeWidth="1.5" fill="none" strokeOpacity="0.62" strokeLinejoin="round" />;
@@ -699,7 +703,7 @@ function CustomTaskNode({
                 !dragging && "cursor-grab",
                 dropPosition === "as-child" && !dragging && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background border-sky-400 bg-sky-500/15 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
-            style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}
+            style={{ left: node.x, top: node.y, width: node.width, height: node.height, minHeight: node.height }}
             onPointerDown={(event) => {
                 const target = event.target;
                 if (target instanceof HTMLElement && target.closest("button,input,textarea,select,a")) return;
@@ -773,7 +777,7 @@ function CustomTaskNode({
                     <span className="truncate">{nodeCodexBadge.label}</span>
                 </div>
             ) : null}
-            <div className="flex items-center gap-1">
+            <div className="flex min-h-0 flex-1 items-start gap-1">
                 <button
                     type="button"
                     role="checkbox"
@@ -820,7 +824,7 @@ function CustomTaskNode({
                     />
                 ) : (
                     <div className={cn(
-                        "min-w-0 flex-1 whitespace-pre-wrap break-words px-0.5 font-bold leading-tight [overflow-wrap:anywhere]",
+                        "max-h-full min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-0.5 font-bold leading-tight [overflow-wrap:anywhere]",
                         node.isDone && "line-through text-muted-foreground",
                         floatingEditing && "opacity-0"
                     )}>
@@ -1295,7 +1299,7 @@ function CustomProjectNode({
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 dropPosition === "as-child" && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]"
             )}
-            style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}
+            style={{ left: node.x, top: node.y, width: node.width, height: node.height, minHeight: node.height }}
             onClick={(event) => {
                 const target = event.target;
                 if (target instanceof HTMLElement && target.closest("input,textarea,select,a")) return;
@@ -1462,6 +1466,22 @@ export function CustomMindMapView({
         [model.nodes, offsetX, offsetY]
     );
     const nodeById = useMemo(() => new Map(positionedNodes.map(node => [node.id, node])), [positionedNodes]);
+    const branchXByDepth = useMemo(() => {
+        const rightByDepth = new Map<number, number>();
+        const leftByDepth = new Map<number, number>();
+        for (const node of positionedNodes) {
+            rightByDepth.set(node.depth, Math.max(rightByDepth.get(node.depth) ?? -Infinity, node.x + node.width));
+            leftByDepth.set(node.depth, Math.min(leftByDepth.get(node.depth) ?? Infinity, node.x));
+        }
+
+        const branchByDepth = new Map<number, number>();
+        for (const [depth, right] of rightByDepth) {
+            const nextLeft = leftByDepth.get(depth + 1);
+            if (!Number.isFinite(right) || nextLeft == null || !Number.isFinite(nextLeft) || nextLeft <= right) continue;
+            branchByDepth.set(depth, right + (nextLeft - right) / 2);
+        }
+        return branchByDepth;
+    }, [positionedNodes]);
     const rawTaskTitleById = useMemo(() => new Map([...groups, ...tasks].map(task => [task.id, task.title ?? ""])), [groups, tasks]);
 
     const handlePreviewTitleChange = useCallback((taskId: string, title: string | null) => {
@@ -2886,6 +2906,7 @@ export function CustomMindMapView({
                                     target={target}
                                     offsetX={0}
                                     offsetY={0}
+                                    branchX={branchXByDepth.get(source.depth)}
                                 />
                             );
                         })}

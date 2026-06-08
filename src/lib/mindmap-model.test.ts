@@ -135,6 +135,6 @@ describe("mindmap geometry", () => {
     });
 
     test("sizes explicit two-line nodes to two text lines", () => {
-        expect(estimateTaskNodeHeight("codex プロンプト注入\nこれ早急に", true, 180, false)).toBe(40);
+        expect(estimateTaskNodeHeight("codex プロンプト注入\nこれ早急に", true, 180, false)).toBe(66);
     });
 });

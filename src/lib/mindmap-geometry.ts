@@ -13,17 +13,17 @@ export const NODE_MIN_WIDTH = 110;
 export const NODE_MIN_WIDTH_MOBILE = 144;
 export const NODE_RESIZE_MAX_WIDTH = 500;
 
-const NODE_TEXT_LINE_HEIGHT = 16;
-const NODE_VERTICAL_PADDING = 8;
-const NODE_TEXT_RESERVED_WIDTH = 48;
-const NODE_TEXT_RESERVED_WIDTH_MOBILE = 56;
-const NODE_CHILD_COUNT_RESERVED_WIDTH = 76;
-const NODE_CHILD_COUNT_RESERVED_WIDTH_MOBILE = 78;
+const NODE_TEXT_LINE_HEIGHT = 18;
+const NODE_VERTICAL_PADDING = 12;
+const NODE_TEXT_RESERVED_WIDTH = 70;
+const NODE_TEXT_RESERVED_WIDTH_MOBILE = 78;
+const NODE_CHILD_COUNT_RESERVED_WIDTH = 104;
+const NODE_CHILD_COUNT_RESERVED_WIDTH_MOBILE = 106;
 const estimateTextWidthPx = (text: string): number => {
     let width = 0;
     for (const ch of text) {
         if (/\s/.test(ch)) {
-            width += 4.0;
+            width += 4.5;
             continue;
         }
 
@@ -34,7 +34,7 @@ const estimateTextWidthPx = (text: string): number => {
             (code >= 0xFF01 && code <= 0xFF60) ||
             (code >= 0xFFE0 && code <= 0xFFE6) ||
             (code >= 0x20000 && code <= 0x2FA1F);
-        width += isWide ? 13.0 : 7.2;
+        width += isWide ? 14.0 : 8.4;
     }
     return width;
 };
