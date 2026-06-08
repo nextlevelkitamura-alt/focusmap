@@ -36,6 +36,7 @@ const IOS_TIME_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
 const DATE_POPOVER_APPROX_HEIGHT = 340
 const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
+const MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS = 180
 const MEMO_CODEX_ACTIVITY_INTERVAL_MS = 10_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
@@ -1551,7 +1552,12 @@ export function WishlistCardDetail({
       setCodexActivityError(null)
       return
     }
-    void loadCodexActivity()
+    const timer = window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        void loadCodexActivity()
+      })
+    }, MEMO_CODEX_ACTIVITY_INITIAL_DELAY_MS)
+    return () => window.clearTimeout(timer)
   }, [loadCodexActivity, memoAiTaskId, memoAiTaskStatus, open])
 
   useEffect(() => {
