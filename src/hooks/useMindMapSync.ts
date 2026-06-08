@@ -36,7 +36,7 @@ interface UseMindMapSyncReturn {
     isLoading: boolean
     getChildTasks: (parentTaskId: string) => Task[]
     getParentTasks: (groupId: string) => Task[]
-    refreshFromServer: (options?: { force?: boolean; staleMs?: number; silent?: boolean }) => Promise<void>
+    refreshFromServer: (options?: { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean }) => Promise<void>
     undo: () => Promise<string | null>
     redo: () => Promise<string | null>
     canUndo: () => boolean
@@ -64,7 +64,7 @@ type DeletedTaskMemoRepairSnapshot = {
 }
 
 const REALTIME_FALLBACK_POLL_INTERVAL_MS = 3_000
-const REALTIME_FALLBACK_STATUSES = new Set(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'])
+const REALTIME_FALLBACK_STATUSES = new Set(['CHANNEL_ERROR', 'TIMED_OUT'])
 
 function isPageVisible() {
     return typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -111,6 +111,7 @@ export function useMindMapSync({
     const lastServerRefreshAt = useRef(Date.now())
     const refreshInFlight = useRef<Promise<void> | null>(null)
     const realtimeFallbackActiveRef = useRef(false)
+    const realtimeFallbackRefreshErrorNotifiedRef = useRef(false)
 
     // 最新の allTasks を参照するための ref（callback の依存配列から除外するため）
     const allTasksRef = useRef(allTasks)
@@ -299,6 +300,7 @@ export function useMindMapSync({
         lastServerRefreshAt.current = 0
         refreshInFlight.current = null
         realtimeFallbackActiveRef.current = false
+        realtimeFallbackRefreshErrorNotifiedRef.current = false
         setRealtimeFallbackActive(false)
     }, [projectId, clear])
 
@@ -320,14 +322,14 @@ export function useMindMapSync({
             .subscribe(status => {
                 if (status === 'SUBSCRIBED') {
                     realtimeFallbackActiveRef.current = false
+                    realtimeFallbackRefreshErrorNotifiedRef.current = false
                     setRealtimeFallbackActive(false)
                     return
                 }
                 if (REALTIME_FALLBACK_STATUSES.has(status)) {
-                    console.warn('[Sync] realtime channel error:', projectId)
+                    console.warn('[Sync] realtime channel fallback:', status, projectId)
                     if (!realtimeFallbackActiveRef.current) {
                         realtimeFallbackActiveRef.current = true
-                        onSyncError?.('リアルタイム同期に接続できませんでした。3秒ごとに再取得します')
                     }
                     setRealtimeFallbackActive(true)
                 }
@@ -1563,7 +1565,7 @@ export function useMindMapSync({
     }, [supabase])
 
     // サーバーからタスクを再取得（ビュー切り替え時など外部でタスクが追加された場合）
-    const refreshFromServer = useCallback(async (options?: { force?: boolean; staleMs?: number; silent?: boolean }) => {
+    const refreshFromServer = useCallback(async (options?: { force?: boolean; staleMs?: number; silent?: boolean; notifyOnError?: boolean }) => {
         if (!projectId) return
         const staleMs = options?.staleMs ?? 0
         if (!options?.force && staleMs > 0 && Date.now() - lastServerRefreshAt.current < staleMs) {
@@ -1600,6 +1602,7 @@ export function useMindMapSync({
             }
 
             if (projectIdRef.current !== refreshProjectId) return
+            realtimeFallbackRefreshErrorNotifiedRef.current = false
 
             setAllTasks(prev => {
                 const serverIds = new Set(data.map(t => t.id))
@@ -1618,18 +1621,22 @@ export function useMindMapSync({
             await refresh
         } catch (e) {
             console.error('[Sync] refreshFromServer failed:', e)
+            if (options?.notifyOnError && !realtimeFallbackRefreshErrorNotifiedRef.current) {
+                realtimeFallbackRefreshErrorNotifiedRef.current = true
+                onSyncError?.('更新できませんでした。通信状態を確認してください')
+            }
         } finally {
             if (refreshInFlight.current === refresh) refreshInFlight.current = null
             if (showLoading) setIsLoading(false)
         }
-    }, [projectId, supabase])
+    }, [onSyncError, projectId, supabase])
 
     useEffect(() => {
         if (!projectId || !realtimeFallbackActive) return
 
-        void refreshFromServer({ force: true, silent: true })
+        void refreshFromServer({ force: true, silent: true, notifyOnError: true })
         const intervalId = window.setInterval(() => {
-            if (isPageVisible()) void refreshFromServer({ force: true, silent: true })
+            if (isPageVisible()) void refreshFromServer({ force: true, silent: true, notifyOnError: true })
         }, REALTIME_FALLBACK_POLL_INTERVAL_MS)
         return () => window.clearInterval(intervalId)
     }, [projectId, realtimeFallbackActive, refreshFromServer])

@@ -298,7 +298,7 @@ describe('useMindMapSync', () => {
       expect(result.current.groups).toHaveLength(0)
     })
 
-    test('realtime接続失敗時は3秒ごとにサーバーから再取得する', async () => {
+    test('realtime接続失敗時は通知せず3秒ごとにサーバーから再取得する', async () => {
       vi.useFakeTimers()
       const onSyncError = vi.fn()
       const serverTask = createMockRootTask({ id: 'server-1', title: 'Server Root', project_id: 'project-1' })
@@ -323,7 +323,7 @@ describe('useMindMapSync', () => {
           latestSubscribeStatusHandler?.('CHANNEL_ERROR')
         })
 
-        expect(onSyncError).toHaveBeenCalledWith('リアルタイム同期に接続できませんでした。3秒ごとに再取得します')
+        expect(onSyncError).not.toHaveBeenCalled()
 
         await act(async () => {
           await vi.advanceTimersByTimeAsync(3000)
@@ -331,6 +331,67 @@ describe('useMindMapSync', () => {
 
         expect(mockFetch).toHaveBeenCalledWith('/api/tasks?project_id=project-1')
         expect(result.current.groups.find(task => task.id === 'server-1')?.title).toBe('Server Root')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    test('realtimeのCLOSEDは正常な片付けとして通知もfallback再取得もしない', async () => {
+      vi.useFakeTimers()
+      const onSyncError = vi.fn()
+
+      try {
+        renderHook(() =>
+          useMindMapSync({
+            projectId: 'project-1',
+            userId: 'user-1',
+            initialRootTasks: EMPTY_ROOT_TASKS,
+            initialTasks: EMPTY_TASKS,
+            onSyncError,
+          })
+        )
+
+        await act(async () => {
+          latestSubscribeStatusHandler?.('CLOSED')
+          await vi.advanceTimersByTimeAsync(3000)
+        })
+
+        expect(onSyncError).not.toHaveBeenCalled()
+        expect(mockFetch).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    test('fallback再取得も失敗した時だけ更新失敗を通知する', async () => {
+      vi.useFakeTimers()
+      const onSyncError = vi.fn()
+      mockFetch.mockRejectedValue(new Error('network down'))
+      mockChain.eq.mockReturnValue({
+        ...mockChain,
+        is: vi.fn().mockReturnValue({
+          order: vi.fn().mockRejectedValue({ message: 'db down' }),
+        }),
+      })
+
+      try {
+        renderHook(() =>
+          useMindMapSync({
+            projectId: 'project-1',
+            userId: 'user-1',
+            initialRootTasks: EMPTY_ROOT_TASKS,
+            initialTasks: EMPTY_TASKS,
+            onSyncError,
+          })
+        )
+
+        await act(async () => {
+          latestSubscribeStatusHandler?.('CHANNEL_ERROR')
+          await vi.advanceTimersByTimeAsync(3000)
+        })
+
+        expect(onSyncError).toHaveBeenCalledTimes(1)
+        expect(onSyncError).toHaveBeenCalledWith('更新できませんでした。通信状態を確認してください')
       } finally {
         vi.useRealTimers()
       }
