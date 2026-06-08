@@ -5,13 +5,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import type { AgentApiClient } from '../api-client.js';
-import type { AgentConfig, AiTask, StepLog, TaskResultJson } from '../types.js';
+import type { AgentActivityMessage, AgentConfig, AiTask, StepLog, TaskResultJson } from '../types.js';
 
 const WS_URL = 'ws://127.0.0.1:7878';
 const CONNECT_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MS = 15 * 60 * 1000;
 const LOG_FLUSH_MS = 3_000;
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
+const MAX_VISIBLE_ACTIVITY_MESSAGES = 8;
 
 type RpcEnvelope = {
   jsonrpc?: string;
@@ -65,6 +66,20 @@ function extractText(value: unknown): string {
   if (Array.isArray(record.content)) return record.content.map(extractText).join('');
   if (Array.isArray(record.parts)) return record.parts.map(extractText).join('');
   return '';
+}
+
+function normalizeActivityBody(text: string, maxChars = 2_000): string {
+  return text.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').trim().slice(0, maxChars);
+}
+
+function textFingerprint(text: string): string {
+  return normalizeActivityBody(text, 500).toLowerCase().replace(/\s+/g, ' ').slice(0, 180);
+}
+
+function codexActivityKindForText(text: string): AgentActivityMessage['kind'] {
+  return /確認|承認|許可|選んで|どうします|どうしますか|approve|confirm|permission|\?/i.test(text)
+    ? 'question'
+    : 'progress';
 }
 
 async function isCodexAppServerReady(timeoutMs = 800): Promise<boolean> {
@@ -239,6 +254,8 @@ export async function runCodexAppTask(
   const steps: StepLog[] = [];
   const logEntries: string[] = [];
   const activeAgentMessages = new Map<string, string>();
+  const visibleActivityMessages: AgentActivityMessage[] = [];
+  const visibleActivityKeys = new Set<string>();
   const seenNotifications = new Set<string>();
   let flushTimer: NodeJS.Timeout | null = null;
   let threadId = task.codex_resume_thread_id || task.codex_thread_id || '';
@@ -254,6 +271,7 @@ export async function runCodexAppTask(
     codex_run_state: 'running',
     codex_review_reason: 'started',
     last_activity_at: lastActivityAt,
+    codex_visible_messages: visibleActivityMessages.slice(-MAX_VISIBLE_ACTIVITY_MESSAGES),
     meta: {
       cwd,
       prompt_chars: prompt.length,
@@ -286,6 +304,52 @@ export async function runCodexAppTask(
     logEntries.push(entry.trim());
     if (logEntries.length > 200) logEntries.splice(0, logEntries.length - 200);
     scheduleFlush();
+  };
+
+  const pushVisibleActivity = (input: {
+    role: AgentActivityMessage['role'];
+    kind: AgentActivityMessage['kind'];
+    body: string;
+    importance?: AgentActivityMessage['importance'];
+    createdAt?: string;
+    dedupeKey?: string;
+    metadata?: Record<string, unknown>;
+  }) => {
+    const body = normalizeActivityBody(input.body);
+    if (!body) return;
+    const fingerprint = `${input.role}:${input.kind}:${textFingerprint(body)}`;
+    if (visibleActivityKeys.has(fingerprint)) return;
+    visibleActivityKeys.add(fingerprint);
+    visibleActivityMessages.push({
+      role: input.role,
+      kind: input.kind,
+      body,
+      importance: input.importance ?? (input.kind === 'progress' ? 'normal' : 'important'),
+      created_at: input.createdAt ?? new Date().toISOString(),
+      dedupe_key: input.dedupeKey ?? `thread:${threadId || task.id}:visible:${fingerprint}`,
+      metadata: {
+        source: 'codex_app_notification',
+        ...(input.metadata ?? {}),
+      },
+    });
+    if (visibleActivityMessages.length > MAX_VISIBLE_ACTIVITY_MESSAGES) {
+      visibleActivityMessages.splice(0, visibleActivityMessages.length - MAX_VISIBLE_ACTIVITY_MESSAGES);
+    }
+  };
+
+  const flushActiveAgentMessages = () => {
+    for (const [itemId, text] of activeAgentMessages) {
+      const body = normalizeActivityBody(text);
+      if (!body) continue;
+      pushVisibleActivity({
+        role: 'codex',
+        kind: codexActivityKindForText(body),
+        body,
+        dedupeKey: `thread:${threadId || task.id}:assistant:${itemId}:${textFingerprint(body)}`,
+        metadata: { item_id: itemId, source_event: 'agent_message_delta' },
+      });
+    }
+    activeAgentMessages.clear();
   };
 
   await startCodexAppServer(config);
@@ -368,7 +432,16 @@ export async function runCodexAppTask(
           const itemId = typeof item.id === 'string' ? item.id : null;
           const text = extractText(item) || (itemId ? activeAgentMessages.get(itemId) ?? '' : '');
           if (itemId) activeAgentMessages.delete(itemId);
-          if (text) appendLog(`[assistant] ${text}`);
+          if (text) {
+            appendLog(`[assistant] ${text}`);
+            pushVisibleActivity({
+              role: 'codex',
+              kind: codexActivityKindForText(text),
+              body: text,
+              dedupeKey: `thread:${threadId || task.id}:assistant:${itemId || textFingerprint(text)}`,
+              metadata: { item_id: itemId, source_event: method },
+            });
+          }
         } else if (itemType === 'userMessage' && method === 'item/completed') {
           appendLog(`[user] プロンプト送信済み (${extractText(item).length}文字)`);
         } else if (itemType === 'commandExecution') {
@@ -422,13 +495,33 @@ export async function runCodexAppTask(
     }
 
     addStep(steps, `Codex実行完了 (${completedStatus || 'completed'})`);
+    flushActiveAgentMessages();
+    const awaitingApprovalAt = new Date().toISOString();
+    const finalVisibleMessages = visibleActivityMessages.slice(-MAX_VISIBLE_ACTIVITY_MESSAGES);
     return {
       ...resultSnapshot({ codex_turn_status: completedStatus }),
       output: '',
       message: 'Codex実行が完了し確認待ちです。',
       codex_run_state: 'awaiting_approval',
       codex_review_reason: 'completed',
-      awaiting_approval_at: new Date().toISOString(),
+      awaiting_approval_at: awaitingApprovalAt,
+      codex_visible_messages: finalVisibleMessages,
+      activity_messages: [
+        ...finalVisibleMessages,
+        {
+          role: 'status',
+          kind: 'approval',
+          body: 'Codex実行が完了し確認待ちです。',
+          importance: 'important',
+          dedupe_key: `task:${task.id}:awaiting_approval:${threadId || 'no-thread'}`,
+          created_at: awaitingApprovalAt,
+          metadata: {
+            event: 'running_to_awaiting_approval',
+            codex_thread_id: threadId || null,
+            codex_turn_status: completedStatus,
+          },
+        },
+      ],
     };
   } finally {
     cleanup();

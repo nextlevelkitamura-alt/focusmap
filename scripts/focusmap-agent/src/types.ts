@@ -62,6 +62,27 @@ export interface StepLog {
   detail?: string;
 }
 
+export interface AgentActivityMessage {
+  role: 'system' | 'codex' | 'user' | 'status';
+  kind:
+    | 'prompt_waiting'
+    | 'sent'
+    | 'progress'
+    | 'question'
+    | 'approval'
+    | 'resumed'
+    | 'completed'
+    | 'failed'
+    | 'user_answer';
+  body: string;
+  importance?: 'normal' | 'important';
+  metadata?: Record<string, unknown>;
+  dedupe_key?: string;
+  dedupeKey?: string;
+  created_at?: string;
+  createdAt?: string;
+}
+
 export interface TaskResultJson {
   executor: 'playwright' | 'simple' | 'browser' | 'terminal' | 'codex_app';
   steps: StepLog[];
@@ -75,6 +96,8 @@ export interface TaskResultJson {
   codex_review_reason?: string;
   last_activity_at?: string;
   awaiting_approval_at?: string;
+  codex_visible_messages?: AgentActivityMessage[];
+  activity_messages?: AgentActivityMessage[];
   usage?: {
     input_tokens: number;
     output_tokens: number;

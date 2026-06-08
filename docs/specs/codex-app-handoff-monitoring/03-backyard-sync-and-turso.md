@@ -97,6 +97,7 @@ flowchart LR
 | `codex_thread_id` 初回検出 | 保存する | 保存する |
 | `pending/running/awaiting_approval/needs_input/completed/failed` の状態変化 | 保存する | 保存する |
 | 完了/失敗/確認待ちの最終summary | 保存する | 保存する |
+| auto実行で `running -> awaiting_approval` へ変わる瞬間のユーザー可視Codex発話 | 短いfallbackとして保存可 | activityとして保存する |
 | Codex threadのアーカイブ/削除による元ノード完了 | `ai_tasks.completed_at` と `tasks.status='done'` を保存する | `completed` snapshot/eventを保存する |
 | `codex_last_checked_at` だけの更新 | 保存しない | 保存しない |
 | running中の同じpulse/current_step | 保存しない | dedupeつきactivityのみ |
@@ -107,6 +108,8 @@ flowchart LR
 `/api/codex/sync-node` は移行中のfallbackだが、無変化pollではSupabaseへ書かない。thread未検出で「見に行っただけ」の時はresponseに `checked_at` を返すだけにし、`ai_tasks.result.codex_last_checked_at` は更新しない。既存thread idがsqliteから読めなくなった `thread_deleted` と、sqlite上で `archived=1` になったthreadは、ユーザーがCodex側で片付けた合図として `ai_tasks.status='completed'` にし、`source_task_id` があれば元マインドマップノードも `done` にする。通常のCodex実行完了や承認待ちは、ユーザー確認前に元ノードを完了しない。
 
 activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定なら有効扱いで、Turso保存に成功したactivityはSupabaseへmirrorしない。明示的にSupabaseにもactivityを書きたい検証時だけ `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=0` を設定する。Turso未設定またはTurso保存失敗時は、既存互換のためSupabaseへfallbackする。
+
+`dispatch_mode='auto'` のCodex.app実行では、Mac側 `focusmap-agent` が `turn/start` 後のapp-server通知からユーザー可視のassistant発話だけを短いactivity候補として保持する。実行中は一覧向けsnapshotに本文を載せず、Codex turnが終わって `ai_tasks.status` を `running` から `awaiting_approval` へ更新する1回だけ、直近最大8件・各2000文字以内の可視発話と「確認待ち」status activityを `/api/agents/tasks/[id]/state` へ同送する。これにより詳細画面を開いた瞬間はクラウド側のactivityを読むだけでよく、開いてからローカルCodexログを取りに行く遅延を避ける。raw log、command output、full rollout、full thread historyはこの単発同期にも含めない。
 
 ## Turso無料枠に収める規律
 

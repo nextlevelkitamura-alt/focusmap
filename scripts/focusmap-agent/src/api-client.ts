@@ -1,4 +1,4 @@
-import type { AgentCommand, AgentConfig, AiTask, TaskResultJson } from './types.js';
+import type { AgentActivityMessage, AgentCommand, AgentConfig, AiTask, TaskResultJson } from './types.js';
 import type { ScreenshotPreviewBundle } from './screenshot-preview.js';
 
 function normalizeApiUrl(value: string | undefined): string {
@@ -64,6 +64,13 @@ export class AgentApiClient {
       live_log_chars: result.live_log?.length ?? 0,
       output_chars: result.output?.length ?? 0,
     };
+  }
+
+  private stateResult(result: TaskResultJson | undefined): TaskResultJson | undefined {
+    if (!result) return undefined;
+    const persistedResult: TaskResultJson = { ...result };
+    delete persistedResult.activity_messages;
+    return persistedResult;
   }
 
   private compactText(value: string | undefined, maxChars: number, fromEnd = false): string | undefined {
@@ -198,17 +205,21 @@ export class AgentApiClient {
     runnerId: string,
     taskId: string,
     status: AiTask['status'],
-    payload: { result?: TaskResultJson; error?: string } = {},
+    payload: { result?: TaskResultJson; error?: string; activity_messages?: AgentActivityMessage[] } = {},
   ): Promise<void> {
+    const result = this.stateResult(payload.result);
+    const activityMessages = payload.activity_messages ?? payload.result?.activity_messages;
     const eventType = this.eventTypeForStatus(status);
-    const progress = this.sendTaskProgressSnapshot(runnerId, taskId, status, payload, {
+    const progress = this.sendTaskProgressSnapshot(runnerId, taskId, status, { result, error: payload.error }, {
       force: true,
       eventType,
     }).catch(() => undefined);
     await this.request(`/agents/tasks/${taskId}/state`, {
       runner_id: runnerId,
       status,
-      ...payload,
+      ...(result ? { result } : {}),
+      ...(payload.error ? { error: payload.error } : {}),
+      ...(activityMessages?.length ? { activity_messages: activityMessages } : {}),
     });
     await progress;
   }

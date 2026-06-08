@@ -1,11 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAgent } from '@/lib/agent-auth'
+import {
+  insertAiTaskActivityMessage,
+  type AiTaskActivityImportance,
+  type AiTaskActivityKind,
+  type AiTaskActivityRole,
+} from '@/lib/ai-task-activity'
 import { isTursoConfigured } from '@/lib/turso/client'
 import { insertTaskEvent, insertTaskProgress, upsertTursoAiTask } from '@/lib/turso/codex-monitoring'
 
 const VALID_STATUSES = new Set(['pending', 'running', 'awaiting_approval', 'needs_input', 'completed', 'failed'])
 const MAX_CURRENT_STEP_CHARS = 600
 const MAX_SUMMARY_CHARS = 1_200
+const MAX_ACTIVITY_MESSAGES_PER_UPDATE = 12
+
+const VALID_ACTIVITY_ROLES = new Set<AiTaskActivityRole>(['system', 'codex', 'user', 'status'])
+const VALID_ACTIVITY_KINDS = new Set<AiTaskActivityKind>([
+  'prompt_waiting',
+  'sent',
+  'progress',
+  'question',
+  'approval',
+  'resumed',
+  'completed',
+  'failed',
+  'user_answer',
+])
+const VALID_ACTIVITY_IMPORTANCE = new Set<AiTaskActivityImportance>(['normal', 'important'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -23,6 +44,40 @@ function compactLatestLine(value: unknown, max: number) {
     .filter(Boolean)
     .at(-1)
   return compactString(latest, max)
+}
+
+function compactActivityMessages(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, MAX_ACTIVITY_MESSAGES_PER_UPDATE).flatMap((item) => {
+    if (!isRecord(item)) return []
+    const role = typeof item.role === 'string' && VALID_ACTIVITY_ROLES.has(item.role as AiTaskActivityRole)
+      ? item.role as AiTaskActivityRole
+      : null
+    const kind = typeof item.kind === 'string' && VALID_ACTIVITY_KINDS.has(item.kind as AiTaskActivityKind)
+      ? item.kind as AiTaskActivityKind
+      : null
+    const body = compactString(item.body, 2_000)
+    if (!role || !kind || !body) return []
+
+    const importance = typeof item.importance === 'string' && VALID_ACTIVITY_IMPORTANCE.has(item.importance as AiTaskActivityImportance)
+      ? item.importance as AiTaskActivityImportance
+      : undefined
+    const dedupeKey = compactString(item.dedupe_key ?? item.dedupeKey, 240) ?? undefined
+    const createdAtRaw = compactString(item.created_at ?? item.createdAt, 80)
+    const createdAt = createdAtRaw && !Number.isNaN(Date.parse(createdAtRaw))
+      ? new Date(createdAtRaw).toISOString()
+      : undefined
+
+    return [{
+      role,
+      kind,
+      body,
+      importance,
+      dedupeKey,
+      createdAt,
+      metadata: isRecord(item.metadata) ? item.metadata : undefined,
+    }]
+  })
 }
 
 export async function POST(
@@ -116,6 +171,26 @@ export async function POST(
       } catch (tursoError) {
         console.error('[agents/tasks/state turso]', tursoError)
       }
+    }
+    const activityMessages = compactActivityMessages(body.activity_messages)
+    if (activityMessages.length > 0) {
+      await Promise.all(activityMessages.map(message => insertAiTaskActivityMessage(supabase, {
+        taskId: id,
+        userId: String(task.user_id),
+        role: message.role,
+        kind: message.kind,
+        body: message.body,
+        importance: message.importance,
+        metadata: {
+          ...(message.metadata ?? {}),
+          runner_id: runnerId,
+          source: 'focusmap-agent',
+        },
+        dedupeKey: message.dedupeKey,
+        createdAt: message.createdAt,
+      }))).catch((activityError: unknown) => {
+        console.error('[agents/tasks/state activity]', activityError)
+      })
     }
     return NextResponse.json({ task: data })
   } catch (error) {
