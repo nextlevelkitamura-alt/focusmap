@@ -386,6 +386,16 @@ export function DashboardClient({
         }
     }, [activeView, refreshFromServer])
 
+    // iOSネイティブアプリ復帰時は、表示済みUIを残したまま裏で最新タスクを読む。
+    useEffect(() => {
+        const handleNativeAppResume = () => {
+            refreshFromServer({ force: true, silent: true })
+        }
+
+        window.addEventListener('focusmap:native-app-resume', handleNativeAppResume)
+        return () => window.removeEventListener('focusmap:native-app-resume', handleNativeAppResume)
+    }, [refreshFromServer])
+
     // STABLE handlers using useCallback
     const handleCreateGroup = useCallback(async (title: string) => {
         return await createGroup(title)

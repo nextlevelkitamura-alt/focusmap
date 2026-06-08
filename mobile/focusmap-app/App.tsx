@@ -202,6 +202,21 @@ export default function App() {
     setHasPresentedWebContent(true);
     setHasDismissedStartupOverlay(true);
     setInitialLoading(false);
+    setLoadProgress(1);
+  }, []);
+
+  const prepareForWebViewLoad = useCallback(() => {
+    setError(null);
+    setLoadProgress(0);
+
+    if (hasPresentedWebContentRef.current) {
+      setInitialLoading(false);
+      setHasDismissedStartupOverlay(true);
+      return;
+    }
+
+    setInitialLoading(true);
+    setHasDismissedStartupOverlay(false);
   }, []);
 
   const buildInternalUrl = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
@@ -217,14 +232,9 @@ export default function App() {
   }, [focusmapUrl]);
 
   const navigateInsideApp = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
-    setError(null);
-    setInitialLoading(true);
-    if (!hasPresentedWebContentRef.current) {
-      setHasDismissedStartupOverlay(false);
-    }
-    setLoadProgress(0);
+    prepareForWebViewLoad();
     setWebViewUrl(buildInternalUrl(pathOrUrl, params));
-  }, [buildInternalUrl]);
+  }, [buildInternalUrl, prepareForWebViewLoad]);
 
   const handleShouldStartLoad = (request: WebViewNavigation) => {
     if (!request.url || request.url === "about:blank") return true;
@@ -293,12 +303,7 @@ export default function App() {
   };
 
   const handleReload = () => {
-    setError(null);
-    setInitialLoading(true);
-    if (!hasPresentedWebContentRef.current) {
-      setHasDismissedStartupOverlay(false);
-    }
-    setLoadProgress(0);
+    prepareForWebViewLoad();
     webViewRef.current?.reload();
   };
 
@@ -365,17 +370,11 @@ export default function App() {
               thirdPartyCookiesEnabled
               onShouldStartLoadWithRequest={handleShouldStartLoad}
               onMessage={handleWebViewMessage}
-              onLoadStart={() => {
-                setError(null);
-                setInitialLoading(true);
-                if (!hasPresentedWebContentRef.current) {
-                  setHasDismissedStartupOverlay(false);
-                }
-              }}
+              onLoadStart={prepareForWebViewLoad}
               onLoadProgress={({ nativeEvent }) => setLoadProgress(nativeEvent.progress)}
               onLoadEnd={markWebContentPresented}
               onContentProcessDidTerminate={() => {
-                setInitialLoading(true);
+                prepareForWebViewLoad();
                 webViewRef.current?.reload();
               }}
               onError={({ nativeEvent }) => {
