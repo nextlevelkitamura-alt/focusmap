@@ -7,7 +7,9 @@ import { getCodexTaskUiState } from '@/lib/codex-run-state'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 
 const ACTIVE_STATUSES: AiTask['status'][] = ['pending', 'running', 'awaiting_approval', 'needs_input']
-const ACTIVE_CODEX_REFRESH_INTERVAL_MS = 3_000
+const RUNNING_CODEX_REFRESH_INTERVAL_MS = 3_000
+const RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS = 5_000
+const PROMPT_WAITING_FAST_SYNC_WINDOW_MS = 3 * 60_000
 const IDLE_REFRESH_INTERVAL_MS = 60 * 60_000
 const LINKED_TASK_LIMIT = 300
 const LOCAL_CODEX_SYNC_TARGET_LIMIT = 40
@@ -34,15 +36,39 @@ function hasRunningCodexTask(tasks: Map<string, AiTask>) {
   return false
 }
 
-function isActiveCodexTask(task: AiTask) {
-  return isCodexTask(task) && ACTIVE_STATUSES.includes(task.status)
+function isPromptWaitingCodexTask(task: AiTask) {
+  if (!isCodexTask(task)) return false
+  return getCodexTaskUiState(task)?.state === 'prompt_waiting'
 }
 
-function hasActiveCodexTask(tasks: Map<string, AiTask>) {
+function promptWaitingStartedMs(task: AiTask) {
+  return parseTaskTime(task.started_at) || parseTaskTime(task.created_at)
+}
+
+function isRecentPromptWaitingCodexTask(task: AiTask, now = Date.now()) {
+  if (!isPromptWaitingCodexTask(task)) return false
+  const startedMs = promptWaitingStartedMs(task)
+  return startedMs > 0 && now - startedMs < PROMPT_WAITING_FAST_SYNC_WINDOW_MS
+}
+
+function hasRecentPromptWaitingCodexTask(tasks: Map<string, AiTask>, now = Date.now()) {
   for (const task of tasks.values()) {
-    if (isActiveCodexTask(task)) return true
+    if (isRecentPromptWaitingCodexTask(task, now)) return true
   }
   return false
+}
+
+function nextPromptWaitingExpiryMs(tasks: Map<string, AiTask>, now = Date.now()) {
+  let next: number | null = null
+  for (const task of tasks.values()) {
+    if (!isPromptWaitingCodexTask(task)) continue
+    const startedMs = promptWaitingStartedMs(task)
+    const expiresAt = startedMs + PROMPT_WAITING_FAST_SYNC_WINDOW_MS
+    if (startedMs > 0 && expiresAt > now && (next == null || expiresAt < next)) {
+      next = expiresAt
+    }
+  }
+  return next
 }
 
 function isPageVisible() {
@@ -60,9 +86,9 @@ function codexTasksForLocalSync(tasks: Map<string, AiTask>) {
 }
 
 function localSyncIntervalForTask(task: AiTask) {
-  return isActiveCodexTask(task) || isRunningCodexTask(task)
-    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
-    : IDLE_REFRESH_INTERVAL_MS
+  if (isRunningCodexTask(task)) return RUNNING_CODEX_REFRESH_INTERVAL_MS
+  if (isRecentPromptWaitingCodexTask(task)) return RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
+  return IDLE_REFRESH_INTERVAL_MS
 }
 
 function sourceKeyForTask(task: AiTask) {
@@ -143,9 +169,12 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
     fetchInitial()
   }, [fetchInitial])
 
-  const refreshIntervalMs = hasRunningCodexTask(bySourceId) || hasActiveCodexTask(bySourceId)
-    ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
-    : IDLE_REFRESH_INTERVAL_MS
+  const promptWaitingExpiryMs = useMemo(() => nextPromptWaitingExpiryMs(bySourceId), [bySourceId])
+  const refreshIntervalMs = hasRunningCodexTask(bySourceId)
+    ? RUNNING_CODEX_REFRESH_INTERVAL_MS
+    : hasRecentPromptWaitingCodexTask(bySourceId)
+      ? RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
+      : IDLE_REFRESH_INTERVAL_MS
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -153,6 +182,15 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
     }, refreshIntervalMs)
     return () => window.clearInterval(intervalId)
   }, [fetchInitial, refreshIntervalMs])
+
+  useEffect(() => {
+    if (!promptWaitingExpiryMs) return
+    const delay = Math.max(0, promptWaitingExpiryMs - Date.now() + 50)
+    const timeoutId = window.setTimeout(() => {
+      if (isPageVisible()) void fetchInitial({ statusOnly: true })
+    }, delay)
+    return () => window.clearTimeout(timeoutId)
+  }, [fetchInitial, promptWaitingExpiryMs])
 
   const localSyncTargets = useMemo(() => codexTasksForLocalSync(bySourceId), [bySourceId])
   const localSyncTargetKey = useMemo(() => {
@@ -171,9 +209,10 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
       return
     }
     const localSyncIntervalMs = hasRunningCodexTask(bySourceId)
-      || hasActiveCodexTask(bySourceId)
-      ? ACTIVE_CODEX_REFRESH_INTERVAL_MS
-      : IDLE_REFRESH_INTERVAL_MS
+      ? RUNNING_CODEX_REFRESH_INTERVAL_MS
+      : hasRecentPromptWaitingCodexTask(bySourceId)
+        ? RECENT_PROMPT_WAITING_REFRESH_INTERVAL_MS
+        : IDLE_REFRESH_INTERVAL_MS
 
     let cancelled = false
     let syncing = false
@@ -207,7 +246,7 @@ export function useMemoAiTasks({ sourceTaskIds = [] }: UseMemoAiTasksOptions = {
       }
     }
 
-    if (hasRunningLocalSyncTarget || localSyncTargets.some(({ task }) => isActiveCodexTask(task))) void syncTargets()
+    if (hasRunningLocalSyncTarget || localSyncTargets.some(({ task }) => isRecentPromptWaitingCodexTask(task))) void syncTargets()
     const intervalId = window.setInterval(() => void syncTargets(), localSyncIntervalMs)
     return () => {
       cancelled = true

@@ -744,7 +744,9 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexSendStatus("sending")
 
     try {
-      const savePromise = saveDraft(heading, detail)
+      const savePromise = saveDraft(heading, detail).catch((saveError: unknown) => {
+        console.warn("[codex-node-panel] draft save failed before Codex handoff:", saveError)
+      })
       const scheduleCodexTask = async () => {
         const scheduleRes = await fetchWithSupabaseAuth("/api/ai-tasks/schedule", {
           method: "POST",
@@ -771,9 +773,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         }
         return await scheduleRes.json() as AiTask
       }
-      const schedulePromise = isMobileHandoff
-        ? scheduleCodexTask()
-        : savePromise.then(scheduleCodexTask)
+      const schedulePromise = scheduleCodexTask()
 
       const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
 
@@ -829,17 +829,32 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         return
       }
 
-      await savePromise
-      await schedulePromise
-      setJustSentPrompt(prompt)
-      void refreshAiTasks()
-
-      let copiedToClipboard = await copyAttempt.finished
+      let copiedToClipboard = copyAttempt.copiedSynchronously
       if (useLocalApi) {
-        const launchOutcome = await launchCodexViaLocalApi({ prompt, repoPath: repoPath || null })
+        const [scheduleResult, launchResult] = await Promise.allSettled([
+          schedulePromise,
+          launchCodexViaLocalApi({ prompt, repoPath: repoPath || null }),
+        ])
+        if (launchResult.status === "rejected") {
+          throw launchResult.reason instanceof Error ? launchResult.reason : new Error("Codex.appを開けませんでした")
+        }
+        const launchOutcome = launchResult.value
         launchMode = launchOutcome.mode
         if (launchOutcome.copiedToClipboard) copiedToClipboard = true
+        if (scheduleResult.status === "fulfilled") {
+          setJustSentPrompt(prompt)
+          void refreshAiTasks()
+        } else {
+          const message = scheduleResult.reason instanceof Error
+            ? scheduleResult.reason.message
+            : "Codex送信準備に失敗しました"
+          setError(`Codex.appは開きましたが、Focusmapの追跡登録に失敗しました。必要なら戻って再送してください。${message}`)
+        }
       } else if (typeof window !== "undefined" && !isMobileHandoff) {
+        await schedulePromise
+        setJustSentPrompt(prompt)
+        void refreshAiTasks()
+        copiedToClipboard = await copyAttempt.finished
         if (!copiedToClipboard) {
           throw new Error("プロンプトをクリップボードにコピーできませんでした")
         }
@@ -847,6 +862,12 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         window.location.href = openTarget.url
       }
 
+      void savePromise
+      if (useLocalApi && !copiedToClipboard) {
+        void copyAttempt.finished.then(copied => {
+          if (copied) setCodexPromptCopied(true)
+        })
+      }
       setCodexSendStatus("sent")
       await refreshAiTasks()
       window.setTimeout(() => void syncCodexState(), 1200)
