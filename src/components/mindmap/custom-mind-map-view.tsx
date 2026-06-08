@@ -698,6 +698,7 @@ function CustomTaskNode({
                 (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 selected && node.isDone && "ring-muted-foreground/40",
+                menuOpen && "z-[120]",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 !dragging && "cursor-grab",
@@ -878,7 +879,7 @@ function CustomTaskNode({
                             </button>
                             {menuOpen && (
                                 <div
-                                    className="absolute right-0 top-7 z-50 w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
+                                    className="absolute right-0 top-7 z-[130] w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onClick={(event) => event.stopPropagation()}
                                 >
@@ -962,7 +963,7 @@ function CustomTaskNode({
                             </button>
                             {menuOpen && (
                                 <div
-                                    className="absolute right-0 top-6 z-50 w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
+                                    className="absolute right-0 top-6 z-[130] w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onClick={(event) => event.stopPropagation()}
                                 >
