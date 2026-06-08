@@ -1078,71 +1078,98 @@ export function useMindMapSync({
         const allCaptured = capturedTask ? [capturedTask, ...capturedDescendants] : capturedDescendants
 
         const allIds = new Set(allCaptured.map(t => t.id))
-        setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
-
-        try {
-            await cancelNotifications('task', taskId);
-        } catch (error) {
-            console.error('[Notification] Failed to cancel notifications:', error);
+        const removeCapturedTasksFromState = () => {
+            allTasksRef.current = allTasksRef.current.filter(t => !allIds.has(t.id))
+            setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+        }
+        const restoreCapturedTasksToState = () => {
+            allTasksRef.current = [
+                ...allTasksRef.current.filter(t => !allIds.has(t.id)),
+                ...allCaptured,
+            ]
+            setAllTasks(prev => [
+                ...prev.filter(t => !allIds.has(t.id)),
+                ...allCaptured,
+            ])
         }
 
-        // CRITICAL FIX: Ensure any pending POST request for this task finishes before we DELETE
-        const pendingInsert = pendingInserts.current.get(taskId)
-        if (pendingInsert) {
-            try {
-                await pendingInsert
-            } catch (e) {
-                console.error('[Sync] deleteTask: pending insert failed, continuing with DELETE anyway', e)
-            }
-        }
+        removeCapturedTasksFromState()
 
         let memoRepairSnapshot: DeletedTaskMemoRepairSnapshot | null = null
-        try {
-            const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
-            if (!response.ok) {
-                if (response.status === 404) {
-                    // DB上に存在しないタスク（ゴーストタスク）→ UIからの削除は成功とする
-                    console.warn('[Sync] deleteTask: task not found in DB (ghost task), removing from UI only:', taskId.slice(0, 8))
-                    // ロールバックしない（DBにないのでUIから消すだけでOK）
-                } else {
-                    const errorData = await response.json().catch(() => ({ message: response.statusText }))
-                    console.error('[Sync] deleteTask API failed:', errorData)
-                    onSyncError?.(`タスクの削除に失敗しました: ${errorData.message || response.statusText}`)
-                    // Rollback: restore removed tasks
-                    setAllTasks(prev => [...prev, ...allCaptured])
-                    return
-                }
-            } else {
-                const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
-                memoRepairSnapshot = data?.memo_repair ?? null
-                dispatchWishlistRefresh()
+        let undoRequested = false
+
+        const deleteFromServer = async () => {
+            try {
+                await cancelNotifications('task', taskId);
+            } catch (error) {
+                console.error('[Notification] Failed to cancel notifications:', error);
             }
-        } catch (e) {
-            console.error('[Sync] deleteTask failed:', e)
-            onSyncError?.(`タスクの削除に失敗しました: ネットワークエラー`)
-            // Rollback: restore removed tasks
-            setAllTasks(prev => [...prev, ...allCaptured])
-            return
+
+            // CRITICAL FIX: Ensure any pending POST request for this task finishes before we DELETE
+            const pendingInsert = pendingInserts.current.get(taskId)
+            if (pendingInsert) {
+                try {
+                    await pendingInsert
+                } catch (e) {
+                    console.error('[Sync] deleteTask: pending insert failed, continuing with DELETE anyway', e)
+                }
+            }
+
+            try {
+                const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        // DB上に存在しないタスク（ゴーストタスク）→ UIからの削除は成功とする
+                        console.warn('[Sync] deleteTask: task not found in DB (ghost task), removing from UI only:', taskId.slice(0, 8))
+                        // ロールバックしない（DBにないのでUIから消すだけでOK）
+                    } else {
+                        const errorData = await response.json().catch(() => ({ message: response.statusText }))
+                        console.error('[Sync] deleteTask API failed:', errorData)
+                        onSyncError?.(`タスクの削除に失敗しました: ${errorData.message || response.statusText}`)
+                        if (!undoRequested) restoreCapturedTasksToState()
+                    }
+                } else {
+                    const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
+                    memoRepairSnapshot = data?.memo_repair ?? null
+                    dispatchWishlistRefresh()
+                }
+            } catch (e) {
+                console.error('[Sync] deleteTask failed:', e)
+                onSyncError?.(`タスクの削除に失敗しました: ネットワークエラー`)
+                if (!undoRequested) restoreCapturedTasksToState()
+            }
         }
+
+        const deleteRequest = deleteFromServer()
 
         if (capturedTask) {
             pushAction({
                 description: `「${capturedTask.title}」を削除`,
                 toast: {
-                    message: 'マップから外しました。元メモは未予定に戻しました。',
+                    message: 'マップから外しました。',
                     actionLabel: '元に戻す',
                     duration: 5000,
                 },
                 undo: async () => {
+                    undoRequested = true
                     const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
-                    setAllTasks(prev => [...prev, ...restored])
+                    allTasksRef.current = [
+                        ...allTasksRef.current.filter(t => !allIds.has(t.id)),
+                        ...restored,
+                    ]
+                    setAllTasks(prev => [
+                        ...prev.filter(t => !allIds.has(t.id)),
+                        ...restored,
+                    ])
+                    await deleteRequest
                     for (const task of allCaptured) {
                         await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                     }
                     await restoreMemoRepairSnapshot(memoRepairSnapshot)
                 },
                 redo: async () => {
-                    setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+                    undoRequested = false
+                    removeCapturedTasksFromState()
                     try {
                         const redoResponse = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
                         const redoData = await redoResponse.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
@@ -1154,6 +1181,8 @@ export function useMindMapSync({
                 },
             })
         }
+
+        await deleteRequest
     }, [cancelNotifications, supabase, pushAction, onSyncError, restoreMemoRepairSnapshot])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {

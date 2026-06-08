@@ -742,6 +742,61 @@ describe('useMindMapSync', () => {
 
       expect(mockCancelNotifications).toHaveBeenCalledWith('task', 't1')
     })
+
+    test('削除API完了前でもUndoでUIを即時復元しDBへ戻す', async () => {
+      const group = createMockRootTask({ id: 'g1' })
+      const task = createMockTask({ id: 't1', parent_task_id: 'g1', title: '戻したいタスク' })
+      const initialRootTasks = [group]
+      const initialTasks = [task]
+      let resolveDelete!: (value: Response) => void
+      mockFetch.mockImplementationOnce(() => new Promise<Response>(resolve => {
+        resolveDelete = resolve
+      }))
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks,
+          initialTasks,
+        })
+      )
+
+      let deletePromise!: Promise<void>
+      await act(async () => {
+        deletePromise = result.current.deleteTask('t1')
+        await Promise.resolve()
+      })
+
+      expect(result.current.tasks.some(item => item.id === 't1')).toBe(false)
+      expect(mockPushAction).toHaveBeenCalledWith(expect.objectContaining({
+        description: '「戻したいタスク」を削除',
+      }))
+
+      const action = mockPushAction.mock.calls.at(-1)?.[0] as { undo: () => Promise<void> }
+      let undoPromise!: Promise<void>
+      await act(async () => {
+        undoPromise = action.undo()
+        await Promise.resolve()
+      })
+
+      expect(result.current.tasks.some(item => item.id === 't1')).toBe(true)
+
+      await act(async () => {
+        resolveDelete({
+          ok: true,
+          json: () => Promise.resolve({ success: true, memo_repair: null }),
+          text: () => Promise.resolve(''),
+        } as Response)
+        await deletePromise
+        await undoPromise
+      })
+
+      expect(mockChain.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        id: 't1',
+        google_event_id: null,
+      }))
+    })
   })
 
   // ===========================
