@@ -25,6 +25,39 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+function heartbeatSeenAt(row: Record<string, unknown>) {
+  return compactString(row.last_seen_at, 80) ??
+    compactString(row.updated_at, 80) ??
+    compactString(row.last_heartbeat_at, 80)
+}
+
+function isFreshHeartbeat(row: Record<string, unknown>, nowMs: number, windowMs: number) {
+  const seenAt = heartbeatSeenAt(row)
+  const seenMs = seenAt ? Date.parse(seenAt) : Number.NaN
+  const status = compactString(row.status, 40)
+  return Number.isFinite(seenMs) && nowMs - seenMs < windowMs && status !== 'offline'
+}
+
+function mergeRunnerHeartbeats(
+  primary: Record<string, unknown>[],
+  fallback: Record<string, unknown>[],
+  limit: number,
+) {
+  const byRunnerId = new Map<string, Record<string, unknown>>()
+  for (const heartbeat of [...primary, ...fallback]) {
+    const runnerId = compactString(heartbeat.runner_id, 160) ?? compactString(heartbeat.id, 160)
+    if (!runnerId) continue
+    const existing = byRunnerId.get(runnerId)
+    const existingSeen = existing ? Date.parse(heartbeatSeenAt(existing) ?? '') || 0 : 0
+    const nextSeen = Date.parse(heartbeatSeenAt(heartbeat) ?? '') || 0
+    if (!existing || nextSeen >= existingSeen) byRunnerId.set(runnerId, heartbeat)
+  }
+
+  return Array.from(byRunnerId.values())
+    .sort((a, b) => (Date.parse(heartbeatSeenAt(b) ?? '') || 0) - (Date.parse(heartbeatSeenAt(a) ?? '') || 0))
+    .slice(0, limit)
+}
+
 function currentTaskIdFrom(metadata: Record<string, unknown>) {
   return compactString(metadata.current_task_id, 160) ?? compactString(metadata.currentTaskId, 160)
 }
@@ -160,7 +193,24 @@ export async function GET(request: NextRequest) {
 
   try {
     const heartbeats = await listRunnerHeartbeats(auth.userId, limit)
-    return NextResponse.json({ source: 'turso', heartbeats })
+    if (heartbeats.some(heartbeat => isFreshHeartbeat(heartbeat as Record<string, unknown>, Date.now(), 90_000))) {
+      return NextResponse.json({ source: 'turso', heartbeats })
+    }
+
+    try {
+      const supabaseHeartbeats = await listSupabaseRunnerHeartbeats(auth, limit)
+      return NextResponse.json({
+        source: supabaseHeartbeats.length > 0 ? 'turso+supabase' : 'turso',
+        heartbeats: mergeRunnerHeartbeats(
+          heartbeats as Array<Record<string, unknown>>,
+          supabaseHeartbeats as Array<Record<string, unknown>>,
+          limit,
+        ),
+      })
+    } catch (fallbackError) {
+      console.error('[runner-heartbeats GET supabase fallback]', fallbackError)
+      return NextResponse.json({ source: 'turso', heartbeats })
+    }
   } catch (error) {
     if (error instanceof TursoConfigurationError) {
       const heartbeats = await listSupabaseRunnerHeartbeats(auth, limit)

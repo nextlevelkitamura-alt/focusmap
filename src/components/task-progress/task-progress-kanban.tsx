@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   Bot,
@@ -36,6 +36,7 @@ import type { TaskProgressSnapshotTask } from "@/types/task-progress"
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
 const HEARTBEAT_POLL_INTERVAL_MS = 30_000
+const HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS = 750
 const HEARTBEAT_POLL_LABEL = "Mac状態30秒ごとに確認"
 
 function isPageVisible() {
@@ -118,6 +119,8 @@ const LANES: Array<{
 ]
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
+  const refreshInFlightRef = useRef<Promise<void> | null>(null)
+  const lastRefreshRequestedAtRef = useRef(0)
   const [state, setState] = useState<RunnerConnectionState>({
     loading: true,
     online: false,
@@ -127,43 +130,56 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
 
   const refresh = useCallback(async () => {
     if (!isPageVisible()) return
-    try {
-      const response = await fetchWithSupabaseAuth("/api/task-progress/runner-heartbeats?limit=5", { cache: "no-store" })
-      if (!response.ok) throw new Error(`heartbeat fetch failed (${response.status})`)
-      const data = await response.json().catch(() => ({})) as { heartbeats?: RunnerHeartbeat[] }
-      const heartbeats = Array.isArray(data.heartbeats) ? data.heartbeats : []
-      const latest = heartbeats
-        .map(heartbeat => ({
-          ...heartbeat,
-          seenAt: heartbeat.last_seen_at || heartbeat.updated_at || null,
-        }))
-        .filter((heartbeat): heartbeat is RunnerHeartbeat & { seenAt: string } => !!heartbeat.seenAt)
-        .sort((a, b) => (Date.parse(b.seenAt) || 0) - (Date.parse(a.seenAt) || 0))[0] ?? null
-      const lastSeenMs = latest ? Date.parse(latest.seenAt) : 0
-      const online = !!latest &&
-        Number.isFinite(lastSeenMs) &&
-        lastSeenMs > 0 &&
-        Date.now() - lastSeenMs < HEARTBEAT_ONLINE_WINDOW_MS &&
-        latest.status !== "offline"
-      const activeTaskSeenAtById = new Map<string, string>()
-      for (const heartbeat of heartbeats) {
-        const seenAt = heartbeat.last_seen_at || heartbeat.updated_at || null
-        const taskId = heartbeat.current_task_id?.trim()
-        const seenMs = seenAt ? Date.parse(seenAt) : Number.NaN
-        if (!taskId || !seenAt || !Number.isFinite(seenMs)) continue
-        if (Date.now() - seenMs >= HEARTBEAT_ONLINE_WINDOW_MS) continue
-        activeTaskSeenAtById.set(taskId, seenAt)
-      }
+    if (refreshInFlightRef.current) return refreshInFlightRef.current
+    const refreshStartedAt = Date.now()
+    if (refreshStartedAt - lastRefreshRequestedAtRef.current < HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS) return
+    lastRefreshRequestedAtRef.current = refreshStartedAt
+    setState(previous => previous.loading ? previous : { ...previous, loading: true })
 
-      setState({
-        loading: false,
-        online,
-        lastSeenAt: latest?.seenAt ?? null,
-        activeTaskSeenAtById,
-      })
-    } catch {
-      setState(previous => ({ ...previous, loading: false }))
-    }
+    const refreshPromise = (async () => {
+      try {
+        const response = await fetchWithSupabaseAuth("/api/task-progress/runner-heartbeats?limit=5", { cache: "no-store" })
+        if (!response.ok) throw new Error(`heartbeat fetch failed (${response.status})`)
+        const data = await response.json().catch(() => ({})) as { heartbeats?: RunnerHeartbeat[] }
+        const heartbeats = Array.isArray(data.heartbeats) ? data.heartbeats : []
+        const latest = heartbeats
+          .map(heartbeat => ({
+            ...heartbeat,
+            seenAt: heartbeat.last_seen_at || heartbeat.updated_at || null,
+          }))
+          .filter((heartbeat): heartbeat is RunnerHeartbeat & { seenAt: string } => !!heartbeat.seenAt)
+          .sort((a, b) => (Date.parse(b.seenAt) || 0) - (Date.parse(a.seenAt) || 0))[0] ?? null
+        const lastSeenMs = latest ? Date.parse(latest.seenAt) : 0
+        const online = !!latest &&
+          Number.isFinite(lastSeenMs) &&
+          lastSeenMs > 0 &&
+          Date.now() - lastSeenMs < HEARTBEAT_ONLINE_WINDOW_MS &&
+          latest.status !== "offline"
+        const activeTaskSeenAtById = new Map<string, string>()
+        for (const heartbeat of heartbeats) {
+          const seenAt = heartbeat.last_seen_at || heartbeat.updated_at || null
+          const taskId = heartbeat.current_task_id?.trim()
+          const seenMs = seenAt ? Date.parse(seenAt) : Number.NaN
+          if (!taskId || !seenAt || !Number.isFinite(seenMs)) continue
+          if (Date.now() - seenMs >= HEARTBEAT_ONLINE_WINDOW_MS) continue
+          activeTaskSeenAtById.set(taskId, seenAt)
+        }
+
+        setState({
+          loading: false,
+          online,
+          lastSeenAt: latest?.seenAt ?? null,
+          activeTaskSeenAtById,
+        })
+      } catch {
+        setState(previous => ({ ...previous, loading: false }))
+      } finally {
+        refreshInFlightRef.current = null
+      }
+    })()
+
+    refreshInFlightRef.current = refreshPromise
+    return refreshPromise
   }, [])
 
   useEffect(() => {
@@ -180,6 +196,20 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
     }
     document.addEventListener("visibilitychange", handleVisibilityChange)
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
+  }, [refresh])
+
+  useEffect(() => {
+    const handleImmediateForeground = () => {
+      if (isPageVisible()) void refresh()
+    }
+    window.addEventListener("focus", handleImmediateForeground)
+    window.addEventListener("pageshow", handleImmediateForeground)
+    window.addEventListener("focusmap:native-app-resume", handleImmediateForeground)
+    return () => {
+      window.removeEventListener("focus", handleImmediateForeground)
+      window.removeEventListener("pageshow", handleImmediateForeground)
+      window.removeEventListener("focusmap:native-app-resume", handleImmediateForeground)
+    }
   }, [refresh])
 
   return { ...state, refresh }

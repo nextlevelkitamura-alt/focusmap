@@ -11,6 +11,8 @@ const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
 const APP_ORIGIN = process.env.FOCUSMAP_DESKTOP_URL || `http://127.0.0.1:${APP_PORT}`;
 const DESKTOP_USER_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'focusmap-desktop-shell');
 const DESKTOP_HEALTH_TOKEN = process.env.FOCUSMAP_DESKTOP_HEALTH_TOKEN || randomUUID();
+app.setName('Focusmap');
+app.setAboutPanelOptions({ applicationName: 'Focusmap' });
 app.setPath('userData', DESKTOP_USER_DATA_DIR);
 
 function resolveRepoRoot() {

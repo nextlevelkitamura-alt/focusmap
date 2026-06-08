@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 import type { TaskProgressSnapshotTask } from '@/types/task-progress'
@@ -98,6 +98,30 @@ describe('TaskProgressKanban', () => {
       })
     } finally {
       visibilitySpy.mockRestore()
+    }
+  })
+
+  test('iOSアプリ復帰イベントでMac heartbeatを即再取得する', async () => {
+    let nowMs = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs)
+    try {
+      renderMobileKanban()
+
+      expect(await screen.findByText('offline')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(fetchWithSupabaseAuthMock).toHaveBeenCalledTimes(1)
+      })
+
+      nowMs += 1_000
+      act(() => {
+        window.dispatchEvent(new Event('focusmap:native-app-resume'))
+      })
+
+      await waitFor(() => {
+        expect(fetchWithSupabaseAuthMock).toHaveBeenCalledTimes(2)
+      })
+    } finally {
+      nowSpy.mockRestore()
     }
   })
 })
