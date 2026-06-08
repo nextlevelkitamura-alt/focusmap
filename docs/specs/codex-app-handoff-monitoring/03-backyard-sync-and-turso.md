@@ -22,10 +22,10 @@ Macローカル:
 
 | 状況 | Mac local check | Cloud write/read |
 |---|---:|---:|
-| runner生存 | local process loop | 実行中5秒・アイドル30秒heartbeat upsert |
-| running、詳細未表示 | 1秒 | 5秒最短snapshot、hash変化時のみ |
+| runner生存 | local process loop | 実行中3秒・アイドル30秒heartbeat upsert |
+| running、詳細未表示 | 1秒 | 3秒最短snapshot、hash変化時のみ |
 | detail panel表示中 | 1秒 | active watch + 3秒detail poll |
-| awaiting approval / needs input | 1秒可 | 追加入力・再開を5秒以内に反映 |
+| awaiting approval / needs input | 1秒可 | 追加入力・再開を3秒以内に反映 |
 | runningなし | 通常background | 30から45秒、または手動更新 |
 | 古いcompleted / failed | tight loop不要 | 低頻度、または手動 |
 
@@ -114,8 +114,8 @@ activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定
 
 write budgetの考え方:
 
-- runner heartbeatは実行中5秒・アイドル30秒なら許容。
-- running snapshot 5秒は、hash dedupe前提なら許容。
+- runner heartbeatは実行中3秒・アイドル30秒なら許容。
+- running snapshot 3秒は、hash dedupe前提なら許容。
 - detail open中だけ3秒boostを許容。
 - 毎tick progress insertは禁止。
 - 毎tick event insertは禁止。
@@ -125,9 +125,9 @@ write budgetの考え方:
 
 | ケース | 月間write概算 | 備考 |
 |---|---:|---|
-| 1 runner heartbeat 5秒で常時active | 518k | 重めの上限見積もり。通常はidle30秒が混ざる |
-| 1 running task 5秒、常に変化、24h/day | 518k | 通常snapshotの重めケース |
-| 5 running tasks 5秒、常に変化、24h/day | 2.59M | progress/eventを増やさなければ許容 |
+| 1 runner heartbeat 3秒で常時active | 864k | 重めの上限見積もり。通常はidle30秒が混ざる |
+| 1 running task 3秒、常に変化、24h/day | 864k | 通常snapshotの重めケース |
+| 5 running tasks 3秒、常に変化、24h/day | 4.32M | progress/eventを増やさなければ許容 |
 | 5 tasks detail-open 3秒、常に変化、24h/day | 4.32M | 重いが他writeが小さければ10M未満 |
 | 全taskが3秒ごとにprogress/event insert | 危険 | 禁止 |
 

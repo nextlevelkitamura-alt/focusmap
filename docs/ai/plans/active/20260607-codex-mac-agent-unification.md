@@ -62,7 +62,7 @@ flowchart TB
 - メモ詳細・マップノード詳細・リンクメモ詳細の標準Codex導線は `dispatch_mode='manual'` にする。Focusmapは handoff task 作成、promptコピー、Codex.app/ChatGPT Codex入口の起動、状態監視を担当し、Codex.appで最終送信するのは人間。`dispatch_mode='auto'` は明示的な自動実行導線だけで使い、通常ボタンや既存manual handoffの再操作から暗黙に昇格しない。
 - Codex状態の通常writerは1つにする。`scripts/task-runner.ts` と `/api/codex/sync-node` は移行期間の互換/手動sync/debugに限定し、supervisor monitorが有効なtaskでは重複書き込みを避ける。
 - UIの3秒pollは読み取り専用にする。`/api/task-progress/snapshot` と `/api/ai-tasks/[id]/activity` を読み、sqlite/rollout探索やDB writeはローカルmonitor側だけが行う。
-- ローカル監視はactive task中だけ1〜5秒で確認してよいが、DB書き込みはhash/活動時刻/状態/新規activityが変わった時だけにする。heartbeatは5秒基準でよい。
+- ローカル監視はactive task中だけ1〜3秒で確認してよいが、DB書き込みはhash/活動時刻/状態/新規activityが変わった時だけにする。heartbeatは実行中3秒・アイドル30秒基準にする。
 - Supabaseへはtask作成、thread初回検出、状態変化、完了/失敗/確認待ち、互換fallbackだけを書く。`codex_last_checked_at` だけの無変化poll、running中の同一pulse、raw log/full thread historyはSupabaseへ書かない。Tursoが使える時、activityはTursoを主にする。
 - macOS権限は機能別に明示する。全アプリ監視を暗黙に行わず、必要な時だけAccessibility、Screen Recording、Automation、Full Disk Accessを案内する。
 
@@ -122,14 +122,14 @@ flowchart TB
 
 - ローカル `npm run mac:dev` で3001、agent、Codex app-serverの起動状態を確認する。
 - manual handoff taskを作り、通常ボタンでは `needs_input` / `prompt_waiting` になり、Codex.appへの `turn/start` が自動送信されないことを確認する。
-- 明示的なauto taskを作る場合だけ、初回runningが5秒以内にUIへ出ることを確認する。
+- 明示的なauto taskを作る場合だけ、初回runningが3秒以内にUIへ出ることを確認する。
 - 複数panelを開いても同一taskに重複snapshot/eventが増えないことを確認する。
 - 3秒UI pollがDB writeを増やさないことを確認する。
 
 ## 受け入れ条件
 
 - Macアプリを開くと、Next 3001、agent、Codex app-serverが起動済みまたは起動不能理由つきで確認できる。
-- Mac上で開始したCodex taskは、通常経路で5秒以内に `未送信` から `実行中` または `確認待ち` へ進む。
+- Mac上で開始したCodex taskは、通常経路で3秒以内に `未送信` から `実行中` または `確認待ち` へ進む。
 - 同じCodex taskのsnapshot/event writerは1つだけになる。
 - UIの3秒pollは読み取り専用で、表示中という理由だけでsqlite/rollout探索やDB writeを発生させない。
 - manual handoff、prompt再コピー、未送信/実行中/確認待ち/接続失敗/完了の表示は維持される。

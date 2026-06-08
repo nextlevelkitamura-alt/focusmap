@@ -152,7 +152,7 @@ export class AgentApiClient {
     }
 
     const hash = this.progressHash(body);
-    const minIntervalMs = options.minIntervalMs ?? 5_000;
+    const minIntervalMs = options.minIntervalMs ?? 3_000;
     const cached = this.progressCache.get(taskId);
     const now = Date.now();
     if (!options.force && cached?.hash === hash) return false;

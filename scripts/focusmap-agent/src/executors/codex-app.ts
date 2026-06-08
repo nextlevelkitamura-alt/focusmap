@@ -10,7 +10,7 @@ import type { AgentConfig, AiTask, StepLog, TaskResultJson } from '../types.js';
 const WS_URL = 'ws://127.0.0.1:7878';
 const CONNECT_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MS = 15 * 60 * 1000;
-const LOG_FLUSH_MS = 5_000;
+const LOG_FLUSH_MS = 3_000;
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 
 type RpcEnvelope = {
