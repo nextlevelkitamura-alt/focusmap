@@ -115,6 +115,8 @@ describe('WishlistCardDetail', () => {
   test('画像エリアでフォルダー選択・ドラッグ&ドロップ・クリップボード貼り付け導線を表示する', async () => {
     render(<DetailHarness />)
 
+    const imageLabel = await screen.findByText('画像')
+    expect(within(imageLabel.closest('div') as HTMLElement).queryByRole('button', { name: /^追加$/ })).not.toBeInTheDocument()
     expect(await screen.findByText('画像を追加')).toBeInTheDocument()
     expect(screen.getByText('フォルダー選択 / ドラッグ&ドロップ')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
@@ -183,7 +185,7 @@ describe('WishlistCardDetail', () => {
     const dateTrigger = within(dateField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
     fireEvent.click(dateTrigger)
 
-    expect(await screen.findByTestId('memo-date-popover')).toHaveAttribute('data-side', 'bottom')
+    expect(await screen.findByTestId('memo-date-popover')).toHaveAttribute('data-side', 'top')
     expect(await screen.findByRole('button', { name: '前' })).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: /^1$/ })[0])
 
@@ -253,6 +255,63 @@ describe('WishlistCardDetail', () => {
     })
   })
 
+  test('時刻ホイールは二本指スクロールで値を保存する', async () => {
+    render(<DetailHarness />)
+
+    const timeField = await screen.findByText('時刻')
+    const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
+    fireEvent.click(timeTrigger)
+
+    const hourColumn = screen.getByRole('listbox', { name: '時' })
+    fireEvent.wheel(hourColumn, { deltaY: 80 })
+
+    await waitFor(() => {
+      expect(within(timeField.parentElement as HTMLElement).getByRole('button', { name: /10:00/ })).toBeInTheDocument()
+    })
+  })
+
+  test('Codex送信は追加依頼文を編集せず見出しと本文だけ渡す', async () => {
+    const onLaunchCodex = vi.fn(async () => undefined)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={onLaunchCodex}
+      />,
+    )
+
+    expect(screen.queryByRole('textbox', { name: /Codex/ })).not.toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Codexに送る/ }))
+
+    await waitFor(() => {
+      expect(onLaunchCodex).toHaveBeenCalled()
+    })
+    expect(onLaunchCodex.mock.calls[0]?.[0]).toMatchObject({
+      title: 'Original title',
+      description: 'Original body',
+    })
+  })
+
   test('画像をドロップすると添付APIへアップロードする', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {
@@ -293,6 +352,9 @@ describe('WishlistCardDetail', () => {
       )
     })
     expect(await screen.findByAltText('memo.png')).toBeInTheDocument()
+    const uploadedImage = await screen.findByAltText('memo.png')
+    const uploadButton = screen.getByRole('button', { name: /画像を追加/ })
+    expect(uploadedImage.compareDocumentPosition(uploadButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   test('アップロード完了前に薄いローカルプレビューを表示する', async () => {

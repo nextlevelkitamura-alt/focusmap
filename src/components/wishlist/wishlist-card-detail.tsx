@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  type WheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -35,7 +36,6 @@ const IOS_TIME_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
 const DATE_POPOVER_APPROX_HEIGHT = 340
 const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
-const DEFAULT_CODEX_REQUEST = "このメモと画像をもとに次の作業を整理して"
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
@@ -323,15 +323,6 @@ function buildMemoCodexLogEntries(args: {
   return entries
 }
 
-function buildCodexRequestDescription(request: string, memo: string) {
-  const requestText = request.trim()
-  const memoText = memo.trim()
-  return [
-    requestText,
-    memoText ? `メモ:\n${memoText}` : null,
-  ].filter(Boolean).join("\n\n")
-}
-
 function getMonthStart(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1)
 }
@@ -568,6 +559,23 @@ function IosTimeWheelColumn({
     settleToIndex(targetIndex, true)
   }, [settleToIndex, values.length])
 
+  const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    if (values.length === 0) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    clearSettleTimer()
+    setIsDragging(false)
+    setIsSettling(false)
+    dragRef.current = null
+    activePointerIdRef.current = null
+
+    const primaryDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+    if (primaryDelta === 0) return
+    const step = primaryDelta > 0 ? 1 : -1
+    settleToIndex(Math.round(virtualIndexRef.current) + step, true)
+  }, [clearSettleTimer, settleToIndex, values.length])
+
   useEffect(() => {
     previewIndexRef.current = selectedIndex
     if (dragRef.current) return
@@ -661,6 +669,7 @@ function IosTimeWheelColumn({
       ref={wheelRef}
       className="relative h-full min-w-0 touch-none select-none overflow-hidden [touch-action:none]"
       data-time-wheel-column={label === "時" ? "hour" : "minute"}
+      onWheel={handleWheel}
       aria-label={label}
       role="listbox"
       aria-activedescendant={`${label}-${values[currentIndex]}`}
@@ -1249,7 +1258,6 @@ export function WishlistCardDetail({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
   const [draftDescription, setDraftDescription] = useState("")
-  const [codexRequest, setCodexRequest] = useState(DEFAULT_CODEX_REQUEST)
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
   const [pendingImages, setPendingImages] = useState<PendingMemoImage[]>([])
@@ -1492,7 +1500,6 @@ export function WishlistCardDetail({
     draftSourceIdRef.current = itemId
     setDraftTitle(itemTitle)
     setDraftDescription(itemDescription)
-    setCodexRequest(DEFAULT_CODEX_REQUEST)
     lastSubmittedDraftRef.current = { title: itemTitle.trim(), description: itemDescription.trim() }
     const scheduled = itemScheduledAt ? new Date(itemScheduledAt) : null
     setCalendarMonth(getMonthStart(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : new Date()))
@@ -2232,205 +2239,207 @@ export function WishlistCardDetail({
               </label>
             </div>
 
-            <div className="order-4 space-y-3 rounded-lg border bg-background/40 p-3 xl:col-start-1 xl:row-start-4">
+            <div className="order-4 space-y-2 xl:col-start-1 xl:row-start-3">
               <Label className="flex items-center gap-1.5">
                 <Clock className="h-4 w-4" />
                 時間・予定
               </Label>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground">日付</span>
-                  <Popover open={isDatePopoverOpen} onOpenChange={handleDatePopoverOpenChange}>
-                    <PopoverTrigger asChild>
-                      <button
-                        ref={dateTriggerRef}
-                        type="button"
-                        className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+              <div className="space-y-3 rounded-lg border bg-background/40 p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <span className="text-xs font-medium text-muted-foreground">日付</span>
+                    <Popover open={isDatePopoverOpen} onOpenChange={handleDatePopoverOpenChange}>
+                      <PopoverTrigger asChild>
+                        <button
+                          ref={dateTriggerRef}
+                          type="button"
+                          className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className={cn("min-w-0 flex-1 truncate", !dateValue && "text-muted-foreground")}>
+                            {formatDateTriggerLabel(dateValue)}
+                          </span>
+                          <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        side={isMobile ? "bottom" : "top"}
+                        align="start"
+                        sideOffset={8}
+                        avoidCollisions={!isMobile}
+                        data-testid="memo-date-popover"
+                        className="w-[min(20rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
                       >
-                        <CalendarIcon className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span className={cn("min-w-0 flex-1 truncate", !dateValue && "text-muted-foreground")}>
-                          {formatDateTriggerLabel(dateValue)}
-                        </span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      side="bottom"
-                      align="start"
-                      sideOffset={8}
-                      avoidCollisions={false}
-                      data-testid="memo-date-popover"
-                      className="w-[min(20rem,calc(100vw-2rem))] rounded-lg border-neutral-800 bg-neutral-950 p-3 text-neutral-100"
-                    >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setCalendarMonth(month => addMonths(month, -1))}
-                            className="flex h-8 min-w-10 items-center justify-center rounded-md border border-neutral-800 text-xs text-neutral-300 hover:bg-neutral-900"
-                          >
-                            前
-                          </button>
-                          <div className="text-sm font-semibold">{calendarMonthLabel}</div>
-                          <button
-                            type="button"
-                            onClick={() => setCalendarMonth(month => addMonths(month, 1))}
-                            className="flex h-8 min-w-10 items-center justify-center rounded-md border border-neutral-800 text-xs text-neutral-300 hover:bg-neutral-900"
-                          >
-                            次
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-neutral-500">
-                          {WEEKDAY_LABELS.map(day => <div key={day}>{day}</div>)}
-                        </div>
-                        <div className="grid grid-cols-7 gap-1">
-                          {calendarDays.map(day => (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
                             <button
-                              key={day.value}
                               type="button"
-                              onClick={() => void handleDateSelect(day.date)}
-                              className={cn(
-                                "flex h-9 items-center justify-center rounded-md text-sm tabular-nums transition-colors",
-                                !day.inMonth && "text-neutral-700",
-                                day.inMonth && "text-neutral-300 hover:bg-neutral-900",
-                                day.isToday && "border border-neutral-700",
-                                dateValue === day.value && "border-primary bg-primary text-primary-foreground hover:bg-primary",
-                              )}
+                              onClick={() => setCalendarMonth(month => addMonths(month, -1))}
+                              className="flex h-8 min-w-10 items-center justify-center rounded-md border border-neutral-800 text-xs text-neutral-300 hover:bg-neutral-900"
                             >
-                              {day.date.getDate()}
+                              前
                             </button>
-                          ))}
-                        </div>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground">時刻</span>
-                  <Popover open={isTimePopoverOpen} onOpenChange={handleTimePopoverOpenChange}>
-                    <PopoverTrigger asChild>
-                      <button
-                        ref={timeTriggerRef}
-                        type="button"
-                        className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
-                      >
-                        <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span className={cn("min-w-0 flex-1 truncate", !timeValue && "text-muted-foreground")}>
-                          {timeValue || "未設定"}
-                        </span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      side="bottom"
-                      align="end"
-                      sideOffset={8}
-                      avoidCollisions={false}
-                      data-testid="memo-time-popover"
-                      className="w-[min(19rem,calc(100vw-2rem))] rounded-[22px] border-neutral-700/40 bg-[#2f2f2f]/95 p-2 text-neutral-100 shadow-[0_18px_52px_rgba(0,0,0,0.45)] backdrop-blur-xl"
-                    >
-                      <div data-testid="ios-time-wheel-picker" className="relative overflow-hidden rounded-[18px] bg-[#383838]/90">
-                        <div className="grid grid-cols-2 border-b border-white/5 px-3 pt-2 text-center text-[11px] font-semibold text-neutral-500">
-                          <div>時</div>
-                          <div>分</div>
-                        </div>
-                        <div className="relative h-[220px]">
-                          <div className="pointer-events-none absolute left-4 right-4 top-1/2 z-10 h-11 -translate-y-1/2 rounded-xl bg-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.06),inset_0_-1px_0_rgba(0,0,0,0.22)]" />
-                          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-16 bg-gradient-to-b from-[#383838] via-[#383838]/90 to-transparent" />
-                          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-16 bg-gradient-to-t from-[#383838] via-[#383838]/90 to-transparent" />
-                          <div className="relative z-30 grid h-full grid-cols-2 px-3">
-                            <IosTimeWheelColumn
-                              label="時"
-                              values={HOUR_OPTIONS}
-                              value={selectedHour}
-                              onPreview={previewHourValue}
-                              onCommit={commitHourValue}
-                            />
-                            <IosTimeWheelColumn
-                              label="分"
-                              values={MINUTE_OPTIONS}
-                              value={selectedMinute}
-                              onPreview={previewMinuteValue}
-                              onCommit={commitMinuteValue}
-                            />
+                            <div className="text-sm font-semibold">{calendarMonthLabel}</div>
+                            <button
+                              type="button"
+                              onClick={() => setCalendarMonth(month => addMonths(month, 1))}
+                              className="flex h-8 min-w-10 items-center justify-center rounded-md border border-neutral-800 text-xs text-neutral-300 hover:bg-neutral-900"
+                            >
+                              次
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-neutral-500">
+                            {WEEKDAY_LABELS.map(day => <div key={day}>{day}</div>)}
+                          </div>
+                          <div className="grid grid-cols-7 gap-1">
+                            {calendarDays.map(day => (
+                              <button
+                                key={day.value}
+                                type="button"
+                                onClick={() => void handleDateSelect(day.date)}
+                                className={cn(
+                                  "flex h-9 items-center justify-center rounded-md text-sm tabular-nums transition-colors",
+                                  !day.inMonth && "text-neutral-700",
+                                  day.inMonth && "text-neutral-300 hover:bg-neutral-900",
+                                  day.isToday && "border border-neutral-700",
+                                  dateValue === day.value && "border-primary bg-primary text-primary-foreground hover:bg-primary",
+                                )}
+                              >
+                                {day.date.getDate()}
+                              </button>
+                            ))}
                           </div>
                         </div>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">所要時間</span>
-                  <span className="text-xs text-muted-foreground">{formatDurationLabel(item.duration_minutes)}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {QUICK_MINUTES.map(minutes => (
-                    <button
-                      key={minutes}
-                      type="button"
-                      onClick={() => update({ duration_minutes: minutes })}
-                      className={cn(
-                        "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
-                        item.duration_minutes === minutes ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {formatDurationLabel(minutes)}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => void handleCustomDuration()}
-                    className={cn(
-                      "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
-                      item.duration_minutes && !QUICK_MINUTES.includes(item.duration_minutes) ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    カスタム
-                  </button>
-                </div>
-              </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <Popover open={isCalendarPopoverOpen} onOpenChange={setIsCalendarPopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex min-h-[42px] min-w-0 items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
-                    >
-                      <span
-                        className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
-                      />
-                      <span className="min-w-0 flex-1 truncate">{selectedCalendar?.name ?? "Google"}</span>
-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-[min(18rem,calc(100vw-2rem))] p-1.5">
-                    {calendarOptions.map(calendar => (
-                      <button
-                        key={calendar.id}
-                        type="button"
-                        onClick={() => handleCalendarSelect(calendar.id)}
-                        className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs font-medium text-muted-foreground">時刻</span>
+                    <Popover open={isTimePopoverOpen} onOpenChange={handleTimePopoverOpenChange}>
+                      <PopoverTrigger asChild>
+                        <button
+                          ref={timeTriggerRef}
+                          type="button"
+                          className="relative flex min-h-[44px] w-full items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+                        >
+                          <Clock className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className={cn("min-w-0 flex-1 truncate", !timeValue && "text-muted-foreground")}>
+                            {timeValue || "未設定"}
+                          </span>
+                          <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        side={isMobile ? "bottom" : "top"}
+                        align={isMobile ? "end" : "start"}
+                        sideOffset={8}
+                        avoidCollisions={!isMobile}
+                        data-testid="memo-time-popover"
+                        className="w-[min(19rem,calc(100vw-2rem))] rounded-[22px] border-neutral-700/40 bg-[#2f2f2f]/95 p-2 text-neutral-100 shadow-[0_18px_52px_rgba(0,0,0,0.45)] backdrop-blur-xl"
                       >
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: calendar.color }} />
-                        <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
-                        {calendar.primary && <span className="text-[10px] text-muted-foreground">主</span>}
-                        {calendar.id === selectedCalendarId && <Check className="h-4 w-4 text-primary" />}
+                        <div data-testid="ios-time-wheel-picker" className="relative overflow-hidden rounded-[18px] bg-[#383838]/90">
+                          <div className="grid grid-cols-2 border-b border-white/5 px-3 pt-2 text-center text-[11px] font-semibold text-neutral-500">
+                            <div>時</div>
+                            <div>分</div>
+                          </div>
+                          <div className="relative h-[220px]">
+                            <div className="pointer-events-none absolute left-4 right-4 top-1/2 z-10 h-11 -translate-y-1/2 rounded-xl bg-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.06),inset_0_-1px_0_rgba(0,0,0,0.22)]" />
+                            <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-16 bg-gradient-to-b from-[#383838] via-[#383838]/90 to-transparent" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-16 bg-gradient-to-t from-[#383838] via-[#383838]/90 to-transparent" />
+                            <div className="relative z-30 grid h-full grid-cols-2 px-3">
+                              <IosTimeWheelColumn
+                                label="時"
+                                values={HOUR_OPTIONS}
+                                value={selectedHour}
+                                onPreview={previewHourValue}
+                                onCommit={commitHourValue}
+                              />
+                              <IosTimeWheelColumn
+                                label="分"
+                                values={MINUTE_OPTIONS}
+                                value={selectedMinute}
+                                onPreview={previewMinuteValue}
+                                onCommit={commitMinuteValue}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">所要時間</span>
+                    <span className="text-xs text-muted-foreground">{formatDurationLabel(item.duration_minutes)}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {QUICK_MINUTES.map(minutes => (
+                      <button
+                        key={minutes}
+                        type="button"
+                        onClick={() => update({ duration_minutes: minutes })}
+                        className={cn(
+                          "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
+                          item.duration_minutes === minutes ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {formatDurationLabel(minutes)}
                       </button>
                     ))}
-                  </PopoverContent>
-                </Popover>
-                <Button
-                  onClick={handleAddCalendar}
-                  disabled={isAddingCalendar || !canAddCalendar}
-                  variant={item.google_event_id ? "outline" : "default"}
-                  className="min-h-[42px] shrink-0 px-3"
-                >
-                  {isAddingCalendar ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarIcon className="mr-1.5 h-4 w-4" />}
-                  {item.google_event_id ? "登録済み" : "予定を追加"}
-                </Button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCustomDuration()}
+                      className={cn(
+                        "min-h-9 rounded-md border px-2 text-xs font-medium transition-colors",
+                        item.duration_minutes && !QUICK_MINUTES.includes(item.duration_minutes) ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      カスタム
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <Popover open={isCalendarPopoverOpen} onOpenChange={setIsCalendarPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex min-h-[42px] min-w-0 items-center rounded-md border bg-background px-3 text-left text-sm transition-colors hover:border-primary/50"
+                      >
+                        <span
+                          className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: selectedCalendar?.color ?? "#3F51B5" }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{selectedCalendar?.name ?? "Google"}</span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-[min(18rem,calc(100vw-2rem))] p-1.5">
+                      {calendarOptions.map(calendar => (
+                        <button
+                          key={calendar.id}
+                          type="button"
+                          onClick={() => handleCalendarSelect(calendar.id)}
+                          className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+                        >
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: calendar.color }} />
+                          <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
+                          {calendar.primary && <span className="text-[10px] text-muted-foreground">主</span>}
+                          {calendar.id === selectedCalendarId && <Check className="h-4 w-4 text-primary" />}
+                        </button>
+                      ))}
+                    </PopoverContent>
+                  </Popover>
+                  <Button
+                    onClick={handleAddCalendar}
+                    disabled={isAddingCalendar || !canAddCalendar}
+                    variant={item.google_event_id ? "outline" : "default"}
+                    className="min-h-[42px] shrink-0 px-3"
+                  >
+                    {isAddingCalendar ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarIcon className="mr-1.5 h-4 w-4" />}
+                    {item.google_event_id ? "登録済み" : "予定を追加"}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -2539,17 +2548,13 @@ export function WishlistCardDetail({
               )}
             </div>
 
-            <div className="order-2 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-1 xl:row-start-2">
-              <div className="flex items-center justify-between gap-2">
+            <div className="order-2 space-y-2 xl:col-start-1 xl:row-start-2">
+              <div className="flex min-h-8 items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   <ImagePlus className="h-4 w-4" />
                   画像
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{displayedImages.length}</span>
                 </Label>
-                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className={cn("h-8 gap-1.5 px-2 text-xs", isMobile && "hidden")}>
-                  <Plus className="h-3.5 w-3.5" />
-                  追加
-                </Button>
               </div>
                 <div
                   ref={imagePasteTargetRef}
@@ -2696,7 +2701,7 @@ export function WishlistCardDetail({
                 </div>
             </div>
 
-            <div className="order-5 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-2 xl:row-start-4">
+            <div className="order-5 space-y-2 xl:col-span-2 xl:row-start-4">
               <div className="flex items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   タグ
@@ -2750,28 +2755,30 @@ export function WishlistCardDetail({
                   </PopoverContent>
                 </Popover>
               </div>
-              {selectedTags.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {selectedTags.map(tag => {
-                    const color = getTagColor(tag, tagColors)
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => void removeTag(tag)}
-                        className="min-h-[40px] rounded-full border px-3 text-sm font-medium hover:opacity-80"
-                        style={{
-                          borderColor: colorToRgba(color, 0.55),
-                          backgroundColor: colorToRgba(color, 0.12),
-                          color,
-                        }}
-                      >
-                        {tag} ×
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+              <div className="min-h-[44px] rounded-lg border bg-background/40 p-3">
+                {selectedTags.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTags.map(tag => {
+                      const color = getTagColor(tag, tagColors)
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => void removeTag(tag)}
+                          className="min-h-[40px] rounded-full border px-3 text-sm font-medium hover:opacity-80"
+                          style={{
+                            borderColor: colorToRgba(color, 0.55),
+                            backgroundColor: colorToRgba(color, 0.12),
+                            color,
+                          }}
+                        >
+                          {tag} ×
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
           {saveError && (
@@ -2782,7 +2789,7 @@ export function WishlistCardDetail({
 
             </div>
 
-            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-span-2 xl:row-start-3")}>
+            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-3")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -2859,22 +2866,22 @@ export function WishlistCardDetail({
               const repoConfigured = !!project?.repo_path
               const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
               const needsRepoConfig = !item.project_id || !repoConfigured
-              const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim() || codexRequest.trim())
+              const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
               const codexDraftItem = {
                 ...item,
                 title: draftTitle,
-                description: buildCodexRequestDescription(codexRequest, draftDescription) || draftDescription || null,
+                description: draftDescription || null,
               } as IdealGoalWithItems
               const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active
               const logEntries = buildMemoCodexLogEntries({ task: aiTask, launchStep, launchError })
               const currentLog = logEntries.find(entry => entry.active) ?? logEntries[logEntries.length - 1]
 
               return (
-                <div className="space-y-3 rounded-lg border bg-background/40 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="space-y-2">
+                  <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
                     <Label className="flex items-center gap-1.5">
                       <Terminal className="h-4 w-4 text-emerald-500" />
-                      Codexへの依頼
+                      Codex
                     </Label>
                     {currentLog && (
                       <span className={cn(
@@ -2886,90 +2893,84 @@ export function WishlistCardDetail({
                     )}
                   </div>
 
-                  <textarea
-                    value={codexRequest}
-                    onChange={e => setCodexRequest(e.target.value)}
-                    rows={2}
-                    placeholder={DEFAULT_CODEX_REQUEST}
-                    className="min-h-[76px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500/30"
-                  />
+                  <div className="space-y-3 rounded-lg border bg-background/40 p-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start">
+                      <Button
+                        type="button"
+                        disabled={codexDisabled || isLaunchingCodex}
+                        onClick={async () => {
+                          setLaunchError(null)
+                          setLaunchStep('sending')
+                          setIsLaunchingCodex(true)
+                          try {
+                            await (onLaunchCodex ?? onLaunchCodexApp)?.(codexDraftItem)
+                            setLaunchStep('sent')
+                          } catch (e) {
+                            setLaunchError(e instanceof Error ? e.message : "起動失敗")
+                            setLaunchStep(null)
+                          } finally {
+                            setIsLaunchingCodex(false)
+                          }
+                        }}
+                        className="min-h-[44px] shrink-0 gap-2 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-45"
+                      >
+                        {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        Codexに送る
+                      </Button>
+                      <div className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
+                        {needsRepoConfig
+                          ? "プロジェクトとリポジトリパスを設定すると送信できます。"
+                          : active
+                            ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
+                            : "見出しとメモ本文をCodex用の追跡taskとして送ります。"}
+                      </div>
+                    </div>
 
-                  <div className="flex flex-col gap-2 md:flex-row md:items-start">
-                    <Button
-                      type="button"
-                      disabled={codexDisabled || isLaunchingCodex}
-                      onClick={async () => {
-                        setLaunchError(null)
-                        setLaunchStep('sending')
-                        setIsLaunchingCodex(true)
-                        try {
-                          await (onLaunchCodex ?? onLaunchCodexApp)?.(codexDraftItem)
-                          setLaunchStep('sent')
-                        } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "起動失敗")
-                          setLaunchStep(null)
-                        } finally {
-                          setIsLaunchingCodex(false)
-                        }
-                      }}
-                      className="min-h-[44px] shrink-0 gap-2 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-45"
-                    >
-                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                      Codexに送る
-                    </Button>
-                    <div className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
-                      {needsRepoConfig
-                        ? "プロジェクトとリポジトリパスを設定すると送信できます。"
-                        : active
-                          ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
-                          : "メモ本文と添付画像を含めて、Codex用の追跡taskを作成します。"}
+                    {needsRepoConfig && (
+                      <Link
+                        href="/dashboard/settings/projects#project-repos"
+                        className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
+                      >
+                        <SettingsIcon className="h-3.5 w-3.5" />
+                        {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
+                      </Link>
+                    )}
+
+                    {launchError && (
+                      <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                        {launchError}
+                      </div>
+                    )}
+
+                    <div className="rounded-md border bg-background/70">
+                      <div className="grid grid-cols-[6rem_6rem_minmax(0,1fr)] border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+                        <span>状態</span>
+                        <span>時刻</span>
+                        <span>内容</span>
+                      </div>
+                      <div className="divide-y">
+                        {logEntries.map((entry, index) => (
+                          <div
+                            key={`${entry.state}-${index}`}
+                            className={cn(
+                              "grid min-h-[42px] grid-cols-[6rem_6rem_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs",
+                              entry.active && "bg-muted/30",
+                            )}
+                          >
+                            <span className={cn(
+                              "inline-flex w-fit items-center rounded-full border px-2 py-0.5 font-medium",
+                              memoCodexLogTone(entry.state, entry.active),
+                            )}>
+                              {entry.label}
+                            </span>
+                            <span className="tabular-nums text-muted-foreground">{entry.time}</span>
+                            <span className="min-w-0 truncate text-muted-foreground">{entry.body}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-
-                  {needsRepoConfig && (
-                    <Link
-                      href="/dashboard/settings/projects#project-repos"
-                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
-                    >
-                      <SettingsIcon className="h-3.5 w-3.5" />
-                      {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
-                    </Link>
-                  )}
-
-                  {launchError && (
-                    <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                      {launchError}
-                    </div>
-                  )}
-
-                  <div className="rounded-md border bg-background/70">
-                    <div className="grid grid-cols-[6rem_6rem_minmax(0,1fr)] border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-                      <span>状態</span>
-                      <span>時刻</span>
-                      <span>内容</span>
-                    </div>
-                    <div className="divide-y">
-                      {logEntries.map((entry, index) => (
-                        <div
-                          key={`${entry.state}-${index}`}
-                          className={cn(
-                            "grid min-h-[42px] grid-cols-[6rem_6rem_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs",
-                            entry.active && "bg-muted/30",
-                          )}
-                        >
-                          <span className={cn(
-                            "inline-flex w-fit items-center rounded-full border px-2 py-0.5 font-medium",
-                            memoCodexLogTone(entry.state, entry.active),
-                          )}>
-                            {entry.label}
-                          </span>
-                          <span className="tabular-nums text-muted-foreground">{entry.time}</span>
-                          <span className="min-w-0 truncate text-muted-foreground">{entry.body}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-              </div>
+                </div>
             )
           })()}
           </div>
