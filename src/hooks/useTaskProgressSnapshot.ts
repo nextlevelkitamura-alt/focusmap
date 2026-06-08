@@ -24,17 +24,37 @@ function isActiveTask(task: TaskProgressSnapshotTask) {
     task.status === 'needs_input'
 }
 
+function taskFingerprint(task: TaskProgressSnapshotTask) {
+  return [
+    task.id,
+    task.status,
+    task.executor ?? '',
+    task.codex_thread_id ?? '',
+    task.current_step ?? '',
+    task.progress_percent ?? '',
+    task.summary ?? '',
+    task.updated_at,
+    task.source_type ?? '',
+    task.source_id ?? '',
+  ].join('\u001f')
+}
+
 function mergeTaskMap(
   previous: Map<string, TaskProgressSnapshotTask>,
   incoming: TaskProgressSnapshotTask[],
 ) {
-  if (incoming.length === 0) return previous
+  if (incoming.length === 0) return { map: previous, changed: false }
   const next = new Map(previous)
+  let changed = false
   for (const task of incoming) {
     if (!task?.id) continue
+    const previousTask = next.get(task.id)
+    if (!previousTask || taskFingerprint(previousTask) !== taskFingerprint(task)) {
+      changed = true
+    }
     next.set(task.id, task)
   }
-  return next
+  return { map: changed ? next : previous, changed }
 }
 
 type UseTaskProgressSnapshotOptions = {
@@ -57,7 +77,12 @@ export function useTaskProgressSnapshot({
   const [isLoading, setIsLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
   const cursorRef = useRef<string | null>(null)
+  const tasksByIdRef = useRef<Map<string, TaskProgressSnapshotTask>>(new Map())
   const inFlightRef = useRef(false)
+  const metadataRef = useRef<{ source: string | null; serverTime: string | null }>({
+    source: null,
+    serverTime: null,
+  })
 
   useEffect(() => {
     cursorRef.current = cursor
@@ -65,7 +90,9 @@ export function useTaskProgressSnapshot({
 
   useEffect(() => {
     if (!fixtureTasks) return
-    setTasksById(new Map(fixtureTasks.map(task => [task.id, task])))
+    const nextTasksById = new Map(fixtureTasks.map(task => [task.id, task]))
+    tasksByIdRef.current = nextTasksById
+    setTasksById(nextTasksById)
     setSource('fixture')
     setServerTime(new Date().toISOString())
     setCursor(new Date().toISOString())
@@ -87,15 +114,33 @@ export function useTaskProgressSnapshot({
         throw new Error(`snapshot fetch failed (${response.status})`)
       }
       const data = await response.json() as TaskProgressSnapshotResponse
-      setTasksById(previous => options.reset
-        ? new Map((data.tasks ?? []).map(task => [task.id, task]))
-        : mergeTaskMap(previous, data.tasks ?? []),
-      )
+      const incomingTasks = data.tasks ?? []
       const returnedCursor = data.cursor ?? nextCursor ?? data.server_time ?? null
       cursorRef.current = returnedCursor
-      setCursor(returnedCursor)
-      setSource(data.source ?? null)
-      setServerTime(data.server_time ?? null)
+      const nextSource = data.source ?? null
+      const nextServerTime = data.server_time ?? null
+      metadataRef.current = { source: nextSource, serverTime: nextServerTime }
+
+      let didChange = false
+      if (options.reset) {
+        const nextTasksById = new Map(incomingTasks.map(task => [task.id, task]))
+        tasksByIdRef.current = nextTasksById
+        setTasksById(nextTasksById)
+        didChange = true
+      } else {
+        const merged = mergeTaskMap(tasksByIdRef.current, incomingTasks)
+        didChange = merged.changed
+        if (didChange) {
+          tasksByIdRef.current = merged.map
+          setTasksById(merged.map)
+        }
+      }
+
+      if (options.reset || didChange) {
+        setCursor(returnedCursor)
+        setSource(nextSource)
+        setServerTime(nextServerTime)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'snapshot fetch failed')
     } finally {

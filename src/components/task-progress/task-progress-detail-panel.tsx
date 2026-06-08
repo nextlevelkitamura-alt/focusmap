@@ -35,6 +35,7 @@ import type { AiTaskActivityMessage } from "@/types/ai-task"
 const DETAIL_POLL_INTERVAL_MS = 3_000
 const WATCH_PING_INTERVAL_MS = 10_000
 const LOCAL_SYNC_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input", "completed"])
+const UPDATE_NOTICE_MS = 1_800
 
 function statusClass(status: string | null | undefined) {
   return codexMonitorToneClass(status)
@@ -96,6 +97,49 @@ function activityMessageClass(message: AiTaskActivityMessage) {
   return "mr-auto max-w-[92%] bg-background"
 }
 
+function taskProgressDetailFingerprint(detail: TaskProgressDetailResponse) {
+  return JSON.stringify({
+    task: {
+      id: detail.task.id,
+      title: detail.task.title,
+      status: detail.task.status,
+      executor: detail.task.executor,
+      codex_thread_id: detail.task.codex_thread_id,
+      current_step: detail.task.current_step,
+      progress_percent: detail.task.progress_percent,
+      summary: detail.task.summary,
+      updated_at: detail.task.updated_at,
+      error_message: detail.task.error_message,
+      last_activity_at: detail.task.last_activity_at,
+      completed_at: detail.task.completed_at,
+    },
+    progress: detail.progress.map(entry => ({
+      id: entry.id,
+      phase: entry.phase,
+      message: entry.message,
+      created_at: entry.created_at,
+      progress_json: entry.progress_json,
+    })),
+    events: detail.events.map(entry => ({
+      id: entry.id,
+      event_type: entry.event_type,
+      created_at: entry.created_at,
+      payload_json: entry.payload_json,
+    })),
+  })
+}
+
+function activityMessagesFingerprint(messages: AiTaskActivityMessage[]) {
+  return JSON.stringify(messages.map(message => ({
+    id: message.id,
+    role: message.role,
+    kind: message.kind,
+    body: message.body,
+    importance: message.importance,
+    created_at: message.created_at,
+  })))
+}
+
 type TaskProgressDetailPanelProps = {
   open: boolean
   task: TaskProgressSnapshotTask | null
@@ -117,7 +161,11 @@ export function TaskProgressDetailPanel({
   const [isCopyingPrompt, setIsCopyingPrompt] = useState(false)
   const [isOpeningCodex, setIsOpeningCodex] = useState(false)
   const [promptCopied, setPromptCopied] = useState(false)
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null)
   const watchIdRef = useRef<string | null>(null)
+  const detailFingerprintRef = useRef<string | null>(null)
+  const activityFingerprintRef = useRef<string | null>(null)
+  const updateNoticeTimeoutRef = useRef<number | null>(null)
   const taskId = task?.id ?? null
   const isFixtureTask = !!taskId?.startsWith("fixture:")
   const shouldSyncLocalCodex =
@@ -131,11 +179,22 @@ export function TaskProgressDetailPanel({
     watchIdRef.current = `detail:${crypto.randomUUID()}`
   }
 
+  const showUpdateNotice = useCallback(() => {
+    if (updateNoticeTimeoutRef.current) {
+      window.clearTimeout(updateNoticeTimeoutRef.current)
+    }
+    setUpdateNotice("情報を更新しました")
+    updateNoticeTimeoutRef.current = window.setTimeout(() => {
+      setUpdateNotice(null)
+      updateNoticeTimeoutRef.current = null
+    }, UPDATE_NOTICE_MS)
+  }, [])
+
   const fetchDetail = useCallback(async () => {
     if (!taskId) return
     if (isFixtureTask && task) {
       const now = new Date().toISOString()
-      setDetail({
+      const nextDetail = {
         source: "fixture",
         task: task,
         progress: [{
@@ -153,29 +212,39 @@ export function TaskProgressDetailPanel({
           payload_json: { status: task?.status },
           created_at: now,
         }],
-      })
+      }
+      detailFingerprintRef.current = taskProgressDetailFingerprint(nextDetail)
+      setDetail(nextDetail)
       setError(null)
       setIsLoading(false)
       return
     }
-    setIsLoading(true)
+    const isInitialLoad = detailFingerprintRef.current === null
+    if (isInitialLoad) setIsLoading(true)
     try {
       setError(null)
       const response = await fetchWithSupabaseAuth(`/api/task-progress?task_id=${encodeURIComponent(taskId)}&limit=50`)
       if (!response.ok) throw new Error(`detail fetch failed (${response.status})`)
-      setDetail(await response.json() as TaskProgressDetailResponse)
+      const nextDetail = await response.json() as TaskProgressDetailResponse
+      const nextFingerprint = taskProgressDetailFingerprint(nextDetail)
+      const previousFingerprint = detailFingerprintRef.current
+      if (nextFingerprint !== previousFingerprint) {
+        detailFingerprintRef.current = nextFingerprint
+        setDetail(nextDetail)
+        if (previousFingerprint !== null) showUpdateNotice()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "detail fetch failed")
     } finally {
-      setIsLoading(false)
+      if (isInitialLoad) setIsLoading(false)
     }
-  }, [isFixtureTask, task, taskId])
+  }, [isFixtureTask, showUpdateNotice, task, taskId])
 
   const fetchActivity = useCallback(async () => {
     if (!taskId) return
     if (isFixtureTask && task) {
       const now = new Date().toISOString()
-      setActivityMessages([
+      const nextMessages: AiTaskActivityMessage[] = [
         {
           id: `${taskId}:fixture-prompt`,
           task_id: taskId,
@@ -198,7 +267,9 @@ export function TaskProgressDetailPanel({
           metadata: { source: "fixture" },
           created_at: now,
         },
-      ])
+      ]
+      activityFingerprintRef.current = activityMessagesFingerprint(nextMessages)
+      setActivityMessages(nextMessages)
       setActivityError(null)
       return
     }
@@ -206,14 +277,21 @@ export function TaskProgressDetailPanel({
       const response = await fetchWithSupabaseAuth(`/api/ai-tasks/${encodeURIComponent(taskId)}/activity`, { cache: "no-store" })
       const data = await response.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
       if (!response.ok) throw new Error(data.error || `activity fetch failed (${response.status})`)
-      setActivityMessages(Array.isArray(data.messages)
+      const nextMessages = Array.isArray(data.messages)
         ? data.messages.filter(message => !isGenericCodexPulseText(message.body))
-        : [])
+        : []
+      const nextFingerprint = activityMessagesFingerprint(nextMessages)
+      const previousFingerprint = activityFingerprintRef.current
+      if (nextFingerprint !== previousFingerprint) {
+        activityFingerprintRef.current = nextFingerprint
+        setActivityMessages(nextMessages)
+        if (previousFingerprint !== null) showUpdateNotice()
+      }
       setActivityError(null)
     } catch (err) {
       setActivityError(err instanceof Error ? err.message : "activity fetch failed")
     }
-  }, [isFixtureTask, task, taskId])
+  }, [isFixtureTask, showUpdateNotice, task, taskId])
 
   const syncLocalCodex = useCallback(async () => {
     if (!taskId || !shouldSyncLocalCodex) return
@@ -240,10 +318,25 @@ export function TaskProgressDetailPanel({
       setError(null)
       setIsCopyingPrompt(false)
       setPromptCopied(false)
+      setUpdateNotice(null)
+      detailFingerprintRef.current = null
+      activityFingerprintRef.current = null
+      if (updateNoticeTimeoutRef.current) {
+        window.clearTimeout(updateNoticeTimeoutRef.current)
+        updateNoticeTimeoutRef.current = null
+      }
       return
     }
     void refreshPanel()
   }, [open, refreshPanel, taskId])
+
+  useEffect(() => {
+    return () => {
+      if (updateNoticeTimeoutRef.current) {
+        window.clearTimeout(updateNoticeTimeoutRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!open || !taskId || isFixtureTask) return
@@ -367,12 +460,7 @@ export function TaskProgressDetailPanel({
                 </span>
                 {taskForDisplay?.executor && <span>{taskForDisplay.executor}</span>}
                 {formatDateTime(taskForDisplay?.updated_at) && <span>{formatDateTime(taskForDisplay?.updated_at)}</span>}
-                {isLoading && (
-                  <span className="inline-flex items-center gap-1 text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    最新状態を確認中...
-                  </span>
-                )}
+                {isLoading && <span className="text-muted-foreground">読み込み中...</span>}
               </SheetDescription>
             </div>
             {canCopyPrompt && (
@@ -431,9 +519,7 @@ export function TaskProgressDetailPanel({
             <section>
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-muted-foreground">チャット</h3>
-                <span className="text-[11px] text-muted-foreground">
-                  {isLoading ? "確認中..." : "最新ログまで表示"}
-                </span>
+                {updateNotice && <span className="text-[11px] text-emerald-600 dark:text-emerald-300">{updateNotice}</span>}
               </div>
               {activityMessages.length > 0 ? (
                 <div className="space-y-3">
@@ -453,9 +539,6 @@ export function TaskProgressDetailPanel({
                       </article>
                     )
                   })}
-                  <div className="py-1 text-center text-[11px] text-muted-foreground">
-                    最新ログまで表示済み
-                  </div>
                 </div>
               ) : (
                 <div className="rounded-lg border border-dashed px-3 py-10 text-center text-xs text-muted-foreground">
