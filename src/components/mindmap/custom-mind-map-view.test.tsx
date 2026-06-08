@@ -366,39 +366,17 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(onAddSiblingNode).toHaveBeenCalledWith("root-1")
   })
 
-  test("limits the node menu to Codex handoff and schedule actions", async () => {
+  test("opens node detail directly from the three-dot button", () => {
     const onRunCodex = vi.fn()
-    const onUpdateSchedule = vi.fn()
 
-    renderMap({ onRunCodex, onUpdateSchedule })
+    renderMap({ onRunCodex })
 
     const node = getNode("Root task", "root-1")
-    fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))
+    fireEvent.click(within(node).getByRole("button", { name: "ノード詳細を開く" }))
 
-    expect(within(node).getByRole("button", { name: "Codexを開く" })).toBeInTheDocument()
-    expect(within(node).getByRole("button", { name: "日時を指定する" })).toBeInTheDocument()
-    expect(within(node).queryByRole("button", { name: "メモを開く" })).not.toBeInTheDocument()
-    expect(within(node).queryByRole("button", { name: "子を追加" })).not.toBeInTheDocument()
-    expect(within(node).queryByRole("button", { name: "兄弟を追加" })).not.toBeInTheDocument()
-    expect(within(node).queryByRole("button", { name: "編集" })).not.toBeInTheDocument()
-    expect(within(node).queryByRole("button", { name: "削除" })).not.toBeInTheDocument()
-
-    fireEvent.click(within(node).getByRole("button", { name: "Codexを開く" }))
     expect(onRunCodex).toHaveBeenCalledWith("root-1")
-
-    fireEvent.click(within(node).getByRole("button", { name: "ノードメニューを開く" }))
-    fireEvent.click(within(node).getByRole("button", { name: "日時を指定する" }))
-    expect(await screen.findByText("カレンダー")).toBeInTheDocument()
-    expect(screen.getByText("所要時間")).toBeInTheDocument()
-    expect(screen.getByRole("combobox")).toHaveValue("primary")
-    fireEvent.click(screen.getByRole("button", { name: "完了" }))
-
-    await waitFor(() => {
-      expect(onUpdateSchedule).toHaveBeenCalledWith("root-1", expect.objectContaining({
-        estimatedMinutes: 60,
-        calendarId: "primary",
-      }))
-    })
+    expect(within(node).queryByRole("button", { name: "Codexを開く" })).not.toBeInTheDocument()
+    expect(within(node).queryByRole("button", { name: "日時を指定する" })).not.toBeInTheDocument()
   })
 
   test("promotes with Shift+Tab and saves inline edits", async () => {

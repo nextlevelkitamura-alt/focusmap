@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Bot, Calendar as CalendarIcon, Check, ChevronDown, ChevronRight, Loader2, MoreVertical } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, MoreVertical } from "lucide-react";
 import type { Project, Task } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { buildMindMapModel, type MindMapModelNode } from "@/lib/mindmap-model";
@@ -18,14 +18,11 @@ import {
     getPinchViewportTransform,
     getViewportTransformAtPoint,
 } from "@/lib/mindmap-viewport";
-import { formatEstimatedTime } from "@/components/ui/estimated-time-select";
-import { DateTimePicker } from "@/components/ui/date-time-picker";
 import type { CodexRunState } from "@/lib/codex-run-state";
 import {
     codexMonitorToneClass,
     codexMonitorUiLabel,
 } from "@/lib/task-progress-ui";
-import { useCalendars } from "@/hooks/useCalendars";
 import type { TaskProgressSnapshotTask } from "@/types/task-progress";
 
 type CustomMindMapViewProps = {
@@ -249,13 +246,6 @@ const trackDetachedSave = (saveAction: void | Promise<void> | undefined, label: 
     });
 };
 
-const formatDateShort = (value: string | null) => {
-    if (!value) return null;
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return null;
-    return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
-};
-
 function CustomBranchPath({
     source,
     target,
@@ -305,12 +295,9 @@ function CustomTaskNode({
     onNavigate,
     onSaveTitle,
     onUpdateStatus,
-    onUpdateScheduledAt,
-    onUpdateSchedule,
     onResize,
     resizeScale,
     isMobile,
-    calendars,
     onRunCodex,
     codexState,
     taskProgress,
@@ -340,12 +327,9 @@ function CustomTaskNode({
     onNavigate?: (taskId: string, direction: CustomNavigationDirection) => void;
     onSaveTitle?: (taskId: string, title: string) => void | Promise<void>;
     onUpdateStatus?: (taskId: string, status: string) => void | Promise<void>;
-    onUpdateScheduledAt?: (taskId: string, scheduledAt: string | null) => void | Promise<void>;
-    onUpdateSchedule?: (taskId: string, params: { scheduledAt: string; estimatedMinutes: number; calendarId: string }) => void | Promise<void>;
     onResize?: (taskId: string, width: number, commit: boolean) => void;
     resizeScale: number;
     isMobile: boolean;
-    calendars: Array<{ google_calendar_id: string; name: string; selected?: boolean; is_primary?: boolean; color?: string | null; background_color?: string | null }>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
     codexState?: CodexNodeState | null;
     taskProgress?: TaskProgressSnapshotTask | null;
@@ -363,10 +347,8 @@ function CustomTaskNode({
     const selectAllOnFocusRef = useRef(true);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
-    const [menuOpen, setMenuOpen] = useState(false);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const nodeCodexBadge = buildCodexBadge(codexState, taskProgress);
-    const scheduledLabel = formatDateShort(node.scheduledAt);
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -375,22 +357,6 @@ function CustomTaskNode({
     useEffect(() => {
         lastCommittedTitleRef.current = initialEditValue ?? node.title;
     }, [initialEditValue, node.title]);
-
-    useEffect(() => {
-        if (!menuOpen) return;
-        const handlePointerDown = (event: PointerEvent) => {
-            const target = event.target;
-            if (target instanceof Node && wrapperRef.current?.contains(target)) return;
-            setMenuOpen(false);
-        };
-        window.addEventListener("pointerdown", handlePointerDown);
-        return () => window.removeEventListener("pointerdown", handlePointerDown);
-    }, [menuOpen]);
-
-    useEffect(() => {
-        if (selected) return;
-        setMenuOpen(false);
-    }, [selected]);
 
     useEffect(() => {
         if (!triggerEdit) {
@@ -514,18 +480,14 @@ function CustomTaskNode({
         setIsEditing(true);
     }, [initialEditValue, isMobile, node.id, node.title, onRequestEdit]);
 
-    const handleMenuAction = useCallback((
-        event: React.MouseEvent<HTMLButtonElement>,
-        action?: () => void | Promise<void>,
-    ) => {
+    const handleOpenNodeDetail = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
-        setMenuOpen(false);
-        if (!action) return;
-        void Promise.resolve(action()).catch(error => {
-            console.error("[CustomMindMap] Node menu action failed:", error);
+        onSelectNode(node.id, { additive: false });
+        void Promise.resolve(onRunCodex?.(node.id)).catch(error => {
+            console.error("[CustomMindMap] Failed to open node detail:", error);
         });
-    }, []);
+    }, [node.id, onRunCodex, onSelectNode]);
 
     useEffect(() => {
         onEditingChange?.(node.id, isEditing);
@@ -629,21 +591,6 @@ function CustomTaskNode({
         void finishEditing();
     }, [finishEditing, isEditing]);
 
-    const handleScheduleConfirm = useCallback((params: { date: Date; estimatedMinutes: number; calendarId: string }) => {
-        const scheduledAt = params.date.toISOString();
-        const action = onUpdateSchedule
-            ? onUpdateSchedule(node.id, {
-                scheduledAt,
-                estimatedMinutes: params.estimatedMinutes,
-                calendarId: params.calendarId,
-            })
-            : onUpdateScheduledAt?.(node.id, scheduledAt);
-        void Promise.resolve(action).catch(error => {
-            console.error("[CustomMindMap] Failed to update schedule:", error);
-        });
-        setMenuOpen(false);
-    }, [node.id, onUpdateSchedule, onUpdateScheduledAt]);
-
     const handleResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (!onResize || isEditing || event.button !== 0) return;
         event.preventDefault();
@@ -698,7 +645,6 @@ function CustomTaskNode({
                 (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 selected && node.isDone && "ring-muted-foreground/40",
-                menuOpen && "z-[120]",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 dragging && "z-30 cursor-grabbing opacity-90 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",
                 !dragging && "cursor-grab",
@@ -856,175 +802,21 @@ function CustomTaskNode({
                             {node.collapsed ? <ChevronRight className="h-3 w-3" strokeWidth={3} /> : <ChevronDown className="h-3 w-3" strokeWidth={3} />}
                         </button>
                     )}
-                    {isMobile ? (
-                        <div className="relative">
-                            <button
-                                type="button"
-                                className={cn(
-                                    "flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors",
-                                    menuOpen ? "bg-muted/50 text-foreground" : "active:bg-muted/60 active:text-foreground"
-                                )}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    onSelectNode(node.id, { additive: false });
-                                    setMenuOpen(prev => !prev);
-                                }}
-                                title="ノードメニュー"
-                                aria-label="ノードメニューを開く"
-                                aria-expanded={menuOpen}
-                            >
-                                <MoreVertical className="h-3.5 w-3.5" />
-                            </button>
-                            {menuOpen && (
-                                <div
-                                    className="absolute right-0 top-7 z-[130] w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => event.stopPropagation()}
-                                >
-                                    <div className="border-b px-3 py-2">
-                                        <div className="truncate text-xs font-semibold">{node.title}</div>
-                                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                                            {codexState && (
-                                                <span className="rounded bg-muted px-1.5 py-0.5">
-                                                    Codex {codexState.label}
-                                                </span>
-                                            )}
-                                            {taskProgress && (
-                                                <span className={cn("rounded border px-1.5 py-0.5", codexMonitorToneClass(taskProgress.status))}>
-                                                    {taskProgressStatusLabel(taskProgress.status)}
-                                                </span>
-                                            )}
-                                            {scheduledLabel && <span>{scheduledLabel}</span>}
-                                            {node.estimatedDisplayMinutes > 0 && <span>{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>}
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
-                                        onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
-                                    >
-                                        <Bot className="h-4 w-4" />
-                                        Codexを開く
-                                    </button>
-                                    {taskProgress && (
-                                        <button
-                                            type="button"
-                                            className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                            onClick={(event) => handleMenuAction(event, () => onOpenTaskProgress?.(taskProgress))}
-                                        >
-                                            <Loader2 className={cn("h-4 w-4", taskProgress.status === "running" && "animate-spin")} />
-                                            Codex進捗を見る
-                                        </button>
-                                    )}
-                                    <DateTimePicker
-                                        date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
-                                        estimatedMinutes={node.estimatedTime && node.estimatedTime > 0 ? node.estimatedTime : node.estimatedDisplayMinutes}
-                                        calendarId={node.calendarId}
-                                        calendars={calendars}
-                                        onConfirmSchedule={handleScheduleConfirm}
-                                        trigger={
-                                            <button
-                                                type="button"
-                                                className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                            >
-                                                <CalendarIcon className="h-4 w-4" />
-                                                <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                                                    <span>日時を指定する</span>
-                                                    {scheduledLabel && <span className="shrink-0 text-xs text-muted-foreground">{scheduledLabel}</span>}
-                                                </span>
-                                            </button>
-                                        }
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        <div className="relative">
-                            <button
-                                type="button"
-                                className={cn(
-                                    "flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-muted/30 hover:text-muted-foreground",
-                                    menuOpen && "bg-muted/50 text-foreground"
-                                )}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    onSelectNode(node.id, { additive: false });
-                                    setMenuOpen(prev => !prev);
-                                }}
-                                title="ノードメニュー"
-                                aria-label="ノードメニューを開く"
-                                aria-expanded={menuOpen}
-                            >
-                                <MoreVertical className="h-3.5 w-3.5" />
-                            </button>
-                            {menuOpen && (
-                                <div
-                                    className="absolute right-0 top-6 z-[130] w-64 overflow-hidden rounded-lg border bg-popover text-[13px] text-popover-foreground shadow-xl"
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => event.stopPropagation()}
-                                >
-                                    <div className="border-b px-3 py-2">
-                                        <div className="truncate text-xs font-semibold">{node.title}</div>
-                                        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                                            {codexState && (
-                                                <span className="rounded bg-muted px-1.5 py-0.5">
-                                                    Codex {codexState.label}
-                                                </span>
-                                            )}
-                                            {taskProgress && (
-                                                <span className={cn("rounded border px-1.5 py-0.5", codexMonitorToneClass(taskProgress.status))}>
-                                                    {taskProgressStatusLabel(taskProgress.status)}
-                                                </span>
-                                            )}
-                                            {scheduledLabel && <span>{scheduledLabel}</span>}
-                                            {node.estimatedDisplayMinutes > 0 && <span>{formatEstimatedTime(node.estimatedDisplayMinutes)}</span>}
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        className="flex min-h-11 w-full items-center gap-2 bg-primary/10 px-3 text-left font-medium text-primary hover:bg-primary/15"
-                                        onClick={(event) => handleMenuAction(event, () => onRunCodex?.(node.id))}
-                                    >
-                                        <Bot className="h-4 w-4" />
-                                        Codexを開く
-                                    </button>
-                                    {taskProgress && (
-                                        <button
-                                            type="button"
-                                            className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                            onClick={(event) => handleMenuAction(event, () => onOpenTaskProgress?.(taskProgress))}
-                                        >
-                                            <Loader2 className={cn("h-4 w-4", taskProgress.status === "running" && "animate-spin")} />
-                                            Codex進捗を見る
-                                        </button>
-                                    )}
-                                    <DateTimePicker
-                                        date={node.scheduledAt ? new Date(node.scheduledAt) : undefined}
-                                        estimatedMinutes={node.estimatedTime && node.estimatedTime > 0 ? node.estimatedTime : node.estimatedDisplayMinutes}
-                                        calendarId={node.calendarId}
-                                        calendars={calendars}
-                                        onConfirmSchedule={handleScheduleConfirm}
-                                        trigger={
-                                            <button
-                                                type="button"
-                                                className="flex min-h-11 w-full items-center gap-2 px-3 text-left hover:bg-muted"
-                                            >
-                                                <CalendarIcon className="h-4 w-4" />
-                                                <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                                                    <span>日時を指定する</span>
-                                                    {scheduledLabel && <span className="shrink-0 text-xs text-muted-foreground">{scheduledLabel}</span>}
-                                                </span>
-                                            </button>
-                                        }
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    )}
+                    <button
+                        type="button"
+                        className={cn(
+                            "flex shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-colors",
+                            isMobile
+                                ? "h-6 w-6 active:bg-muted/60 active:text-foreground"
+                                : "h-5 w-5 hover:bg-muted/30 hover:text-muted-foreground"
+                        )}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={handleOpenNodeDetail}
+                        title="ノード詳細"
+                        aria-label="ノード詳細を開く"
+                    >
+                        <MoreVertical className="h-3.5 w-3.5" />
+                    </button>
                 </div>
             </div>
 
@@ -1361,8 +1153,6 @@ export function CustomMindMapView({
     onSaveTitle,
     onSaveProjectTitle,
     onUpdateStatus,
-    onUpdateScheduledAt,
-    onUpdateSchedule,
     onResizeNode,
     onRunCodex,
     codexRunByNodeId = {},
@@ -1385,7 +1175,6 @@ export function CustomMindMapView({
     const [floatingEditValue, setFloatingEditValue] = useState("");
     const [mobileKeyboardAccessoryPinned, setMobileKeyboardAccessoryPinned] = useState(false);
     const { keyboardHeight, isKeyboardOpen, viewportBottom } = useKeyboardHeight();
-    const { calendars } = useCalendars();
     const viewportRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const keyboardAnchorRef = useRef<HTMLInputElement>(null);
@@ -2966,12 +2755,9 @@ export function CustomMindMapView({
                                 onNavigate={onNavigateNode}
                                 onSaveTitle={onSaveTitle}
                                 onUpdateStatus={handleUpdateNodeStatus}
-                                onUpdateScheduledAt={onUpdateScheduledAt}
-                                onUpdateSchedule={onUpdateSchedule}
                                 onResize={onResizeNode ? handleResizeNode : undefined}
                                 resizeScale={zoom}
                                 isMobile={isMobile}
-                                calendars={calendars}
                                 onRunCodex={onRunCodex}
                                 codexState={codexRunByNodeId[node.id] ?? null}
                                 taskProgress={taskProgressByNodeId[node.id] ?? null}

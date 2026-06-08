@@ -73,10 +73,6 @@ function DetailHarness() {
   )
 }
 
-async function openDetailMenu() {
-  fireEvent.click(await screen.findByRole('button', { name: /メモ詳細メニューを開く/ }))
-}
-
 describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -103,11 +99,10 @@ describe('WishlistCardDetail', () => {
     render(<DetailHarness />)
 
     const titleInput = await screen.findByDisplayValue('Original title')
-    const bodyInput = screen.getByPlaceholderText('メモの詳細を書いてください')
+    const bodyInput = screen.getByPlaceholderText('本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。')
 
     fireEvent.change(titleInput, { target: { value: 'Draft title' } })
     fireEvent.change(bodyInput, { target: { value: 'Draft body' } })
-    await openDetailMenu()
     fireEvent.click(screen.getByRole('button', { name: /タグを追加/ }))
     fireEvent.click(screen.getByRole('button', { name: '仕事' }))
 
@@ -119,7 +114,6 @@ describe('WishlistCardDetail', () => {
 
   test('画像エリアでフォルダー選択・ドラッグ&ドロップ・クリップボード貼り付け導線を表示する', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const imageLabel = await screen.findByText('画像')
     expect(within(imageLabel.closest('div') as HTMLElement).queryByRole('button', { name: /^追加$/ })).not.toBeInTheDocument()
@@ -174,8 +168,7 @@ describe('WishlistCardDetail', () => {
       />,
     )
 
-    await openDetailMenu()
-    const openButton = await screen.findByRole('button', { name: /Codexを開く/ })
+    const openButton = await screen.findByRole('button', { name: /Codexに送る/ })
     expect(openButton).toBeDisabled()
     expect(screen.queryByRole('button', { name: /Macへ再送/ })).not.toBeInTheDocument()
     expect(screen.getAllByText('確認待ち').length).toBeGreaterThan(0)
@@ -187,7 +180,6 @@ describe('WishlistCardDetail', () => {
 
   test('日付を選択するとカレンダーPopoverを閉じる', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const dateField = await screen.findByText('日付')
     const dateTrigger = within(dateField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
@@ -204,7 +196,6 @@ describe('WishlistCardDetail', () => {
 
   test('時刻PopoverはiPhone風の中央ハイライトホイールにする', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
@@ -220,7 +211,6 @@ describe('WishlistCardDetail', () => {
 
   test('時刻ホイールはマウスドラッグ中に表示を即時更新する', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
@@ -237,7 +227,6 @@ describe('WishlistCardDetail', () => {
 
   test('時刻ホイールはタッチドラッグで表示を即時更新する', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
@@ -254,7 +243,6 @@ describe('WishlistCardDetail', () => {
 
   test('時刻ホイールはタップ選択でも値を保存する', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
@@ -269,7 +257,6 @@ describe('WishlistCardDetail', () => {
 
   test('時刻ホイールは二本指スクロールで値を保存する', async () => {
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const timeField = await screen.findByText('時刻')
     const timeTrigger = within(timeField.parentElement as HTMLElement).getByRole('button', { name: /未設定/ })
@@ -314,8 +301,7 @@ describe('WishlistCardDetail', () => {
 
     expect(screen.queryByRole('textbox', { name: /Codex/ })).not.toBeInTheDocument()
 
-    await openDetailMenu()
-    fireEvent.click(await screen.findByRole('button', { name: /Codexを開く/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Codexに送る/ }))
 
     await waitFor(() => {
       expect(onLaunchCodex).toHaveBeenCalled()
@@ -407,7 +393,6 @@ describe('WishlistCardDetail', () => {
       />,
     )
 
-    await openDetailMenu()
     expect(await screen.findByText('チャット')).toBeInTheDocument()
     expect(await screen.findByText('少々お待ちください！')).toBeInTheDocument()
     expect(await screen.findByText('承知しました。待機します。')).toBeInTheDocument()
@@ -437,7 +422,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const dropZone = (await screen.findByText('画像を追加')).closest('button')
     expect(dropZone).toBeTruthy()
@@ -486,7 +470,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    await openDetailMenu()
 
     const dropZone = (await screen.findByText('画像を追加')).closest('button')
     expect(dropZone).toBeTruthy()
@@ -539,7 +522,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    await openDetailMenu()
     expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle('削除'))
@@ -588,7 +570,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    await openDetailMenu()
     expect(await screen.findByAltText('existing.png')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle('削除'))
@@ -636,7 +617,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    await openDetailMenu()
     fireEvent.click(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ }))
 
     await waitFor(() => {
@@ -673,7 +653,6 @@ describe('WishlistCardDetail', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<DetailHarness />)
-    await openDetailMenu()
     fireEvent.paste(screen.getByTestId('memo-image-paste-target'), {
       clipboardData: {
         files: [new File(['data'], 'pasted-event.png', { type: 'image/png' })],

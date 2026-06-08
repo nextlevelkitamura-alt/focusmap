@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Menu, Mic, Network, Plus, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
+import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Mic, Network, Plus, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -221,7 +221,7 @@ function isGenericCodexPulseText(value: string) {
 }
 
 function memoCodexActivityLabel(message: AiTaskActivityMessage) {
-  if (message.role === "user" || message.kind === "user_answer") return "メモ詳細"
+  if (message.role === "user" || message.kind === "user_answer") return "送信内容"
   if (message.role === "status") return "状態"
   if (message.kind === "question") return "Codexから質問"
   if (message.kind === "approval") return "確認"
@@ -239,8 +239,8 @@ type MemoCodexLogEntry = {
 }
 
 const MEMO_CODEX_LOG_LABEL: Record<MemoCodexLogState, string> = {
-  not_sent: "未開始",
-  sent: "準備済み",
+  not_sent: "未送信",
+  sent: "送信済み",
   running: "実行中",
   awaiting_approval: "確認待ち",
   completed: "完了",
@@ -284,7 +284,7 @@ function buildMemoCodexLogEntries(args: {
     state: "not_sent",
     label: MEMO_CODEX_LOG_LABEL.not_sent,
     time: task ? createdTime : "-",
-    body: task ? "Codex側で開始されるまで待機しています" : "メモ詳細はまだ開かれていません",
+    body: task ? "Codex側で送信されるまで待機しています" : "依頼はまだ送信されていません",
     active: current === "not_sent",
   })
 
@@ -293,7 +293,7 @@ function buildMemoCodexLogEntries(args: {
       state: "sent",
       label: MEMO_CODEX_LOG_LABEL.sent,
       time: createdTime,
-      body: "Focusmapがメモ詳細を登録しました",
+      body: "Focusmapが依頼を登録しました",
       active: !task && launchStep === "sending",
     })
   }
@@ -1269,7 +1269,6 @@ export function WishlistCardDetail({
   const [isTimePopoverOpen, setIsTimePopoverOpen] = useState(false)
   const [previewTimeValue, setPreviewTimeValue] = useState<string | null>(null)
   const [isCalendarPopoverOpen, setIsCalendarPopoverOpen] = useState(false)
-  const [isDetailMenuOpen, setIsDetailMenuOpen] = useState(false)
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -2258,7 +2257,7 @@ export function WishlistCardDetail({
                 "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5",
               ]
             : [
-                "h-[min(920px,calc(100dvh-32px))] w-[min(1280px,calc(100vw-32px))] gap-0 overflow-hidden px-0",
+                "h-[min(920px,calc(100dvh-32px))] w-[min(1280px,calc(100vw-32px))] gap-2 overflow-y-auto px-6",
                 "border-neutral-800 bg-neutral-950/98 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
                 "[&>button]:right-5 [&>button]:top-5 [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:text-neutral-100",
               ]
@@ -2275,75 +2274,135 @@ export function WishlistCardDetail({
           </div>
         )}
 
-        <SheetHeader className={cn(
-          "shrink-0 border-b border-neutral-800/80",
-          isMobile ? "px-4 pb-3 pt-0 pr-16" : "px-6 py-4 pr-16"
-        )}>
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <SheetTitle className={cn("text-left text-base text-neutral-50", isMobile && "text-base")}>メモ詳細</SheetTitle>
-            <button
-              type="button"
-              onClick={() => setIsDetailMenuOpen(prev => !prev)}
-              className={cn(
-                "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-300 transition-colors hover:bg-neutral-900 hover:text-neutral-50",
-                isDetailMenuOpen && "border-primary/50 bg-primary/10 text-primary"
-              )}
-              aria-label={isDetailMenuOpen ? "メモ詳細メニューを閉じる" : "メモ詳細メニューを開く"}
-              aria-expanded={isDetailMenuOpen}
-              title={isDetailMenuOpen ? "詳細メニューを閉じる" : "詳細メニューを開く"}
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-          </div>
+        <SheetHeader className={cn(isMobile ? "px-4 pb-2 pt-0" : "px-0 pb-2 pt-4")}>
+          <SheetTitle className={cn("text-left", isMobile && "pr-12 text-base text-neutral-50")}>メモを編集</SheetTitle>
         </SheetHeader>
 
         <div
           ref={sheetScrollRef}
           className={cn(
           isMobile
-            ? "min-h-0 flex-1 overflow-y-auto px-4 pb-4"
-            : "grid min-h-0 flex-1 gap-4 overflow-y-auto px-6 py-5 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start"
+            ? "min-h-0 flex-1 overflow-y-auto px-4 pb-0"
+            : "grid gap-4 pb-6 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start"
         )}>
           <div className={cn("min-w-0", isMobile ? "flex flex-col gap-3" : "contents")}>
-          <div className={cn(
-            "order-0 grid gap-2 xl:col-span-2 xl:row-start-1",
-            isDetailMenuOpen ? "grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)]" : "grid-cols-1"
-          )}>
-            <label className="min-w-0 space-y-2">
-              <span className="text-sm text-muted-foreground">メモ見出し</span>
+          <div className="order-0 grid gap-3 md:grid-cols-2 xl:col-span-2 xl:row-start-1">
+            <label className="min-w-0 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">見出し</span>
               <Input
                 value={draftTitle}
                 onChange={e => setDraftTitle(e.target.value)}
-                placeholder="メモ見出し"
-                className="min-h-[64px] min-w-0 rounded-lg border-neutral-800 bg-neutral-950 px-4 py-3 text-base font-semibold text-neutral-50 placeholder:text-neutral-500"
+                placeholder="見出し"
+                className="h-10 min-w-0 text-sm font-semibold"
               />
             </label>
 
-            <label className={cn("min-w-0 space-y-1", !isDetailMenuOpen && "hidden")}>
-              <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
-              <div className="relative">
-                <select
-                  value={item.project_id ?? ""}
-                  onChange={e => update({ project_id: e.target.value || null })}
-                  className="h-10 w-full appearance-none truncate rounded-md border bg-background px-2 pr-7 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                  style={selectedProject ? {
-                    borderColor: colorToRgba(selectedProjectColor, 0.55),
-                    boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
-                  } : undefined}
-                >
-                  <option value="">未設定</option>
-                  {projects.map(project => (
-                    <option key={project.id} value={project.id}>
-                      {project.title}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
+            <div className="min-w-0 space-y-2">
+              <label className="block min-w-0 space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
+                <div className="relative">
+                  <select
+                    value={item.project_id ?? ""}
+                    onChange={e => update({ project_id: e.target.value || null })}
+                    className="h-10 w-full appearance-none truncate rounded-md border bg-background px-2 pr-7 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                    style={selectedProject ? {
+                      borderColor: colorToRgba(selectedProjectColor, 0.55),
+                      boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
+                    } : undefined}
+                  >
+                    <option value="">未設定</option>
+                    {projects.map(project => (
+                      <option key={project.id} value={project.id}>
+                        {project.title}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                </div>
               </label>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    タグ
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{selectedTags.length}</span>
+                  </Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="outline" aria-label="タグを追加" className="h-8 gap-1.5 px-2 text-xs">
+                        <Plus className="h-3.5 w-3.5" />
+                        追加
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] space-y-3 p-3">
+                      <div className="flex gap-2">
+                        <Input
+                          value={tagText}
+                          onChange={e => setTagText(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") {
+                              e.preventDefault()
+                              void handleAddTag()
+                            }
+                          }}
+                          placeholder="新規タグ"
+                          className="h-10"
+                        />
+                        <Button variant="outline" onClick={() => void handleAddTag()} className="h-10 shrink-0 px-3">追加</Button>
+                      </div>
+                      {tagSuggestions.length > 0 && (
+                        <div className="grid grid-cols-2 gap-2">
+                          {tagSuggestions.map(tag => {
+                            const color = getTagColor(tag, tagColors)
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => void addTagValue(tag)}
+                                className="min-h-[40px] rounded-md border px-3 text-left text-sm font-medium"
+                                style={{
+                                  borderColor: colorToRgba(color, 0.45),
+                                  backgroundColor: colorToRgba(color, 0.1),
+                                  color,
+                                }}
+                              >
+                                {tag}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="min-h-[44px] rounded-lg border bg-background/40 p-2">
+                  {selectedTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTags.map(tag => {
+                        const color = getTagColor(tag, tagColors)
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => void removeTag(tag)}
+                            className="min-h-9 rounded-full border px-3 text-sm font-medium hover:opacity-80"
+                            style={{
+                              borderColor: colorToRgba(color, 0.55),
+                              backgroundColor: colorToRgba(color, 0.12),
+                              color,
+                            }}
+                          >
+                            {tag} ×
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
+          </div>
 
-            <div className={cn("order-4 space-y-2 xl:col-start-1 xl:row-start-3", !isDetailMenuOpen && "hidden")}>
+            <div className="order-4 space-y-2 xl:col-start-1 xl:row-start-3">
               <Label className="flex items-center gap-1.5">
                 <Clock className="h-4 w-4" />
                 時間・予定
@@ -2547,17 +2606,9 @@ export function WishlistCardDetail({
               </div>
             </div>
 
-            <div className={cn(
-              "order-1 space-y-2",
-              isDetailMenuOpen ? "xl:col-start-2 xl:row-start-2" : "xl:col-span-2 xl:row-start-2"
-            )}>
+            <div className="order-1 space-y-1 xl:col-start-2 xl:row-start-2">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm text-muted-foreground">メモ詳細</Label>
-                  <span className="text-xs font-medium text-muted-foreground" aria-live="polite">
-                    {isSavingMemo ? "保存中" : saveError ? "保存失敗" : "保存済み"}
-                  </span>
-                </div>
+                <Label>メモ</Label>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     type="button"
@@ -2605,7 +2656,7 @@ export function WishlistCardDetail({
                   )}
                 </div>
               </div>
-                <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 focus-within:ring-2 focus-within:ring-primary/40">
+              <div className="overflow-hidden rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring">
                 <textarea
                   value={draftDescription}
                   onChange={e => setDraftDescription(e.target.value)}
@@ -2616,13 +2667,10 @@ export function WishlistCardDetail({
                     }
                   }}
                   rows={5}
-                  placeholder="メモの詳細を書いてください"
-                  className={cn(
-                    "w-full resize-none overflow-y-auto border-0 bg-transparent px-4 py-4 text-base leading-7 text-neutral-50 outline-none placeholder:text-neutral-500",
-                    isDetailMenuOpen ? "h-48 md:h-64" : "h-[min(52dvh,520px)]"
-                  )}
+                  placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
+                  className="h-28 w-full resize-none overflow-y-auto border-0 bg-transparent px-3 py-2 text-sm outline-none md:h-36"
                 />
-                <div className="flex min-h-9 items-center justify-between gap-2 border-t border-neutral-800 bg-neutral-900/40 px-3 py-1.5">
+                <div className="flex min-h-9 items-center justify-between gap-2 border-t bg-muted/20 px-2 py-1.5">
                   <div className="flex min-w-0 items-center text-xs text-muted-foreground">
                     {isSavingMemo && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   </div>
@@ -2663,7 +2711,7 @@ export function WishlistCardDetail({
               )}
             </div>
 
-            <div className={cn("order-2 space-y-2 xl:col-start-1 xl:row-start-2", !isDetailMenuOpen && "hidden")}>
+            <div className="order-2 space-y-2 xl:col-start-1 xl:row-start-2">
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   <ImagePlus className="h-4 w-4" />
@@ -2816,86 +2864,6 @@ export function WishlistCardDetail({
                 </div>
             </div>
 
-            <div className={cn("order-5 space-y-2 xl:col-span-2 xl:row-start-4", !isDetailMenuOpen && "hidden")}>
-              <div className="flex items-center justify-between gap-2">
-                <Label className="flex items-center gap-1.5">
-                  タグ
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{selectedTags.length}</span>
-                </Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button type="button" variant="outline" aria-label="タグを追加" className="h-8 gap-1.5 px-2 text-xs">
-                      <Plus className="h-3.5 w-3.5" />
-                      追加
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] space-y-3 p-3">
-                    <div className="flex gap-2">
-                      <Input
-                        value={tagText}
-                        onChange={e => setTagText(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") {
-                            e.preventDefault()
-                            void handleAddTag()
-                          }
-                        }}
-                        placeholder="新規タグ"
-                        className="h-10"
-                      />
-                      <Button variant="outline" onClick={() => void handleAddTag()} className="h-10 shrink-0 px-3">追加</Button>
-                    </div>
-                    {tagSuggestions.length > 0 && (
-                      <div className="grid grid-cols-2 gap-2">
-                        {tagSuggestions.map(tag => {
-                          const color = getTagColor(tag, tagColors)
-                          return (
-                            <button
-                              key={tag}
-                              type="button"
-                              onClick={() => void addTagValue(tag)}
-                              className="min-h-[40px] rounded-md border px-3 text-left text-sm font-medium"
-                              style={{
-                                borderColor: colorToRgba(color, 0.45),
-                                backgroundColor: colorToRgba(color, 0.1),
-                                color,
-                              }}
-                            >
-                              {tag}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              </div>
-              <div className="min-h-[44px] rounded-lg border bg-background/40 p-3">
-                {selectedTags.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {selectedTags.map(tag => {
-                      const color = getTagColor(tag, tagColors)
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => void removeTag(tag)}
-                          className="min-h-[40px] rounded-full border px-3 text-sm font-medium hover:opacity-80"
-                          style={{
-                            borderColor: colorToRgba(color, 0.55),
-                            backgroundColor: colorToRgba(color, 0.12),
-                            color,
-                          }}
-                        >
-                          {tag} ×
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
           {saveError && (
             <div className="order-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-2 xl:row-start-5">
               {saveError}
@@ -2904,11 +2872,7 @@ export function WishlistCardDetail({
 
             </div>
 
-            <div className={cn(
-              "min-w-0",
-              isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-3",
-              !isDetailMenuOpen && "hidden"
-            )}>
+            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-3")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -3034,14 +2998,14 @@ export function WishlistCardDetail({
                         className="min-h-[44px] shrink-0 gap-2 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-45"
                       >
                         {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                        Codexを開く
+                        Codexに送る
                       </Button>
                       <div className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
                         {needsRepoConfig
-                          ? "プロジェクトとリポジトリパスを設定すると利用できます。"
+                          ? "プロジェクトとリポジトリパスを設定すると送信できます。"
                           : active
                             ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
-                            : "見出しとメモ詳細をCodexで開く準備をします。"}
+                            : "見出しとメモ本文をCodex用の追跡taskとして送ります。"}
                       </div>
                     </div>
 
@@ -3131,16 +3095,6 @@ export function WishlistCardDetail({
             )
           })()}
           </div>
-        </div>
-        <div className="shrink-0 border-t border-neutral-800/80 px-4 py-3 sm:px-6">
-          <Button
-            type="button"
-            onClick={() => void handleRequestClose()}
-            className="min-h-[52px] w-full gap-2 rounded-lg bg-emerald-500 text-base font-semibold text-emerald-950 hover:bg-emerald-400"
-          >
-            {isSavingMemo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            保存して閉じる
-          </Button>
         </div>
       </SheetContent>
 

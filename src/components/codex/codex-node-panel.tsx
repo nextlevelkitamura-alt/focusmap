@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type MouseEvent } from "react"
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,8 @@ import {
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { fetchWithSupabaseAuth } from "@/lib/auth/supabase-auth-fetch"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
-import { Bot, Check, Clock, Copy, ExternalLink, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, TriangleAlert } from "lucide-react"
+import { Bot, Calendar as CalendarIcon, Check, Clock, Copy, ExternalLink, ImagePlus, Laptop, Loader2, Mic, Save, Smartphone, Sparkles, Square, Trash2, TriangleAlert } from "lucide-react"
+import type { Task, TaskAttachment } from "@/types/database"
 
 type NodeInfo = {
   taskId: string
@@ -81,6 +82,9 @@ const CODEX_PANEL_SYNC_INTERVAL_MS = 3_000
 const CODEX_PANEL_IDLE_SYNC_INTERVAL_MS = 60 * 60_000
 const CODEX_PANEL_WATCH_PING_INTERVAL_MS = 10_000
 const CODEX_DISPLAY_LOG_CHARS = 80_000
+const QUICK_ESTIMATED_MINUTES = [5, 15, 30, 60, 120] as const
+
+type TaskAttachmentPreview = Pick<TaskAttachment, "id" | "file_name" | "file_url" | "file_type" | "file_size">
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -106,6 +110,62 @@ function buildCodexPrompt(heading: string, detail: string) {
   const normalizedHeading = normalizeCodexPrompt(heading)
   const normalizedDetail = normalizeCodexPrompt(detail)
   return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
+}
+
+function toDateInputValue(value: string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, "0")
+  const day = `${date.getDate()}`.padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function toTimeInputValue(value: string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const hour = `${date.getHours()}`.padStart(2, "0")
+  const minute = `${date.getMinutes()}`.padStart(2, "0")
+  return `${hour}:${minute}`
+}
+
+function todayDateInputValue() {
+  const date = new Date()
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, "0")
+  const day = `${date.getDate()}`.padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function combineLocalDateTime(dateValue: string, timeValue: string) {
+  if (!dateValue) return null
+  const [year, month, day] = dateValue.split("-").map(Number)
+  const [hour, minute] = (timeValue || "09:00").split(":").map(Number)
+  if (!year || !month || !day) return null
+  return new Date(year, month - 1, day, hour || 0, minute || 0, 0, 0).toISOString()
+}
+
+function formatDurationLabel(minutes: number | null) {
+  if (!minutes || minutes <= 0) return "未設定"
+  if (minutes < 60) return `${minutes}分`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours}時間${rest}分` : `${hours}時間`
+}
+
+function formatFileSize(value: number | null) {
+  if (!value || value <= 0) return null
+  if (value < 1024 * 1024) return `${Math.ceil(value / 1024)}KB`
+  return `${(value / 1024 / 1024).toFixed(1)}MB`
+}
+
+function imageExtensionFromType(type: string) {
+  if (type.includes("jpeg")) return "jpg"
+  if (type.includes("webp")) return "webp"
+  if (type.includes("gif")) return "gif"
+  return "png"
 }
 
 function stripFocusmapSyncId(prompt: string) {
@@ -240,6 +300,7 @@ function parseCodexConversation(value: string, prompt: string): { entries: Codex
 
 export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading, onSaveDraft }: CodexNodePanelProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const {
     getBySourceId: getAiTaskBySourceId,
     refresh: refreshAiTasks,
@@ -262,6 +323,15 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
+  const [scheduledAt, setScheduledAt] = useState<string | null>(null)
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(null)
+  const [calendarId, setCalendarId] = useState("")
+  const [attachments, setAttachments] = useState<TaskAttachmentPreview[]>([])
+  const [isLoadingTaskDetail, setIsLoadingTaskDetail] = useState(false)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null)
+  const [imageNotice, setImageNotice] = useState<string | null>(null)
+  const [isImageDragActive, setIsImageDragActive] = useState(false)
   const saveVersionRef = useRef(0)
   const codexWatchIdRef = useRef<string | null>(null)
 
@@ -289,7 +359,52 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setCodexPromptCopied(false)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
+    setImageNotice(null)
+    setIsImageDragActive(false)
   }, [open, node.taskId, node.title, node.memo])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+
+    const loadTaskDetail = async () => {
+      setIsLoadingTaskDetail(true)
+      try {
+        const [taskRes, attachmentsRes] = await Promise.all([
+          fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, { cache: "no-store" }),
+          fetch(`/api/tasks/${encodeURIComponent(node.taskId)}/attachments`, { cache: "no-store" }),
+        ])
+
+        const taskData = await taskRes.json().catch(() => ({})) as { task?: Task; error?: { message?: string } }
+        const attachmentsData = await attachmentsRes.json().catch(() => ({})) as { attachments?: TaskAttachmentPreview[]; error?: string }
+        if (cancelled) return
+
+        if (taskRes.ok && taskData.task) {
+          setScheduledAt(taskData.task.scheduled_at ?? null)
+          setEstimatedMinutes(taskData.task.estimated_time ?? null)
+          setCalendarId(taskData.task.calendar_id ?? "")
+        }
+
+        if (attachmentsRes.ok && Array.isArray(attachmentsData.attachments)) {
+          setAttachments(attachmentsData.attachments)
+        } else {
+          setAttachments([])
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "メモ詳細を取得できませんでした")
+          setAttachments([])
+        }
+      } finally {
+        if (!cancelled) setIsLoadingTaskDetail(false)
+      }
+    }
+
+    void loadTaskDetail()
+    return () => {
+      cancelled = true
+    }
+  }, [open, node.taskId])
 
   useEffect(() => {
     if (!open) return
@@ -384,6 +499,154 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     setDetail(nextDetail)
     void saveDraft(heading, nextDetail)
   }, [heading, saveDraft])
+
+  const patchTaskDetail = useCallback(async (updates: Record<string, unknown>) => {
+    setError(null)
+    setSaveStatus("saving")
+    try {
+      const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(typeof data?.error?.message === "string" ? data.error.message : "タスク詳細の保存に失敗しました")
+      }
+      setSaveStatus("saved")
+    } catch (err) {
+      setSaveStatus("error")
+      setError(err instanceof Error ? err.message : "タスク詳細の保存に失敗しました")
+    }
+  }, [node.taskId])
+
+  const dateValue = useMemo(() => toDateInputValue(scheduledAt), [scheduledAt])
+  const timeValue = useMemo(() => toTimeInputValue(scheduledAt), [scheduledAt])
+
+  const updateScheduledAt = useCallback((nextScheduledAt: string | null) => {
+    setScheduledAt(nextScheduledAt)
+    void patchTaskDetail({ scheduled_at: nextScheduledAt })
+  }, [patchTaskDetail])
+
+  const handleDateChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const nextDate = event.target.value
+    if (!nextDate) {
+      updateScheduledAt(null)
+      return
+    }
+    updateScheduledAt(combineLocalDateTime(nextDate, timeValue || "09:00"))
+  }, [timeValue, updateScheduledAt])
+
+  const handleTimeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const nextTime = event.target.value
+    const nextDate = dateValue || todayDateInputValue()
+    updateScheduledAt(combineLocalDateTime(nextDate, nextTime || "09:00"))
+  }, [dateValue, updateScheduledAt])
+
+  const handleDurationChange = useCallback((minutes: number | null) => {
+    setEstimatedMinutes(minutes)
+    void patchTaskDetail({ estimated_time: minutes })
+  }, [patchTaskDetail])
+
+  const handleCalendarChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const nextCalendarId = event.target.value
+    setCalendarId(nextCalendarId)
+    void patchTaskDetail({ calendar_id: nextCalendarId.trim() || null })
+  }, [patchTaskDetail])
+
+  const uploadImages = useCallback(async (files: File[]) => {
+    const imageFiles = files.filter(file => file.type.startsWith("image/"))
+    if (imageFiles.length === 0) {
+      setImageNotice("画像ファイルを選択してください")
+      return
+    }
+    setError(null)
+    setImageNotice(null)
+    setIsUploadingImage(true)
+    try {
+      const uploaded: TaskAttachmentPreview[] = []
+      for (const file of imageFiles) {
+        const formData = new FormData()
+        formData.append("file", file)
+        const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}/attachments`, {
+          method: "POST",
+          body: formData,
+        })
+        const data = await res.json().catch(() => ({})) as { attachment?: TaskAttachmentPreview; error?: string }
+        if (!res.ok || !data.attachment) {
+          throw new Error(typeof data.error === "string" ? data.error : "画像の追加に失敗しました")
+        }
+        uploaded.push(data.attachment)
+      }
+      setAttachments(prev => [...prev, ...uploaded])
+      setImageNotice(`${uploaded.length}件の画像を追加しました`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像の追加に失敗しました")
+    } finally {
+      setIsUploadingImage(false)
+      setIsImageDragActive(false)
+    }
+  }, [node.taskId])
+
+  const handleFileInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    if (files.length > 0) void uploadImages(files)
+    event.target.value = ""
+  }, [uploadImages])
+
+  const handlePasteClipboardImage = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard || !("read" in navigator.clipboard)) {
+      setImageNotice("この環境ではクリック貼り付けに対応していません。Cmd+Vか画像追加を使ってください")
+      return
+    }
+    try {
+      const clipboardItems = await navigator.clipboard.read()
+      const files: File[] = []
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(type => type.startsWith("image/"))
+        if (!imageType) continue
+        const blob = await item.getType(imageType)
+        files.push(new File([blob], `clipboard-${Date.now()}.${imageExtensionFromType(imageType)}`, { type: imageType }))
+      }
+      await uploadImages(files)
+    } catch (err) {
+      setImageNotice(err instanceof Error ? err.message : "クリップボード画像を読み取れませんでした")
+    }
+  }, [uploadImages])
+
+  const handlePanelPaste = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.files ?? []).filter(file => file.type.startsWith("image/"))
+    if (files.length === 0) return
+    event.preventDefault()
+    void uploadImages(files)
+  }, [uploadImages])
+
+  const handleImageDrop = useCallback((event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsImageDragActive(false)
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) void uploadImages(files)
+  }, [uploadImages])
+
+  const handleDeleteAttachment = useCallback(async (attachment: TaskAttachmentPreview) => {
+    setDeletingAttachmentId(attachment.id)
+    setError(null)
+    const previous = attachments
+    setAttachments(prev => prev.filter(item => item.id !== attachment.id))
+    try {
+      const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}/attachments/${encodeURIComponent(attachment.id)}`, {
+        method: "DELETE",
+      })
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "画像の削除に失敗しました")
+    } catch (err) {
+      setAttachments(previous)
+      setError(err instanceof Error ? err.message : "画像の削除に失敗しました")
+    } finally {
+      setDeletingAttachmentId(null)
+    }
+  }, [attachments, node.taskId])
 
   const handleTranscribed = useCallback((text: string) => {
     setDetail(prev => {
@@ -891,6 +1154,17 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
     !canUseLocalCodexOpenApi() &&
     codexRunnerStatus.checked &&
     !codexRunnerStatus.ready
+  const nodeMetaTags = useMemo(() => {
+    const tags: string[] = []
+    if (node.isDone) tags.push("完了")
+    else tags.push("未完了")
+    if (scheduledAt) tags.push("予定あり")
+    if (estimatedMinutes && estimatedMinutes > 0) tags.push(formatDurationLabel(estimatedMinutes))
+    if (attachments.length > 0) tags.push(`画像 ${attachments.length}`)
+    if (node.hasMemo || detail.trim()) tags.push("メモあり")
+    if (node.priority != null) tags.push(`優先度 ${node.priority}`)
+    return Array.from(new Set(tags))
+  }, [attachments.length, detail, estimatedMinutes, node.hasMemo, node.isDone, node.priority, scheduledAt])
 
   return (
     <Dialog
@@ -905,32 +1179,224 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       <DialogContent
         ref={contentRef}
         tabIndex={-1}
+        onPaste={handlePanelPaste}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           window.requestAnimationFrame(moveFocusToPanel)
         }}
-        className="flex max-h-[92dvh] w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden border-border/70 p-0 xl:!max-w-[1200px]"
+        className="flex max-h-[92dvh] w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden border-neutral-800 bg-neutral-950/98 p-0 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)] xl:!max-w-[1280px]"
       >
-        <DialogTitle className="sr-only">メモ見出し</DialogTitle>
+        <div className="shrink-0 px-4 pb-2 pt-4 pr-12 sm:px-6">
+          <DialogTitle className="text-left text-lg font-semibold text-neutral-50">メモを編集</DialogTitle>
+        </div>
 
-        <div className="shrink-0 border-b border-border/70 px-4 py-4 pr-12 sm:px-6">
-          <label className="text-sm text-muted-foreground" htmlFor="codex-memo-heading">
-            メモ見出し
-          </label>
-          <div className="mt-2">
-            <textarea
-              id="codex-memo-heading"
-              value={heading}
-              rows={2}
-              onChange={(event) => handleHeadingChange(event.target.value)}
-              className="max-h-28 min-h-12 w-full resize-none overflow-y-auto rounded-lg border border-border/70 bg-background px-3 py-3 text-base leading-relaxed outline-none focus:border-primary"
-              placeholder="メモ見出し"
-            />
+        <div className="shrink-0 border-b border-neutral-800 px-4 pb-4 sm:px-6">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="min-w-0 space-y-1" htmlFor="codex-memo-heading">
+              <span className="text-sm text-neutral-400">見出し</span>
+              <textarea
+                id="codex-memo-heading"
+                value={heading}
+                rows={2}
+                onChange={(event) => handleHeadingChange(event.target.value)}
+                className="max-h-28 min-h-12 w-full resize-none overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900/70 px-3 py-3 text-base leading-relaxed text-neutral-50 outline-none placeholder:text-neutral-500 focus:border-emerald-500"
+                placeholder="見出し"
+              />
+            </label>
+            <div className="min-w-0 space-y-1">
+              <span className="text-sm text-neutral-400">タグ</span>
+              <div className="flex min-h-12 flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/45 px-3 py-2">
+                {nodeMetaTags.map(tag => (
+                  <span
+                    key={tag}
+                    className="rounded-full border border-neutral-700 bg-neutral-950 px-2.5 py-1 text-xs font-medium text-neutral-300"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="min-h-0 overflow-y-auto px-4 py-5 sm:px-6">
-          <div className="space-y-2">
+          <div className="grid gap-4 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start">
+            <div className="space-y-4">
+              <section className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
+                  <ImagePlus className="h-4 w-4" />
+                  <span>画像</span>
+                  <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-400">{attachments.length}</span>
+                </div>
+                <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                  {attachments.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
+                      {attachments.map(attachment => {
+                        const isImage = attachment.file_type?.startsWith("image/")
+                        const sizeLabel = formatFileSize(attachment.file_size)
+                        return (
+                          <div key={attachment.id} className="group relative overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+                            {isImage ? (
+                              // eslint-disable-next-line @next/next/no-img-element -- Supabase signed attachment URLs are user-generated.
+                              <img src={attachment.file_url} alt={attachment.file_name} className="h-28 w-full object-cover" />
+                            ) : (
+                              <div className="flex h-28 items-center justify-center px-2 text-center text-xs text-neutral-400">
+                                {attachment.file_name}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-neutral-400">
+                              <span className="min-w-0 flex-1 truncate">{attachment.file_name}</span>
+                              {sizeLabel && <span className="shrink-0">{sizeLabel}</span>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteAttachment(attachment)}
+                              disabled={deletingAttachmentId === attachment.id}
+                              className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950/90 text-neutral-300 opacity-100 transition-colors hover:bg-red-500/15 hover:text-red-200 disabled:opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                              aria-label="画像を削除"
+                              title="画像を削除"
+                            >
+                              {deletingAttachmentId === attachment.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      disabled={isUploadingImage}
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={(event) => {
+                        event.preventDefault()
+                        setIsImageDragActive(true)
+                      }}
+                      onDragEnter={(event) => {
+                        event.preventDefault()
+                        setIsImageDragActive(true)
+                      }}
+                      onDragLeave={() => setIsImageDragActive(false)}
+                      onDrop={handleImageDrop}
+                      className={`flex min-h-[72px] items-center justify-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left transition-colors ${
+                        isImageDragActive
+                          ? "border-emerald-500 bg-emerald-500/10 text-neutral-50"
+                          : "border-neutral-800 bg-neutral-900/35 text-neutral-400 hover:border-emerald-500/60 hover:text-neutral-100"
+                      } ${isUploadingImage ? "cursor-wait opacity-70" : ""}`}
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-950">
+                        {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-neutral-100">画像を追加</span>
+                        <span className="block text-xs leading-4">フォルダー選択 / ドラッグ&ドロップ</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isUploadingImage}
+                      onClick={() => void handlePasteClipboardImage()}
+                      className="flex min-h-[72px] items-center justify-center gap-3 rounded-lg border border-emerald-500/35 bg-emerald-500/5 px-3 py-3 text-left text-emerald-200 transition-colors hover:bg-emerald-500/10 disabled:opacity-70"
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-emerald-500/35 bg-neutral-950">
+                        <Copy className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold">クリップボード画像を貼り付け</span>
+                        <span className="block text-xs leading-4 text-emerald-200/75">クリック / Cmd+V</span>
+                      </span>
+                    </button>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleFileInputChange}
+                  />
+                  {imageNotice && (
+                    <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">{imageNotice}</p>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
+                  <Clock className="h-4 w-4" />
+                  <span>時間・予定</span>
+                  {isLoadingTaskDetail && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-500" />}
+                </div>
+                <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1 text-xs text-neutral-400">
+                      <span>日付</span>
+                      <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
+                        <CalendarIcon className="h-4 w-4 shrink-0 text-neutral-500" />
+                        <input
+                          type="date"
+                          value={dateValue}
+                          onChange={handleDateChange}
+                          className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
+                        />
+                      </span>
+                    </label>
+                    <label className="space-y-1 text-xs text-neutral-400">
+                      <span>時刻</span>
+                      <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-800 bg-neutral-900/55 px-3">
+                        <Clock className="h-4 w-4 shrink-0 text-neutral-500" />
+                        <input
+                          type="time"
+                          value={timeValue}
+                          onChange={handleTimeChange}
+                          className="min-w-0 flex-1 bg-transparent text-sm text-neutral-100 outline-none [color-scheme:dark]"
+                        />
+                      </span>
+                    </label>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2 text-xs text-neutral-400">
+                      <span>所要時間</span>
+                      <span>{formatDurationLabel(estimatedMinutes)}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {QUICK_ESTIMATED_MINUTES.map(minutes => (
+                        <button
+                          key={minutes}
+                          type="button"
+                          onClick={() => handleDurationChange(minutes)}
+                          className={`min-h-9 rounded-md border px-2 text-xs font-medium transition-colors ${
+                            estimatedMinutes === minutes
+                              ? "border-emerald-500 bg-emerald-500 text-emerald-950"
+                              : "border-neutral-800 bg-neutral-900/55 text-neutral-400 hover:text-neutral-100"
+                          }`}
+                        >
+                          {formatDurationLabel(minutes)}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => handleDurationChange(null)}
+                        className="min-h-9 rounded-md border border-neutral-800 bg-neutral-900/55 px-2 text-xs font-medium text-neutral-400 transition-colors hover:text-neutral-100"
+                      >
+                        解除
+                      </button>
+                    </div>
+                  </div>
+                  <label className="space-y-1 text-xs text-neutral-400">
+                    <span>カレンダー</span>
+                    <input
+                      value={calendarId}
+                      onChange={handleCalendarChange}
+                      placeholder="primary"
+                      className="min-h-11 w-full rounded-md border border-neutral-800 bg-neutral-900/55 px-3 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-emerald-500"
+                    />
+                  </label>
+                </div>
+              </section>
+            </div>
+
+            <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div className="flex items-center justify-between gap-3 sm:justify-start">
                 <span className="text-sm text-muted-foreground">メモ詳細</span>
@@ -1146,6 +1612,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                 </p>
               </div>
             )}
+            </div>
           </div>
 
           <button
