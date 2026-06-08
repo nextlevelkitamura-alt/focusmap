@@ -105,7 +105,8 @@ flowchart TB
 ### Phase 5: Legacy Runner整理
 
 - `scripts/task-runner.ts` は非Codex taskや既存互換のため一旦残す。
-- supervisor monitorが有効な時は、`task-runner.ts` のCodex sqlite/rollout監視を無効化または対象外にする。
+- 通常運用ではMacアプリから旧 `task-runner` を自動kickせず、`focusmap-agent` をCodex監視writerの本命一本にする。
+- `task-runner.ts` のCodex sqlite/rollout監視は通常無効にし、`FOCUSMAP_LEGACY_CODEX_MONITOR=1` を明示した互換/デバッグ時だけ動かす。
 - parity確認後、Codex監視責務を`focusmap-agent`へ完全移管する。
 
 ### Phase 6: 権限/onboarding
@@ -157,6 +158,7 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 ## Progress
 
 - 2026-06-07: Phase 1の設定UI入り口として、Focusmap MacアプリのElectron IPCに `getAutomationStatus` / `connectAutomation` / `disconnectAutomation` を追加し、設定 > 自動化の先頭へ `Mac / Codex Connection` カードを追加した。カードはNext 3001、Macアプリ管理下の `focusmap-agent`、Codex app-serverを5秒ごとに診断し、Macアプリ内だけで接続/切断できる。通常ブラウザ、Cloud Run、スマホからローカルMacを制御するAPIは追加していない。
+- 2026-06-08: Phase 5の先行整理として、通常監視writerを `focusmap-agent` 一本に固定した。Macアプリは旧 `task-runner` を通常自動起動せず、旧runner側のCodex sqlite/rollout監視も `FOCUSMAP_LEGACY_CODEX_MONITOR=1` 明示時だけ動く。設定UIは旧runnerを「通常停止」として表示し、`docs/CONTEXT.md` と保存境界仕様に同じ契約を追記した。
 
 ## リスク
 

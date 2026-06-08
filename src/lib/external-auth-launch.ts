@@ -42,6 +42,7 @@ export type FocusmapDesktopAuthSession = {
 
 export type FocusmapDesktopAutomationServiceStatus = {
   ready?: boolean
+  enabled?: boolean
   managed?: boolean
   external?: boolean
   configured?: boolean
@@ -59,6 +60,7 @@ export type FocusmapDesktopAutomationServiceStatus = {
   apiUrl?: string
   lastKickAt?: string | null
   lastKickMessage?: string | null
+  disabledReason?: string | null
 }
 
 export type FocusmapDesktopAutomationStatus = {

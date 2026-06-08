@@ -22,12 +22,22 @@ Macローカル:
 
 | 状況 | Mac local check | Cloud write/read |
 |---|---:|---:|
-| runner生存 | local process loop | 10秒ごとheartbeat upsert |
+| runner生存 | local process loop | 実行中5秒・アイドル30秒heartbeat upsert |
 | running、詳細未表示 | 1秒 | 5秒最短snapshot、hash変化時のみ |
 | detail panel表示中 | 1秒 | active watch + 3秒detail poll |
 | awaiting approval / needs input | 1秒可 | 追加入力・再開を5秒以内に反映 |
 | runningなし | 通常background | 30から45秒、または手動更新 |
 | 古いcompleted / failed | tight loop不要 | 低頻度、または手動 |
+
+## 監視writerの本命一本化
+
+通常のCodex監視writerはMac Supervisor配下の `focusmap-agent` 1本にする。`focusmap-agent` がCodex app-server通知、`~/.codex/state_5.sqlite`、rollout JSONLを読み、状態変化と軽量snapshotだけをTurso/Supabaseへ送る。
+
+- Focusmap Macアプリは、通常起動でNext 3001、`focusmap-agent`、Codex app-serverだけを自動確認する。
+- 旧 `scripts/task-runner.ts` は非Codex task、明示即時実行、既存互換のため残すが、Codex sqlite/rollout監視は通常無効にする。互換/デバッグで必要な時だけ `FOCUSMAP_LEGACY_CODEX_MONITOR=1` を付ける。
+- Macアプリから旧 `task-runner` を自動kickするのは `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した時だけにする。
+- `/api/codex/sync-node` は手動sync now、debug、移行中fallbackに限定し、通常の3秒UI更新や詳細表示だけを理由にsqlite/rollout探索とDB writeを起こさない。
+- このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール
 
@@ -73,8 +83,10 @@ Mac agent側で圧縮する前提でも、API側で必ず防御的にsanitizeし
 
 ```mermaid
 flowchart LR
-  Monitor["Mac側monitor / sync-node fallback"] --> Turso["Turso: live snapshot / event / heartbeat / activity"]
-  Monitor --> Supabase["Supabase: task command / final state / compatibility fallback"]
+  Agent["focusmap-agent monitor (normal writer)"] --> Turso["Turso: live snapshot / event / heartbeat / activity"]
+  Agent --> Supabase["Supabase: task command / final state / compatibility summary"]
+  Fallback["sync-node / legacy task-runner (manual/debug fallback)"] -.-> Turso
+  Fallback -.-> Supabase
   UI["Focusmap UI"] --> Turso
   UI --> Supabase
 ```
@@ -102,7 +114,7 @@ activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定
 
 write budgetの考え方:
 
-- runner heartbeat 10秒は許容。
+- runner heartbeatは実行中5秒・アイドル30秒なら許容。
 - running snapshot 5秒は、hash dedupe前提なら許容。
 - detail open中だけ3秒boostを許容。
 - 毎tick progress insertは禁止。
@@ -113,7 +125,7 @@ write budgetの考え方:
 
 | ケース | 月間write概算 | 備考 |
 |---|---:|---|
-| 1 runner heartbeat 10秒 | 259k | 1 row upsert |
+| 1 runner heartbeat 5秒で常時active | 518k | 重めの上限見積もり。通常はidle30秒が混ざる |
 | 1 running task 5秒、常に変化、24h/day | 518k | 通常snapshotの重めケース |
 | 5 running tasks 5秒、常に変化、24h/day | 2.59M | progress/eventを増やさなければ許容 |
 | 5 tasks detail-open 3秒、常に変化、24h/day | 4.32M | 重いが他writeが小さければ10M未満 |
@@ -145,6 +157,7 @@ backend修正は、次を満たす場合だけ理想に近づいています。
 - manual handoff時、Codex.appを開く前、または同時にtracking taskを作る。
 - `dispatch_mode='manual'` を通常runnerが勝手に `turn/start` しない。
 - `dispatch_mode='auto'` は明示的な別モードとして残す。
+- 通常のCodex監視writerは `focusmap-agent` 1本で、旧 `task-runner.ts` のCodex監視は `FOCUSMAP_LEGACY_CODEX_MONITOR=1` 明示時だけ動く。
 - `snapshot_only=true` の通常POSTは最新snapshotだけ更新し、履歴insertしない。
 - event insert は意味のある状態変化だけ。
 - progress history は短く、上限つき。

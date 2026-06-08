@@ -13,6 +13,7 @@
  *   SUPABASE_SERVICE_ROLE_KEY  — サービスロールキー
  *   FOCUSMAP_RUNNER_USER_ID    — このPCで実行を許可するFocusmapユーザーID
  *   FOCUSMAP_ALLOW_LEGACY_TASK_RUNNER=true — runner未設定時の旧全体取得を明示許可
+ *   FOCUSMAP_LEGACY_CODEX_MONITOR=1 — 互換/デバッグ用に旧Codex監視を明示許可
  *
  * launchd から毎分起動される（~/Library/LaunchAgents/com.focusmap.task-runner.plist）
  */
@@ -65,6 +66,11 @@ function loadEnvFile(filePath: string) {
   }
 }
 
+function envFlagEnabled(value: string | undefined): boolean {
+  if (!value) return false
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
 const envPath = path.resolve(__dirname, '../.env.local')
 loadEnvFile(envPath)
 const monitoringEnvPath = path.resolve(__dirname, '../.env.monitoring.local')
@@ -98,6 +104,8 @@ const CODEX_AWAITING_RECHECK_MS = 5_000
 const CODEX_ARCHIVE_SCAN_INTERVAL_MS = 30 * 60_000
 const CODEX_LIVE_LOG_MAX_CHARS = 16_000
 const CODEX_ARCHIVE_SCAN_STATE_PATH = path.join(FOCUSMAP_RUNS_DIR, 'codex-archive-scan.json')
+const LEGACY_CODEX_MONITOR_ENABLED = envFlagEnabled(process.env.FOCUSMAP_LEGACY_CODEX_MONITOR) ||
+  envFlagEnabled(process.env.FOCUSMAP_ENABLE_LEGACY_CODEX_MONITOR)
 
 function pauseRunnerForSupabaseRestriction(message: string): boolean {
   if (!SUPABASE_RESTRICTED_PATTERN.test(message)) return false
@@ -3570,17 +3578,22 @@ async function main() {
 
     // ─── 0. tmux セッションが消えた RC タスクを確認待ちに遷移 ─
     await reconcileRemoteControlSessions(supabase, monitorScope)
-    await cleanupStaleCodexTasks(supabase, monitorScope)
 
-    // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
-    await syncCodexLiveLogs(supabase, monitorScope)
+    if (LEGACY_CODEX_MONITOR_ENABLED) {
+      await cleanupStaleCodexTasks(supabase, monitorScope)
 
-    // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
-    const codexSyncStats = await syncCodexAppThreads(supabase, monitorScope)
-    if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
-      await syncCompletedFocusmapNodesToCodexArchive(supabase, monitorScope)
+      // ─── 0.1. 実行中の Codex タスクのライブログを DB にダンプ（UI 表示用）─
+      await syncCodexLiveLogs(supabase, monitorScope)
+
+      // ─── 0.2. Codex.app スレッド進捗を ~/.codex/state_5.sqlite から同期 ─
+      const codexSyncStats = await syncCodexAppThreads(supabase, monitorScope)
+      if (shouldRunIntervalScan(CODEX_ARCHIVE_SCAN_STATE_PATH, CODEX_ARCHIVE_SCAN_INTERVAL_MS)) {
+        await syncCompletedFocusmapNodesToCodexArchive(supabase, monitorScope)
+      }
+      await syncActiveCodexFollowUps(supabase, codexSyncStats, monitorScope)
+    } else {
+      console.log('[task-runner] Legacy Codex monitor disabled; focusmap-agent owns normal Codex monitoring. Set FOCUSMAP_LEGACY_CODEX_MONITOR=1 only for compatibility/debug fallback.')
     }
-    await syncActiveCodexFollowUps(supabase, codexSyncStats, monitorScope)
 
     // ─── 0.3. staff-status が途中停止した場合は次回実行へ戻す ─
     await recoverStaleStaffStatusTasks(supabase)

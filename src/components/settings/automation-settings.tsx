@@ -50,7 +50,8 @@ function formatStatusTime(value: string | null | undefined) {
   return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 }
 
-function statusTone(ready: boolean | undefined) {
+function statusTone(ready: boolean | undefined, inactive = false) {
+  if (inactive) return "border-zinc-700 bg-black/30 text-zinc-400"
   return ready
     ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
     : "border-zinc-700 bg-black/30 text-zinc-400"
@@ -61,19 +62,23 @@ function MacConnectionItem({
   label,
   ready,
   detail,
+  inactive = false,
+  statusLabel,
 }: {
   icon: ComponentType<{ className?: string }>
   label: string
   ready: boolean | undefined
   detail: string
+  inactive?: boolean
+  statusLabel?: string
 }) {
   return (
-    <div className={`rounded-md border p-3 ${statusTone(ready)}`}>
+    <div className={`rounded-md border p-3 ${statusTone(ready, inactive)}`}>
       <div className="flex items-center gap-2">
         <Icon className="h-4 w-4 shrink-0" />
         <span className="min-w-0 truncate text-sm font-medium text-zinc-100">{label}</span>
         <span className="ml-auto shrink-0 rounded-full bg-black/25 px-2 py-0.5 text-[10px]">
-          {ready ? "接続中" : "未接続"}
+          {statusLabel ?? (ready ? "接続中" : "未接続")}
         </span>
       </div>
       <p className="mt-2 min-h-8 text-xs leading-4 text-zinc-400">{detail}</p>
@@ -111,6 +116,7 @@ function appDetail(status: FocusmapDesktopAutomationStatus | null) {
 function runnerDetail(status: FocusmapDesktopAutomationStatus | null) {
   const runner = status?.runner
   if (!runner) return "Macアプリから状態を取得していません。"
+  if (runner.enabled === false) return runner.disabledReason ?? "Codex監視はfocusmap-agentが担当します。旧runnerは互換/デバッグ時だけ使います。"
   if (!runner.available) return "task-runner起動スクリプトが見つかりません。"
   if (runner.paused) return runner.pauseReason ? `一時停止中: ${runner.pauseReason}` : "一時停止中です。接続で復旧を試します。"
   if (runner.managed) return "監視runnerはこのMacアプリから実行中です。"
@@ -195,7 +201,7 @@ function MacCodexConnectionPanel() {
               {bridgeAvailable ? (connected ? "MacBookに接続中" : "MacBookは一部未接続") : "Macアプリ未接続"}
             </h2>
             <p className="mt-1 text-sm leading-6 text-zinc-400">
-              Macアプリを開いている間、Focusmap Web、agent、Codex app-server、runnerを自動確認します。
+              Macアプリを開いている間、Focusmap Web、focusmap-agent、Codex app-serverを自動確認します。
             </p>
             {status?.keepAwake?.active && (
               <p className="mt-1 text-xs text-emerald-300">
@@ -239,7 +245,14 @@ function MacCodexConnectionPanel() {
         <MacConnectionItem icon={Laptop} label="Focusmap 3001" ready={status?.app.ready} detail={appDetail(status)} />
         <MacConnectionItem icon={Workflow} label="focusmap-agent" ready={status?.agent.ready} detail={agentDetail(status)} />
         <MacConnectionItem icon={Bot} label="Codex app-server" ready={status?.codex.ready} detail={codexDetail(status)} />
-        <MacConnectionItem icon={Terminal} label="Codex監視runner" ready={status?.runner?.ready} detail={runnerDetail(status)} />
+        <MacConnectionItem
+          icon={Terminal}
+          label="旧task-runner"
+          ready={status?.runner?.ready}
+          inactive={status?.runner?.enabled === false}
+          statusLabel={status?.runner?.enabled === false ? "通常停止" : undefined}
+          detail={runnerDetail(status)}
+        />
       </div>
 
       <div className="mt-3 flex flex-col gap-2 text-xs leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">

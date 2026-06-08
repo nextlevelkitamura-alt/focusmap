@@ -56,8 +56,17 @@ function loadDesktopEnv(repoRoot) {
   ].reduce((merged, filePath) => ({ ...merged, ...parseEnvFile(filePath) }), {});
 }
 
+function envFlagEnabled(value) {
+  if (typeof value !== 'string') return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 const REPO_ROOT = resolveRepoRoot();
 const DESKTOP_ENV = loadDesktopEnv(REPO_ROOT);
+const LEGACY_TASK_RUNNER_ENABLED = envFlagEnabled(
+  process.env.FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER ||
+  DESKTOP_ENV.FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER,
+);
 const AUTOMATION_SUPERVISOR_INTERVAL_MS = Math.max(
   15_000,
   Number(process.env.FOCUSMAP_DESKTOP_SUPERVISOR_INTERVAL_MS || DESKTOP_ENV.FOCUSMAP_DESKTOP_SUPERVISOR_INTERVAL_MS || 30_000) || 30_000,
@@ -259,15 +268,30 @@ function commandExists(command) {
 }
 
 function readTaskRunnerPauseStatus() {
+  const available = fs.existsSync(TASK_RUNNER_SCRIPT);
+  const base = {
+    enabled: LEGACY_TASK_RUNNER_ENABLED,
+    available,
+    pauseFile: TASK_RUNNER_PAUSE_FILE,
+    scriptPath: TASK_RUNNER_SCRIPT,
+    lastKickAt: lastTaskRunnerKickAt,
+    lastKickMessage: lastTaskRunnerKickMessage,
+  };
+
+  if (!LEGACY_TASK_RUNNER_ENABLED) {
+    return {
+      ...base,
+      ready: false,
+      paused: false,
+      disabledReason: 'Codex監視はfocusmap-agentが通常担当します。旧task-runnerは互換/デバッグ時だけ起動します。',
+    };
+  }
+
   if (!fs.existsSync(TASK_RUNNER_PAUSE_FILE)) {
     return {
-      ready: fs.existsSync(TASK_RUNNER_SCRIPT),
-      available: fs.existsSync(TASK_RUNNER_SCRIPT),
+      ...base,
+      ready: available,
       paused: false,
-      pauseFile: TASK_RUNNER_PAUSE_FILE,
-      scriptPath: TASK_RUNNER_SCRIPT,
-      lastKickAt: lastTaskRunnerKickAt,
-      lastKickMessage: lastTaskRunnerKickMessage,
     };
   }
 
@@ -280,15 +304,11 @@ function readTaskRunnerPauseStatus() {
   const reason = raw.split(/\r?\n/).find((line) => line.startsWith('Reason:'))?.replace(/^Reason:\s*/, '') || null;
   const pausedAt = raw.split(/\r?\n/).find((line) => line.startsWith('Paused at'))?.replace(/^Paused at\s*/, '') || null;
   return {
+    ...base,
     ready: false,
-    available: fs.existsSync(TASK_RUNNER_SCRIPT),
     paused: true,
-    pauseFile: TASK_RUNNER_PAUSE_FILE,
-    scriptPath: TASK_RUNNER_SCRIPT,
     pausedAt,
     pauseReason: reason,
-    lastKickAt: lastTaskRunnerKickAt,
-    lastKickMessage: lastTaskRunnerKickMessage,
   };
 }
 
@@ -300,6 +320,22 @@ function clearTaskRunnerPauseFile() {
 }
 
 function kickTaskRunnerOnce(reason) {
+  if (!LEGACY_TASK_RUNNER_ENABLED) {
+    if (isChildRunning(managedProcesses.runner)) {
+      const stopped = stopManagedProcess('runner', '旧task-runner');
+      return serviceResult(
+        stopped.ok,
+        stopped.ok
+          ? 'Codex監視はfocusmap-agent一本にしたため、旧task-runnerを停止しました。'
+          : stopped.message,
+      );
+    }
+    const message = '旧task-runnerは通常起動しません。Codex監視はfocusmap-agentが担当します。';
+    lastTaskRunnerKickAt = new Date().toISOString();
+    lastTaskRunnerKickMessage = message;
+    return serviceResult(true, message);
+  }
+
   if (isChildRunning(managedProcesses.runner)) {
     const message = `task-runnerは実行中です (${reason})`;
     lastTaskRunnerKickAt = new Date().toISOString();
@@ -998,13 +1034,14 @@ async function getAutomationStatus() {
   const codexManaged = isChildRunning(managedProcesses.codex);
   const agentReady = agentManaged || externalAgentRunning;
   const runner = readTaskRunnerPauseStatus();
-  runner.ready = runner.available && !runner.paused;
+  runner.ready = runner.enabled ? runner.available && !runner.paused : false;
   runner.managed = isChildRunning(managedProcesses.runner);
+  const runnerBlocksConnection = Boolean(runner.enabled && runner.paused);
 
   return {
     ok: true,
     available: true,
-    connected: Boolean(appReady && agentReady && codexReady && !runner.paused),
+    connected: Boolean(appReady && agentReady && codexReady && !runnerBlocksConnection),
     timestamp: new Date().toISOString(),
     supervisor: {
       enabled: automationSupervisorEnabled,
