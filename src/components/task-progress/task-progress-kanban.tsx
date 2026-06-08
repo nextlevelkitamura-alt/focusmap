@@ -38,6 +38,10 @@ const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
 const HEARTBEAT_POLL_INTERVAL_MS = 30_000
 const HEARTBEAT_POLL_LABEL = "Mac状態30秒ごとに確認"
 
+function isPageVisible() {
+  return typeof document === "undefined" || document.visibilityState === "visible"
+}
+
 type SourceTaskInfo = Pick<Task, "id" | "status" | "title">
 
 type RunnerHeartbeat = {
@@ -122,6 +126,7 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
   })
 
   const refresh = useCallback(async () => {
+    if (!isPageVisible()) return
     try {
       const response = await fetchWithSupabaseAuth("/api/task-progress/runner-heartbeats?limit=5", { cache: "no-store" })
       if (!response.ok) throw new Error(`heartbeat fetch failed (${response.status})`)
@@ -163,8 +168,18 @@ function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise
 
   useEffect(() => {
     void refresh()
-    const intervalId = window.setInterval(() => void refresh(), HEARTBEAT_POLL_INTERVAL_MS)
+    const intervalId = window.setInterval(() => {
+      if (isPageVisible()) void refresh()
+    }, HEARTBEAT_POLL_INTERVAL_MS)
     return () => window.clearInterval(intervalId)
+  }, [refresh])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (isPageVisible()) void refresh()
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
   }, [refresh])
 
   return { ...state, refresh }

@@ -137,6 +137,7 @@ read budgetの考え方:
 - 短周期APIで `select('*')` しない。
 - hot pathで `count` しない。
 - full scanを避ける。
+- Web/スマホのMac online確認は画面が前面表示中の時だけ30秒ごとに読み、アプリ未起動・WebView/ブラウザ非表示・`document.visibilityState !== 'visible'` の間は止める。表示復帰時だけ即再取得する。
 - user path / space path のcursor indexを維持する。
 
 必要なindex:

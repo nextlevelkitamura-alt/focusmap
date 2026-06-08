@@ -248,7 +248,7 @@ Goals → Projects → TaskGroups → Tasks
 - `/api/codex/sync-node` と `scripts/task-runner.ts` のCodex監視は移行期間の互換、手動sync now、debug fallbackとして扱い、通常運用では書き込み監視に使わない。旧 `task-runner.ts` のsqlite/rollout監視は `FOCUSMAP_LEGACY_CODEX_MONITOR=1` を明示した時だけ動かし、Mac supervisor配下の `focusmap-agent` monitorが所有するtaskでは重複書き込みを避ける。
 - `ai_tasks` はコマンド、最終状態、互換summaryの正、Tursoは高頻度表示用のsnapshot/event/heartbeatの正、ローカルファイルはraw sqlite/rollout/screenshot/logの正にする。クラウドにはfull thread historyやraw logを保存しない。
 - Supabase/Tursoの保存境界は `docs/specs/codex-app-handoff-monitoring/03-backyard-sync-and-turso.md` を正とする。Supabaseへ保存するのはtask作成、thread初回検出、状態変化、完了/失敗/確認待ちなどの重要状態と互換fallbackに限る。Tursoが使える時、activityはTursoを主にし、Supabase activity mirrorは `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=0` を明示した時だけ行う。
-- Mac側の監視間隔はactive task中だけ1〜3秒まで許容する。ただしDB書き込みはhash、活動時刻、状態、新規activityが変わった時だけにし、runner heartbeatの書き込みは実行中3秒・アイドル30秒基準にする。Web/スマホのMac接続表示は `/api/task-progress/runner-heartbeats` を30秒ごとに読むだけにし、オンライン判定窓は90秒にする。オフラインはDBへ毎回書かず、`last_seen_at` が古くなった時点でUIがofflineと解釈する。
+- Mac側の監視間隔はactive task中だけ1〜3秒まで許容する。ただしDB書き込みはhash、活動時刻、状態、新規activityが変わった時だけにし、runner heartbeatの書き込みは実行中3秒・アイドル30秒基準にする。Web/スマホのMac接続表示は、画面が前面表示中の時だけ `/api/task-progress/runner-heartbeats` を30秒ごとに読む。アプリ未起動、WebView/ブラウザ未表示、`document.visibilityState !== 'visible'` の間はheartbeat読み取りpollを走らせず、表示復帰時に即再取得する。オンライン判定窓は90秒にする。オフラインはDBへ毎回書かず、`last_seen_at` が古くなった時点でUIがofflineと解釈する。
 - macOS権限は機能別に明示する。Codex.appや他アプリを汎用的に自由監視できる前提にはせず、Full Disk Access、Accessibility、Screen Recording、Automationは必要な機能を使う時だけ案内する。
 
 - `ai_tasks` が全ての起点。Codex.app連携では `executor='codex_app'` または `executor='codex'` を使う。

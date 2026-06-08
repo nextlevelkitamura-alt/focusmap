@@ -79,4 +79,25 @@ describe('TaskProgressKanban', () => {
       expect(screen.getByRole('button', { name: /Mac状態はオフライン/ })).toBeInTheDocument()
     })
   })
+
+  test('非表示中はMac heartbeatを読まず、表示復帰時に読む', async () => {
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get')
+    try {
+      visibilitySpy.mockReturnValue('hidden')
+
+      renderMobileKanban()
+
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+      expect(fetchWithSupabaseAuthMock).not.toHaveBeenCalled()
+
+      visibilitySpy.mockReturnValue('visible')
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      await waitFor(() => {
+        expect(fetchWithSupabaseAuthMock).toHaveBeenCalledTimes(1)
+      })
+    } finally {
+      visibilitySpy.mockRestore()
+    }
+  })
 })
