@@ -88,6 +88,40 @@ describe("buildMindMapModel", () => {
         expect(model.taskById.get("short")?.width).toBeLessThan(model.taskById.get("long")?.width ?? 0);
         expect(model.taskById.get("short")?.x).toBe(model.taskById.get("long")?.x);
     });
+
+    test("uses the widest node in a depth as the basis for the next column", () => {
+        const shortParent = makeTask({
+            id: "short-parent",
+            title: "短い親",
+            order_index: 0,
+        });
+        const wideSibling = makeTask({
+            id: "wide-sibling",
+            title: "横に長い同階層ノード",
+            node_width: 420,
+            order_index: 1,
+        });
+        const child = makeTask({
+            id: "child",
+            title: "子",
+            parent_task_id: "short-parent",
+            order_index: 0,
+        });
+
+        const model = buildMindMapModel({
+            project,
+            groups: [shortParent, wideSibling],
+            tasks: [child],
+            isMobile: false,
+        });
+
+        const wideNode = model.taskById.get("wide-sibling");
+        const childNode = model.taskById.get("child");
+
+        expect(wideNode).toBeDefined();
+        expect(childNode).toBeDefined();
+        expect(childNode!.x).toBeGreaterThan(wideNode!.x + wideNode!.width);
+    });
 });
 
 describe("mindmap geometry", () => {

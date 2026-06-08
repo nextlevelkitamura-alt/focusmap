@@ -271,10 +271,13 @@ function CustomBranchPath({
     const sourceY = Math.round(source.y + offsetY + source.height / 2);
     const targetX = Math.round(target.x + offsetX);
     const targetY = Math.round(target.y + offsetY + target.height / 2);
-    const branchX = Math.min(sourceX + 16, Math.max(sourceX + 8, targetX - 14));
+    const gap = targetX - sourceX;
+    const branchX = gap > 24
+        ? Math.round(sourceX + gap / 2)
+        : Math.round(sourceX + Math.max(8, gap / 2));
     const path = `M ${sourceX} ${sourceY} L ${branchX} ${sourceY} L ${branchX} ${targetY} L ${targetX} ${targetY}`;
 
-    return <path d={path} stroke="currentColor" strokeWidth="1.5" fill="none" strokeOpacity="0.62" />;
+    return <path d={path} stroke="currentColor" strokeWidth="1.5" fill="none" strokeOpacity="0.62" strokeLinejoin="round" />;
 }
 
 function CustomTaskNode({
@@ -677,13 +680,13 @@ function CustomTaskNode({
             data-id={node.id}
             tabIndex={0}
             className={cn(
-                "absolute rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
+                "absolute z-10 rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
                 "group flex flex-col gap-0 outline-none",
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
                 isMemoNode && !(node.isHabit || node.parentIsHabit) && "border-amber-400 bg-amber-50 dark:bg-amber-950/20",
-                node.isDone && "border-muted-foreground/25 bg-muted/20 text-muted-foreground opacity-60 grayscale",
+                node.isDone && "border-muted-foreground/25 bg-background text-muted-foreground grayscale",
                 codexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
                 codexState?.state === "running" && "border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
                 codexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
@@ -1287,7 +1290,7 @@ function CustomProjectNode({
             aria-label={isEditing ? undefined : node.title}
             tabIndex={0}
             className={cn(
-                "absolute flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm outline-none",
+                "absolute z-10 flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground shadow-sm outline-none",
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 dropPosition === "as-child" && "ring-2 ring-sky-400 ring-offset-2 ring-offset-background shadow-[0_0_18px_rgba(56,189,248,0.65)]"
@@ -2867,7 +2870,7 @@ export function CustomMindMapView({
                     }}
                 >
                     <svg
-                        className="absolute inset-0 text-muted-foreground"
+                        className="pointer-events-none absolute inset-0 z-0 text-muted-foreground"
                         width={stageWidth}
                         height={stageHeight}
                         aria-hidden="true"

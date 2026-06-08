@@ -70,6 +70,9 @@ type BuildMindMapModelParams = {
     projectNodeId?: string;
 };
 
+const COLUMN_GAP = 52;
+const COLUMN_GAP_MOBILE = 44;
+
 const hasMemoImages = (task: Task) =>
     Array.isArray(task.memo_images) && task.memo_images.some(url => typeof url === 'string' && url.trim().length > 0);
 
@@ -271,10 +274,24 @@ export function buildMindMapModel({
     }
 
     const leftByDepth = new Map<number, number>();
+    const maxWidthByDepth = new Map<number, number>();
     for (const node of nodes) {
         const current = leftByDepth.get(node.depth);
         leftByDepth.set(node.depth, current == null ? node.x : Math.min(current, node.x));
+        maxWidthByDepth.set(node.depth, Math.max(maxWidthByDepth.get(node.depth) ?? 0, node.width));
     }
+
+    const columnGap = isMobile ? COLUMN_GAP_MOBILE : COLUMN_GAP;
+    let previousRight: number | null = null;
+    for (const depth of [...leftByDepth.keys()].sort((a, b) => a - b)) {
+        const currentLeft: number = leftByDepth.get(depth) ?? 0;
+        const alignedLeft: number = previousRight == null
+            ? currentLeft
+            : Math.max(currentLeft, previousRight + columnGap);
+        leftByDepth.set(depth, alignedLeft);
+        previousRight = alignedLeft + (maxWidthByDepth.get(depth) ?? 0);
+    }
+
     for (const node of nodes) {
         const alignedX = leftByDepth.get(node.depth);
         if (alignedX != null) node.x = alignedX;
