@@ -101,18 +101,33 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function taskSnapshotStatus(input: {
+  status: string
+  dispatchMode: string | null
+  codexThreadId: string | null
+}) {
+  if (input.dispatchMode === 'manual') {
+    if (input.status === 'needs_input') return 'pending'
+    if (input.status === 'awaiting_approval' && !input.codexThreadId) return 'pending'
+  }
+  return input.status
+}
+
 function asTask(row: Row): TursoAiTask {
+  const codexThreadId = asString(row.codex_thread_id)?.trim() || null
+  const status = asString(row.status) ?? 'pending'
+  const dispatchMode = asString(row.dispatch_mode)
   return {
     id: String(row.id),
     user_id: String(row.user_id),
     space_id: asString(row.space_id),
     title: asString(row.title),
-    status: asString(row.status) ?? 'pending',
+    status: taskSnapshotStatus({ status, dispatchMode, codexThreadId }),
     executor: asString(row.executor),
-    dispatch_mode: asString(row.dispatch_mode),
+    dispatch_mode: dispatchMode,
     source_type: asString(row.source_type),
     source_id: asString(row.source_id),
-    codex_thread_id: asString(row.codex_thread_id),
+    codex_thread_id: codexThreadId,
     current_step: asString(row.current_step),
     progress_percent: asNumber(row.progress_percent),
     summary: asString(row.summary),

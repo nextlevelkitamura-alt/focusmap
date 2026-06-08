@@ -1,9 +1,7 @@
 import { describe, expect, test } from "vitest"
 import {
-  buildManualCodexHandoffConfirmedResult,
-  isManualCodexHandoffConfirmed,
   isManualCodexHandoffWaiting,
-  MANUAL_CODEX_HANDOFF_CONFIRMED_MESSAGE,
+  isPassiveManualCodexHandoffEvent,
 } from "./codex-manual-handoff"
 
 describe("manual Codex handoff confirmation", () => {
@@ -27,30 +25,10 @@ describe("manual Codex handoff confirmation", () => {
     })).toBe(false)
   })
 
-  test("builds an awaiting approval result for external app screen switches", () => {
-    const result = buildManualCodexHandoffConfirmedResult({
-      codex_manual_handoff: true,
-      codex_run_state: "prompt_waiting",
-      steps: [{ key: "prompt_waiting", label: "プロンプト待ち", status: "active" }],
-    }, {
-      nowIso: "2026-06-07T08:00:00.000Z",
-      event: "external_app_returned",
-    })
-
-    expect(result.codex_manual_handoff).toBe(true)
-    expect(result.codex_run_state).toBe("awaiting_approval")
-    expect(result.codex_review_reason).toBe("external_app_handoff")
-    expect(result.message).toBe(MANUAL_CODEX_HANDOFF_CONFIRMED_MESSAGE)
-    expect(result.progress_summary).toMatchObject({
-      state: "needs_review",
-      current_step: "Codexで確認待ち",
-    })
-    expect(Array.isArray(result.steps)).toBe(true)
-    expect(Array.isArray(result.codex_visible_messages)).toBe(true)
-    expect(isManualCodexHandoffConfirmed({
-      executor: "codex_app",
-      status: "awaiting_approval",
-      result,
-    })).toBe(true)
+  test("treats external app screen switches as passive handoff events", () => {
+    expect(isPassiveManualCodexHandoffEvent("external_app_opened")).toBe(true)
+    expect(isPassiveManualCodexHandoffEvent("external_app_returned")).toBe(true)
+    expect(isPassiveManualCodexHandoffEvent("screen_switched")).toBe(true)
+    expect(isPassiveManualCodexHandoffEvent("execution_detected")).toBe(false)
   })
 })

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { insertAiTaskActivityMessage } from '@/lib/ai-task-activity'
 import {
   buildManualCodexHandoffConfirmedResult,
+  isPassiveManualCodexHandoffEvent,
   isManualCodexHandoffWaiting,
   MANUAL_CODEX_HANDOFF_CONFIRMED_MESSAGE,
   MANUAL_CODEX_HANDOFF_CONFIRMED_STEP,
@@ -85,6 +86,10 @@ export async function POST(
   }
 
   if (!isManualCodexHandoffWaiting(task)) {
+    return NextResponse.json(task)
+  }
+
+  if (isPassiveManualCodexHandoffEvent(event)) {
     return NextResponse.json(task)
   }
 

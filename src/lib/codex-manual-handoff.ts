@@ -59,6 +59,12 @@ export function isManualCodexHandoffConfirmed(task: ManualCodexHandoffTaskLike |
   return result.codex_manual_handoff === true && stringValue(result.codex_run_state) === "awaiting_approval"
 }
 
+export function isPassiveManualCodexHandoffEvent(event: ManualCodexHandoffEvent | string | null | undefined) {
+  return event === "external_app_opened" ||
+    event === "external_app_returned" ||
+    event === "screen_switched"
+}
+
 export function buildManualCodexHandoffConfirmedResult(
   currentResult: Record<string, unknown> | null | undefined,
   options: {

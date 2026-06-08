@@ -129,7 +129,7 @@ flowchart TB
 ## 受け入れ条件
 
 - Macアプリを開くと、Next 3001、agent、Codex app-serverが起動済みまたは起動不能理由つきで確認できる。
-- Mac上で開始したCodex taskは、通常経路で3秒以内に `未送信` から `実行中` または `確認待ち` へ進む。
+- Mac上で開始したCodex taskは、通常経路で3秒以内に `未送信` から `実行中` または `確認待ち` へ進む。スマホ/外部アプリ起動だけでは開始確認とせず、thread未検出のmanual handoffは `未送信` のままにする。
 - 同じCodex taskのsnapshot/event writerは1つだけになる。
 - UIの3秒pollは読み取り専用で、表示中という理由だけでsqlite/rollout探索やDB writeを発生させない。
 - manual handoff、prompt再コピー、未送信/実行中/確認待ち/接続失敗/完了の表示は維持される。

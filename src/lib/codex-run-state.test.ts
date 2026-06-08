@@ -230,7 +230,7 @@ describe("getCodexTaskUiState", () => {
         codex_run_state: "awaiting_approval",
         codex_review_reason: "external_app_handoff",
       },
-    })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+    })).toEqual({ state: "prompt_waiting", label: "未送信" })
   })
 
   test("hides the node Codex badge after a closed thread completes the source task", () => {
