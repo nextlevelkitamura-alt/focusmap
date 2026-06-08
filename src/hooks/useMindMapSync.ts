@@ -65,9 +65,58 @@ type DeletedTaskMemoRepairSnapshot = {
 
 const REALTIME_FALLBACK_POLL_INTERVAL_MS = 3_000
 const REALTIME_FALLBACK_STATUSES = new Set(['CHANNEL_ERROR', 'TIMED_OUT'])
+const MINDMAP_CACHE_PREFIX = 'focusmap:mindmap:project:'
+const MINDMAP_CACHE_TTL_MS = 12 * 60 * 60 * 1000
+
+type MindmapCachePayload = {
+    projectId?: string
+    tasks?: Task[]
+    cachedAt?: number
+}
 
 function isPageVisible() {
     return typeof document === 'undefined' || document.visibilityState === 'visible'
+}
+
+function getMindmapCacheKey(projectId: string) {
+    return `${MINDMAP_CACHE_PREFIX}${projectId}`
+}
+
+function readMindmapCache(projectId: string | null): Task[] {
+    if (!projectId || typeof window === 'undefined') return []
+
+    try {
+        const raw = window.localStorage.getItem(getMindmapCacheKey(projectId))
+        if (!raw) return []
+
+        const parsed = JSON.parse(raw) as MindmapCachePayload
+        if (parsed.projectId !== projectId || !Array.isArray(parsed.tasks) || typeof parsed.cachedAt !== 'number') {
+            return []
+        }
+        if (Date.now() - parsed.cachedAt > MINDMAP_CACHE_TTL_MS) {
+            window.localStorage.removeItem(getMindmapCacheKey(projectId))
+            return []
+        }
+
+        return parsed.tasks.filter(task => task.project_id === projectId && task.deleted_at === null)
+    } catch {
+        return []
+    }
+}
+
+function writeMindmapCache(projectId: string, tasks: Task[]) {
+    if (typeof window === 'undefined' || tasks.length === 0) return
+
+    try {
+        window.localStorage.setItem(getMindmapCacheKey(projectId), JSON.stringify({
+            projectId,
+            tasks: tasks.filter(task => task.project_id === projectId && task.deleted_at === null),
+            cachedAt: Date.now(),
+        }))
+        window.localStorage.setItem('focusmap:lastMindmapProjectId', projectId)
+    } catch {
+        // The current in-memory state is still authoritative while the app is open.
+    }
 }
 
 function withoutGoogleEventId(task: Task) {
@@ -90,10 +139,10 @@ export function useMindMapSync({
     const { cancelNotifications } = useNotificationScheduler()
 
     // 統合ステート管理（全タスクを1つのリストで管理）
-    const [allTasks, setAllTasks] = useState<Task[]>([
-        ...initialRootTasks,
-        ...initialTasks
-    ])
+    const [allTasks, setAllTasks] = useState<Task[]>(() => {
+        const initial = [...initialRootTasks, ...initialTasks]
+        return initial.length > 0 ? initial : readMindmapCache(projectId)
+    })
     const [isLoading, setIsLoading] = useState(false)
     const [realtimeFallbackActive, setRealtimeFallbackActive] = useState(false)
     const { pushAction, undo, redo, canUndo, canRedo, clear } = useUndoRedo()
@@ -254,20 +303,27 @@ export function useMindMapSync({
     // 楽観的タスクは現在のprojectIdに属するもののみ保持（プロジェクト切替時に前のデータが残るのを防止）
     useEffect(() => {
         setAllTasks(prev => {
+            const initial = [...initialRootTasks, ...initialTasks]
+            const cached = initial.length > 0 ? [] : readMindmapCache(projectId)
+            const baseTasks = initial.length > 0 ? initial : cached
             const allInitialIds = new Set([
-                ...initialRootTasks.map(t => t.id),
-                ...initialTasks.map(t => t.id)
+                ...baseTasks.map(t => t.id),
             ]);
             const optimisticItems = prev.filter(t =>
                 !allInitialIds.has(t.id) && t.project_id === projectId
             );
             return [
-                ...initialRootTasks,
-                ...initialTasks,
+                ...baseTasks,
                 ...optimisticItems
             ];
         });
     }, [initialRootTasks, initialTasks, projectId])
+
+    useEffect(() => {
+        if (!projectId) return
+        const projectTasks = allTasks.filter(task => task.project_id === projectId && task.deleted_at === null)
+        writeMindmapCache(projectId, projectTasks)
+    }, [allTasks, projectId])
 
     // Watchdog: 楽観的タスクが state から消えた場合に再追加（現プロジェクトのみ）
     useEffect(() => {
@@ -1611,6 +1667,7 @@ export function useMindMapSync({
                 )
                 const nextTasks = [...data, ...optimistic]
                 allTasksRef.current = nextTasks
+                writeMindmapCache(refreshProjectId, nextTasks)
                 return nextTasks
             })
             lastServerRefreshAt.current = Date.now()

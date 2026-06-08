@@ -158,6 +158,8 @@ const EMPTY_TASKS: Task[] = []
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.clear()
+  window.sessionStorage.clear()
   uuidCounter = 0
   latestRealtimeHandler = null
   latestSubscribeStatusHandler = null

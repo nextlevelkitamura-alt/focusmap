@@ -21,10 +21,24 @@ const DEFAULT_FOCUSMAP_URL = "https://focusmap-official.com/dashboard";
 const CHATGPT_CODEX_MOBILE_URL = "https://chatgpt.com/codex/mobile/";
 const EXTERNAL_AUTH_HOSTS = new Set(["accounts.google.com", "oauth2.googleapis.com"]);
 const STARTUP_OVERLAY_MAX_MS = 1200;
+const WEBVIEW_BACKGROUND = "#050505";
 const CONTENT_READY_SCRIPT = `
 (() => {
   if (window.__focusmapNativeReadyInstalled) return true;
   window.__focusmapNativeReadyInstalled = true;
+  const ensureDarkBackground = () => {
+    try {
+      document.documentElement.style.backgroundColor = "${WEBVIEW_BACKGROUND}";
+      if (document.body) document.body.style.backgroundColor = "${WEBVIEW_BACKGROUND}";
+      if (!document.getElementById("focusmap-native-startup-style")) {
+        const style = document.createElement("style");
+        style.id = "focusmap-native-startup-style";
+        style.textContent = "html,body{background:${WEBVIEW_BACKGROUND} !important;} body{min-height:100vh;}";
+        document.head?.appendChild(style);
+      }
+    } catch {}
+  };
+  ensureDarkBackground();
   const postReady = () => {
     try {
       window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "focusmap:web-content-ready" }));
@@ -32,6 +46,7 @@ const CONTENT_READY_SCRIPT = `
   };
   const hasContent = () => document.body && document.body.children && document.body.children.length > 0;
   const check = () => {
+    ensureDarkBackground();
     if (hasContent()) {
       requestAnimationFrame(postReady);
       return;
@@ -195,28 +210,32 @@ export default function App() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [hasPresentedWebContent, setHasPresentedWebContent] = useState(false);
   const [hasDismissedStartupOverlay, setHasDismissedStartupOverlay] = useState(false);
+  const [isRecoveringWebContent, setIsRecoveringWebContent] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
 
   const markWebContentPresented = useCallback(() => {
     hasPresentedWebContentRef.current = true;
     setHasPresentedWebContent(true);
     setHasDismissedStartupOverlay(true);
+    setIsRecoveringWebContent(false);
     setInitialLoading(false);
     setLoadProgress(1);
   }, []);
 
-  const prepareForWebViewLoad = useCallback(() => {
+  const prepareForWebViewLoad = useCallback((options?: { recovering?: boolean }) => {
     setError(null);
     setLoadProgress(0);
 
     if (hasPresentedWebContentRef.current) {
       setInitialLoading(false);
       setHasDismissedStartupOverlay(true);
+      setIsRecoveringWebContent(options?.recovering === true);
       return;
     }
 
     setInitialLoading(true);
     setHasDismissedStartupOverlay(false);
+    setIsRecoveringWebContent(false);
   }, []);
 
   const buildInternalUrl = useCallback((pathOrUrl: string, params?: Record<string, string>) => {
@@ -303,7 +322,7 @@ export default function App() {
   };
 
   const handleReload = () => {
-    prepareForWebViewLoad();
+    prepareForWebViewLoad({ recovering: hasPresentedWebContentRef.current });
     webViewRef.current?.reload();
   };
 
@@ -353,6 +372,7 @@ export default function App() {
             <WebView
               ref={webViewRef}
               source={{ uri: webViewUrl }}
+              containerStyle={styles.webViewContainer}
               style={styles.webView}
               applicationNameForUserAgent="FocusmapIOS"
               allowsBackForwardNavigationGestures
@@ -370,11 +390,12 @@ export default function App() {
               thirdPartyCookiesEnabled
               onShouldStartLoadWithRequest={handleShouldStartLoad}
               onMessage={handleWebViewMessage}
-              onLoadStart={prepareForWebViewLoad}
+              renderLoading={() => <View pointerEvents="none" style={styles.webViewLoadingSurface} />}
+              onLoadStart={() => prepareForWebViewLoad()}
               onLoadProgress={({ nativeEvent }) => setLoadProgress(nativeEvent.progress)}
               onLoadEnd={markWebContentPresented}
               onContentProcessDidTerminate={() => {
-                prepareForWebViewLoad();
+                prepareForWebViewLoad({ recovering: hasPresentedWebContentRef.current });
                 webViewRef.current?.reload();
               }}
               onError={({ nativeEvent }) => {
@@ -395,6 +416,16 @@ export default function App() {
                 }
               }}
             />
+            {isRecoveringWebContent && (
+              <View pointerEvents="none" style={styles.recoverySurface}>
+                <View style={styles.recoveryHeader}>
+                  <View style={styles.recoveryTitle} />
+                  <View style={styles.recoveryPill} />
+                </View>
+                <View style={styles.recoveryBlock} />
+                <View style={styles.recoveryBlockShort} />
+              </View>
+            )}
             {loadProgress < 1 && (
               <View pointerEvents="none" style={styles.progressTrack}>
                 <View style={[styles.progressFill, { width: `${Math.max(loadProgress, 0.08) * 100}%` }]} />
@@ -422,15 +453,67 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#050505",
+    backgroundColor: WEBVIEW_BACKGROUND,
   },
   container: {
     flex: 1,
-    backgroundColor: "#050505",
+    backgroundColor: WEBVIEW_BACKGROUND,
+  },
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: WEBVIEW_BACKGROUND,
   },
   webView: {
     flex: 1,
-    backgroundColor: "#050505",
+    backgroundColor: WEBVIEW_BACKGROUND,
+  },
+  webViewLoadingSurface: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: WEBVIEW_BACKGROUND,
+  },
+  recoverySurface: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: -1,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    backgroundColor: WEBVIEW_BACKGROUND,
+  },
+  recoveryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  recoveryTitle: {
+    width: 150,
+    height: 28,
+    borderRadius: 7,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  recoveryPill: {
+    width: 86,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.10)",
+  },
+  recoveryBlock: {
+    height: 180,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  recoveryBlockShort: {
+    height: 86,
+    marginTop: 12,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.06)",
   },
   progressTrack: {
     position: "absolute",
