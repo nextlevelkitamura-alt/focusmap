@@ -312,6 +312,92 @@ describe('WishlistCardDetail', () => {
     })
   })
 
+  test('Codexチャット内容をactivityから表示する', async () => {
+    memoAiTaskMock.task = {
+      id: 'ai-task-chat',
+      executor: 'codex_app',
+      status: 'awaiting_approval',
+      result: {
+        codex_run_state: 'awaiting_approval',
+      },
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/codex/sync-node') {
+        return new Response(JSON.stringify({ synced: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url === '/api/ai-tasks/ai-task-chat/activity') {
+        return new Response(JSON.stringify({
+          messages: [
+            {
+              id: 'activity-user',
+              task_id: 'ai-task-chat',
+              user_id: 'user-1',
+              role: 'user',
+              kind: 'sent',
+              body: '少々お待ちください！',
+              importance: 'normal',
+              metadata: {},
+              created_at: '2026-06-08T08:56:00.000Z',
+            },
+            {
+              id: 'activity-codex',
+              task_id: 'ai-task-chat',
+              user_id: 'user-1',
+              role: 'codex',
+              kind: 'progress',
+              body: '承知しました。待機します。',
+              importance: 'normal',
+              metadata: {},
+              created_at: '2026-06-08T08:57:00.000Z',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={vi.fn(async () => undefined)}
+      />,
+    )
+
+    expect(await screen.findByText('チャット')).toBeInTheDocument()
+    expect(await screen.findByText('少々お待ちください！')).toBeInTheDocument()
+    expect(await screen.findByText('承知しました。待機します。')).toBeInTheDocument()
+  })
+
   test('画像をドロップすると添付APIへアップロードする', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {

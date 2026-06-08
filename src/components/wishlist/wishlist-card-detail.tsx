@@ -24,7 +24,7 @@ import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { UserCalendar } from "@/hooks/useCalendars"
-import type { AiTask } from "@/types/ai-task"
+import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 
 const QUICK_MINUTES = [5, 15, 30, 60, 120]
@@ -36,6 +36,7 @@ const IOS_TIME_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
 const DATE_POPOVER_APPROX_HEIGHT = 340
 const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
+const MEMO_CODEX_ACTIVITY_INTERVAL_MS = 10_000
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
@@ -208,6 +209,22 @@ function formatLogTime(value: string | null | undefined) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date)
+}
+
+function formatActivityTime(value: string | null | undefined) {
+  return formatLogTime(value)
+}
+
+function isGenericCodexPulseText(value: string) {
+  return /Codex\.appの稼働シグナルを確認中|Codex\.appが作業中です|Codex セッションは確認待ちです/u.test(value.trim())
+}
+
+function memoCodexActivityLabel(message: AiTaskActivityMessage) {
+  if (message.role === "user" || message.kind === "user_answer") return "送信内容"
+  if (message.role === "status") return "状態"
+  if (message.kind === "question") return "Codexから質問"
+  if (message.kind === "approval") return "確認"
+  return "Codex"
 }
 
 type MemoCodexLogState = "not_sent" | "sent" | "running" | "awaiting_approval" | "completed" | "failed"
@@ -1242,6 +1259,9 @@ export function WishlistCardDetail({
   const [isLaunchingCodex, setIsLaunchingCodex] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
+  const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
+  const [codexActivityError, setCodexActivityError] = useState<string | null>(null)
+  const [isLoadingCodexActivity, setIsLoadingCodexActivity] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState("primary")
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthStart(new Date()))
   const [isDatePopoverOpen, setIsDatePopoverOpen] = useState(false)
@@ -1457,6 +1477,9 @@ export function WishlistCardDetail({
   }, [item?.project_id])
 
   const itemId = item?.id ?? null
+  const memoAiTask = itemId ? getMemoAiTask(itemId) : null
+  const memoAiTaskId = memoAiTask?.id ?? null
+  const memoAiTaskStatus = memoAiTask?.status ?? null
   const itemTitle = item?.title ?? ""
   const itemDescription = item?.description ?? ""
   const itemScheduledAt = item?.scheduled_at ?? null
@@ -1489,6 +1512,55 @@ export function WishlistCardDetail({
     previewTimePartsRef.current = null
     setPreviewTimeValue(null)
   }, [currentTimeValue, previewTimeValue])
+
+  const loadCodexActivity = useCallback(async () => {
+    if (!open || !memoAiTaskId) {
+      setCodexActivityMessages([])
+      setCodexActivityError(null)
+      return
+    }
+
+    setIsLoadingCodexActivity(true)
+    try {
+      await fetch("/api/codex/sync-node", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ai_task_id: memoAiTaskId,
+          include_visible_activity: true,
+        }),
+      }).catch(() => undefined)
+
+      const res = await fetch(`/api/ai-tasks/${encodeURIComponent(memoAiTaskId)}/activity`, { cache: "no-store" })
+      const data = await res.json().catch(() => ({})) as { messages?: AiTaskActivityMessage[]; error?: string }
+      if (!res.ok) throw new Error(data.error || `activity ${res.status}`)
+      setCodexActivityMessages(Array.isArray(data.messages)
+        ? data.messages.filter(message => message.body.trim() && !isGenericCodexPulseText(message.body))
+        : [])
+      setCodexActivityError(null)
+    } catch (err) {
+      setCodexActivityError(err instanceof Error ? err.message : "Codexチャットを取得できません")
+    } finally {
+      setIsLoadingCodexActivity(false)
+    }
+  }, [memoAiTaskId, open])
+
+  useEffect(() => {
+    if (!open || !memoAiTaskId) {
+      setCodexActivityMessages([])
+      setCodexActivityError(null)
+      return
+    }
+    void loadCodexActivity()
+  }, [loadCodexActivity, memoAiTaskId, memoAiTaskStatus, open])
+
+  useEffect(() => {
+    if (!open || !memoAiTaskId || !["pending", "running", "awaiting_approval", "needs_input"].includes(memoAiTaskStatus ?? "")) return
+    const timer = window.setInterval(() => {
+      void loadCodexActivity()
+    }, MEMO_CODEX_ACTIVITY_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [loadCodexActivity, memoAiTaskId, memoAiTaskStatus, open])
 
   useEffect(() => {
     if (!open || !itemId) {
@@ -2169,7 +2241,7 @@ export function WishlistCardDetail({
       }}
     >
       <SheetContent
-        side={isMobile ? "bottom" : "right"}
+        side={isMobile ? "bottom" : "center"}
         className={cn(
           isMobile
             ? [
@@ -2178,7 +2250,11 @@ export function WishlistCardDetail({
                 "[&>button]:right-3 [&>button]:top-3 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center",
                 "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5",
               ]
-            : "w-full gap-2 overflow-y-auto px-3 sm:max-w-[min(1280px,calc(100vw-32px))] sm:px-6"
+            : [
+                "h-[min(920px,calc(100dvh-32px))] w-[min(1280px,calc(100vw-32px))] gap-2 overflow-y-auto px-6",
+                "border-neutral-800 bg-neutral-950/98 text-neutral-50 shadow-[0_24px_80px_rgba(0,0,0,0.6)]",
+                "[&>button]:right-5 [&>button]:top-5 [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:text-neutral-100",
+              ]
         )}
         onOpenAutoFocus={event => {
           event.preventDefault()
@@ -2861,7 +2937,7 @@ export function WishlistCardDetail({
             )}
 
             {(onLaunchCodex || onCopyCodexPrompt || onLaunchCodexApp) && (() => {
-              const aiTask = getMemoAiTask(item.id)
+              const aiTask = memoAiTask
               const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
               const repoConfigured = !!project?.repo_path
               const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
@@ -2969,6 +3045,44 @@ export function WishlistCardDetail({
                         ))}
                       </div>
                     </div>
+
+                    {aiTask && (
+                      <div className="rounded-md border bg-background/70">
+                        <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+                          <span className="text-xs font-medium text-muted-foreground">チャット</span>
+                          {isLoadingCodexActivity && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                        </div>
+                        {codexActivityMessages.length > 0 ? (
+                          <div className="max-h-56 space-y-2 overflow-y-auto p-3">
+                            {codexActivityMessages.slice(-12).map(message => {
+                              const isUser = message.role === "user" || message.kind === "user_answer"
+                              const isStatus = message.role === "status"
+                              return (
+                                <article
+                                  key={message.id}
+                                  className={cn(
+                                    "max-w-[92%] rounded-lg border px-3 py-2 text-xs leading-5",
+                                    isUser && "ml-auto border-sky-500/25 bg-sky-500/10 text-sky-100",
+                                    isStatus && "mx-auto border-muted bg-muted/25 text-muted-foreground",
+                                    !isUser && !isStatus && "mr-auto border-emerald-500/25 bg-emerald-500/10 text-emerald-50",
+                                  )}
+                                >
+                                  <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                                    <span className="font-medium text-foreground">{memoCodexActivityLabel(message)}</span>
+                                    <span className="shrink-0 tabular-nums">{formatActivityTime(message.created_at)}</span>
+                                  </div>
+                                  <p className="whitespace-pre-wrap break-words text-foreground/90">{message.body}</p>
+                                </article>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                            {codexActivityError ? "チャット内容を取得できません" : "Codex側の返答を待っています"}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
             )
