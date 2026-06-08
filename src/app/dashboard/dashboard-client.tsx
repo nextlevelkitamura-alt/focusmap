@@ -1348,23 +1348,65 @@ export function DashboardClient({
                 )}
 
                 {isViewReady && activeView === 'long-term' && (
-                    <div className={cn("flex-1 flex flex-col overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
-                        <WishlistView
-                            projects={projects}
-                            spaces={spaces}
-                            selectedProjectId={selectedProjectId}
-                            selectedSpaceId={selectedSpaceId}
-                            onSelectSpace={setSelectedSpaceId}
-                            onSelectProject={setSelectedProjectId}
-                            onProjectCreated={handleProjectCreatedFromSwitcher}
-                            onProjectSaved={handleProjectSavedFromSwitcher}
-                            onProjectDeleted={handleDeleteProject}
-                            onSpaceSaved={handleSpaceSavedFromSwitcher}
-                            onOpenTodayMemoSchedule={openTodayMemoSchedule}
-                            isCalendarSplitVisible={false}
-                            onToggleCalendarSplit={toggleCalendarSplit}
-                            onMindmapUpdated={refreshFromServer}
-                        />
+                    <div className={cn("flex-1 overflow-hidden", isCalendarPanelVisible && "md:hidden")}>
+                        {isMapSplitVisible ? (
+                            <div className="flex h-full min-h-0 overflow-hidden">
+                                <div className="h-full min-w-[420px] max-w-[720px] border-r bg-background" style={{ width: '46%' }}>
+                                    <WishlistView
+                                        projects={projects}
+                                        spaces={spaces}
+                                        selectedProjectId={selectedProjectId}
+                                        selectedSpaceId={selectedSpaceId}
+                                        onSelectSpace={setSelectedSpaceId}
+                                        onSelectProject={setSelectedProjectId}
+                                        onProjectCreated={handleProjectCreatedFromSwitcher}
+                                        onProjectSaved={handleProjectSavedFromSwitcher}
+                                        onProjectDeleted={handleDeleteProject}
+                                        onSpaceSaved={handleSpaceSavedFromSwitcher}
+                                        onOpenTodayMemoSchedule={openTodayMemoSchedule}
+                                        isCalendarSplitVisible={false}
+                                        onMindmapUpdated={refreshFromServer}
+                                    />
+                                </div>
+                                <div className="min-w-0 flex-1 overflow-hidden">
+                                    <CenterPane
+                                        project={selectedProject}
+                                        groups={currentGroups}
+                                        tasks={currentTasks}
+                                        onUpdateProject={handleUpdateProjectTitle}
+                                        onCreateGroup={handleCreateGroup}
+                                        onDeleteGroup={handleDeleteGroup}
+                                        onCreateTask={createTask}
+                                        onUpdateTask={updateTask}
+                                        onDeleteTask={handleDeleteTask}
+                                        onBulkDelete={bulkDelete}
+                                        onReorderTask={reorderTask}
+                                        onReorderGroup={reorderGroup}
+                                        onRefreshCalendar={handleRefreshCalendar}
+                                        onAddOptimisticEvent={handleAddOptimisticEvent}
+                                        onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                                        onOpenLinkedMemos={openMindmapLinkedMemos}
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            <WishlistView
+                                projects={projects}
+                                spaces={spaces}
+                                selectedProjectId={selectedProjectId}
+                                selectedSpaceId={selectedSpaceId}
+                                onSelectSpace={setSelectedSpaceId}
+                                onSelectProject={setSelectedProjectId}
+                                onProjectCreated={handleProjectCreatedFromSwitcher}
+                                onProjectSaved={handleProjectSavedFromSwitcher}
+                                onProjectDeleted={handleDeleteProject}
+                                onSpaceSaved={handleSpaceSavedFromSwitcher}
+                                onOpenTodayMemoSchedule={openTodayMemoSchedule}
+                                isCalendarSplitVisible={false}
+                                onToggleCalendarSplit={toggleCalendarSplit}
+                                onMindmapUpdated={refreshFromServer}
+                            />
+                        )}
                     </div>
                 )}
 
@@ -1522,40 +1564,6 @@ export function DashboardClient({
                                         spaces={spaces}
                                     />
                                 )}
-                            </div>
-                        </div>
-                    ) : activeView === 'long-term' && isMapSplitVisible ? (
-                        <div className="flex h-full min-h-0 overflow-hidden">
-                            <div className="h-full min-w-[420px] max-w-[720px] border-r bg-background" style={{ width: '46%' }}>
-                                <WishlistView
-                                    projects={projects}
-                                    spaces={spaces}
-                                    selectedProjectId={selectedProjectId}
-                                    selectedSpaceId={selectedSpaceId}
-                                    onOpenTodayMemoSchedule={openTodayMemoSchedule}
-                                    isCalendarSplitVisible={false}
-                                    onMindmapUpdated={refreshFromServer}
-                                />
-                            </div>
-                            <div className="min-w-0 flex-1 overflow-hidden">
-                                <CenterPane
-                                    project={selectedProject}
-                                    groups={currentGroups}
-                                    tasks={currentTasks}
-                                    onUpdateProject={handleUpdateProjectTitle}
-                                    onCreateGroup={handleCreateGroup}
-                                    onDeleteGroup={handleDeleteGroup}
-                                    onCreateTask={createTask}
-                                    onUpdateTask={updateTask}
-                                    onDeleteTask={handleDeleteTask}
-                                    onBulkDelete={bulkDelete}
-                                    onReorderTask={reorderTask}
-                                    onReorderGroup={reorderGroup}
-                                    onRefreshCalendar={handleRefreshCalendar}
-                                    onAddOptimisticEvent={handleAddOptimisticEvent}
-                                    onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
-                                    onOpenLinkedMemos={openMindmapLinkedMemos}
-                                />
                             </div>
                         </div>
                     ) : activeView === 'long-term' ? (
