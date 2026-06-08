@@ -40,6 +40,9 @@ interface HeaderProps {
     showCalendarSplitToggle?: boolean
     isCalendarSplitVisible?: boolean
     onToggleCalendarSplit?: () => void
+    showMapSplitToggle?: boolean
+    isMapSplitVisible?: boolean
+    onToggleMapSplit?: () => void
     showMemoSplitToggle?: boolean
     isMemoSplitVisible?: boolean
     onToggleMemoSplit?: () => void
@@ -61,6 +64,9 @@ export function Header({
     showCalendarSplitToggle = false,
     isCalendarSplitVisible = false,
     onToggleCalendarSplit,
+    showMapSplitToggle = false,
+    isMapSplitVisible = false,
+    onToggleMapSplit,
     showMemoSplitToggle = false,
     isMemoSplitVisible = false,
     onToggleMemoSplit,
@@ -238,6 +244,22 @@ export function Header({
 
             {/* Right: User Profile & Settings */}
             <div className="flex items-center gap-2">
+                {showMapSplitToggle && onToggleMapSplit && (
+                    <Button
+                        variant={isMapSplitVisible ? "secondary" : "ghost"}
+                        size="icon"
+                        className={cn(
+                            "text-muted-foreground",
+                            isMapSplitVisible && "bg-background text-primary shadow-sm border border-primary/30"
+                        )}
+                        onClick={onToggleMapSplit}
+                        aria-pressed={isMapSplitVisible}
+                        aria-label={isMapSplitVisible ? "マップ分割を閉じる" : "マップを分割表示"}
+                        title={isMapSplitVisible ? "マップ分割を閉じる" : "マップを分割表示"}
+                    >
+                        <Network className="h-4 w-4" />
+                    </Button>
+                )}
                 {showCalendarSplitToggle && onToggleCalendarSplit && (
                     <Button
                         variant={isCalendarSplitVisible ? "secondary" : "ghost"}

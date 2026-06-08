@@ -272,22 +272,40 @@ export function DashboardClient({
     }, [setActiveView, updateTodaySubView])
     const [isCalendarSplitOpen, setIsCalendarSplitOpen] = useState(false)
     const [isMemoSplitOpen, setIsMemoSplitOpen] = useState(false)
+    const [isMapSplitOpen, setIsMapSplitOpen] = useState(false)
     const [mindmapLinkedMemoTarget, setMindmapLinkedMemoTarget] = useState<{ taskId: string; requestKey: number } | null>(null)
     const isOptionalCalendarView = activeView === 'map' || activeView === 'long-term'
     const isCalendarPanelVisible = activeView === 'today' || (isOptionalCalendarView && isCalendarSplitOpen)
     const isMemoSplitVisible = activeView === 'map' && isMemoSplitOpen
+    const isMapSplitVisible = activeView === 'long-term' && isMapSplitOpen
     const isRightSidePanelVisible = isCalendarPanelVisible
     const toggleCalendarSplit = useCallback(() => {
         setIsCalendarSplitOpen(prev => {
             const next = !prev
-            if (next) setIsMemoSplitOpen(false)
+            if (next) {
+                setIsMemoSplitOpen(false)
+                setIsMapSplitOpen(false)
+            }
             return next
         })
     }, [])
     const toggleMemoSplit = useCallback(() => {
         setIsMemoSplitOpen(prev => {
             const next = !prev
-            if (next) setIsCalendarSplitOpen(false)
+            if (next) {
+                setIsCalendarSplitOpen(false)
+                setIsMapSplitOpen(false)
+            }
+            return next
+        })
+    }, [])
+    const toggleMapSplit = useCallback(() => {
+        setIsMapSplitOpen(prev => {
+            const next = !prev
+            if (next) {
+                setIsCalendarSplitOpen(false)
+                setIsMemoSplitOpen(false)
+            }
             return next
         })
     }, [])
@@ -1200,6 +1218,9 @@ export function DashboardClient({
                     showCalendarSplitToggle={activeView === 'map' || activeView === 'long-term'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
+                    showMapSplitToggle={activeView === 'long-term'}
+                    isMapSplitVisible={isMapSplitVisible}
+                    onToggleMapSplit={toggleMapSplit}
                     showMemoSplitToggle={activeView === 'map'}
                     isMemoSplitVisible={isMemoSplitVisible}
                     onToggleMemoSplit={toggleMemoSplit}
@@ -1501,6 +1522,40 @@ export function DashboardClient({
                                         spaces={spaces}
                                     />
                                 )}
+                            </div>
+                        </div>
+                    ) : activeView === 'long-term' && isMapSplitVisible ? (
+                        <div className="flex h-full min-h-0 overflow-hidden">
+                            <div className="h-full min-w-[420px] max-w-[720px] border-r bg-background" style={{ width: '46%' }}>
+                                <WishlistView
+                                    projects={projects}
+                                    spaces={spaces}
+                                    selectedProjectId={selectedProjectId}
+                                    selectedSpaceId={selectedSpaceId}
+                                    onOpenTodayMemoSchedule={openTodayMemoSchedule}
+                                    isCalendarSplitVisible={false}
+                                    onMindmapUpdated={refreshFromServer}
+                                />
+                            </div>
+                            <div className="min-w-0 flex-1 overflow-hidden">
+                                <CenterPane
+                                    project={selectedProject}
+                                    groups={currentGroups}
+                                    tasks={currentTasks}
+                                    onUpdateProject={handleUpdateProjectTitle}
+                                    onCreateGroup={handleCreateGroup}
+                                    onDeleteGroup={handleDeleteGroup}
+                                    onCreateTask={createTask}
+                                    onUpdateTask={updateTask}
+                                    onDeleteTask={handleDeleteTask}
+                                    onBulkDelete={bulkDelete}
+                                    onReorderTask={reorderTask}
+                                    onReorderGroup={reorderGroup}
+                                    onRefreshCalendar={handleRefreshCalendar}
+                                    onAddOptimisticEvent={handleAddOptimisticEvent}
+                                    onRemoveOptimisticEvent={handleRemoveOptimisticEvent}
+                                    onOpenLinkedMemos={openMindmapLinkedMemos}
+                                />
                             </div>
                         </div>
                     ) : activeView === 'long-term' ? (
