@@ -873,9 +873,7 @@ export async function POST(req: NextRequest) {
   const archived = row.archived === 1 || row.archived === true
   const parsed = parseCodexRollout(rolloutRaw, { archived, snapshot: row })
   if (archived && shouldCompleteSourceTaskForCodexReview('archived')) {
-    const visibleActivityEventsForClosure = includeVisibleActivity
-      ? visibleCodexActivityEvents(row, parsed, task)
-      : []
+    const visibleActivityEventsForClosure = visibleCodexActivityEvents(row, parsed, task)
     try {
       const closure = await persistCodexThreadClosure({
         supabase,
@@ -929,7 +927,13 @@ export async function POST(req: NextRequest) {
   const currentStep = codexPulseStep(codexState, reviewReason)
   const lastActivityAt = parsed.lastActivityAt ?? threadUpdatedAtIso(row) ?? (typeof current.last_activity_at === 'string' ? current.last_activity_at : nowIso)
   const summary = codexPulseSummary(codexState, reviewReason, lastActivityAt)
-  const visibleActivityEventsForResult = includeVisibleActivity
+  const shouldPrefetchVisibleActivity =
+    codexState === 'awaiting_approval' &&
+    task.status !== 'awaiting_approval' &&
+    previousRunState !== 'awaiting_approval' &&
+    !resumedFromApproval
+  const shouldCollectVisibleActivity = includeVisibleActivity || shouldPrefetchVisibleActivity
+  const visibleActivityEventsForResult = shouldCollectVisibleActivity
     ? visibleCodexActivityEvents(row, parsed, task)
     : []
   const compactVisibleMessages = visibleActivityEventsForResult.map(event => ({
@@ -940,7 +944,7 @@ export async function POST(req: NextRequest) {
     created_at: event.createdAt ?? nowIso,
   }))
   const shouldUpdateVisibleMessages =
-    includeVisibleActivity &&
+    shouldCollectVisibleActivity &&
     visibleMessagesChanged(current.codex_visible_messages, compactVisibleMessages)
   const shouldPersistVisibleMessagesFallback =
     shouldUpdateVisibleMessages &&
@@ -1124,16 +1128,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (includeVisibleActivity && codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
-    activityEvents.push({
-      role: 'codex',
-      kind: 'question',
-      body: parsed.latestQuestion,
-      dedupeKey: `thread:${threadId}:question:${textFingerprint(parsed.latestQuestion)}`,
-    })
-  }
-
-  if (includeVisibleActivity) {
+  if (shouldCollectVisibleActivity) {
     for (const visibleActivityEvent of visibleActivityEventsForResult) {
       if (!activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
         activityEvents.push(visibleActivityEvent)

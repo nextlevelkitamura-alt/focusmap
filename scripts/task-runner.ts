@@ -1625,7 +1625,18 @@ function readCodexBridgeObservation(taskId: string): CodexBridgeObservation {
 async function completeCodexTaskClosedFromApp(
   supabase: SupabaseClient,
   task: MonitoredCodexTask,
-  opts: { threadId: string; reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>; liveLog?: string },
+  opts: {
+    threadId: string
+    reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
+    liveLog?: string
+    visibleActivityEvents?: Array<{
+      role: AiTaskActivityRole
+      kind: AiTaskActivityKind
+      body: string
+      dedupeKey: string
+      importance?: 'normal' | 'important'
+    }>
+  },
 ): Promise<void> {
   const now = new Date().toISOString()
   const current = (task.result ?? {}) as Record<string, unknown>
@@ -1679,14 +1690,25 @@ async function completeCodexTaskClosedFromApp(
     console.warn('[codex-app] turso completion mirror failed:', error instanceof Error ? error.message : error)
   })
 
-  await insertAiTaskActivityMessage(supabase, {
-    taskId: task.id,
-    userId: task.user_id,
-    role: opts.reason === 'archived' ? 'codex' : 'status',
-    kind: opts.reason === 'archived' ? 'completed' : 'failed',
-    body: completionNotice,
-    dedupeKey: `thread:${opts.threadId}:${opts.reason}`,
-  })
+  await Promise.all([
+    ...(opts.visibleActivityEvents ?? []).map(event => insertAiTaskActivityMessage(supabase, {
+      taskId: task.id,
+      userId: task.user_id,
+      role: event.role,
+      kind: event.kind,
+      body: event.body,
+      importance: event.importance,
+      dedupeKey: event.dedupeKey,
+    })),
+    insertAiTaskActivityMessage(supabase, {
+      taskId: task.id,
+      userId: task.user_id,
+      role: opts.reason === 'archived' ? 'codex' : 'status',
+      kind: opts.reason === 'archived' ? 'completed' : 'failed',
+      body: completionNotice,
+      dedupeKey: `thread:${opts.threadId}:${opts.reason}`,
+    }),
+  ])
 }
 
 async function archiveCodexThreadsViaAppServer(threadIds: string[]): Promise<Set<string>> {
@@ -2237,6 +2259,9 @@ async function syncCodexAppThreads(
           threadId,
           reason: closureReason,
           liveLog,
+          visibleActivityEvents: closureReason === 'archived'
+            ? visibleCodexActivityEvents(threadId, row.preview, parsed, task)
+            : [],
         })
         console.log(`[codex-app] thread ${closureReason}, task completed: ${task.id}${task.source_task_id ? ` -> ${task.source_task_id}` : ''}`)
         continue
@@ -2389,16 +2414,16 @@ async function syncCodexAppThreads(
         }
       }
 
-      if (hasActiveWatch && codexState === 'awaiting_approval' && !wasAwaitingApproval && parsed.latestQuestion) {
-        activityEvents.push({
-          role: 'codex',
-          kind: 'question',
-          body: parsed.latestQuestion,
-          dedupeKey: `thread:${threadId}:question:${textFingerprint(parsed.latestQuestion)}`,
-        })
-      }
+      const shouldCollectVisibleActivity =
+        hasActiveWatch ||
+        (
+          codexState === 'awaiting_approval' &&
+          task.status !== 'awaiting_approval' &&
+          previousRunState !== 'awaiting_approval' &&
+          !resumedFromApproval
+        )
 
-      if (hasActiveWatch) {
+      if (shouldCollectVisibleActivity) {
         for (const visibleActivityEvent of visibleCodexActivityEvents(threadId, row.preview, parsed, task)) {
           if (!activityEvents.some(event => textFingerprint(event.body) === textFingerprint(visibleActivityEvent.body))) {
             activityEvents.push(visibleActivityEvent)

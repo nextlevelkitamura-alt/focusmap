@@ -304,6 +304,13 @@ describe('/api/codex/sync-node Codex thread closure', () => {
         codex_review_reason: 'archived',
         codex_source_task_completed: true,
         codex_source_task_id: 'source-task-1',
+        codex_visible_messages: [{
+          role: 'codex',
+          kind: 'progress',
+          body: 'done',
+          importance: 'normal',
+          created_at: '2026-06-07T00:01:00.000Z',
+        }],
       },
     }))
     setThreadRow({
@@ -359,7 +366,7 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(mockInsertActivity).not.toHaveBeenCalled()
   })
 
-  test('syncs a short manual Codex reply from a Mac .local preview host', async () => {
+  test('prefetches a short manual Codex reply when a Mac .local preview task reaches review', async () => {
     process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_SYNC = 'false'
     setAiTask(baseTask({
       prompt: 'アンドラ',
@@ -412,7 +419,6 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     const { POST } = await import('./route')
     const response = await POST(postRequest('http://naononmac.local:3001/api/codex/sync-node', {
       ai_task_id: 'ai-task-1',
-      include_visible_activity: true,
     }))
     const json = await response.json()
 
