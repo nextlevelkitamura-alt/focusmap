@@ -179,14 +179,27 @@ function isGenericCodexReviewText(value: string) {
     text === "承認待ち" ||
     text === "プロンプト待ち" ||
     /^Codexの実行が完了しました。?結果確認待ちです。?$/.test(text) ||
+    /^Codex実行が完了し確認待ちです。?$/.test(text) ||
+    /^Codex実行が完了し、Focusmapで承認待ちです。?$/.test(text) ||
     /^Codex セッションは確認待ちです。?/.test(text) ||
     /^\[Codex\] 実行完了。?確認待ちです。?$/.test(text) ||
     /^Codex側では完了らしき状態です。?/.test(text)
 }
 
-function cleanCodexDisplayText(value: string) {
-  const blocks = value
+function stripGenericCodexReviewLines(value: string) {
+  return value
     .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(line => line.trimEnd())
+    .filter(line => !isGenericCodexReviewText(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
+function cleanCodexDisplayText(value: string) {
+  const withoutGenericLines = stripGenericCodexReviewLines(value)
+  const blocks = withoutGenericLines
     .split(/\n{2,}/)
     .map(block => block.trim())
     .filter(Boolean)
@@ -215,7 +228,7 @@ function codexReadableOutput(result: Record<string, unknown> | null) {
 
 function reviewActivityBody(message: AiTaskActivityMessage | undefined) {
   if (!message || isGenericCodexReviewText(message.body)) return ""
-  return message.body
+  return cleanCodexDisplayText(message.body)
 }
 
 export function NoteClaudeRunnerButton({
@@ -402,7 +415,8 @@ export function NoteClaudeRunnerPanel({
     : null
   const activityLoadHelp = userFacingActivityError(activityError)
   const visibleActivityMessages = activityMessages
-    .filter(message => !isReviewActivity(message) || !isGenericCodexReviewText(message.body))
+    .map(message => ({ ...message, body: cleanCodexDisplayText(message.body) }))
+    .filter(message => message.body && (!isReviewActivity(message) || !isGenericCodexReviewText(message.body)))
     .slice(-6)
   const showActivityLoadHelp = !!activityLoadHelp && visibleActivityMessages.length === 0 && !codexOutput
   const progressSummary = progressOverride ?? getProgressSummary(resultObj)

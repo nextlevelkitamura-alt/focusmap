@@ -404,9 +404,9 @@ function codexReviewActivity(reason: CodexReviewReason): {
   kind: AiTaskActivityKind
   role: AiTaskActivityRole
   body: string
-} {
+} | null {
   if (reason === 'completed') {
-    return { kind: 'completed', role: 'codex', body: 'Codexの実行が完了しました。結果確認待ちです。' }
+    return null
   }
   if (reason === 'approval_requested') {
     return { kind: 'approval', role: 'codex', body: 'Codexが承認を待っています。内容を確認してください。' }
@@ -2407,10 +2407,12 @@ async function syncCodexAppThreads(
           })
         } else if (codexState === 'awaiting_approval' && !wasAwaitingApproval) {
           const reviewActivity = codexReviewActivity(reviewReason)
-          activityEvents.push({
-            ...reviewActivity,
-            dedupeKey: `thread:${threadId}:review:${reviewReason}`,
-          })
+          if (reviewActivity) {
+            activityEvents.push({
+              ...reviewActivity,
+              dedupeKey: `thread:${threadId}:review:${reviewReason}`,
+            })
+          }
         }
       }
 

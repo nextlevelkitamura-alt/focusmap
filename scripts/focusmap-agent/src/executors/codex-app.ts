@@ -506,22 +506,7 @@ export async function runCodexAppTask(
       codex_review_reason: 'completed',
       awaiting_approval_at: awaitingApprovalAt,
       codex_visible_messages: finalVisibleMessages,
-      activity_messages: [
-        ...finalVisibleMessages,
-        {
-          role: 'status',
-          kind: 'approval',
-          body: 'Codex実行が完了し確認待ちです。',
-          importance: 'important',
-          dedupe_key: `task:${task.id}:awaiting_approval:${threadId || 'no-thread'}`,
-          created_at: awaitingApprovalAt,
-          metadata: {
-            event: 'running_to_awaiting_approval',
-            codex_thread_id: threadId || null,
-            codex_turn_status: completedStatus,
-          },
-        },
-      ],
+      activity_messages: finalVisibleMessages,
     };
   } finally {
     cleanup();
