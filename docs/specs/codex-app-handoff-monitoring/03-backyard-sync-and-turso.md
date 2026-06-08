@@ -37,6 +37,8 @@ Macローカル:
 - 旧 `scripts/task-runner.ts` は非Codex task、明示即時実行、既存互換のため残すが、Codex sqlite/rollout監視は通常無効にする。互換/デバッグで必要な時だけ `FOCUSMAP_LEGACY_CODEX_MONITOR=1` を付ける。
 - Macアプリから旧 `task-runner` を自動kickするのは `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した時だけにする。
 - `/api/codex/sync-node` は手動sync now、debug、移行中fallbackに限定し、通常の3秒UI更新や詳細表示だけを理由にsqlite/rollout探索とDB writeを起こさない。
+- `ai_tasks.codex_thread_id` が保存済みのtaskは、`focusmap-agent` がそのthread IDだけを固定監視する。確認待ち後に `awaiting_approval_at` / `last_activity_at` より後の `user_message`、`task_started`、またはthread `updated_at_ms` を検知したら、3秒以内を目安に `running` snapshot/eventと `resumed` activityを保存する。
+- `/api/agents/codex-monitor/tasks` は固定監視対象を返すagent専用APIで、`tasks.deleted_at is null` / `notes.deleted_at is null` / `ideal_goals.status != 'archived'` を満たすsourceだけを返す。source側が削除/アーカイブされたthreadは通常monitor対象から外し、以後は明示sync/debug fallbackでない限り追わない。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール
@@ -98,14 +100,14 @@ flowchart LR
 | `pending/running/awaiting_approval/needs_input/completed/failed` の状態変化 | 保存する | 保存する |
 | 完了/失敗/確認待ちの最終summary | 保存する | 保存する |
 | auto実行で `running -> awaiting_approval` へ変わる瞬間のユーザー可視Codex発話 | 短いfallbackとして保存可 | activityとして保存する |
-| Codex threadのアーカイブ/削除による元ノード完了 | `ai_tasks.completed_at` と `tasks.status='done'` を保存する | `completed` snapshot/eventを保存する |
+| Codex threadのアーカイブ/削除による監視停止 | `ai_tasks.completed_at` と `result.codex_review_reason` を保存する。元ノードは自動完了しない | `completed` snapshot/eventを保存する |
 | `codex_last_checked_at` だけの更新 | 保存しない | 保存しない |
 | running中の同じpulse/current_step | 保存しない | dedupeつきactivityのみ |
 | runner heartbeat | 保存しない | 保存する |
 | 詳細open時の短いactivity | Turso未設定時だけfallback保存 | 保存する |
 | raw log / full rollout / full thread history | 保存しない | 保存しない |
 
-`/api/codex/sync-node` は移行中のfallbackだが、無変化pollではSupabaseへ書かない。thread未検出で「見に行っただけ」の時はresponseに `checked_at` を返すだけにし、`ai_tasks.result.codex_last_checked_at` は更新しない。既存thread idがsqliteから読めなくなった `thread_deleted` と、sqlite上で `archived=1` になったthreadは、ユーザーがCodex側で片付けた合図として `ai_tasks.status='completed'` にし、`source_task_id` があれば元マインドマップノードも `done` にする。通常のCodex実行完了や承認待ちは、ユーザー確認前に元ノードを完了しない。
+`/api/codex/sync-node` は移行中のfallbackだが、無変化pollではSupabaseへ書かない。thread未検出で「見に行っただけ」の時はresponseに `checked_at` を返すだけにし、`ai_tasks.result.codex_last_checked_at` は更新しない。既存thread idがsqliteから読めなくなった `thread_deleted` と、sqlite上で `archived=1` になったthreadは、ユーザーがCodex側で片付けた合図として `ai_tasks.status='completed'` にして監視対象から外す。通常のCodex実行完了や承認待ちは、ユーザー確認前に元ノードを完了しない。
 
 activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定なら有効扱いで、Turso保存に成功したactivityはSupabaseへmirrorしない。明示的にSupabaseにもactivityを書きたい検証時だけ `FOCUSMAP_TURSO_ACTIVITY_PRIMARY=0` を設定する。Turso未設定またはTurso保存失敗時は、既存互換のためSupabaseへfallbackする。
 

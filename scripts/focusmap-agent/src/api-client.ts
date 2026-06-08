@@ -201,6 +201,14 @@ export class AgentApiClient {
     return data.task;
   }
 
+  async listCodexMonitorTasks(runnerId: string, limit = 80): Promise<AiTask[]> {
+    const data = await this.request<{ tasks: AiTask[] }>('/agents/codex-monitor/tasks', {
+      runner_id: runnerId,
+      limit,
+    });
+    return Array.isArray(data.tasks) ? data.tasks : [];
+  }
+
   async updateTaskState(
     runnerId: string,
     taskId: string,

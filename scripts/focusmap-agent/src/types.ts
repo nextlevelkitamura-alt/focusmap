@@ -50,9 +50,14 @@ export interface AiTask {
   scheduled_at?: string | null;
   cwd?: string | null;
   source_task_id?: string | null;
+  source_note_id?: string | null;
+  source_ideal_goal_id?: string | null;
   codex_thread_id?: string | null;
   codex_resume_thread_id?: string | null;
   result?: Record<string, unknown> | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
 }
 
 export interface StepLog {
@@ -84,12 +89,13 @@ export interface AgentActivityMessage {
 }
 
 export interface TaskResultJson {
-  executor: 'playwright' | 'simple' | 'browser' | 'terminal' | 'codex_app';
+  executor: 'playwright' | 'simple' | 'browser' | 'terminal' | 'codex' | 'codex_app';
   steps: StepLog[];
   output: string;
   error?: string;
   live_log?: string;
   message?: string;
+  current_step?: string;
   codex_thread_id?: string;
   codex_thread_url?: string;
   codex_run_state?: 'running' | 'awaiting_approval';

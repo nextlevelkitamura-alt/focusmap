@@ -21,6 +21,7 @@ import { loadConfig, ConfigError } from './config.js';
 import { upsertRunner, startHeartbeatLoop } from './heartbeat.js';
 import { startClaimLoop } from './claim.js';
 import { startCommandLoop } from './command-loop.js';
+import { startCodexThreadMonitorLoop } from './codex-thread-monitor.js';
 import { executeTask } from './executor.js';
 import { AgentApiClient } from './api-client.js';
 import { info, error as logError } from './logger.js';
@@ -35,6 +36,7 @@ const HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_HEARTBEAT_INTERVAL
 const IDLE_HEARTBEAT_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_IDLE_HEARTBEAT_INTERVAL_MS', 30_000, 5_000, 5 * 60_000);
 const CLAIM_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CLAIM_INTERVAL_MS', 15_000, 5_000, 60_000);
 const COMMAND_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_COMMAND_INTERVAL_MS', 15_000, 5_000, 60_000);
+const CODEX_THREAD_MONITOR_INTERVAL_MS = intervalFromEnv('FOCUSMAP_AGENT_CODEX_THREAD_MONITOR_INTERVAL_MS', 3_000, 1_000, 60_000);
 
 async function main(): Promise<void> {
   // 1. Safety check
@@ -105,9 +107,10 @@ async function main(): Promise<void> {
     CLAIM_INTERVAL_MS,
   );
   const commandTimer = startCommandLoop(api, runnerId, config, COMMAND_INTERVAL_MS);
+  const codexThreadMonitorTimer = startCodexThreadMonitorLoop(api, runnerId, CODEX_THREAD_MONITOR_INTERVAL_MS);
 
   info(
-    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s active / ${IDLE_HEARTBEAT_INTERVAL_MS / 1000}s idle / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s`,
+    `agent ready — heartbeat ${HEARTBEAT_INTERVAL_MS / 1000}s active / ${IDLE_HEARTBEAT_INTERVAL_MS / 1000}s idle / claim poll ${CLAIM_INTERVAL_MS / 1000}s / command poll ${COMMAND_INTERVAL_MS / 1000}s / codex thread monitor ${CODEX_THREAD_MONITOR_INTERVAL_MS / 1000}s`,
   );
 
   // 7. Shutdown
@@ -116,6 +119,7 @@ async function main(): Promise<void> {
     clearInterval(heartbeatTimer);
     clearInterval(claimTimer);
     clearInterval(commandTimer);
+    clearInterval(codexThreadMonitorTimer);
     process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
