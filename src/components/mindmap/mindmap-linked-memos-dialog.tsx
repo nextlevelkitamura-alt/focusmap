@@ -1043,7 +1043,7 @@ export function MindmapLinkedMemosDialog({
                         {codexWaitingForAppSend
                           ? "プロンプトはコピー済みです。Codex側で貼り付けて送信すると、Focusmapがthreadとログを同期します。"
                           : codexManualHandoff && !codexThreadId
-                            ? "ChatGPT/Codexアプリ側で返答を確認してください。Focusmapは送信済み状態と確認待ちだけを同期します。"
+                            ? "Codex側で返答を確認してください。Focusmapは送信済み状態と確認待ちだけを同期します。"
                           : "このノードの続きはCodex.appのスレッドで進めます。Focusmap側は状態とログだけ同期します。"}
                       </div>
                     </div>
@@ -1095,7 +1095,7 @@ export function MindmapLinkedMemosDialog({
                       {codexWaitingForAppSend
                         ? "Codexで送信されると、この欄に状態と出力が同期されます"
                         : codexManualHandoff && !codexThreadId
-                          ? "ChatGPT/Codexアプリ側の返答を確認してください"
+                          ? "Codex側の返答を確認してください"
                         : codexActivityError
                           ? "チャットログを取得できません"
                           : "Codex.app側の出力は未同期です"}

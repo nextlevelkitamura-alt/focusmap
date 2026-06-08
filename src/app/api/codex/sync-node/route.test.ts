@@ -488,7 +488,7 @@ describe('/api/codex/sync-node Codex thread closure', () => {
         current_step: '完了確認',
         progress_summary: {
           state: 'needs_review',
-          current_step: 'ChatGPT/Codexアプリで確認待ち',
+          current_step: 'Codexで確認待ち',
           summary: '古いhandoff文',
           can_mark_completed: false,
           last_activity_at: '2026-06-07T09:04:03.000Z',

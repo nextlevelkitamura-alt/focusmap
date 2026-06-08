@@ -29,6 +29,18 @@ function kindFromEventType(eventType: string) {
   return 'progress'
 }
 
+const HIDDEN_ACTIVITY_EVENT_TYPES = new Set([
+  'thread_detected',
+  'running',
+  'awaiting_approval',
+  'status:running',
+  'status:awaiting_approval',
+])
+
+function isHiddenActivityEvent(eventType: string) {
+  return HIDDEN_ACTIVITY_EVENT_TYPES.has(eventType)
+}
+
 function activityRole(value: unknown) {
   return value === 'system' || value === 'codex' || value === 'user' || value === 'status'
     ? value
@@ -192,6 +204,19 @@ function hasUserSentMessage(messages: Array<{ role?: unknown; kind?: unknown; bo
   )
 }
 
+function isHiddenActivityMessage(message: { role?: unknown; kind?: unknown; body?: unknown }) {
+  const body = stringValue(message.body)
+  if (!body) return true
+  if (message.role === 'status' && /^Codex threadを検出しました/u.test(body)) return true
+  if (/^状態:\s*(running|awaiting_approval)$/u.test(body)) return true
+  if (/^(thread_detected|running|awaiting_approval)$/u.test(body)) return true
+  return false
+}
+
+function visibleActivityMessages<T extends { role?: unknown; kind?: unknown; body?: unknown }>(messages: T[]) {
+  return messages.filter(message => !isHiddenActivityMessage(message))
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -214,25 +239,27 @@ export async function GET(
           listTaskEvents(task.id, task.user_id, 50),
         ])
         const progressMessages = progress.map(progressMessageFromTurso)
-        const eventMessages = events.map(item => ({
-          id: item.id,
-          task_id: item.task_id,
-          user_id: item.user_id,
-          role: 'status',
-          kind: kindFromEventType(item.event_type),
-          body: item.event_type.startsWith('status:')
-            ? `状態: ${item.event_type.slice('status:'.length)}`
-            : item.event_type,
-          importance: item.event_type.includes('failed') || item.event_type.includes('approval') ? 'important' : 'normal',
-          metadata: item.payload_json ?? {},
-          created_at: item.created_at,
-        }))
+        const eventMessages = events
+          .filter(item => !isHiddenActivityEvent(item.event_type))
+          .map(item => ({
+            id: item.id,
+            task_id: item.task_id,
+            user_id: item.user_id,
+            role: 'status',
+            kind: kindFromEventType(item.event_type),
+            body: item.event_type.startsWith('status:')
+              ? `状態: ${item.event_type.slice('status:'.length)}`
+              : item.event_type,
+            importance: item.event_type.includes('failed') || item.event_type.includes('approval') ? 'important' : 'normal',
+            metadata: item.payload_json ?? {},
+            created_at: item.created_at,
+          }))
         const promptMessage = taskPromptMessage(task)
-        const messages = [
+        const messages = visibleActivityMessages([
           ...(promptMessage && !hasUserSentMessage([...progressMessages, ...eventMessages]) ? [promptMessage] : []),
           ...progressMessages,
           ...eventMessages,
-        ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).slice(-50)
+        ]).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).slice(-50)
 
         if (messages.some(message => !String(message.id).startsWith('prompt:'))) {
           return NextResponse.json({ source: 'turso', messages })
@@ -275,10 +302,10 @@ export async function GET(
   const activityMessages = [...(data ?? [])].reverse()
   const resultFallbackMessages = fallbackMessagesFromTask(task)
     .filter(message => !String(message.id).startsWith('prompt:'))
-  const messages = [
+  const messages = visibleActivityMessages([
     ...(promptMessage && !hasUserSentMessage(activityMessages) ? [promptMessage] : []),
     ...activityMessages,
     ...(activityMessages.length === 0 ? resultFallbackMessages : []),
-  ]
+  ])
   return NextResponse.json({ messages })
 }

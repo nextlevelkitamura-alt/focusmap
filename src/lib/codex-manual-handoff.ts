@@ -9,9 +9,9 @@ export type ManualCodexHandoffTaskLike = {
   result?: Record<string, unknown> | null
 }
 
-export const MANUAL_CODEX_HANDOFF_CONFIRMED_STEP = "ChatGPT/Codexアプリで確認待ち"
+export const MANUAL_CODEX_HANDOFF_CONFIRMED_STEP = "Codexで確認待ち"
 export const MANUAL_CODEX_HANDOFF_CONFIRMED_MESSAGE =
-  "ChatGPT/Codexアプリへプロンプトを渡しました。返答はChatGPT側で確認し、必要ならFocusmapへ戻って続けてください。"
+  "Codexへプロンプトを渡しました。返答を確認し、必要ならFocusmapへ戻って続けてください。"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -73,7 +73,7 @@ export function buildManualCodexHandoffConfirmedResult(
   const previousSummary = isRecord(current.progress_summary) ? current.progress_summary : {}
   const nextStep = {
     key: "external_app_handoff_confirmed",
-    label: "ChatGPT/Codexアプリへ送信済み",
+    label: "Codexへ送信済み",
     status: "active",
     at: options.nowIso,
   }
@@ -106,7 +106,7 @@ export function buildManualCodexHandoffConfirmedResult(
       summary: MANUAL_CODEX_HANDOFF_CONFIRMED_MESSAGE,
       current_step: MANUAL_CODEX_HANDOFF_CONFIRMED_STEP,
       evidence: "Focusmap detected an external app screen switch for a manual Codex handoff.",
-      recommended_action: "ChatGPT/Codexアプリ側の返答を確認してください。",
+      recommended_action: "Codex側の返答を確認してください。",
       can_mark_completed: false,
       confidence: typeof previousSummary.confidence === "number" ? previousSummary.confidence : 0.6,
       checked_at: options.nowIso,

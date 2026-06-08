@@ -43,7 +43,7 @@ describe("manual Codex handoff confirmation", () => {
     expect(result.message).toBe(MANUAL_CODEX_HANDOFF_CONFIRMED_MESSAGE)
     expect(result.progress_summary).toMatchObject({
       state: "needs_review",
-      current_step: "ChatGPT/Codexアプリで確認待ち",
+      current_step: "Codexで確認待ち",
     })
     expect(Array.isArray(result.steps)).toBe(true)
     expect(Array.isArray(result.codex_visible_messages)).toBe(true)

@@ -338,6 +338,6 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
 
 export function launchFeedbackForMode(mode: CodexLaunchMode) {
   if (mode === "local-api") return "Codex.app のチャットを開いています"
-  if (mode === "chatgpt-mobile") return "ChatGPTアプリのCodex画面を開くリクエストを出しました"
+  if (mode === "chatgpt-mobile") return "Codexを開くリクエストを出しました"
   return "Codex.app を開くリクエストを出しました。確認ダイアログが出たら Open Codex を選んでください"
 }

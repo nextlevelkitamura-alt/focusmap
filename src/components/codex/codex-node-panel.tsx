@@ -596,11 +596,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
         .then(copied => {
           setCodexPromptCopied(copied)
           setCodexFeedback(copied
-            ? "プロンプトをコピーしました。ChatGPTアプリのCodex画面で貼り付けて開始してください。"
-            : "ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+            ? "プロンプトをコピーしました。Codexで貼り付けて開始してください。"
+            : "Codexを開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
         })
         .catch(() => {
-          setCodexFeedback("ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+          setCodexFeedback("Codexを開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
         })
         .finally(() => {
           setIsOpeningCodex(false)
@@ -807,11 +807,11 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
           .then(copied => {
             setCodexPromptCopied(copied)
             setCodexFeedback(copied
-              ? "プロンプトをコピーしました。ChatGPTアプリのCodex画面で貼り付けて開始してください。"
-              : "ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+              ? "プロンプトをコピーしました。Codexで貼り付けて開始してください。"
+              : "Codexを開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
           })
           .catch(() => {
-            setCodexFeedback("ChatGPTアプリのCodex画面を開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
+            setCodexFeedback("Codexを開きます。コピーできない場合はFocusmapに戻って再コピーしてください。")
           })
           .finally(() => {
             setCodexSendStatus("sent")
@@ -853,7 +853,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
       window.setTimeout(() => void syncCodexState(), 3500)
       const copyFeedback = copiedToClipboard ? "プロンプトはコピー済みです。" : "プロンプトのコピーに失敗しました。"
       const dispatchFeedback = isMobileOpenTarget
-          ? "ChatGPTアプリのCodex画面で貼り付けて開始してください。"
+          ? "Codexで貼り付けて開始してください。"
           : repoPath
           ? "Codex.appで内容を確認して送信してください。"
           : "リポジトリ未設定のため、Codex.appで貼り付けて開始してください。"
@@ -924,8 +924,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                     onClick={sendToCodex}
                     aria-disabled={codexSendStatus === "sending"}
                     className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
-                    aria-label={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
-                    title={isMobileOpenTarget ? "コピーしてChatGPTのCodexを開く" : "コピーしてCodexを開く"}
+                    aria-label="コピーしてCodexを開く"
+                    title="コピーしてCodexを開く"
                   >
                     {codexSendStatus === "sending" ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1006,8 +1006,8 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                       onClick={(event) => void handleOpenCodexWithPrompt(event)}
                       aria-disabled={isOpeningCodex}
                       className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-200"
-                      aria-label={isMobileOpenTarget ? "プロンプトをコピーしてChatGPTのCodexを開く" : "プロンプトをコピーしてCodexを開く"}
-                      title={isMobileOpenTarget ? "プロンプトをコピーしてChatGPTのCodexを開く" : "プロンプトをコピーしてCodexを開く"}
+                      aria-label="プロンプトをコピーしてCodexを開く"
+                      title="プロンプトをコピーしてCodexを開く"
                     >
                       {isOpeningCodex ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1084,7 +1084,7 @@ export function CodexNodePanel({ open, node, candidates, onClose, onSaveHeading,
                         {codexWaitingForAppSend
                           ? "Codex.appで送信されると、ここに返答が表示されます"
                           : codexManualHandoff && !codexThreadId
-                            ? "ChatGPT/Codexアプリ側の返答を確認してください"
+                            ? "Codex側の返答を確認してください"
                           : codexActivityError
                             ? "チャットログを取得できません"
                             : "Codex側の返答を待っています"}
