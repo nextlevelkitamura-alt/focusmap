@@ -2446,17 +2446,49 @@ export function WishlistCardDetail({
             <div className="order-1 space-y-1 xl:col-start-2 xl:row-start-2">
               <div className="flex items-center justify-between gap-2">
                 <Label>メモ</Label>
-                <div className="flex items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant={isMemoRecording ? "destructive" : "outline"}
+                    size="icon"
+                    onClick={() => void handleMemoVoiceToggle()}
+                    disabled={isMemoTranscribing}
+                    className="h-8 w-8 rounded-md bg-background/90"
+                    aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                    title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
+                  >
+                    {isMemoTranscribing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : isMemoRecording ? (
+                      <Square className="h-3.5 w-3.5" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleGenerateTitle()}
+                    disabled={isGeneratingTitle || !draftDescription.trim()}
+                    className="h-8 gap-1.5 rounded-md bg-background/90 px-2 text-xs"
+                    aria-label="本文から見出し生成"
+                    title="本文から見出し生成"
+                  >
+                    {isGeneratingTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    <span className="hidden sm:inline">見出し生成</span>
+                  </Button>
                   {!isMobile && (
                     <Button
                       type="button"
                       variant="ghost"
+                      size="icon"
                       onClick={() => void navigator.clipboard?.writeText(draftDescription)}
-                      className="h-8 gap-1.5 px-2 text-xs text-muted-foreground"
+                      className="h-8 w-8 text-muted-foreground"
                       disabled={!draftDescription.trim()}
+                      aria-label="本文をコピー"
+                      title="本文をコピー"
                     >
                       <Copy className="h-3.5 w-3.5" />
-                      コピー
                     </Button>
                   )}
                 </div>
@@ -2475,41 +2507,9 @@ export function WishlistCardDetail({
                   placeholder="本文にGoogle DocsなどのURLを貼ると、そのままリンクとして開けます。"
                   className="h-28 w-full resize-none overflow-y-auto border-0 bg-transparent px-3 py-2 text-sm outline-none md:h-36"
                 />
-                <div className="flex min-h-11 items-center justify-between gap-2 border-t bg-muted/20 px-2 py-1.5">
+                <div className="flex min-h-9 items-center justify-between gap-2 border-t bg-muted/20 px-2 py-1.5">
                   <div className="flex min-w-0 items-center text-xs text-muted-foreground">
                     {isSavingMemo && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Button
-                      type="button"
-                      variant={isMemoRecording ? "destructive" : "outline"}
-                      size="icon"
-                      onClick={() => void handleMemoVoiceToggle()}
-                      disabled={isMemoTranscribing}
-                      className="h-9 w-9 rounded-md bg-background/90"
-                      aria-label={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
-                      title={isMemoRecording ? "本文の音声入力を停止" : "本文を音声入力"}
-                    >
-                      {isMemoTranscribing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : isMemoRecording ? (
-                        <Square className="h-4 w-4" />
-                      ) : (
-                        <Mic className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void handleGenerateTitle()}
-                      disabled={isGeneratingTitle || !draftDescription.trim()}
-                      className="h-9 gap-1.5 rounded-md bg-background/90 px-2.5 text-xs"
-                      aria-label="本文から見出し生成"
-                      title="本文から見出し生成"
-                    >
-                      {isGeneratingTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                      見出し生成
-                    </Button>
                   </div>
                 </div>
               </div>
