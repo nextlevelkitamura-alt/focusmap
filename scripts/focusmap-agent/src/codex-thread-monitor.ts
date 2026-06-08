@@ -105,6 +105,14 @@ function timeMs(value: unknown): number | null {
   return null;
 }
 
+function latestIso(...values: Array<unknown>): string | null {
+  const times = values
+    .map(timeMs)
+    .filter((value): value is number => value !== null);
+  if (times.length === 0) return null;
+  return new Date(Math.max(...times)).toISOString();
+}
+
 function isInternalUserMessage(value: string): boolean {
   const text = value.trim();
   return text.startsWith('# AGENTS.md instructions') ||
@@ -152,7 +160,7 @@ function appendVisibleMessage(messages: VisibleMessage[], input: VisibleMessage)
   while (messages.length > 40) messages.shift();
 }
 
-function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
+export function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
   const visibleMessages: VisibleMessage[] = [];
   let state: RolloutSummary['state'] = row.archived ? 'awaiting_approval' : 'running';
   let reviewReason = row.archived ? 'archived' : 'started';
@@ -178,7 +186,7 @@ function parseRollout(rawJsonl: string, row: CodexThreadRow): RolloutSummary {
     const payload = isRecord(parsed.payload) ? parsed.payload : {};
     const payloadType = typeof payload.type === 'string' ? payload.type : '';
     const payloadTime = timestampToIso(payload.timestamp ?? payload.started_at ?? payload.completed_at);
-    const eventTime = payloadTime ?? rowTime ?? lastActivityAt;
+    const eventTime = latestIso(rowTime, payloadTime) ?? lastActivityAt;
     if (eventTime) lastActivityAt = eventTime;
 
     if (payloadType === 'task_started') {
@@ -354,28 +362,38 @@ function checkpointMs(task: AiTask): number | null {
   return null;
 }
 
-function didResumeAfterCheckpoint(task: AiTask, summary: RolloutSummary, row: CodexThreadRow): boolean {
+function wasWaitingForReview(task: AiTask): boolean {
+  const result = taskResult(task);
+  const state = typeof result.codex_run_state === 'string' ? result.codex_run_state : '';
+  return task.status === 'awaiting_approval' ||
+    task.status === 'completed' ||
+    state === 'awaiting_approval';
+}
+
+function didResumeAfterCheckpoint(task: AiTask, summary: RolloutSummary): boolean {
+  if (!wasWaitingForReview(task)) return false;
   const checkpoint = checkpointMs(task);
   if (checkpoint === null) return false;
   const candidates = [
     timeMs(summary.latestUserMessageAt),
     timeMs(summary.latestTaskStartedAt),
-    timeMs(row.updated_at_ms),
   ].filter((value): value is number => value !== null);
   return candidates.some(value => value > checkpoint);
 }
 
-function taskStateForSummary(task: AiTask, summary: RolloutSummary, row: CodexThreadRow) {
-  const resumed = didResumeAfterCheckpoint(task, summary, row);
+export function taskStateForSummary(task: AiTask, summary: RolloutSummary) {
+  const resumed = didResumeAfterCheckpoint(task, summary);
   if (resumed) {
     const resumeMs = Math.max(
       timeMs(summary.latestUserMessageAt) ?? 0,
       timeMs(summary.latestTaskStartedAt) ?? 0,
-      timeMs(row.updated_at_ms) ?? 0,
     );
     const completedMs = timeMs(summary.latestTaskCompleteAt) ?? 0;
-    if (completedMs > resumeMs) return { status: 'awaiting_approval' as const, resumed: true };
+    if (completedMs >= resumeMs) return { status: 'awaiting_approval' as const, resumed: true };
     return { status: 'running' as const, resumed: true };
+  }
+  if (wasWaitingForReview(task) && summary.state === 'running') {
+    return { status: 'awaiting_approval' as const, resumed: false };
   }
   return { status: summary.state === 'awaiting_approval' ? 'awaiting_approval' as const : 'running' as const, resumed: false };
 }
@@ -499,7 +517,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
 
   const rolloutRaw = await readRollout(row);
   const summary = parseRollout(rolloutRaw, row);
-  const { status, resumed } = taskStateForSummary(task, summary, row);
+  const { status, resumed } = taskStateForSummary(task, summary);
   const lastActivityAt = summary.lastActivityAt ?? timestampToIso(row.updated_at_ms) ?? '';
   const cacheKey = [
     status,
