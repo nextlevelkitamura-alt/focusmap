@@ -1197,7 +1197,7 @@ export function DashboardClient({
                     onProjectSaved={handleProjectSavedFromSwitcher}
                     onProjectDeleted={handleDeleteProject}
                     onSpaceSaved={handleSpaceSavedFromSwitcher}
-                    showCalendarSplitToggle={activeView === 'map'}
+                    showCalendarSplitToggle={activeView === 'map' || activeView === 'long-term'}
                     isCalendarSplitVisible={isCalendarPanelVisible}
                     onToggleCalendarSplit={toggleCalendarSplit}
                     showMemoSplitToggle={activeView === 'map'}

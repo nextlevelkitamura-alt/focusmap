@@ -313,7 +313,7 @@ describe('WishlistView calendar D&D', () => {
 
     await renderVisibleWishlist('Unsorted memo')
 
-    expect(screen.getByLabelText('カレンダーを閉じる')).toHaveTextContent('')
+    expect(screen.queryByLabelText('カレンダーを閉じる')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('タグメニューを開く')).not.toBeInTheDocument()
     expect(screen.queryByTitle('複数メモをマインドマップに整理')).not.toBeInTheDocument()
     expect(screen.getByText('Unsorted memo').closest('div[draggable="true"]')).toBeTruthy()

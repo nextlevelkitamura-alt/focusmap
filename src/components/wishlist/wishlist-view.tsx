@@ -783,7 +783,6 @@ export function WishlistView({
   selectedSpaceId = null,
   onOpenTodayMemoSchedule,
   isCalendarSplitVisible = false,
-  onToggleCalendarSplit,
   onSelectSpace,
   onSelectProject,
   onProjectCreated,
@@ -827,7 +826,6 @@ export function WishlistView({
   const [suggestionOpen, setSuggestionOpen] = useState(false)
   const [isSavingSuggestion, setIsSavingSuggestion] = useState(false)
   const [tagFilter, setTagFilter] = useState<string | "all">("all")
-  const [isCheckingVisibleAi, setIsCheckingVisibleAi] = useState(false)
   const [todayRemovalDialog, setTodayRemovalDialog] = useState<TodayRemovalDialogState | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set())
@@ -854,7 +852,7 @@ export function WishlistView({
   const pendingCreateUpdatesRef = useRef(new Map<string, Record<string, unknown>>())
   const { tags: managedTags, tagColors, refreshTags } = useTagColors()
   const { calendars } = useCalendars()
-  const { getBySourceId: getMemoAiTask, refresh: refreshMemoAiTasks } = useMemoAiTasks()
+  const { refresh: refreshMemoAiTasks } = useMemoAiTasks()
   const { pushAction } = useUndoRedo()
   const memoDndSensors = useMemo<Sensor[]>(() => [useMouseSensor, useKeyboardSensor, useDelayedMemoTouchSensor], [])
 
@@ -1191,37 +1189,6 @@ export function WishlistView({
       return true
     })
   }, [items, linkedMemoIds, selectedProjectId, tagFilter])
-
-  const visibleAiTaskIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const item of filteredItems) {
-      const task = getMemoAiTask(item.id)
-      if (task?.id) ids.add(task.id)
-    }
-    return [...ids]
-  }, [filteredItems, getMemoAiTask])
-
-  const checkVisibleAiProgress = useCallback(async () => {
-    if (isCheckingVisibleAi || visibleAiTaskIds.length === 0) return
-    setIsCheckingVisibleAi(true)
-    setIntakeError(null)
-    try {
-      for (let index = 0; index < visibleAiTaskIds.length; index += 3) {
-        const batch = visibleAiTaskIds.slice(index, index + 3)
-        await Promise.all(batch.map(async taskId => {
-          const res = await fetch(`/api/ai-tasks/${taskId}/progress-check`, { method: "POST" })
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}))
-            throw new Error(data?.error || `AI状況更新に失敗しました (${res.status})`)
-          }
-        }))
-      }
-    } catch (err) {
-      setIntakeError(err instanceof Error ? err.message : "AI状況更新に失敗しました")
-    } finally {
-      setIsCheckingVisibleAi(false)
-    }
-  }, [isCheckingVisibleAi, visibleAiTaskIds])
 
   // 今日の範囲を 1 分単位で再評価（日跨ぎでも自動で再判定）
   const [nowMinuteKey, setNowMinuteKey] = useState(() => Math.floor(Date.now() / 60_000))
@@ -2625,37 +2592,6 @@ export function WishlistView({
             <h1 className="text-base font-semibold leading-tight">メモ</h1>
             <p className="hidden truncate text-xs text-muted-foreground sm:block">雑な入力を整理</p>
           </div>
-          {visibleAiTaskIds.length > 0 && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={checkVisibleAiProgress}
-            disabled={isCheckingVisibleAi}
-            className="min-h-[40px] shrink-0 gap-1.5 px-3"
-            title="表示中メモのAI状況をまとめて更新"
-          >
-            <RefreshCw className={cn("h-4 w-4", isCheckingVisibleAi && "animate-spin")} />
-            <span className="hidden sm:inline">AI状況</span>
-            <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
-              {visibleAiTaskIds.length}
-            </span>
-          </Button>
-          )}
-          {onToggleCalendarSplit && (
-            <Button
-              type="button"
-              variant={isCalendarSplitVisible ? "default" : "outline"}
-              size="icon"
-              onClick={onToggleCalendarSplit}
-              aria-pressed={isCalendarSplitVisible}
-              aria-label={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
-              className="hidden min-h-[40px] min-w-[40px] shrink-0 md:inline-flex"
-              title={isCalendarSplitVisible ? "カレンダーを閉じる" : "カレンダーを表示"}
-            >
-              <Calendar className="h-4 w-4" />
-            </Button>
-          )}
           {SHOW_MEMO_TAG_FILTER_ENTRY && (
           <TagFilterMenu
             tags={allTags}
