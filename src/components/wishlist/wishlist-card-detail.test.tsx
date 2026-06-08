@@ -166,10 +166,10 @@ describe('WishlistCardDetail', () => {
       />,
     )
 
-    const openButton = await screen.findByRole('button', { name: /Codexを開く/ })
+    const openButton = await screen.findByRole('button', { name: /Codexに送る/ })
     expect(openButton).toBeDisabled()
     expect(screen.queryByRole('button', { name: /Macへ再送/ })).not.toBeInTheDocument()
-    expect(screen.getByText(/Codex 実行中または確認待ちです/)).toBeInTheDocument()
+    expect(screen.getAllByText('確認待ち').length).toBeGreaterThan(0)
 
     fireEvent.click(openButton)
 

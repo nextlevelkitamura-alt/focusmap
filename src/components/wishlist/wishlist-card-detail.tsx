@@ -7,8 +7,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Mic, Network, Plus, Search, Sparkles, Square, Terminal, Trash2, CheckCircle2, Wifi } from "lucide-react"
-import QRCode from "react-qr-code"
+import { Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Download, ImagePlus, Loader2, Mic, Network, Plus, Search, Send, Sparkles, Square, Terminal, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -19,12 +18,13 @@ import { cn } from "@/lib/utils"
 import { DEFAULT_PROJECT_COLOR, colorToRgba, getTagColor, normalizeColor } from "@/lib/color-utils"
 import Link from "next/link"
 import { Settings as SettingsIcon } from "lucide-react"
-import { NoteClaudeRunnerPanel } from "@/components/memo/note-claude-runner"
 import { VoiceWaveform } from "@/components/ui/voice-waveform"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useIsMobile } from "@/hooks/useIsMobile"
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { UserCalendar } from "@/hooks/useCalendars"
+import type { AiTask } from "@/types/ai-task"
+import { getCodexTaskUiState } from "@/lib/codex-run-state"
 
 const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
@@ -35,6 +35,7 @@ const IOS_TIME_WHEEL_OFFSETS = [-3, -2, -1, 0, 1, 2, 3]
 const DATE_POPOVER_APPROX_HEIGHT = 340
 const TIME_POPOVER_APPROX_HEIGHT = 286
 const IMAGE_UPLOAD_TIMEOUT_MS = 60_000
+const DEFAULT_CODEX_REQUEST = "このメモと画像をもとに次の作業を整理して"
 const CLIPBOARD_IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
@@ -197,6 +198,138 @@ function formatDurationLabel(minutes: number | null | undefined) {
 
 function formatTimePart(value: number) {
   return String(value).padStart(2, "0")
+}
+
+function formatLogTime(value: string | null | undefined) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return new Intl.DateTimeFormat("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+type MemoCodexLogState = "not_sent" | "sent" | "running" | "awaiting_approval" | "completed" | "failed"
+
+type MemoCodexLogEntry = {
+  state: MemoCodexLogState
+  label: string
+  time: string
+  body: string
+  active?: boolean
+}
+
+const MEMO_CODEX_LOG_LABEL: Record<MemoCodexLogState, string> = {
+  not_sent: "未送信",
+  sent: "送信済み",
+  running: "実行中",
+  awaiting_approval: "確認待ち",
+  completed: "完了",
+  failed: "失敗",
+}
+
+function memoCodexLogTone(state: MemoCodexLogState, active = false) {
+  if (state === "failed") return "border-red-500/35 bg-red-500/10 text-red-700 dark:text-red-300"
+  if (state === "completed") return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+  if (state === "awaiting_approval") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+  if (state === "running") return "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+  if (state === "sent") return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+  return active ? "border-muted-foreground/35 bg-muted/40 text-foreground" : "border-border bg-background/70 text-muted-foreground"
+}
+
+function getMemoCodexCurrentState(task: AiTask | null | undefined): MemoCodexLogState {
+  if (!task) return "not_sent"
+  const codexState = task.executor === "codex" || task.executor === "codex_app"
+    ? getCodexTaskUiState(task)?.state
+    : null
+  if (task.status === "failed" || codexState === "connection_failed") return "failed"
+  if (task.status === "completed") return "completed"
+  if (task.status === "awaiting_approval" || task.status === "needs_input" || codexState === "awaiting_approval") return "awaiting_approval"
+  if (task.status === "running" || codexState === "running") return "running"
+  return "not_sent"
+}
+
+function buildMemoCodexLogEntries(args: {
+  task: AiTask | null | undefined
+  launchStep: null | "sending" | "sent" | "connected" | "completed"
+  launchError: string | null
+}): MemoCodexLogEntry[] {
+  const { task, launchStep, launchError } = args
+  const current = launchError ? "failed" : getMemoCodexCurrentState(task)
+  const createdTime = formatLogTime(task?.created_at)
+  const startedTime = formatLogTime(task?.started_at ?? task?.created_at)
+  const completedTime = formatLogTime(task?.completed_at ?? task?.created_at)
+  const entries: MemoCodexLogEntry[] = []
+
+  entries.push({
+    state: "not_sent",
+    label: MEMO_CODEX_LOG_LABEL.not_sent,
+    time: task ? createdTime : "-",
+    body: task ? "Codex側で送信されるまで待機しています" : "依頼はまだ送信されていません",
+    active: current === "not_sent",
+  })
+
+  if (task || launchStep) {
+    entries.push({
+      state: "sent",
+      label: MEMO_CODEX_LOG_LABEL.sent,
+      time: createdTime,
+      body: "Focusmapが依頼を登録しました",
+      active: !task && launchStep === "sending",
+    })
+  }
+
+  if (task?.status === "running" || getMemoCodexCurrentState(task) === "running") {
+    entries.push({
+      state: "running",
+      label: MEMO_CODEX_LOG_LABEL.running,
+      time: startedTime,
+      body: "Codexが整理しています",
+      active: current === "running",
+    })
+  }
+
+  if (["awaiting_approval", "needs_input", "completed"].includes(task?.status ?? "") || getMemoCodexCurrentState(task) === "awaiting_approval") {
+    entries.push({
+      state: "awaiting_approval",
+      label: MEMO_CODEX_LOG_LABEL.awaiting_approval,
+      time: formatLogTime(task?.completed_at ?? task?.started_at ?? task?.created_at),
+      body: "確認が必要です",
+      active: current === "awaiting_approval",
+    })
+  }
+
+  if (task?.status === "completed" || launchStep === "completed") {
+    entries.push({
+      state: "completed",
+      label: MEMO_CODEX_LOG_LABEL.completed,
+      time: completedTime,
+      body: "結果を反映しました",
+      active: current === "completed",
+    })
+  }
+
+  if (task?.status === "failed" || launchError) {
+    entries.push({
+      state: "failed",
+      label: MEMO_CODEX_LOG_LABEL.failed,
+      time: completedTime,
+      body: launchError ?? task?.error ?? "実行に失敗しました",
+      active: true,
+    })
+  }
+
+  return entries
+}
+
+function buildCodexRequestDescription(request: string, memo: string) {
+  const requestText = request.trim()
+  const memoText = memo.trim()
+  return [
+    requestText,
+    memoText ? `メモ:\n${memoText}` : null,
+  ].filter(Boolean).join("\n\n")
 }
 
 function getMonthStart(date: Date) {
@@ -1089,7 +1222,6 @@ export function WishlistCardDetail({
   projects = [],
   calendars = [],
   tagColors = {},
-  onLaunchClaude,
   onLaunchCodex,
   onCopyCodexPrompt,
   onReadyForAttachments,
@@ -1098,15 +1230,9 @@ export function WishlistCardDetail({
 }: WishlistCardDetailProps) {
   const [isAddingCalendar, setIsAddingCalendar] = useState(false)
   const [isSavingMemo, setIsSavingMemo] = useState(false)
-  const [isLaunchingClaude, setIsLaunchingClaude] = useState(false)
   const [isLaunchingCodex, setIsLaunchingCodex] = useState(false)
-  const [isCopyingCodexPrompt, setIsCopyingCodexPrompt] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchStep, setLaunchStep] = useState<null | 'sending' | 'sent' | 'connected' | 'completed'>(null)
-  const [launchExecutor, setLaunchExecutor] = useState<'claude' | 'codex' | 'codex_app' | null>(null)
-  const [isCodexPanelOpen, setIsCodexPanelOpen] = useState(false)
-  const [copiedUrl, setCopiedUrl] = useState(false)
-  const [elapsedSecs, setElapsedSecs] = useState(0)
   const [selectedCalendarId, setSelectedCalendarId] = useState("primary")
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthStart(new Date()))
   const [isDatePopoverOpen, setIsDatePopoverOpen] = useState(false)
@@ -1114,7 +1240,6 @@ export function WishlistCardDetail({
   const [previewTimeValue, setPreviewTimeValue] = useState<string | null>(null)
   const [isCalendarPopoverOpen, setIsCalendarPopoverOpen] = useState(false)
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false)
-  const sentAtRef = useRef<number | null>(null)
   const { getBySourceId: getMemoAiTask } = useMemoAiTasks()
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [isPastingClipboardImage, setIsPastingClipboardImage] = useState(false)
@@ -1124,7 +1249,7 @@ export function WishlistCardDetail({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState("")
   const [draftDescription, setDraftDescription] = useState("")
-  const [newSubItem, setNewSubItem] = useState("")
+  const [codexRequest, setCodexRequest] = useState(DEFAULT_CODEX_REQUEST)
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
   const [pendingImages, setPendingImages] = useState<PendingMemoImage[]>([])
@@ -1367,6 +1492,7 @@ export function WishlistCardDetail({
     draftSourceIdRef.current = itemId
     setDraftTitle(itemTitle)
     setDraftDescription(itemDescription)
+    setCodexRequest(DEFAULT_CODEX_REQUEST)
     lastSubmittedDraftRef.current = { title: itemTitle.trim(), description: itemDescription.trim() }
     const scheduled = itemScheduledAt ? new Date(itemScheduledAt) : null
     setCalendarMonth(getMonthStart(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : new Date()))
@@ -1376,7 +1502,6 @@ export function WishlistCardDetail({
     setIsTimePopoverOpen(false)
     setIsCalendarPopoverOpen(false)
     setSaveError(null)
-    setIsCodexPanelOpen(false)
     setPendingImages(prev => {
       prev.forEach(releasePendingImage)
       return []
@@ -1478,20 +1603,6 @@ export function WishlistCardDetail({
       }, 2500)
     }
   }, [getMemoAiTask, handleRequestClose, item, launchStep])
-
-  // 接続待ち中の経過秒数カウンター
-  useEffect(() => {
-    if (launchStep !== 'sent') {
-      sentAtRef.current = null
-      setElapsedSecs(0)
-      return
-    }
-    if (!sentAtRef.current) sentAtRef.current = Date.now()
-    const id = setInterval(() => {
-      setElapsedSecs(Math.floor((Date.now() - sentAtRef.current!) / 1000))
-    }, 1000)
-    return () => clearInterval(id)
-  }, [launchStep])
 
   const commitTimeValue = useCallback((hour: number, minute: number) => {
     const nextDateValue = currentDateValue || formatLocalDateValue(new Date())
@@ -1663,17 +1774,6 @@ export function WishlistCardDetail({
     } finally {
       setIsAddingCalendar(false)
     }
-  }
-
-  const handleAddSubItem = async () => {
-    if (!newSubItem.trim()) return
-    await fetch(`/api/wishlist/${item.id}/items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newSubItem.trim() }),
-    })
-    setNewSubItem("")
-    await update({})
   }
 
   const handleStructureMemo = async (mode: "quick" | "deep" = "quick") => {
@@ -2094,10 +2194,10 @@ export function WishlistCardDetail({
           className={cn(
           isMobile
             ? "min-h-0 flex-1 overflow-y-auto px-4 pb-0"
-            : "grid gap-4 pb-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)] xl:items-start"
+            : "grid gap-4 pb-6 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start"
         )}>
           <div className={cn("min-w-0", isMobile ? "flex flex-col gap-3" : "contents")}>
-          <div className="order-0 grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2 xl:col-start-1 xl:row-start-1">
+          <div className="order-0 grid grid-cols-[minmax(0,1fr)_minmax(6.25rem,0.44fr)] gap-2 xl:col-span-2 xl:row-start-1">
             <label className="min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
               <Input
@@ -2132,7 +2232,11 @@ export function WishlistCardDetail({
               </label>
             </div>
 
-            <div className="order-4 space-y-3 rounded-lg border bg-background/40 p-3 xl:col-start-2 xl:row-start-1">
+            <div className="order-4 space-y-3 rounded-lg border bg-background/40 p-3 xl:col-start-1 xl:row-start-4">
+              <Label className="flex items-center gap-1.5">
+                <Clock className="h-4 w-4" />
+                時間・予定
+              </Label>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">日付</span>
@@ -2330,7 +2434,7 @@ export function WishlistCardDetail({
               </div>
             </div>
 
-            <div className="order-1 space-y-1 xl:col-start-1 xl:row-start-2">
+            <div className="order-1 space-y-1 xl:col-start-2 xl:row-start-2">
               <div className="flex items-center justify-between gap-2">
                 <Label>メモ</Label>
                 <div className="flex items-center gap-1.5">
@@ -2435,7 +2539,7 @@ export function WishlistCardDetail({
               )}
             </div>
 
-            <div className="order-2 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-1 xl:row-start-3">
+            <div className="order-2 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-1 xl:row-start-2">
               <div className="flex items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   <ImagePlus className="h-4 w-4" />
@@ -2592,7 +2696,7 @@ export function WishlistCardDetail({
                 </div>
             </div>
 
-            <div className="order-5 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-2 xl:row-start-2">
+            <div className="order-5 space-y-2 rounded-lg border bg-background/40 p-3 xl:col-start-2 xl:row-start-4">
               <div className="flex items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   タグ
@@ -2671,14 +2775,14 @@ export function WishlistCardDetail({
             </div>
 
           {saveError && (
-            <div className="order-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-start-1">
+            <div className="order-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-2 xl:row-start-5">
               {saveError}
             </div>
           )}
 
             </div>
 
-            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:sticky xl:top-0 xl:col-start-2 xl:row-start-3")}>
+            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-span-2 xl:row-start-3")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -2749,313 +2853,125 @@ export function WishlistCardDetail({
             </div>
             )}
 
-            {(onLaunchClaude || onLaunchCodex || onCopyCodexPrompt) && (() => {
-            const aiTask = getMemoAiTask(item.id)
-            const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
-            const repoConfigured = !!project?.repo_path
-            const taskExecutor = aiTask?.executor ?? null
-            const taskResult = aiTask?.result && typeof aiTask.result === 'object' && !Array.isArray(aiTask.result)
-              ? aiTask.result as Record<string, unknown>
-              : {}
-            const codexPromptWaiting = (taskExecutor === "codex" || taskExecutor === "codex_app") && taskResult.codex_run_state === "prompt_waiting"
-            const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
-            const isCodexExecutor = taskExecutor === "codex" || taskExecutor === "codex_app" || launchExecutor === "codex" || launchExecutor === "codex_app"
-            const isCodexRunning = isCodexExecutor && aiTask?.status === "running"
-            const needsRepoConfig = !item.project_id || !repoConfigured
-            const claudeDisabled = needsRepoConfig || !!active
-              const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
+            {(onLaunchCodex || onCopyCodexPrompt || onLaunchCodexApp) && (() => {
+              const aiTask = getMemoAiTask(item.id)
+              const project = item.project_id ? projects.find(p => p.id === item.project_id) : null
+              const repoConfigured = !!project?.repo_path
+              const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
+              const needsRepoConfig = !item.project_id || !repoConfigured
+              const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim() || codexRequest.trim())
               const codexDraftItem = {
                 ...item,
                 title: draftTitle,
-                description: draftDescription || null,
+                description: buildCodexRequestDescription(codexRequest, draftDescription) || draftDescription || null,
               } as IdealGoalWithItems
               const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active
-              const needsConfig = (!!onLaunchClaude || !!onLaunchCodex) && needsRepoConfig
-              const showCodexDetails = isCodexPanelOpen || !!active || launchStep !== null || !!launchError || needsConfig
-              const showPromptCopyButton = !!onCopyCodexPrompt && showCodexDetails && !isCodexRunning && (codexPromptWaiting || !!active || launchStep !== null || !!launchError)
+              const logEntries = buildMemoCodexLogEntries({ task: aiTask, launchStep, launchError })
+              const currentLog = logEntries.find(entry => entry.active) ?? logEntries[logEntries.length - 1]
+
               return (
                 <div className="space-y-3 rounded-lg border bg-background/40 p-3">
-                  {/* Codex handoff。Focusmapは追跡task作成と起動補助まで行い、送信はCodex側で行う。 */}
-                  <div className="grid grid-cols-1 gap-2">
-                    {onLaunchClaude && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={claudeDisabled || isLaunchingClaude}
-                        onClick={async () => {
-                          setIsCodexPanelOpen(true)
-                          setLaunchError(null)
-                          setLaunchStep('sending')
-                        setLaunchExecutor('claude')
-                        setIsLaunchingClaude(true)
-                        try {
-                          await onLaunchClaude(item)
-                          setLaunchStep('sent')
-                        } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "起動に失敗")
-                          setLaunchStep(null)
-                          setLaunchExecutor(null)
-                        } finally {
-                          setIsLaunchingClaude(false)
-                        }
-                      }}
-                      className="min-h-[60px] flex-col gap-0.5 border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 dark:hover:bg-amber-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
-                      >
-                        {isLaunchingClaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="text-base font-semibold">▲ Claude</span>}
-                      </Button>
-                    )}
-                    {onLaunchCodex && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={codexDisabled || isLaunchingCodex}
-                        onClick={async () => {
-                          setIsCodexPanelOpen(true)
-                          setLaunchError(null)
-                          setLaunchStep('sending')
-                          setLaunchExecutor('codex_app')
-                          setIsLaunchingCodex(true)
-                          try {
-                            await onLaunchCodex(codexDraftItem)
-                            setLaunchStep('sent')
-                          } catch (e) {
-                            setLaunchError(e instanceof Error ? e.message : "起動失敗")
-                            setLaunchStep(null)
-                            setLaunchExecutor(null)
-                          } finally {
-                            setIsLaunchingCodex(false)
-                          }
-                        }}
-                        className="min-h-[48px] gap-2 border-emerald-500/50 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20 disabled:opacity-40 disabled:border-muted disabled:text-muted-foreground"
-                      >
-                        {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                        <span className="font-semibold">Codexを開く</span>
-                      </Button>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="flex items-center gap-1.5">
+                      <Terminal className="h-4 w-4 text-emerald-500" />
+                      Codexへの依頼
+                    </Label>
+                    {currentLog && (
+                      <span className={cn(
+                        "rounded-full border px-2.5 py-1 text-xs font-medium",
+                        memoCodexLogTone(currentLog.state, currentLog.active),
+                      )}>
+                        {currentLog.label}
+                      </span>
                     )}
                   </div>
 
-                  {showCodexDetails && (
-                    <>
-                      <Label className="flex items-center gap-1.5">
-                        <Terminal className="h-4 w-4" />
-                        実行状況
-                      </Label>
-                      <p className={cn(
-                        "text-xs leading-5",
-                        needsConfig && !active ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
-                      )}>
-                        {active
-                          ? codexPromptWaiting
-                            ? "Codexはプロンプト待ちです。必要なら下から再コピーできます"
-                            : `${taskExecutor === "codex" || taskExecutor === "codex_app" ? "Codex" : "Claude"} 実行中または確認待ちです（下に進行状況）`
-                          : needsConfig
-                            ? "プロジェクトまたはリポジトリパスが未設定です"
-                            : "追跡taskを作成し、プロンプトをコピーしてCodexを開きます。送信はCodex側で行います"}
-                      </p>
-                      {needsConfig && (
-                        <Link
-                          href="/dashboard/settings/projects#project-repos"
-                          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
-                        >
-                          <SettingsIcon className="h-3.5 w-3.5" />
-                          {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
-                        </Link>
-                      )}
-                    </>
-                  )}
+                  <textarea
+                    value={codexRequest}
+                    onChange={e => setCodexRequest(e.target.value)}
+                    rows={2}
+                    placeholder={DEFAULT_CODEX_REQUEST}
+                    className="min-h-[76px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  />
 
-                  {showPromptCopyButton && (
+                  <div className="flex flex-col gap-2 md:flex-row md:items-start">
                     <Button
                       type="button"
-                      variant="secondary"
-                      disabled={!hasCodexPromptDraft || isCopyingCodexPrompt}
+                      disabled={codexDisabled || isLaunchingCodex}
                       onClick={async () => {
-                        setIsCodexPanelOpen(true)
-                        setLaunchError(null)
-                        setIsCopyingCodexPrompt(true)
-                        try {
-                          await onCopyCodexPrompt(codexDraftItem)
-                          setLaunchStep('sent')
-                          setLaunchExecutor('codex_app')
-                        } catch (e) {
-                          setLaunchError(e instanceof Error ? e.message : "コピー失敗")
-                        } finally {
-                          setIsCopyingCodexPrompt(false)
-                        }
-                      }}
-                      className="min-h-[44px] w-full justify-center gap-2 text-xs"
-                    >
-                      {isCopyingCodexPrompt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
-                      プロンプト/画像を再コピー
-                    </Button>
-                  )}
-
-                  {/* サブオプション: promptをコピーしてCodex.appを開く（送信は手動） */}
-                  {showCodexDetails && onLaunchCodexApp && !active && (
-                    <button
-                      type="button"
-                      disabled={!draftTitle.trim() || isLaunchingCodex}
-                      onClick={async () => {
-                        setIsCodexPanelOpen(true)
                         setLaunchError(null)
                         setLaunchStep('sending')
-                        setLaunchExecutor('codex_app')
                         setIsLaunchingCodex(true)
                         try {
-                          await onLaunchCodexApp(codexDraftItem)
+                          await (onLaunchCodex ?? onLaunchCodexApp)?.(codexDraftItem)
                           setLaunchStep('sent')
                         } catch (e) {
                           setLaunchError(e instanceof Error ? e.message : "起動失敗")
                           setLaunchStep(null)
-                          setLaunchExecutor(null)
                         } finally {
                           setIsLaunchingCodex(false)
                         }
                       }}
-                      className="w-full text-[11px] text-muted-foreground hover:text-foreground py-1.5 underline disabled:opacity-50"
+                      className="min-h-[44px] shrink-0 gap-2 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-45"
                     >
-                      ◎ Codexを開く（プロンプトをコピー）
-                    </button>
+                      {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Codexに送る
+                    </Button>
+                    <div className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
+                      {needsRepoConfig
+                        ? "プロジェクトとリポジトリパスを設定すると送信できます。"
+                        : active
+                          ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
+                          : "メモ本文と添付画像を含めて、Codex用の追跡taskを作成します。"}
+                    </div>
+                  </div>
+
+                  {needsRepoConfig && (
+                    <Link
+                      href="/dashboard/settings/projects#project-repos"
+                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs hover:bg-muted"
+                    >
+                      <SettingsIcon className="h-3.5 w-3.5" />
+                      {!item.project_id ? "メモにプロジェクトを設定" : "リポジトリパスを設定する"}
+                    </Link>
                   )}
 
-                  {showCodexDetails && launchError && (
-                    <div className="rounded bg-red-500/5 border border-red-200 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
+                  {launchError && (
+                    <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
                       {launchError}
                     </div>
                   )}
 
-                  {/* ステップログ */}
-                  {showCodexDetails && launchStep !== null && (() => {
-                    const sessionUrl = aiTask?.remote_session_url ?? null
-                    const isCodex = launchExecutor === 'codex' || launchExecutor === 'codex_app'
-                    const executorLabel = launchExecutor === 'claude' ? 'Claude Code' : 'Codex'
-                    const copyStepText = isCodex
-                      ? (launchStep === 'sending' ? 'プロンプトを準備しています...' : 'プロンプトをコピーしました')
-                      : (launchStep === 'sending' ? `${executorLabel}に送信しています...` : `${executorLabel}に送信しました`)
-                    return (
-                      <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-[12px]">
-                        {/* Step 1: コピー/送信 */}
-                        <div className="flex items-center gap-2">
-                          {launchStep === 'sending'
-                            ? <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
-                            : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                          <span className={launchStep === 'sending' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
-                            {copyStepText}
+                  <div className="rounded-md border bg-background/70">
+                    <div className="grid grid-cols-[6rem_6rem_minmax(0,1fr)] border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+                      <span>状態</span>
+                      <span>時刻</span>
+                      <span>内容</span>
+                    </div>
+                    <div className="divide-y">
+                      {logEntries.map((entry, index) => (
+                        <div
+                          key={`${entry.state}-${index}`}
+                          className={cn(
+                            "grid min-h-[42px] grid-cols-[6rem_6rem_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs",
+                            entry.active && "bg-muted/30",
+                          )}
+                        >
+                          <span className={cn(
+                            "inline-flex w-fit items-center rounded-full border px-2 py-0.5 font-medium",
+                            memoCodexLogTone(entry.state, entry.active),
+                          )}>
+                            {entry.label}
                           </span>
+                          <span className="tabular-nums text-muted-foreground">{entry.time}</span>
+                          <span className="min-w-0 truncate text-muted-foreground">{entry.body}</span>
                         </div>
-                        {/* Step 2: 接続/起動 */}
-                        {launchStep !== 'sending' && (
-                          <div className="space-y-1.5">
-                            <div className="flex items-center gap-2">
-                              {launchStep === 'sent'
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 shrink-0" />
-                                : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                              <span className={launchStep === 'sent' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}>
-                                {launchStep === 'sent'
-                                  ? `${isCodex ? 'プロンプト待ち' : '接続しています'}...${elapsedSecs > 0 ? ` (${elapsedSecs}秒)` : ''}`
-                                  : (isCodex ? 'プロンプト待ち' : '接続しました')}
-                              </span>
-                            </div>
-                            {launchStep === 'sent' && (
-                              <div className="pl-5 space-y-1 text-[11px] text-muted-foreground">
-                                <p>{isCodex ? 'Codex側で内容を確認して送信してください' : '通常15〜45秒かかります'}</p>
-                                {(() => {
-                                  const status = aiTask?.status
-                                  if (status === 'running') return <p className="text-blue-500 dark:text-blue-400 font-medium">▶ {executorLabel} が実行中です{isCodex ? '' : ' — URLを取得中...'}</p>
-                                  if (status === 'pending') return <p>Mac でエージェントの起動を待っています...</p>
-                                  return null
-                                })()}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {/* Claude: QRコード + URL */}
-                        {!isCodex && (launchStep === 'connected' || launchStep === 'completed') && sessionUrl && (
-                          <div className="flex flex-col sm:flex-row gap-3 pt-1">
-                            <div className="shrink-0 rounded-md border bg-white p-2 self-start">
-                              <QRCode value={sessionUrl} size={80} />
-                            </div>
-                            <div className="flex-1 min-w-0 space-y-2">
-                              <p className="text-muted-foreground">QRを読み取るかボタンで開く:</p>
-                              <a
-                                href={sessionUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-                              >
-                                <Wifi className="h-3.5 w-3.5" />
-                                このデバイスで開く
-                              </a>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  await navigator.clipboard.writeText(sessionUrl).catch(() => {})
-                                  setCopiedUrl(true)
-                                  setTimeout(() => setCopiedUrl(false), 1500)
-                                }}
-                                className="ml-2 inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1.5 text-[11px] hover:bg-muted"
-                              >
-                                {copiedUrl ? 'コピー済' : 'URLコピー'}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {/* Codex: 起動完了メッセージ */}
-                        {isCodex && (launchStep === 'connected' || launchStep === 'completed') && (
-                          <div className="pl-1 text-[11px] text-muted-foreground space-y-0.5">
-                            <p>✓ Codexを開きました。内容を確認してCodex側で送信してください。</p>
-                          </div>
-                        )}
-                        {/* 完了 */}
-                        {launchStep === 'completed' && (
-                          <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-medium">
-                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                            完了しました — メモ一覧に戻ります
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })()}
-
-                  {showCodexDetails && (
-                    <NoteClaudeRunnerPanel
-                      latestTask={aiTask}
-                      isProjectAssigned={!!item.project_id || aiTask?.executor === 'codex' || aiTask?.executor === 'codex_app'}
-                      isRepoConfigured={repoConfigured}
-                    />
-                  )}
+                      ))}
+                    </div>
+                  </div>
               </div>
             )
           })()}
-
-            <div className="space-y-2">
-            <Label>サブタスク候補</Label>
-            <ul className="space-y-1">
-              {(item.ideal_items ?? []).map(sub => (
-                <li key={sub.id} className="flex items-center gap-2 rounded-md border px-2 py-2 text-sm">
-                  <span className={cn(
-                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                    sub.is_done ? "border-primary bg-primary" : "border-muted-foreground/40",
-                  )}>
-                    {sub.is_done && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-                  </span>
-                  <span className={cn("flex-1", sub.is_done && "line-through text-muted-foreground")}>{sub.title}</span>
-                  {sub.session_minutes > 0 && <span className="text-xs text-muted-foreground">{sub.session_minutes}分</span>}
-                </li>
-              ))}
-            </ul>
-            <div className="flex gap-2">
-              <Input
-                value={newSubItem}
-                onChange={e => setNewSubItem(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleAddSubItem()}
-                placeholder="サブタスク候補を追加"
-              />
-              <Button size="icon" variant="outline" onClick={handleAddSubItem} className="min-w-[44px]">
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
           </div>
         </div>
       </SheetContent>
