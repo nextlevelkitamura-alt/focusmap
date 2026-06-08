@@ -36,6 +36,23 @@ function compactString(value: unknown, max: number) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 }
 
+function parseTimeMs(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : null
+}
+
+export function isClaimedByOtherActiveRunner(
+  task: { claimed_runner_id?: unknown; claim_expires_at?: unknown },
+  runnerId: string,
+  nowMs = Date.now(),
+) {
+  const claimedRunnerId = compactString(task.claimed_runner_id, 120)
+  if (!claimedRunnerId || claimedRunnerId === runnerId) return false
+  const claimExpiresAtMs = parseTimeMs(task.claim_expires_at)
+  return claimExpiresAtMs == null || claimExpiresAtMs > nowMs
+}
+
 function compactLatestLine(value: unknown, max: number) {
   if (typeof value !== 'string') return null
   const latest = value
@@ -95,14 +112,14 @@ export async function POST(
 
     const { data: task } = await supabase
       .from('ai_tasks')
-          .select('id, user_id, space_id, claimed_runner_id, status')
+          .select('id, user_id, space_id, claimed_runner_id, claim_expires_at, status')
       .eq('id', id)
       .maybeSingle()
     if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     if (task.user_id !== token.user_id && task.space_id !== token.space_id) {
       return NextResponse.json({ error: 'Task is outside this agent token scope' }, { status: 403 })
     }
-    if (task.claimed_runner_id && task.claimed_runner_id !== runnerId) {
+    if (isClaimedByOtherActiveRunner(task, runnerId)) {
       return NextResponse.json({ error: 'Task is claimed by another runner' }, { status: 409 })
     }
 

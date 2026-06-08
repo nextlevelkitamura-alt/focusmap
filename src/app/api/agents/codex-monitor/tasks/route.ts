@@ -3,6 +3,7 @@ import { authenticateAgent } from '@/lib/agent-auth'
 
 const VALID_STATUSES = ['pending', 'running', 'awaiting_approval', 'needs_input'] as const
 const VALID_EXECUTORS = ['codex', 'codex_app'] as const
+const MANUAL_HANDOFF_DISCOVERY_WINDOW_MS = 10 * 60 * 1000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -17,9 +18,40 @@ function jsonThreadId(result: unknown) {
   return stringValue(record.codex_thread_id)
 }
 
+function parseTimeMs(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return 0
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : 0
+}
+
+function isRecentManualHandoffDiscoveryCandidate(row: Record<string, unknown>, nowMs = Date.now()) {
+  if (stringValue(row.codex_thread_id) || jsonThreadId(row.result)) return false
+  if (stringValue(row.executor) !== 'codex_app') return false
+  const result = isRecord(row.result) ? row.result : {}
+  if (result.codex_manual_handoff !== true) return false
+  if (stringValue(result.codex_run_state) !== 'prompt_waiting') return false
+  if (!stringValue(row.prompt)) return false
+
+  const startedMs = parseTimeMs(row.started_at)
+  const createdMs = parseTimeMs(row.created_at)
+  const candidateMs = Math.max(startedMs, createdMs)
+  return candidateMs > 0 && nowMs - candidateMs <= MANUAL_HANDOFF_DISCOVERY_WINDOW_MS
+}
+
+export function shouldReturnCodexMonitorTask(row: Record<string, unknown>) {
+  return Boolean(stringValue(row.codex_thread_id) || jsonThreadId(row.result)) ||
+    isRecentManualHandoffDiscoveryCandidate(row)
+}
+
 function parseLimit(value: unknown) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.max(1, Math.min(200, Math.floor(parsed))) : 80
+}
+
+function collectStringIds(rows: unknown[], key: string) {
+  return [...new Set(rows
+    .map(row => stringValue(isRecord(row) ? row[key] : null))
+    .filter((value): value is string => Boolean(value)))]
 }
 
 async function activeTaskIds(
@@ -108,17 +140,17 @@ export async function POST(request: NextRequest) {
 
     const rows = (data ?? []).filter(row => {
       const record = row as Record<string, unknown>
-      return !!(stringValue(record.codex_thread_id) || jsonThreadId(record.result))
+      return shouldReturnCodexMonitorTask(record)
     })
 
-    const sourceTaskIds = rows.flatMap(row => stringValue((row as Record<string, unknown>).source_task_id) ?? [])
-    const sourceNoteIds = rows.flatMap(row => stringValue((row as Record<string, unknown>).source_note_id) ?? [])
-    const sourceIdealGoalIds = rows.flatMap(row => stringValue((row as Record<string, unknown>).source_ideal_goal_id) ?? [])
+    const sourceTaskIds = collectStringIds(rows, 'source_task_id')
+    const sourceNoteIds = collectStringIds(rows, 'source_note_id')
+    const sourceIdealGoalIds = collectStringIds(rows, 'source_ideal_goal_id')
 
     const [activeTasks, activeNotes, activeIdealGoals] = await Promise.all([
-      activeTaskIds(supabase, [...new Set(sourceTaskIds)]),
-      activeNoteIds(supabase, [...new Set(sourceNoteIds)]),
-      activeIdealGoalIds(supabase, [...new Set(sourceIdealGoalIds)]),
+      activeTaskIds(supabase, sourceTaskIds),
+      activeNoteIds(supabase, sourceNoteIds),
+      activeIdealGoalIds(supabase, sourceIdealGoalIds),
     ])
 
     const tasks = rows

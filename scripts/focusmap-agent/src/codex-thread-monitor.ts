@@ -25,6 +25,7 @@ type CodexThreadRow = {
   rollout_path?: string | null;
   source?: string | null;
   cwd?: string | null;
+  first_user_message?: string | null;
 };
 
 type VisibleMessage = {
@@ -133,7 +134,7 @@ async function readThread(dbPath: string, threadId: string): Promise<CodexThread
   const rows = await sqliteJson<CodexThreadRow>(
     dbPath,
     [
-      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, preview, rollout_path, source, cwd',
+      'SELECT id, title, tokens_used, has_user_event, archived, updated_at_ms, preview, rollout_path, source, cwd, first_user_message',
       'FROM threads',
       `WHERE id = ${sqlString(threadId)}`,
       'LIMIT 1',
@@ -297,6 +298,46 @@ function taskThreadId(task: AiTask): string | null {
   return typeof resultThreadId === 'string' && resultThreadId.trim() ? resultThreadId.trim() : null;
 }
 
+function taskHandoffToken(task: AiTask): string | null {
+  const result = isRecord(task.result) ? task.result : {};
+  const resultToken = result.codex_handoff_token;
+  if (typeof resultToken === 'string' && resultToken.trim()) return resultToken.trim();
+  const match = task.prompt.match(/Focusmap同期ID:\s*(FM-[A-Za-z0-9._:-]+)/);
+  return match?.[1]?.trim() || null;
+}
+
+async function findMatchingThread(dbPath: string, task: AiTask): Promise<string | null> {
+  const startedMs = timeMs(task.started_at) ?? timeMs(task.created_at) ?? Date.now();
+  const sinceMs = Math.max(0, startedMs - 60_000);
+  const token = taskHandoffToken(task);
+  const cwd = task.cwd?.trim();
+  const cwdCondition = cwd ? ` AND cwd = ${sqlString(cwd)}` : '';
+  const candidates: string[] = [];
+
+  if (token) {
+    const tokenCondition = `first_user_message LIKE ${sqlString(`%Focusmap同期ID: ${token}%`)} AND updated_at_ms >= ${sinceMs}`;
+    if (cwdCondition) candidates.push(`${tokenCondition}${cwdCondition}`);
+    candidates.push(tokenCondition);
+  }
+
+  const promptPrefix = task.prompt.slice(0, 60).trim();
+  if (promptPrefix) {
+    const prefixCondition = `first_user_message LIKE ${sqlString(`${promptPrefix}%`)} AND updated_at_ms >= ${sinceMs}`;
+    if (cwdCondition) candidates.push(`${prefixCondition}${cwdCondition}`);
+    candidates.push(prefixCondition);
+  }
+
+  for (const where of candidates) {
+    const rows = await sqliteJson<{ id: string }>(
+      dbPath,
+      `SELECT id FROM threads WHERE ${where} ORDER BY created_at_ms DESC LIMIT 1`,
+    );
+    if (rows[0]?.id) return rows[0].id;
+  }
+
+  return null;
+}
+
 function taskResult(task: AiTask): Record<string, unknown> {
   return isRecord(task.result) ? task.result : {};
 }
@@ -441,7 +482,7 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
 }
 
 async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string, task: AiTask): Promise<void> {
-  const threadId = taskThreadId(task);
+  const threadId = taskThreadId(task) ?? await findMatchingThread(dbPath, task);
   if (!threadId) return;
 
   const row = await readThread(dbPath, threadId);

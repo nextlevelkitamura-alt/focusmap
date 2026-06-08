@@ -161,7 +161,7 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 - 2026-06-07: Phase 1の設定UI入り口として、Focusmap MacアプリのElectron IPCに `getAutomationStatus` / `connectAutomation` / `disconnectAutomation` を追加し、設定 > 自動化の先頭へ `Mac / Codex Connection` カードを追加した。カードはNext 3001、Macアプリ管理下の `focusmap-agent`、Codex app-serverを5秒ごとに診断し、Macアプリ内だけで接続/切断できる。通常ブラウザ、Cloud Run、スマホからローカルMacを制御するAPIは追加していない。
 - 2026-06-08: Phase 5の先行整理として、通常監視writerを `focusmap-agent` 一本に固定した。Macアプリは旧 `task-runner` を通常自動起動せず、旧runner側のCodex sqlite/rollout監視も `FOCUSMAP_LEGACY_CODEX_MONITOR=1` 明示時だけ動く。設定UIは旧runnerを「通常停止」として表示し、`docs/CONTEXT.md` と保存境界仕様に同じ契約を追記した。
 - 2026-06-08: auto実行の確認待ち遷移を補強した。`focusmap-agent` はCodex.app app-server通知からユーザー可視assistant発話だけを短いactivity候補として保持し、`running -> awaiting_approval` の状態更新1回に限ってactivityをクラウドへ同送する。詳細画面は開いた瞬間にTurso/Supabase activityを読めるため、開いてからローカルログを回収する待ち時間を避けられる。
-- 2026-06-09: 固定済みCodex threadの通常監視を `focusmap-agent` に追加した。agent専用 `/api/agents/codex-monitor/tasks` は `codex_thread_id` 保存済みかつsourceが削除/アーカイブされていないtaskだけを返し、Mac agentはそのthread IDを `~/.codex/state_5.sqlite` / rollout JSONL から3秒間隔で読む。確認待ち後の追加プロンプトを検知したら `running` snapshot/eventと `resumed` / `user_answer` activityへ戻し、thread削除/アーカイブ時は対象 `ai_tasks` を `completed` にして監視対象から外す。
+- 2026-06-09: 固定済みCodex threadの通常監視を `focusmap-agent` に追加した。agent専用 `/api/agents/codex-monitor/tasks` は `codex_thread_id` 保存済みかつsourceが削除/アーカイブされていないtaskに加え、作成から10分以内の未紐付けmanual handoff taskも一時的に返す。Mac agentは未紐付けtaskを `~/.codex/state_5.sqlite` の `first_user_message` とhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存し、保存後はそのthread IDを rollout JSONL と合わせて3秒間隔で読む。確認待ち後の追加プロンプトを検知したら `running` snapshot/eventと `resumed` / `user_answer` activityへ戻し、thread削除/アーカイブ時は対象 `ai_tasks` を `completed` にして監視対象から外す。
 
 ## リスク
 
