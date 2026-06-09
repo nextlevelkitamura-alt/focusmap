@@ -1,7 +1,9 @@
 "use client"
 
+import { useCallback, useEffect } from "react"
 import type React from "react"
-import { IndentIncrease, IndentDecrease, Plus, Trash2, ChevronDown } from "lucide-react"
+import { IndentIncrease, IndentDecrease, Plus, Trash2, ChevronDown, Loader2, Mic, Square } from "lucide-react"
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import { cn } from "@/lib/utils"
 
 interface KeyboardAccessoryBarProps {
@@ -17,6 +19,7 @@ interface KeyboardAccessoryBarProps {
     onAddChild?: () => void
     onAddSibling?: () => void
     onDelete?: () => void
+    onVoiceText?: (text: string) => void
     onDismiss: () => void
 }
 
@@ -33,6 +36,7 @@ export function KeyboardAccessoryBar({
     onAddChild,
     onAddSibling,
     onDelete,
+    onVoiceText,
     onDismiss,
 }: KeyboardAccessoryBarProps) {
     const positionStyle = viewportBottom > 0
@@ -41,12 +45,41 @@ export function KeyboardAccessoryBar({
     const preserveKeyboardFocus = (event: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>) => {
         event.preventDefault()
     }
+    const handleVoiceTranscribed = useCallback((text: string) => {
+        onVoiceText?.(text)
+    }, [onVoiceText])
+    const {
+        isRecording,
+        isTranscribing,
+        error: voiceError,
+        startRecording,
+        stopRecording,
+    } = useVoiceRecorder(handleVoiceTranscribed)
+    const handleVoiceToggle = useCallback(() => {
+        if (isRecording) {
+            stopRecording()
+            return
+        }
+        void startRecording()
+    }, [isRecording, startRecording, stopRecording])
+
+    useEffect(() => () => {
+        stopRecording()
+    }, [stopRecording])
 
     return (
         <div
             className="fixed left-0 right-0 z-[60] bg-background/95 backdrop-blur-sm border-t border-border md:hidden"
             style={positionStyle}
         >
+            {onVoiceText && voiceError && (
+                <div
+                    role="status"
+                    className="border-b border-border/70 px-3 py-1 text-[11px] font-medium text-destructive"
+                >
+                    <span className="line-clamp-1">{voiceError}</span>
+                </div>
+            )}
             <div className="flex items-center justify-between px-2 py-1.5 safe-area-inset-bottom">
                 {/* キーボード閉じる */}
                 <button
@@ -151,6 +184,33 @@ export function KeyboardAccessoryBar({
                             aria-label="ノード削除"
                         >
                             <Trash2 className="h-4 w-4" />
+                        </button>
+                    )}
+
+                    {onVoiceText && (
+                        <button
+                            type="button"
+                            disabled={isTranscribing}
+                            onPointerDown={preserveKeyboardFocus}
+                            onMouseDown={preserveKeyboardFocus}
+                            onClick={handleVoiceToggle}
+                            className={cn(
+                                "flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors active:bg-muted disabled:text-muted-foreground/40",
+                                isRecording
+                                    ? "bg-red-500/10 text-red-500 active:bg-red-500/15"
+                                    : "text-foreground"
+                            )}
+                            title={isRecording ? "録音停止" : "音声入力"}
+                            aria-label={isRecording ? "録音を停止" : "ノード名を音声入力"}
+                            aria-pressed={isRecording}
+                        >
+                            {isTranscribing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : isRecording ? (
+                                <Square className="h-4 w-4" />
+                            ) : (
+                                <Mic className="h-4 w-4" />
+                            )}
                         </button>
                     )}
                 </div>

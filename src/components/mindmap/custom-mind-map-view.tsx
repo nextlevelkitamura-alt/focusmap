@@ -2583,6 +2583,80 @@ export function CustomMindMapView({
         }
     }, []);
 
+    const applyVoiceTextToFloatingEditor = useCallback((text: string) => {
+        const transcript = text.trim();
+        if (!transcript) return;
+
+        const input = floatingTextareaRef.current;
+        const currentValue = input?.value ?? floatingEditValueRef.current;
+        const selectionStart = input?.selectionStart ?? currentValue.length;
+        const selectionEnd = input?.selectionEnd ?? currentValue.length;
+        const isReplacingAll = selectionStart === 0 && selectionEnd === currentValue.length;
+        const isEmpty = currentValue.trim().length === 0;
+        const before = currentValue.slice(0, selectionStart);
+        const after = currentValue.slice(selectionEnd);
+        const beforeSeparator = before.length > 0 && !/\s$/.test(before) ? "\n" : "";
+        const afterSeparator = after.length > 0 && !/^\s/.test(after) ? "\n" : "";
+        const nextValue = isEmpty || isReplacingAll
+            ? transcript
+            : `${before}${beforeSeparator}${transcript}${afterSeparator}${after}`;
+        const cursorPosition = isEmpty || isReplacingAll
+            ? transcript.length
+            : before.length + beforeSeparator.length + transcript.length;
+
+        if (input) input.value = nextValue;
+        updateFloatingEditValue(nextValue);
+
+        const restoreCursor = () => {
+            const nextInput = floatingTextareaRef.current;
+            if (!nextInput) return;
+            nextInput.focus({ preventScroll: true });
+            nextInput.setSelectionRange(cursorPosition, cursorPosition);
+            syncFloatingTextareaHeight(nextInput);
+        };
+        restoreCursor();
+        requestAnimationFrame(restoreCursor);
+    }, [syncFloatingTextareaHeight, updateFloatingEditValue]);
+
+    const handleAccessoryVoiceText = useCallback((text: string) => {
+        void runKeyboardAction(async () => {
+            const node = activeAccessoryNode;
+            if (!node) return;
+
+            await finishFloatingComposition();
+            ignoreNextFloatingBlurRef.current = true;
+            setMobileKeyboardAccessoryPinned(true);
+
+            const applyText = () => {
+                applyVoiceTextToFloatingEditor(text);
+                requestAnimationFrame(() => {
+                    ignoreNextFloatingBlurRef.current = false;
+                });
+            };
+
+            if (floatingEditNodeId !== node.id) {
+                const value = node.kind === "project"
+                    ? node.title
+                    : rawTaskTitleById.get(node.id) ?? node.title;
+                startFloatingEdit(node.id, value, { selectAll: false });
+                requestAnimationFrame(applyText);
+                return;
+            }
+
+            preserveMobileKeyboardFocus();
+            applyText();
+        });
+    }, [
+        activeAccessoryNode,
+        applyVoiceTextToFloatingEditor,
+        finishFloatingComposition,
+        floatingEditNodeId,
+        preserveMobileKeyboardFocus,
+        rawTaskTitleById,
+        runKeyboardAction,
+        startFloatingEdit,
+    ]);
+
     const handleCreateRootNode = useCallback(async (options: { preserveTextFocus?: boolean } = {}) => {
         if (!options.preserveTextFocus) prepareMobileTextFocus();
         await onAddRootNode?.();
@@ -2933,6 +3007,7 @@ export function CustomMindMapView({
                     onAddChild={(activeAccessoryNode.kind === "project" ? onAddRootNode : onAddChildNode) ? handleAccessoryAddChild : undefined}
                     onAddSibling={activeAccessoryNode.kind === "task" && onAddSiblingNode ? handleAccessoryAddSibling : undefined}
                     onDelete={activeAccessoryNode.kind === "task" && onDeleteNode ? handleAccessoryDelete : undefined}
+                    onVoiceText={handleAccessoryVoiceText}
                     onDismiss={handleAccessoryDismiss}
                 />
             )}

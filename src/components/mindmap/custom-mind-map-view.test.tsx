@@ -1040,6 +1040,20 @@ describe("CustomMindMapView keyboard operations", () => {
     await waitFor(() => expect(onAddSiblingNode).toHaveBeenCalledWith("root-1"))
   })
 
+  test("shows voice input on the mobile keyboard accessory while editing a node", async () => {
+    installOpenKeyboardViewport()
+
+    renderMap({
+      isMobile: true,
+      pendingEditNodeId: "root-1",
+      selectedNodeId: "root-1",
+      selectedNodeIds: new Set(["root-1"]),
+    })
+
+    await screen.findByDisplayValue("Root task")
+    expect(await screen.findByRole("button", { name: "ノード名を音声入力" })).toBeInTheDocument()
+  })
+
   test("guards mobile keyboard accessory add actions from duplicate taps", async () => {
     installOpenKeyboardViewport()
     const onAddSiblingNode = vi.fn()
