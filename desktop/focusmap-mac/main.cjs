@@ -1,14 +1,16 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const https = require('node:https');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
 const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
-const APP_ORIGIN = process.env.FOCUSMAP_DESKTOP_URL || `http://127.0.0.1:${APP_PORT}`;
+const LOCAL_APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`;
+const PRODUCTION_APP_ORIGIN = 'https://focusmap-official.com';
 const DESKTOP_USER_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'focusmap-desktop-shell');
 const DESKTOP_HEALTH_TOKEN = process.env.FOCUSMAP_DESKTOP_HEALTH_TOKEN || randomUUID();
 app.setName('Focusmap');
@@ -65,6 +67,22 @@ function envFlagEnabled(value) {
 
 const REPO_ROOT = resolveRepoRoot();
 const DESKTOP_ENV = loadDesktopEnv(REPO_ROOT);
+const EXPLICIT_APP_ORIGIN = (
+  process.env.FOCUSMAP_DESKTOP_URL ||
+  DESKTOP_ENV.FOCUSMAP_DESKTOP_URL ||
+  ''
+).trim();
+const DESKTOP_UI_MODE = (
+  process.env.FOCUSMAP_DESKTOP_UI_MODE ||
+  DESKTOP_ENV.FOCUSMAP_DESKTOP_UI_MODE ||
+  ''
+).trim().toLowerCase();
+const APP_ORIGIN = normalizeOriginValue(
+  EXPLICIT_APP_ORIGIN ||
+  (DESKTOP_UI_MODE === 'remote' || (app.isPackaged && DESKTOP_UI_MODE !== 'local')
+    ? PRODUCTION_APP_ORIGIN
+    : LOCAL_APP_ORIGIN)
+);
 const LEGACY_TASK_RUNNER_ENABLED = envFlagEnabled(
   process.env.FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER ||
   DESKTOP_ENV.FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER,
@@ -75,13 +93,13 @@ const AUTOMATION_SUPERVISOR_INTERVAL_MS = Math.max(
 );
 const RUNNER_KICK_COOLDOWN_MS = 5 * 60_000;
 const RUNNER_RECOVERY_COOLDOWN_MS = 15 * 60_000;
-const WEB_AUTH_ORIGIN = (
+const WEB_AUTH_ORIGIN = normalizeOriginValue(
   process.env.FOCUSMAP_WEB_AUTH_ORIGIN ||
   DESKTOP_ENV.FOCUSMAP_WEB_AUTH_ORIGIN ||
   process.env.NEXT_PUBLIC_APP_URL ||
   DESKTOP_ENV.NEXT_PUBLIC_APP_URL ||
-  'https://focusmap-official.com'
-).replace(/\/$/, '');
+  (!isLocalOriginValue(APP_ORIGIN) ? APP_ORIGIN : PRODUCTION_APP_ORIGIN)
+);
 const RESOURCE_ROOT = app.isPackaged ? process.resourcesPath : REPO_ROOT;
 const CONFIG_PATH = path.join(os.homedir(), '.focusmap', 'config.json');
 const AUTH_SESSION_PATH = path.join(DESKTOP_USER_DATA_DIR, 'auth-session.json');
@@ -271,6 +289,19 @@ function commandExists(command) {
   });
 }
 
+function execFileText(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: 5000, windowsHide: true, ...options }, (error, stdout, stderr) => {
+      if (error) {
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
 function readTaskRunnerPauseStatus() {
   const available = fs.existsSync(TASK_RUNNER_SCRIPT);
   const base = {
@@ -400,16 +431,23 @@ function tcpReady(host, port, timeoutMs = 800) {
 
 function httpRequest(url, timeoutMs = 1000, headers = {}) {
   return new Promise((resolve) => {
-    const req = http.get(url, { timeout: timeoutMs, headers }, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        resolve({
-          statusCode: res.statusCode || 0,
-          body: Buffer.concat(chunks).toString('utf8'),
+    let req = null;
+    try {
+      const client = String(url).startsWith('https:') ? https : http;
+      req = client.get(url, { timeout: timeoutMs, headers }, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          resolve({
+            statusCode: res.statusCode || 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          });
         });
       });
-    });
+    } catch {
+      resolve({ statusCode: 0, body: '' });
+      return;
+    }
     req.once('timeout', () => {
       req.destroy();
       resolve({ statusCode: 0, body: '' });
@@ -424,8 +462,21 @@ function healthUrl() {
   return url.toString();
 }
 
+function normalizeOriginValue(value) {
+  try {
+    const url = new URL(value);
+    return url.origin;
+  } catch {
+    return String(value || '').replace(/\/$/, '');
+  }
+}
+
+function isLocalOriginValue(value) {
+  return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(value);
+}
+
 function isLocalAppOrigin() {
-  return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(APP_ORIGIN);
+  return isLocalOriginValue(APP_ORIGIN);
 }
 
 function isSameOrigin(urlString, origin) {
@@ -474,6 +525,51 @@ function normalizeHttpOrigin(value) {
 
 function allowedDesktopAuthOrigins() {
   return new Set([APP_ORIGIN, WEB_AUTH_ORIGIN].map(normalizeHttpOrigin).filter(Boolean));
+}
+
+function allowedDesktopIpcOrigins() {
+  return allowedDesktopAuthOrigins();
+}
+
+function senderFrameUrl(event) {
+  return event.senderFrame?.url || event.sender?.getURL?.() || '';
+}
+
+function assertAllowedIpcSender(event, channel) {
+  const origin = normalizeHttpOrigin(senderFrameUrl(event));
+  if (origin && allowedDesktopIpcOrigins().has(origin)) return;
+  const message = `blocked IPC ${channel} from ${origin || senderFrameUrl(event) || 'unknown origin'}`;
+  log('ipc', message);
+  throw new Error('このFocusmap画面からはMac連携を実行できません');
+}
+
+function handleDesktopIpc(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    assertAllowedIpcSender(event, channel);
+    return handler(event, ...args);
+  });
+}
+
+function isAllowedAppNavigationUrl(urlString) {
+  const origin = normalizeHttpOrigin(urlString);
+  return Boolean(origin && allowedDesktopAuthOrigins().has(origin));
+}
+
+function canOpenExternalUrl(urlString) {
+  try {
+    const protocol = new URL(urlString).protocol;
+    return ['http:', 'https:', 'mailto:', 'focusmap:', 'codex:'].includes(protocol);
+  } catch {
+    return false;
+  }
+}
+
+function openExternalSafely(urlString) {
+  if (typeof urlString !== 'string' || !canOpenExternalUrl(urlString)) {
+    throw new Error('外部URLが不正です');
+  }
+  rememberDesktopAuthNonceFromUrl(urlString);
+  return shell.openExternal(urlString);
 }
 
 function resolveDesktopAuthOrigin(value) {
@@ -602,6 +698,7 @@ function loadDashboardSoon(reason) {
   if (now - dashboardLoadAttemptedAt < 1500) return;
   dashboardLoadAttemptedAt = now;
 
+  log('app', `loading dashboard (${reason}): ${dashboardUrl()}`);
   void loadUrlAllowingRedirect(mainWindow, dashboardUrl()).catch((error) => {
     log('app', `dashboard load failed (${reason}): ${error.message}`);
   });
@@ -620,6 +717,7 @@ async function loadDashboardWhenReady(reason) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     const currentUrl = mainWindow.webContents.getURL();
     if (!isSameOrigin(currentUrl, origin) || isLoadingScreenUrl(currentUrl)) {
+      log('app', `loading dashboard (${reason}): ${dashboardUrl(origin)}`);
       await loadUrlAllowingRedirect(mainWindow, dashboardUrl(origin));
     }
   }
@@ -669,6 +767,16 @@ function handleMainNavigation(event, url) {
     return true;
   }
 
+  if (!isAllowedAppNavigationUrl(url)) {
+    event.preventDefault();
+    if (canOpenExternalUrl(url)) {
+      shell.openExternal(url).catch((error) => {
+        log('app', `failed to open external navigation ${url}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -689,6 +797,9 @@ function preferredAgentApiUrl() {
   }
   if (DESKTOP_ENV.FOCUSMAP_DESKTOP_AGENT_API_URL) {
     return DESKTOP_ENV.FOCUSMAP_DESKTOP_AGENT_API_URL.replace(/\/$/, '');
+  }
+  if (!isLocalAppOrigin()) {
+    return `${APP_ORIGIN}/api`;
   }
   if (isLocalAppOrigin() && (
     !app.isPackaged ||
@@ -725,7 +836,7 @@ async function desktopHealthReady(timeoutMs = 1200) {
     'x-focusmap-desktop-token': DESKTOP_HEALTH_TOKEN,
   });
   if (response.statusCode >= 500 || response.statusCode === 404 || response.statusCode === 0) return false;
-  if (!isLocalAppOrigin() || process.env.FOCUSMAP_DESKTOP_URL) return true;
+  if (!isLocalAppOrigin() || EXPLICIT_APP_ORIGIN) return true;
 
   try {
     const payload = JSON.parse(response.body);
@@ -738,7 +849,7 @@ async function desktopHealthReady(timeoutMs = 1200) {
 }
 
 function startNextServer() {
-  if (process.env.FOCUSMAP_DESKTOP_URL) return null;
+  if (!isLocalAppOrigin() || EXPLICIT_APP_ORIGIN) return null;
   if (isChildRunning(managedProcesses.next)) return managedProcesses.next;
 
   const devNextBin = path.join(REPO_ROOT, 'node_modules', '.bin', 'next');
@@ -776,6 +887,7 @@ function startNextServer() {
 }
 
 async function ensureFocusmapApp() {
+  if (!isLocalAppOrigin()) return APP_ORIGIN;
   if (await desktopHealthReady(1200)) return APP_ORIGIN;
   if (isLocalAppOrigin() && await tcpReady(appOriginHost(), APP_PORT, 250)) {
     throw new Error(`${APP_ORIGIN} は応答していますが、このFocusmap Macアプリが起動したWebではありません。3001番を使っている古いNext/別プロジェクトを終了してから、Focusmapを開き直してください。`);
@@ -937,6 +1049,128 @@ function handleFocusmapDeepLink(urlString) {
   }
 }
 
+function normalizeClipboardText(value) {
+  if (typeof value !== 'string') return '';
+  if (value.length > 500_000) throw new Error('クリップボードへ渡す文字列が大きすぎます');
+  return value.replace(/\r\n?/g, '\n');
+}
+
+function normalizeCodexPrompt(value) {
+  return normalizeClipboardText(value).replace(/[ \t]+\n/g, '\n').trim();
+}
+
+function expandHome(input) {
+  if (input === '~') return os.homedir();
+  if (input.startsWith('~/')) return path.join(os.homedir(), input.slice(2));
+  return input;
+}
+
+async function resolveGitRoot(repoPath) {
+  try {
+    const stdout = await execFileText('/usr/bin/git', ['-C', repoPath, 'rev-parse', '--show-toplevel']);
+    return fs.realpathSync(String(stdout).trim());
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCodexRepoPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const expanded = expandHome(value.trim());
+  if (!path.isAbsolute(expanded)) throw new Error('repoPath must be an absolute path');
+
+  let resolved = '';
+  try {
+    resolved = fs.realpathSync(expanded);
+  } catch {
+    throw new Error('repoPath does not exist');
+  }
+
+  const stat = fs.statSync(resolved);
+  if (!stat.isDirectory()) throw new Error('repoPath must be a directory');
+
+  const gitRoot = await resolveGitRoot(resolved);
+  if (!gitRoot) throw new Error('repoPath must be a git repository');
+  if (gitRoot !== resolved) throw new Error('repoPath must point to the git repository root');
+  return resolved;
+}
+
+function resolveCodexUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.length > 4000) throw new Error('codex URL is too long');
+  const url = new URL(value.trim());
+  if (url.protocol !== 'codex:') throw new Error('codex URL must use the codex:// scheme');
+  return url.toString();
+}
+
+function resolveOriginUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.length > 4000) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function buildCodexChatUrl(repoPath, originUrl) {
+  const url = new URL('codex://');
+  if (repoPath) url.searchParams.set('path', repoPath);
+  if (originUrl) url.searchParams.set('originUrl', originUrl);
+  return url.toString();
+}
+
+async function activateCodexApp() {
+  try {
+    await execFileText('/usr/bin/osascript', [
+      '-e',
+      'tell application id "com.openai.codex" to reopen',
+      '-e',
+      'tell application id "com.openai.codex" to activate',
+    ]);
+    return true;
+  } catch (error) {
+    log('codex', `Codex.app activation failed: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+async function copyTextFromBridge(_event, value) {
+  const text = normalizeClipboardText(value);
+  if (!text) return { ok: false, copied: false, error: 'コピーする文字列がありません' };
+  clipboard.writeText(text);
+  return { ok: true, copied: true };
+}
+
+async function launchCodexFromBridge(_event, payload) {
+  const input = payload && typeof payload === 'object' ? payload : {};
+  const prompt = normalizeCodexPrompt(input.prompt);
+  const repoPath = await resolveCodexRepoPath(input.repoPath ?? input.repo_path);
+  const codexUrl = resolveCodexUrl(input.codexUrl ?? input.codex_url ?? input.threadUrl ?? input.thread_url);
+  const originUrl = resolveOriginUrl(input.originUrl ?? input.origin_url);
+  let copiedToClipboard = false;
+
+  if (prompt) {
+    clipboard.writeText(prompt);
+    copiedToClipboard = true;
+  }
+
+  const targetUrl = codexUrl || buildCodexChatUrl(repoPath, originUrl);
+  await shell.openExternal(targetUrl);
+  const activated = await activateCodexApp();
+
+  return {
+    ok: true,
+    mode: 'electron-bridge',
+    url: targetUrl,
+    repoPath,
+    copiedToClipboard,
+    activated,
+  };
+}
+
 async function startAgent() {
   if (isChildRunning(managedProcesses.agent)) return { ok: true, message: 'agentは起動済みです' };
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -1036,7 +1270,12 @@ async function ensureAutomationServices(reason, options = {}) {
 
   try {
     await ensureFocusmapApp();
-    results.app = serviceResult(true, 'FocusmapローカルWebは起動済みです');
+    results.app = serviceResult(
+      true,
+      isLocalAppOrigin()
+        ? 'FocusmapローカルWebは起動済みです'
+        : 'Focusmap本番Webを表示しています',
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     results.app = serviceResult(false, message);
@@ -1144,6 +1383,7 @@ async function getAutomationStatus() {
     app: {
       ready: appReady,
       managed: isChildRunning(managedProcesses.next),
+      mode: isLocalAppOrigin() ? 'local' : 'remote',
       origin: APP_ORIGIN,
       port: APP_PORT,
     },
@@ -1265,7 +1505,13 @@ async function createMainWindow() {
       openAuthExternally(url);
       return { action: 'deny' };
     }
-    return { action: 'allow' };
+    if (isAllowedAppNavigationUrl(url)) return { action: 'allow' };
+    if (canOpenExternalUrl(url)) {
+      shell.openExternal(url).catch((error) => {
+        log('app', `failed to open external window ${url}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    return { action: 'deny' };
   });
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -1335,22 +1581,21 @@ app.on('second-instance', (_event, commandLine) => {
   });
 });
 
-ipcMain.handle('focusmap-desktop:openMain', () => {
+handleDesktopIpc('focusmap-desktop:openMain', () => {
   createMainWindow();
   return true;
 });
-ipcMain.handle('focusmap-desktop:openExternal', (_event, url) => {
-  rememberDesktopAuthNonceFromUrl(url);
-  return shell.openExternal(url);
-});
-ipcMain.handle('focusmap-desktop:getWebAuthOrigin', () => WEB_AUTH_ORIGIN);
-ipcMain.handle('focusmap-desktop:consumeAuthSession', consumeExternalAuthSession);
-ipcMain.handle('focusmap-desktop:saveAuthSession', saveDesktopAuthSession);
-ipcMain.handle('focusmap-desktop:loadAuthSession', loadDesktopAuthSession);
-ipcMain.handle('focusmap-desktop:clearAuthSession', clearDesktopAuthSession);
-ipcMain.handle('focusmap-desktop:getAutomationStatus', getAutomationStatus);
-ipcMain.handle('focusmap-desktop:connectAutomation', connectAutomation);
-ipcMain.handle('focusmap-desktop:disconnectAutomation', disconnectAutomation);
+handleDesktopIpc('focusmap-desktop:openExternal', (_event, url) => openExternalSafely(url));
+handleDesktopIpc('focusmap-desktop:getWebAuthOrigin', () => WEB_AUTH_ORIGIN);
+handleDesktopIpc('focusmap-desktop:consumeAuthSession', consumeExternalAuthSession);
+handleDesktopIpc('focusmap-desktop:saveAuthSession', saveDesktopAuthSession);
+handleDesktopIpc('focusmap-desktop:loadAuthSession', loadDesktopAuthSession);
+handleDesktopIpc('focusmap-desktop:clearAuthSession', clearDesktopAuthSession);
+handleDesktopIpc('focusmap-desktop:getAutomationStatus', getAutomationStatus);
+handleDesktopIpc('focusmap-desktop:connectAutomation', connectAutomation);
+handleDesktopIpc('focusmap-desktop:disconnectAutomation', disconnectAutomation);
+handleDesktopIpc('focusmap-desktop:copyText', copyTextFromBridge);
+handleDesktopIpc('focusmap-desktop:launchCodex', launchCodexFromBridge);
 
 app.on('before-quit', () => {
   isQuitting = true;

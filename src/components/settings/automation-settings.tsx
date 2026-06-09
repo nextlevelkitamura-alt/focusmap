@@ -109,6 +109,7 @@ function codexDetail(status: FocusmapDesktopAutomationStatus | null) {
 function appDetail(status: FocusmapDesktopAutomationStatus | null) {
   const app = status?.app
   if (!app) return "Macアプリから状態を取得していません。"
+  if (app.ready && app.mode === "remote") return `${app.origin ?? "本番Web"} をMacアプリ内で表示しています。`
   if (app.ready) return `${app.origin ?? "localhost"} をMacアプリが管理しています。`
   return "ローカルWebのhealth確認ができていません。"
 }

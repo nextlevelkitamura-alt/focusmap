@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('focusmapDesktop', {
   getAutomationStatus: () => ipcRenderer.invoke('focusmap-desktop:getAutomationStatus'),
   connectAutomation: () => ipcRenderer.invoke('focusmap-desktop:connectAutomation'),
   disconnectAutomation: () => ipcRenderer.invoke('focusmap-desktop:disconnectAutomation'),
+  copyText: (text) => ipcRenderer.invoke('focusmap-desktop:copyText', text),
+  launchCodex: (payload) => ipcRenderer.invoke('focusmap-desktop:launchCodex', payload),
 });

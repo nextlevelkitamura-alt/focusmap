@@ -6,6 +6,7 @@ import {
   buildCodexDeepLink,
   buildCodexHandoffToken,
   buildCodexOpenTarget,
+  canUseElectronCodexBridge,
   detectMobilePlatform,
   isLocalCodexOpenHost,
   isLocalCodexOpenRequestHost,
@@ -15,6 +16,7 @@ import {
 
 afterEach(() => {
   delete window.ReactNativeWebView
+  delete (window as Window & { focusmapDesktop?: unknown }).focusmapDesktop
   vi.unstubAllGlobals()
 })
 
@@ -152,6 +154,47 @@ describe("ChatGPT mobile open target", () => {
 })
 
 describe("launchCodexViaLocalApi", () => {
+  test("uses the Electron bridge before the local Next API", async () => {
+    const launchCodex = vi.fn(async () => ({
+      ok: true,
+      copiedToClipboard: true,
+      url: "codex://",
+    }))
+    ;(window as Window & { focusmapDesktop?: { launchCodex: typeof launchCodex } }).focusmapDesktop = { launchCodex }
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(launchCodexViaLocalApi({
+      prompt: "  実行して\r\n",
+      repoPath: "/repo",
+      threadUrl: "codex://thread/abc",
+      originUrl: "https://focusmap-official.com/dashboard",
+    })).resolves.toEqual({
+      mode: "electron-bridge",
+      url: "codex://",
+      copiedToClipboard: true,
+    })
+
+    expect(canUseElectronCodexBridge()).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(launchCodex).toHaveBeenCalledWith({
+      prompt: "実行して",
+      repoPath: "/repo",
+      threadUrl: "codex://thread/abc",
+      codexUrl: "codex://thread/abc",
+      originUrl: "https://focusmap-official.com/dashboard",
+    })
+  })
+
+  test("rejects prompt handoff when the Electron bridge could not copy the prompt", async () => {
+    ;(window as Window & { focusmapDesktop?: { launchCodex: () => Promise<{ ok: true; copiedToClipboard: false }> } }).focusmapDesktop = {
+      launchCodex: vi.fn(async () => ({ ok: true, copiedToClipboard: false })),
+    }
+
+    await expect(launchCodexViaLocalApi({ prompt: "実行して", repoPath: "/repo" }))
+      .rejects.toThrow("プロンプトをクリップボードにコピーできませんでした")
+  })
+
   test("rejects prompt handoff when the local API could not copy the prompt", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       copied_to_clipboard: false,

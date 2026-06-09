@@ -8,6 +8,20 @@ declare global {
       getAutomationStatus?: () => Promise<FocusmapDesktopAutomationStatus>
       connectAutomation?: () => Promise<FocusmapDesktopAutomationActionResult>
       disconnectAutomation?: () => Promise<FocusmapDesktopAutomationActionResult>
+      copyText?: (text: string) => Promise<{ ok: boolean; copied?: boolean; error?: string }>
+      launchCodex?: (payload: {
+        prompt?: string
+        repoPath?: string | null
+        threadUrl?: string | null
+        codexUrl?: string | null
+        originUrl?: string | null
+      }) => Promise<{
+        ok: boolean
+        error?: string
+        mode?: string
+        url?: string
+        copiedToClipboard?: boolean
+      }>
       saveAuthSession?: (session: FocusmapDesktopAuthSession) => Promise<{ ok: boolean; error?: string }>
       loadAuthSession?: () => Promise<{
         ok: boolean
@@ -58,6 +72,7 @@ export type FocusmapDesktopAutomationServiceStatus = {
   scriptPath?: string
   pauseFile?: string
   apiUrl?: string
+  mode?: string
   lastKickAt?: string | null
   lastKickMessage?: string | null
   disabledReason?: string | null

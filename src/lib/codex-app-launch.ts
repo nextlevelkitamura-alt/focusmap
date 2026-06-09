@@ -1,4 +1,4 @@
-export type CodexLaunchMode = "thread" | "browser-deep-link" | "chatgpt-mobile" | "local-api"
+export type CodexLaunchMode = "thread" | "browser-deep-link" | "chatgpt-mobile" | "local-api" | "electron-bridge"
 export type MobilePlatform = "ios" | "android" | "mobile" | "desktop"
 
 export type CodexLaunchPayload = {
@@ -35,6 +35,32 @@ export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 type FocusmapNativeAppMessage =
   | { type: "focusmap:copyText"; text: string }
   | { type: "focusmap:openExternal"; url: string; urls?: string[] }
+
+type FocusmapDesktopCodexBridge = {
+  copyText?: (text: string) => Promise<{ ok?: boolean; copied?: boolean; error?: string } | boolean>
+  launchCodex?: (payload: {
+    prompt?: string
+    repoPath?: string | null
+    threadUrl?: string | null
+    codexUrl?: string | null
+    originUrl?: string | null
+  }) => Promise<{
+    ok?: boolean
+    error?: string
+    mode?: string
+    url?: string
+    copiedToClipboard?: boolean
+  } | boolean>
+}
+
+function focusmapDesktopCodexBridge() {
+  if (typeof window === "undefined") return null
+  return (window as Window & { focusmapDesktop?: FocusmapDesktopCodexBridge }).focusmapDesktop ?? null
+}
+
+export function canUseElectronCodexBridge() {
+  return Boolean(focusmapDesktopCodexBridge()?.launchCodex)
+}
 
 export function isLocalCodexOpenHost(hostname: string) {
   const normalized = normalizeHostForCodexOpen(hostname)
@@ -145,6 +171,7 @@ export function copyTextToClipboard(text: string): Promise<boolean> {
 
 export function canUseLocalCodexOpenApi() {
   if (typeof window === "undefined") return false
+  if (canUseElectronCodexBridge()) return true
   return isLocalCodexOpenHost(window.location.hostname)
 }
 
@@ -163,6 +190,16 @@ export function isLikelyMobileDevice() {
 }
 
 export async function copyCodexPromptViaLocalApi(prompt: string): Promise<boolean> {
+  const bridge = focusmapDesktopCodexBridge()
+  if (bridge?.copyText) {
+    try {
+      const result = await bridge.copyText(normalizeCodexPrompt(prompt))
+      if (result === true || (typeof result === "object" && (result.ok === true || result.copied === true))) return true
+    } catch {
+      // Fall through to the local API when available.
+    }
+  }
+
   const res = await fetch("/api/codex/open-repo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -313,6 +350,35 @@ export function launchCodexFromBrowser(payload: CodexLaunchPayload): CodexLaunch
 }
 
 export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promise<CodexLaunchResult> {
+  const bridge = focusmapDesktopCodexBridge()
+  if (bridge?.launchCodex) {
+    const normalizedPrompt = normalizeCodexPrompt(payload.prompt)
+    const result = await bridge.launchCodex({
+      prompt: normalizedPrompt,
+      repoPath: payload.repoPath?.trim() || null,
+      threadUrl: payload.threadUrl?.trim() || null,
+      codexUrl: payload.threadUrl?.trim() || null,
+      originUrl: payload.originUrl ?? window.location.href,
+    })
+    if (result !== true && (!result || typeof result !== "object" || result.ok === false)) {
+      throw new Error(
+        typeof result === "object" && result?.error
+          ? result.error
+          : "Codex.app を開けませんでした",
+      )
+    }
+    const bridgeResult = typeof result === "object" ? result : {}
+    const copiedToClipboard = bridgeResult.copiedToClipboard === true
+    if (normalizedPrompt && !copiedToClipboard) {
+      throw new Error("プロンプトをクリップボードにコピーできませんでした")
+    }
+    return {
+      mode: "electron-bridge",
+      url: bridgeResult.url,
+      copiedToClipboard,
+    }
+  }
+
   const res = await fetch("/api/codex/open-repo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -337,7 +403,7 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
 }
 
 export function launchFeedbackForMode(mode: CodexLaunchMode) {
-  if (mode === "local-api") return "Codex.app のチャットを開いています"
+  if (mode === "local-api" || mode === "electron-bridge") return "Codex.app のチャットを開いています"
   if (mode === "chatgpt-mobile") return "Codexを開くリクエストを出しました"
   return "Codex.app を開くリクエストを出しました。確認ダイアログが出たら Open Codex を選んでください"
 }
