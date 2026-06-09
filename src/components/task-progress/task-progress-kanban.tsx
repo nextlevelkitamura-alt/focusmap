@@ -37,7 +37,6 @@ import type { TaskProgressSnapshotTask } from "@/types/task-progress"
 const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
 const HEARTBEAT_POLL_INTERVAL_MS = 30_000
 const HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS = 750
-const HEARTBEAT_POLL_LABEL = "Mac状態30秒ごとに確認"
 
 function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible"
@@ -233,14 +232,6 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
   if (uiStatus === "running") return "running"
   if (uiStatus === "connection_failed") return "connection_failed"
   return "review"
-}
-
-function relativePollLabel(pollIntervalMs: number, isDetailOpen: boolean) {
-  const seconds = Math.round(pollIntervalMs / 1000)
-  if (seconds <= 3) return "3秒ごとに更新"
-  if (seconds <= 5) return "5秒ごとに更新"
-  if (isDetailOpen) return "詳細を更新中"
-  return `${seconds}秒ごとに更新`
 }
 
 function RunnerChip({ state }: { state: RunnerConnectionState }) {
@@ -443,7 +434,6 @@ export function TaskProgressKanban({
   isLoading = false,
   isRefreshing = false,
   error,
-  pollIntervalMs,
   onRefresh,
   onOpenTask,
 }: TaskProgressKanbanProps) {
@@ -483,7 +473,6 @@ export function TaskProgressKanban({
     }, { unsent: 0, running: 0, review: 0, connection_failed: 0, done: 0 })
   }, [lanes])
   const total = counts.unsent + counts.running + counts.review + counts.connection_failed + counts.done
-  const pollLabel = relativePollLabel(pollIntervalMs, pollIntervalMs <= 5_000)
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -530,8 +519,6 @@ export function TaskProgressKanban({
               </div>
               <div className="flex flex-wrap gap-1.5 pt-2">
                 <RunnerChip state={runnerState} />
-                <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">{HEARTBEAT_POLL_LABEL}</span>
-                <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">{pollLabel}</span>
               </div>
             </SheetHeader>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
@@ -575,8 +562,6 @@ export function TaskProgressKanban({
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               <RunnerChip state={runnerState} />
-              <span>{HEARTBEAT_POLL_LABEL}</span>
-              <span>{pollLabel}</span>
               {error && <span className="text-red-600 dark:text-red-300">snapshot取得エラー</span>}
             </div>
           </div>

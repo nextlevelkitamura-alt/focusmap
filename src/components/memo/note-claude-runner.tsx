@@ -561,13 +561,6 @@ export function NoteClaudeRunnerPanel({
                       </span>
                     )}
                   </div>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    {codexUiState?.state === "running"
-                      ? "実行中だけ約3秒ごとに状態を同期します"
-                      : codexUiState?.state === "prompt_waiting"
-                        ? "Codex側で送信されるまで待機しています"
-                        : "最新の確認内容を優先して表示します"}
-                  </p>
                 </div>
                 {codexUiState?.state === "running" && <Loader2 className="h-4 w-4 animate-spin text-emerald-500" />}
               </div>
