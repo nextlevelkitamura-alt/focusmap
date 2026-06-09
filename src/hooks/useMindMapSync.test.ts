@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, cleanup } from '@testing-library/react'
+import { renderHook, act, cleanup, waitFor } from '@testing-library/react'
 import { useMindMapSync } from './useMindMapSync'
 import type { Task } from '@/types/database'
 
@@ -826,9 +826,8 @@ describe('useMindMapSync', () => {
       )
 
       let deletePromise!: Promise<void>
-      await act(async () => {
+      act(() => {
         deletePromise = result.current.deleteTask('t1')
-        await Promise.resolve()
       })
 
       expect(result.current.tasks.some(item => item.id === 't1')).toBe(false)
@@ -859,6 +858,94 @@ describe('useMindMapSync', () => {
         id: 't1',
         google_event_id: null,
       }))
+    })
+
+    test('削除API完了前に古いDB再取得が来てもノードを復活させない', async () => {
+      const group = createMockRootTask({ id: 'g1' })
+      const task = createMockTask({ id: 't1', parent_task_id: 'g1', title: '消したいタスク' })
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: [group],
+          initialTasks: [task],
+        })
+      )
+
+      let resolveDelete!: (response: Response) => void
+      mockFetch.mockImplementationOnce(() => new Promise<Response>(resolve => {
+        resolveDelete = resolve
+      }))
+
+      let deletePromise!: Promise<void>
+      await act(async () => {
+        deletePromise = result.current.deleteTask('t1')
+        await Promise.resolve()
+      })
+
+      expect(result.current.tasks.some(item => item.id === 't1')).toBe(false)
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, tasks: [group, task] }),
+        text: () => Promise.resolve(''),
+      })
+      await act(async () => {
+        await result.current.refreshFromServer({ force: true })
+      })
+
+      expect(result.current.tasks.some(item => item.id === 't1')).toBe(false)
+
+      await act(async () => {
+        resolveDelete({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        } as Response)
+        await deletePromise
+      })
+    })
+
+    test('ネットワーク断の削除は復元せず保留し、オンライン復帰時に同期する', async () => {
+      const onlineSpy = vi.spyOn(window.navigator, 'onLine', 'get')
+      onlineSpy.mockReturnValue(false)
+      const group = createMockRootTask({ id: 'g1' })
+      const task = createMockTask({ id: 't1', parent_task_id: 'g1', title: 'オフライン削除' })
+      mockFetch
+        .mockRejectedValueOnce(new TypeError('offline'))
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        })
+
+      const { result } = renderHook(() =>
+        useMindMapSync({
+          projectId: 'project-1',
+          userId: 'user-1',
+          initialRootTasks: [group],
+          initialTasks: [task],
+        })
+      )
+
+      await act(async () => {
+        await result.current.deleteTask('t1')
+      })
+
+      expect(result.current.tasks.some(item => item.id === 't1')).toBe(false)
+      expect(window.localStorage.getItem('focusmap:mindmap:project:project-1:pending-deletes')).toContain('t1')
+
+      onlineSpy.mockReturnValue(true)
+      await act(async () => {
+        window.dispatchEvent(new Event('online'))
+      })
+
+      await waitFor(() => {
+        expect(window.localStorage.getItem('focusmap:mindmap:project:project-1:pending-deletes')).toBeNull()
+      })
+      expect(result.current.tasks.some(item => item.id === 't1')).toBe(false)
+      onlineSpy.mockRestore()
     })
   })
 

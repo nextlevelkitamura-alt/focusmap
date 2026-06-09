@@ -74,12 +74,95 @@ type MindmapCachePayload = {
     cachedAt?: number
 }
 
+type PendingMindmapDelete = {
+    operationId: string
+    projectId: string
+    taskIds: string[]
+    tasks: Task[]
+    deleteRequestIds: string[]
+    requestedAt: number
+}
+
+type MindmapPendingDeletePayload = {
+    projectId?: string
+    operations?: PendingMindmapDelete[]
+}
+
 function isPageVisible() {
     return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
 function getMindmapCacheKey(projectId: string) {
     return `${MINDMAP_CACHE_PREFIX}${projectId}`
+}
+
+function getMindmapPendingDeleteKey(projectId: string) {
+    return `${MINDMAP_CACHE_PREFIX}${projectId}:pending-deletes`
+}
+
+function readMindmapPendingDeletes(projectId: string | null): Map<string, PendingMindmapDelete> {
+    const operations = new Map<string, PendingMindmapDelete>()
+    if (!projectId || typeof window === 'undefined') return operations
+
+    try {
+        const raw = window.localStorage.getItem(getMindmapPendingDeleteKey(projectId))
+        if (!raw) return operations
+
+        const parsed = JSON.parse(raw) as MindmapPendingDeletePayload
+        if (parsed.projectId !== projectId || !Array.isArray(parsed.operations)) return operations
+
+        for (const operation of parsed.operations) {
+            if (
+                operation?.projectId === projectId &&
+                typeof operation.operationId === 'string' &&
+                Array.isArray(operation.taskIds) &&
+                Array.isArray(operation.tasks) &&
+                Array.isArray(operation.deleteRequestIds)
+            ) {
+                operations.set(operation.operationId, operation)
+            }
+        }
+    } catch {
+        window.localStorage.removeItem(getMindmapPendingDeleteKey(projectId))
+    }
+
+    return operations
+}
+
+function writeMindmapPendingDeletes(projectId: string, operations: Map<string, PendingMindmapDelete>) {
+    if (typeof window === 'undefined') return
+
+    try {
+        const values = Array.from(operations.values()).filter(operation => operation.projectId === projectId)
+        if (values.length === 0) {
+            window.localStorage.removeItem(getMindmapPendingDeleteKey(projectId))
+            return
+        }
+        window.localStorage.setItem(getMindmapPendingDeleteKey(projectId), JSON.stringify({
+            projectId,
+            operations: values,
+        }))
+    } catch {
+        // In-memory pending deletes still protect the current UI session.
+    }
+}
+
+function getPendingDeleteTaskIds(projectId: string | null): Set<string> {
+    const ids = new Set<string>()
+    for (const operation of readMindmapPendingDeletes(projectId).values()) {
+        for (const taskId of operation.taskIds) ids.add(taskId)
+    }
+    return ids
+}
+
+function filterPendingDeletedTasks(projectId: string | null, tasks: Task[]) {
+    const pendingIds = getPendingDeleteTaskIds(projectId)
+    if (pendingIds.size === 0) return tasks
+    return tasks.filter(task => !pendingIds.has(task.id))
+}
+
+function isSameTaskListByReference(a: Task[], b: Task[]) {
+    return a.length === b.length && a.every((task, index) => task === b[index])
 }
 
 function readMindmapCache(projectId: string | null): Task[] {
@@ -98,7 +181,10 @@ function readMindmapCache(projectId: string | null): Task[] {
             return []
         }
 
-        return parsed.tasks.filter(task => task.project_id === projectId && task.deleted_at === null)
+        return filterPendingDeletedTasks(
+            projectId,
+            parsed.tasks.filter(task => task.project_id === projectId && task.deleted_at === null),
+        )
     } catch {
         return []
     }
@@ -110,7 +196,10 @@ function writeMindmapCache(projectId: string, tasks: Task[]) {
     try {
         window.localStorage.setItem(getMindmapCacheKey(projectId), JSON.stringify({
             projectId,
-            tasks: tasks.filter(task => task.project_id === projectId && task.deleted_at === null),
+            tasks: filterPendingDeletedTasks(
+                projectId,
+                tasks.filter(task => task.project_id === projectId && task.deleted_at === null),
+            ),
             cachedAt: Date.now(),
         }))
         window.localStorage.setItem('focusmap:lastMindmapProjectId', projectId)
@@ -140,7 +229,7 @@ export function useMindMapSync({
 
     // 統合ステート管理（全タスクを1つのリストで管理）
     const [allTasks, setAllTasks] = useState<Task[]>(() => {
-        const initial = [...initialRootTasks, ...initialTasks]
+        const initial = filterPendingDeletedTasks(projectId, [...initialRootTasks, ...initialTasks])
         return initial.length > 0 ? initial : readMindmapCache(projectId)
     })
     const [isLoading, setIsLoading] = useState(false)
@@ -152,6 +241,7 @@ export function useMindMapSync({
 
     // 楽観的に作成されたタスクを保護（INSERT 完了まで state からの削除を防止）
     const pendingOptimisticTasks = useRef(new Map<string, Task>())
+    const pendingDeletes = useRef(readMindmapPendingDeletes(projectId))
 
     // タスクごとの保存順序を保証する。
     // UIは先に楽観更新し、DB保存だけをキュー化することで連打時も最後の操作が残る。
@@ -167,6 +257,97 @@ export function useMindMapSync({
     allTasksRef.current = allTasks
     const projectIdRef = useRef(projectId)
     projectIdRef.current = projectId
+
+    const getLocalPendingDeleteIds = useCallback(() => {
+        const ids = new Set<string>()
+        for (const operation of pendingDeletes.current.values()) {
+            for (const taskId of operation.taskIds) ids.add(taskId)
+        }
+        return ids
+    }, [])
+
+    const persistPendingDeletes = useCallback(() => {
+        const currentProjectId = projectIdRef.current
+        if (!currentProjectId) return
+        writeMindmapPendingDeletes(currentProjectId, pendingDeletes.current)
+    }, [])
+
+    const removeTasksFromState = useCallback((ids: Set<string>) => {
+        allTasksRef.current = allTasksRef.current.filter(task => !ids.has(task.id))
+        setAllTasks(prev => prev.filter(task => !ids.has(task.id)))
+    }, [])
+
+    const restoreTasksToState = useCallback((capturedTasks: Task[]) => {
+        if (capturedTasks.length === 0) return
+        const restoreIds = new Set(capturedTasks.map(task => task.id))
+        allTasksRef.current = [
+            ...allTasksRef.current.filter(task => !restoreIds.has(task.id)),
+            ...capturedTasks,
+        ]
+        setAllTasks(prev => [
+            ...prev.filter(task => !restoreIds.has(task.id)),
+            ...capturedTasks,
+        ])
+    }, [])
+
+    const beginPendingDelete = useCallback((operation: PendingMindmapDelete) => {
+        pendingDeletes.current.set(operation.operationId, operation)
+        persistPendingDeletes()
+        const deletedIds = new Set(operation.taskIds)
+        for (const id of deletedIds) {
+            pendingOptimisticTasks.current.delete(id)
+            pendingInserts.current.delete(id)
+            taskSaveQueues.current.delete(id)
+            taskUpdateVersions.current.delete(id)
+        }
+        removeTasksFromState(deletedIds)
+    }, [persistPendingDeletes, removeTasksFromState])
+
+    const completePendingDelete = useCallback((operationId: string) => {
+        if (!pendingDeletes.current.delete(operationId)) return
+        persistPendingDeletes()
+    }, [persistPendingDeletes])
+
+    const rollbackPendingDelete = useCallback((operationId: string) => {
+        const operation = pendingDeletes.current.get(operationId)
+        if (!operation) return
+        pendingDeletes.current.delete(operationId)
+        persistPendingDeletes()
+        restoreTasksToState(operation.tasks)
+    }, [persistPendingDeletes, restoreTasksToState])
+
+    const retryPendingDeletes = useCallback(async () => {
+        const currentProjectId = projectIdRef.current
+        if (!currentProjectId) return
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+
+        const operations = Array.from(pendingDeletes.current.values())
+            .filter(operation => operation.projectId === currentProjectId)
+        for (const operation of operations) {
+            let networkFailed = false
+            let hardFailed = false
+            for (const id of operation.deleteRequestIds) {
+                try {
+                    const response = await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+                    if (!response.ok && response.status !== 404) {
+                        hardFailed = true
+                    }
+                } catch (error) {
+                    console.error('[Sync] pending delete retry failed:', error)
+                    networkFailed = true
+                    break
+                }
+            }
+
+            if (!networkFailed && !hardFailed) {
+                completePendingDelete(operation.operationId)
+                dispatchWishlistRefresh()
+            } else if (hardFailed) {
+                rollbackPendingDelete(operation.operationId)
+                onSyncError?.('保留中の削除を同期できなかったため、ノードを戻しました')
+            }
+        }
+    }, [completePendingDelete, onSyncError, rollbackPendingDelete])
 
     const addOptimisticTaskToState = useCallback((task: Task) => {
         allTasksRef.current = allTasksRef.current.some(t => t.id === task.id)
@@ -230,6 +411,15 @@ export function useMindMapSync({
 
     const applyRealtimeTask = useCallback((serverTask: Task) => {
         if (!serverTask.id || serverTask.project_id !== projectId) return
+        if (getLocalPendingDeleteIds().has(serverTask.id)) return
+        if (serverTask.deleted_at !== null) {
+            pendingOptimisticTasks.current.delete(serverTask.id)
+            pendingInserts.current.delete(serverTask.id)
+            taskSaveQueues.current.delete(serverTask.id)
+            taskUpdateVersions.current.delete(serverTask.id)
+            removeTasksFromState(new Set([serverTask.id]))
+            return
+        }
 
         const hasLocalSaveInFlight =
             pendingInserts.current.has(serverTask.id) ||
@@ -262,7 +452,7 @@ export function useMindMapSync({
 
         allTasksRef.current = applyServerTask(allTasksRef.current)
         setAllTasks(prev => applyServerTask(prev))
-    }, [projectId])
+    }, [getLocalPendingDeleteIds, projectId, removeTasksFromState])
 
     const removeRealtimeTask = useCallback((taskId: string) => {
         if (!taskId) return
@@ -303,21 +493,23 @@ export function useMindMapSync({
     // 楽観的タスクは現在のprojectIdに属するもののみ保持（プロジェクト切替時に前のデータが残るのを防止）
     useEffect(() => {
         setAllTasks(prev => {
-            const initial = [...initialRootTasks, ...initialTasks]
+            const pendingDeleteIds = getLocalPendingDeleteIds()
+            const initial = [...initialRootTasks, ...initialTasks].filter(task => !pendingDeleteIds.has(task.id))
             const cached = initial.length > 0 ? [] : readMindmapCache(projectId)
             const baseTasks = initial.length > 0 ? initial : cached
             const allInitialIds = new Set([
                 ...baseTasks.map(t => t.id),
             ]);
             const optimisticItems = prev.filter(t =>
-                !allInitialIds.has(t.id) && t.project_id === projectId
+                !allInitialIds.has(t.id) && t.project_id === projectId && !pendingDeleteIds.has(t.id)
             );
-            return [
+            const nextTasks = [
                 ...baseTasks,
                 ...optimisticItems
             ];
+            return isSameTaskListByReference(prev, nextTasks) ? prev : nextTasks
         });
-    }, [initialRootTasks, initialTasks, projectId])
+    }, [getLocalPendingDeleteIds, initialRootTasks, initialTasks, projectId])
 
     useEffect(() => {
         if (!projectId) return
@@ -331,7 +523,7 @@ export function useMindMapSync({
         const currentIds = new Set(allTasks.map(t => t.id))
         const missingTasks: Task[] = []
         for (const [, task] of pendingOptimisticTasks.current) {
-            if (!currentIds.has(task.id) && task.project_id === projectId) {
+            if (!currentIds.has(task.id) && task.project_id === projectId && !getLocalPendingDeleteIds().has(task.id)) {
                 missingTasks.push(task)
             }
         }
@@ -344,7 +536,7 @@ export function useMindMapSync({
                 return [...prev, ...toAdd]
             })
         }
-    }, [allTasks, projectId])
+    }, [allTasks, getLocalPendingDeleteIds, projectId])
 
     // プロジェクト切替時にundo/redoスタックと楽観的タスクをクリア
     useEffect(() => {
@@ -353,12 +545,25 @@ export function useMindMapSync({
         pendingInserts.current.clear()
         taskSaveQueues.current.clear()
         taskUpdateVersions.current.clear()
+        pendingDeletes.current = readMindmapPendingDeletes(projectId)
         lastServerRefreshAt.current = 0
         refreshInFlight.current = null
         realtimeFallbackActiveRef.current = false
         realtimeFallbackRefreshErrorNotifiedRef.current = false
         setRealtimeFallbackActive(false)
     }, [projectId, clear])
+
+    useEffect(() => {
+        pendingDeletes.current = readMindmapPendingDeletes(projectId)
+        void retryPendingDeletes()
+
+        if (typeof window === 'undefined') return
+        const handleOnline = () => {
+            void retryPendingDeletes()
+        }
+        window.addEventListener('online', handleOnline)
+        return () => window.removeEventListener('online', handleOnline)
+    }, [projectId, retryPendingDeletes])
 
     useEffect(() => {
         if (!projectId) return
@@ -679,8 +884,16 @@ export function useMindMapSync({
         const capturedDescendants = getDescendants(groupId)
         const allCaptured = capturedTask ? [capturedTask, ...capturedDescendants] : capturedDescendants
         const allIds = new Set(allCaptured.map(t => t.id))
+        const operation: PendingMindmapDelete = {
+            operationId: `delete:${groupId}`,
+            projectId: projectIdRef.current ?? capturedTask?.project_id ?? '',
+            taskIds: Array.from(allIds),
+            tasks: allCaptured,
+            deleteRequestIds: [groupId],
+            requestedAt: Date.now(),
+        }
 
-        setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+        beginPendingDelete(operation)
 
         // CRITICAL FIX: Ensure any pending POST request for this group finishes before we DELETE
         const pendingInsert = pendingInserts.current.get(groupId)
@@ -699,18 +912,20 @@ export function useMindMapSync({
                     // DB上に存在しないグループ（ゴーストタスク）→ UIからの削除は成功とする
                     console.warn('[Sync] deleteGroup: group not found in DB (ghost task), removing from UI only:', groupId.slice(0, 8))
                     // ロールバックしない（DBにないのでUIから消すだけでOK）
+                    completePendingDelete(operation.operationId)
                 } else {
                     const errorData = await response.json().catch(() => ({ message: response.statusText }))
                     console.error('[Sync] deleteGroup API failed:', errorData)
                     onSyncError?.(`グループの削除に失敗しました: ${errorData.message || response.statusText}`)
-                    setAllTasks(prev => [...prev, ...allCaptured])
+                    rollbackPendingDelete(operation.operationId)
                     return
                 }
+            } else {
+                completePendingDelete(operation.operationId)
             }
         } catch (e) {
             console.error('[Sync] deleteGroup failed:', e)
-            onSyncError?.(`グループの削除に失敗しました: ネットワークエラー`)
-            setAllTasks(prev => [...prev, ...allCaptured])
+            onSyncError?.('オフラインのため、オンライン復帰後に削除を同期します')
             return
         }
 
@@ -719,22 +934,36 @@ export function useMindMapSync({
                 description: `「${capturedTask.title}」を削除`,
                 undo: async () => {
                     const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
-                    setAllTasks(prev => [...prev, ...restored])
+                    completePendingDelete(operation.operationId)
+                    restoreTasksToState(restored)
                     for (const task of allCaptured) {
                         await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                     }
                 },
                 redo: async () => {
-                    setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
+                    beginPendingDelete({ ...operation, requestedAt: Date.now() })
                     try {
-                        await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
+                        const redoResponse = await fetch(`/api/tasks/${groupId}`, { method: 'DELETE' })
+                        if (redoResponse.ok || redoResponse.status === 404) {
+                            completePendingDelete(operation.operationId)
+                        } else {
+                            rollbackPendingDelete(operation.operationId)
+                        }
                     } catch (e) {
                         console.error('[UndoRedo] redo deleteGroup failed:', e)
                     }
                 },
             })
         }
-    }, [supabase, pushAction, onSyncError])
+    }, [
+        beginPendingDelete,
+        completePendingDelete,
+        pushAction,
+        restoreTasksToState,
+        rollbackPendingDelete,
+        supabase,
+        onSyncError,
+    ])
 
     // --- タスク操作 ---
     const createTask = useCallback(async (groupId: string, title: string = "New Task", parentTaskId: string | null = null): Promise<Task | null> => {
@@ -1136,22 +1365,16 @@ export function useMindMapSync({
         const allCaptured = capturedTask ? [capturedTask, ...capturedDescendants] : capturedDescendants
 
         const allIds = new Set(allCaptured.map(t => t.id))
-        const removeCapturedTasksFromState = () => {
-            allTasksRef.current = allTasksRef.current.filter(t => !allIds.has(t.id))
-            setAllTasks(prev => prev.filter(t => !allIds.has(t.id)))
-        }
-        const restoreCapturedTasksToState = () => {
-            allTasksRef.current = [
-                ...allTasksRef.current.filter(t => !allIds.has(t.id)),
-                ...allCaptured,
-            ]
-            setAllTasks(prev => [
-                ...prev.filter(t => !allIds.has(t.id)),
-                ...allCaptured,
-            ])
+        const operation: PendingMindmapDelete = {
+            operationId: `delete:${taskId}`,
+            projectId: projectIdRef.current ?? capturedTask?.project_id ?? '',
+            taskIds: Array.from(allIds),
+            tasks: allCaptured,
+            deleteRequestIds: [taskId],
+            requestedAt: Date.now(),
         }
 
-        removeCapturedTasksFromState()
+        beginPendingDelete(operation)
 
         let memoRepairSnapshot: DeletedTaskMemoRepairSnapshot | null = null
         let undoRequested = false
@@ -1180,21 +1403,22 @@ export function useMindMapSync({
                         // DB上に存在しないタスク（ゴーストタスク）→ UIからの削除は成功とする
                         console.warn('[Sync] deleteTask: task not found in DB (ghost task), removing from UI only:', taskId.slice(0, 8))
                         // ロールバックしない（DBにないのでUIから消すだけでOK）
+                        completePendingDelete(operation.operationId)
                     } else {
                         const errorData = await response.json().catch(() => ({ message: response.statusText }))
                         console.error('[Sync] deleteTask API failed:', errorData)
                         onSyncError?.(`タスクの削除に失敗しました: ${errorData.message || response.statusText}`)
-                        if (!undoRequested) restoreCapturedTasksToState()
+                        if (!undoRequested) rollbackPendingDelete(operation.operationId)
                     }
                 } else {
                     const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
                     memoRepairSnapshot = data?.memo_repair ?? null
+                    completePendingDelete(operation.operationId)
                     dispatchWishlistRefresh()
                 }
             } catch (e) {
                 console.error('[Sync] deleteTask failed:', e)
-                onSyncError?.(`タスクの削除に失敗しました: ネットワークエラー`)
-                if (!undoRequested) restoreCapturedTasksToState()
+                onSyncError?.('オフラインのため、オンライン復帰後に削除を同期します')
             }
         }
 
@@ -1211,14 +1435,8 @@ export function useMindMapSync({
                 undo: async () => {
                     undoRequested = true
                     const restored = allCaptured.map(t => ({ ...t, google_event_id: null }))
-                    allTasksRef.current = [
-                        ...allTasksRef.current.filter(t => !allIds.has(t.id)),
-                        ...restored,
-                    ]
-                    setAllTasks(prev => [
-                        ...prev.filter(t => !allIds.has(t.id)),
-                        ...restored,
-                    ])
+                    completePendingDelete(operation.operationId)
+                    restoreTasksToState(restored)
                     await deleteRequest
                     for (const task of allCaptured) {
                         await supabase.from('tasks').upsert(withoutGoogleEventId(task))
@@ -1227,12 +1445,17 @@ export function useMindMapSync({
                 },
                 redo: async () => {
                     undoRequested = false
-                    removeCapturedTasksFromState()
+                    beginPendingDelete({ ...operation, requestedAt: Date.now() })
                     try {
                         const redoResponse = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
-                        const redoData = await redoResponse.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
-                        memoRepairSnapshot = redoData?.memo_repair ?? memoRepairSnapshot
-                        dispatchWishlistRefresh()
+                        if (redoResponse.ok || redoResponse.status === 404) {
+                            const redoData = await redoResponse.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
+                            memoRepairSnapshot = redoData?.memo_repair ?? memoRepairSnapshot
+                            completePendingDelete(operation.operationId)
+                            dispatchWishlistRefresh()
+                        } else {
+                            rollbackPendingDelete(operation.operationId)
+                        }
                     } catch (e) {
                         console.error('[UndoRedo] redo deleteTask failed:', e)
                     }
@@ -1241,7 +1464,17 @@ export function useMindMapSync({
         }
 
         await deleteRequest
-    }, [cancelNotifications, supabase, pushAction, onSyncError, restoreMemoRepairSnapshot])
+    }, [
+        beginPendingDelete,
+        cancelNotifications,
+        completePendingDelete,
+        pushAction,
+        restoreMemoRepairSnapshot,
+        restoreTasksToState,
+        rollbackPendingDelete,
+        supabase,
+        onSyncError,
+    ])
 
     const moveTask = useCallback(async (taskId: string, newGroupId: string) => {
         const currentAll = allTasksRef.current;
@@ -1317,8 +1550,16 @@ export function useMindMapSync({
         }
 
         const capturedTasks = currentAll.filter(t => allSelectedIds.has(t.id))
+        const operation: PendingMindmapDelete = {
+            operationId: `bulk-delete:${Date.now()}:${Array.from(allSelectedIds).join(',')}`,
+            projectId: projectIdRef.current ?? capturedTasks[0]?.project_id ?? '',
+            taskIds: Array.from(allSelectedIds),
+            tasks: capturedTasks,
+            deleteRequestIds: [...groupIds, ...taskIds],
+            requestedAt: Date.now(),
+        }
 
-        setAllTasks(prev => prev.filter(t => !allSelectedIds.has(t.id)))
+        beginPendingDelete(operation)
 
         let memoRepairSnapshots: DeletedTaskMemoRepairSnapshot[] = []
         pushAction({
@@ -1330,7 +1571,8 @@ export function useMindMapSync({
             },
             undo: async () => {
                 const restored = capturedTasks.map(t => ({ ...t, google_event_id: null }))
-                setAllTasks(prev => [...prev, ...restored])
+                completePendingDelete(operation.operationId)
+                restoreTasksToState(restored)
                 for (const task of capturedTasks) {
                     await supabase.from('tasks').upsert(withoutGoogleEventId(task))
                 }
@@ -1339,18 +1581,30 @@ export function useMindMapSync({
                 }
             },
             redo: async () => {
-                setAllTasks(prev => prev.filter(t => !allSelectedIds.has(t.id)))
+                beginPendingDelete({ ...operation, requestedAt: Date.now() })
                 // ルートタスクを削除すれば CASCADE で子も消える
                 const nextSnapshots: DeletedTaskMemoRepairSnapshot[] = []
+                let redoFailed = false
                 for (const id of [...groupIds, ...taskIds]) {
                     try {
                         const response = await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+                        if (!response.ok && response.status !== 404) {
+                            redoFailed = true
+                            continue
+                        }
                         const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
                         if (data?.memo_repair) nextSnapshots.push(data.memo_repair)
-                    } catch { }
+                    } catch {
+                        redoFailed = true
+                    }
                 }
                 if (nextSnapshots.length > 0) memoRepairSnapshots = nextSnapshots
-                dispatchWishlistRefresh()
+                if (redoFailed) {
+                    onSyncError?.('オフラインのため、オンライン復帰後に削除を同期します')
+                } else {
+                    completePendingDelete(operation.operationId)
+                    dispatchWishlistRefresh()
+                }
             },
         })
 
@@ -1360,8 +1614,12 @@ export function useMindMapSync({
             try {
                 const response = await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
                 if (!response.ok) {
-                    console.error('[Sync] bulkDelete API failed for:', id)
-                    bulkFailed = true
+                    if (response.status === 404) {
+                        console.warn('[Sync] bulkDelete: task not found in DB (ghost task), removing from UI only:', id.slice(0, 8))
+                    } else {
+                        console.error('[Sync] bulkDelete API failed for:', id)
+                        bulkFailed = true
+                    }
                 } else {
                     const data = await response.json().catch(() => null) as { memo_repair?: DeletedTaskMemoRepairSnapshot } | null
                     if (data?.memo_repair) memoRepairSnapshots.push(data.memo_repair)
@@ -1372,13 +1630,20 @@ export function useMindMapSync({
             }
         }
         if (bulkFailed) {
-            onSyncError?.('一括削除の一部が失敗しました')
-            // Rollback: restore all
-            setAllTasks(prev => [...prev, ...capturedTasks])
+            onSyncError?.('オフラインのため、オンライン復帰後に削除を同期します')
         } else {
+            completePendingDelete(operation.operationId)
             dispatchWishlistRefresh()
         }
-    }, [supabase, pushAction, onSyncError, restoreMemoRepairSnapshot])
+    }, [
+        beginPendingDelete,
+        completePendingDelete,
+        pushAction,
+        restoreMemoRepairSnapshot,
+        restoreTasksToState,
+        supabase,
+        onSyncError,
+    ])
 
     // --- Helper Functions ---
     const getChildTasks = useCallback((parentTaskId: string): Task[] => {
@@ -1661,11 +1926,15 @@ export function useMindMapSync({
             realtimeFallbackRefreshErrorNotifiedRef.current = false
 
             setAllTasks(prev => {
-                const serverIds = new Set(data.map(t => t.id))
+                const pendingDeleteIds = getLocalPendingDeleteIds()
+                const visibleServerTasks = data.filter(task => !pendingDeleteIds.has(task.id))
+                const serverIds = new Set(visibleServerTasks.map(t => t.id))
                 const optimistic = prev.filter(t =>
-                    !serverIds.has(t.id) && pendingOptimisticTasks.current.has(t.id)
+                    !serverIds.has(t.id) &&
+                    pendingOptimisticTasks.current.has(t.id) &&
+                    !pendingDeleteIds.has(t.id)
                 )
-                const nextTasks = [...data, ...optimistic]
+                const nextTasks = [...visibleServerTasks, ...optimistic]
                 allTasksRef.current = nextTasks
                 writeMindmapCache(refreshProjectId, nextTasks)
                 return nextTasks
@@ -1686,7 +1955,7 @@ export function useMindMapSync({
             if (refreshInFlight.current === refresh) refreshInFlight.current = null
             if (showLoading) setIsLoading(false)
         }
-    }, [onSyncError, projectId, supabase])
+    }, [getLocalPendingDeleteIds, onSyncError, projectId, supabase])
 
     useEffect(() => {
         if (!projectId || !realtimeFallbackActive) return
