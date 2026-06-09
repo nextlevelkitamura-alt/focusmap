@@ -3,7 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 
 const BUCKET = 'ideal-attachments'
-const MAX_FILE_SIZE = 20 * 1024 * 1024
+const MAX_FILE_SIZE = 300 * 1024
 const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365
 
 function createAdminClientOrNull() {
@@ -82,7 +82,7 @@ export async function POST(
   const file = formData.get('file') as File | null
   if (!file) return NextResponse.json({ error: 'File is required' }, { status: 400 })
   if (!file.type.startsWith('image/')) return NextResponse.json({ error: '画像ファイルを選択してください' }, { status: 400 })
-  if (file.size > MAX_FILE_SIZE) return NextResponse.json({ error: '画像は20MB以下にしてください' }, { status: 400 })
+  if (file.size > MAX_FILE_SIZE) return NextResponse.json({ error: '画像は300KB以下に圧縮してからアップロードしてください' }, { status: 400 })
 
   const storageToken = createStorageToken()
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')

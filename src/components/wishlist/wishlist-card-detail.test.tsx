@@ -8,10 +8,24 @@ const memoAiTaskMock = vi.hoisted(() => ({
   task: null as Record<string, unknown> | null,
 }))
 
+const imageCompressionMock = vi.hoisted(() => ({
+  compressImageFileForUpload: vi.fn(async (file: File) => (
+    new File(['compressed'], file.name.replace(/\.[^.]+$/, '.jpg'), {
+      type: 'image/jpeg',
+      lastModified: file.lastModified,
+    })
+  )),
+}))
+
 vi.mock('@/hooks/useMemoAiTasks', () => ({
   useMemoAiTasks: () => ({
     getBySourceId: () => memoAiTaskMock.task,
   }),
+}))
+
+vi.mock('@/lib/image-compression', () => ({
+  MAX_UPLOAD_IMAGE_BYTES: 300 * 1024,
+  compressImageFileForUpload: imageCompressionMock.compressImageFileForUpload,
 }))
 
 vi.mock('@/components/memo/note-claude-runner', () => ({
@@ -76,6 +90,13 @@ function DetailHarness() {
 describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    imageCompressionMock.compressImageFileForUpload.mockClear()
+    imageCompressionMock.compressImageFileForUpload.mockImplementation(async (file: File) => (
+      new File(['compressed'], file.name.replace(/\.[^.]+$/, '.jpg'), {
+        type: 'image/jpeg',
+        lastModified: file.lastModified,
+      })
+    ))
     memoAiTaskMock.task = null
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -456,6 +477,14 @@ describe('WishlistCardDetail', () => {
         expect.objectContaining({ method: 'POST' }),
       )
     })
+    expect(imageCompressionMock.compressImageFileForUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'memo.png', type: 'image/png' }),
+    )
+    const uploadBody = (fetchMock.mock.calls.find(call => call[1]?.method === 'POST')?.[1]?.body) as FormData
+    const uploadedFile = uploadBody.get('file') as File
+    expect(uploadedFile.name).toBe('memo.jpg')
+    expect(uploadedFile.type).toBe('image/jpeg')
+    expect(uploadedFile.size).toBeLessThanOrEqual(300 * 1024)
     expect(await screen.findByAltText('memo.png')).toBeInTheDocument()
     const uploadedImage = await screen.findByAltText('memo.png')
     const uploadButton = screen.getByRole('button', { name: /画像を追加/ })

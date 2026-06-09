@@ -167,6 +167,7 @@ describe("launchCodexViaLocalApi", () => {
       repoPath: "/repo",
       threadUrl: "codex://thread/abc",
       originUrl: "https://focusmap-official.com/dashboard",
+      clipboardImageUrl: "https://example.com/signed.png",
     })).resolves.toEqual({
       mode: "electron-bridge",
       url: "codex://",
@@ -181,7 +182,7 @@ describe("launchCodexViaLocalApi", () => {
       threadUrl: "codex://thread/abc",
       codexUrl: "codex://thread/abc",
       originUrl: "https://focusmap-official.com/dashboard",
-      clipboardImageUrl: null,
+      clipboardImageUrl: "https://example.com/signed.png",
     })
   })
 

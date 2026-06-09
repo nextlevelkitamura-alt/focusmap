@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 
 const BUCKET = 'task-attachments'
+
+function createAdminClientOrNull() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null
+  try {
+    return createServiceClient()
+  } catch (error) {
+    console.error('[tasks/attachments/delete] Service client unavailable:', error)
+    return null
+  }
+}
 
 /**
  * DELETE /api/tasks/[id]/attachments/[attachmentId]
@@ -19,6 +30,17 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const { data: task } = await supabase
+    .from('tasks')
+    .select('id')
+    .eq('id', taskId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!task) {
+    return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+  }
+
   // 添付ファイルの所有権確認と storage_path 取得
   const { data: attachment, error: fetchError } = await supabase
     .from('task_attachments')
@@ -32,18 +54,20 @@ export async function DELETE(
     return NextResponse.json({ error: 'Attachment not found' }, { status: 404 })
   }
 
+  const attachmentClient = createAdminClientOrNull() ?? supabase
+
   // Storage から削除
-  const { error: storageError } = await supabase.storage
+  const { error: storageError } = await attachmentClient.storage
     .from(BUCKET)
     .remove([attachment.storage_path])
 
   if (storageError) {
-    console.error('[attachments/delete] Storage error:', storageError)
+    console.error('[tasks/attachments/delete] Storage error:', storageError)
     // Storage削除失敗でもDBは削除する（孤立レコード防止）
   }
 
   // DB から削除
-  const { error: dbError } = await supabase
+  const { error: dbError } = await attachmentClient
     .from('task_attachments')
     .delete()
     .eq('id', attachmentId)

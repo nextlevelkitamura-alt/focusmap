@@ -27,6 +27,7 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder"
 import type { UserCalendar } from "@/hooks/useCalendars"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
+import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 
 const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
@@ -1797,8 +1798,13 @@ export function WishlistCardDetail({
     setIsUploadingImage(true)
     setSaveError(null)
     try {
+      const compressedFiles = await Promise.all(imageFiles.map(file => compressImageFileForUpload(file)))
+      const oversizedFile = compressedFiles.find(file => file.size > MAX_UPLOAD_IMAGE_BYTES)
+      if (oversizedFile) {
+        throw new Error("画像を300KB以下に圧縮できませんでした。小さい画像を選んでください")
+      }
       await onReadyForAttachments?.(item.id)
-      const uploaded = await Promise.allSettled(imageFiles.map(async file => {
+      const uploaded = await Promise.allSettled(compressedFiles.map(async file => {
         const formData = new FormData()
         formData.append("file", file)
         const res = await fetchWithTimeout(`/api/wishlist/${item.id}/attachments`, {

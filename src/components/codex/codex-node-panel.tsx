@@ -32,6 +32,7 @@ import { Bot, Calendar as CalendarIcon, Check, ChevronDown, Clock, Copy, Externa
 import { DurationWheelPopover } from "@/components/ui/duration-wheel-popover"
 import { useCalendars } from "@/hooks/useCalendars"
 import type { Task, TaskAttachment } from "@/types/database"
+import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
 
 type NodeInfo = {
   taskId: string
@@ -89,6 +90,9 @@ const CODEX_DISPLAY_LOG_CHARS = 80_000
 const QUICK_ESTIMATED_MINUTES = [5, 15, 30, 60, 120] as const
 
 type TaskAttachmentPreview = Pick<TaskAttachment, "id" | "file_name" | "file_url" | "file_type" | "file_size">
+type PendingTaskAttachmentPreview = TaskAttachmentPreview & {
+  is_pending: true
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -187,6 +191,10 @@ function imageExtensionFromType(type: string) {
   if (type.includes("webp")) return "webp"
   if (type.includes("gif")) return "gif"
   return "png"
+}
+
+function createPendingAttachmentId(file: File, index: number) {
+  return `pending-${Date.now()}-${index}-${file.name}`
 }
 
 function stripFocusmapSyncId(prompt: string) {
@@ -360,6 +368,7 @@ export function CodexNodePanel({
   const [isRegisteringSchedule, setIsRegisteringSchedule] = useState(false)
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<TaskAttachmentPreview[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<PendingTaskAttachmentPreview[]>([])
   const [isLoadingTaskDetail, setIsLoadingTaskDetail] = useState(false)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null)
@@ -368,6 +377,32 @@ export function CodexNodePanel({
   const saveVersionRef = useRef(0)
   const codexWatchIdRef = useRef<string | null>(null)
   const codexSyncInFlightRef = useRef(false)
+  const pendingAttachmentUrlsRef = useRef<Set<string>>(new Set())
+
+  const releasePendingAttachmentUrl = useCallback((previewUrl: string) => {
+    if (!previewUrl || !pendingAttachmentUrlsRef.current.has(previewUrl)) return
+    if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(previewUrl)
+    }
+    pendingAttachmentUrlsRef.current.delete(previewUrl)
+  }, [])
+
+  const createPendingAttachments = useCallback((files: File[]) => {
+    return files.map((file, index): PendingTaskAttachmentPreview => {
+      const previewUrl = typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : ""
+      if (previewUrl) pendingAttachmentUrlsRef.current.add(previewUrl)
+      return {
+        id: createPendingAttachmentId(file, index),
+        file_name: file.name,
+        file_url: previewUrl,
+        file_type: file.type,
+        file_size: file.size,
+        is_pending: true,
+      }
+    })
+  }, [])
 
   if (!codexWatchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
     codexWatchIdRef.current = `node:${crypto.randomUUID()}`
@@ -398,7 +433,23 @@ export function CodexNodePanel({
     setScheduleNotice(null)
     setImageNotice(null)
     setIsImageDragActive(false)
-  }, [open, node.taskId, node.title, node.memo])
+    setPendingAttachments(prev => {
+      prev.forEach(attachment => releasePendingAttachmentUrl(attachment.file_url))
+      return []
+    })
+  }, [open, node.taskId, node.title, node.memo, releasePendingAttachmentUrl])
+
+  useEffect(() => {
+    const pendingUrls = pendingAttachmentUrlsRef.current
+    return () => {
+      pendingUrls.forEach(previewUrl => {
+        if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(previewUrl)
+        }
+      })
+      pendingUrls.clear()
+    }
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -689,12 +740,20 @@ export function CodexNodePanel({
       setImageNotice("画像ファイルを選択してください")
       return
     }
+    const pendingUploads = createPendingAttachments(imageFiles)
+    const pendingIds = new Set(pendingUploads.map(attachment => attachment.id))
     setError(null)
     setImageNotice(null)
+    setPendingAttachments(prev => [...pendingUploads, ...prev])
     setIsUploadingImage(true)
     try {
-      const uploaded: TaskAttachmentPreview[] = []
-      for (const file of imageFiles) {
+      const compressedFiles = await Promise.all(imageFiles.map(file => compressImageFileForUpload(file)))
+      const oversizedFile = compressedFiles.find(file => file.size > MAX_UPLOAD_IMAGE_BYTES)
+      if (oversizedFile) {
+        throw new Error("画像を300KB以下に圧縮できませんでした。小さい画像を選んでください")
+      }
+
+      const uploaded = await Promise.allSettled(compressedFiles.map(async file => {
         const formData = new FormData()
         formData.append("file", file)
         const res = await fetch(`/api/tasks/${encodeURIComponent(node.taskId)}/attachments`, {
@@ -705,17 +764,31 @@ export function CodexNodePanel({
         if (!res.ok || !data.attachment) {
           throw new Error(typeof data.error === "string" ? data.error : "画像の追加に失敗しました")
         }
-        uploaded.push(data.attachment)
+        return data.attachment
+      }))
+      const succeeded = uploaded
+        .filter((result): result is PromiseFulfilledResult<TaskAttachmentPreview> => result.status === "fulfilled")
+      const failed = uploaded.filter(result => result.status === "rejected")
+
+      pendingUploads.forEach(attachment => releasePendingAttachmentUrl(attachment.file_url))
+      setPendingAttachments(prev => prev.filter(attachment => !pendingIds.has(attachment.id)))
+      if (succeeded.length > 0) {
+        setAttachments(prev => [...prev, ...succeeded.map(result => result.value)])
+        setImageNotice(`${succeeded.length}件の画像を追加しました`)
       }
-      setAttachments(prev => [...prev, ...uploaded])
-      setImageNotice(`${uploaded.length}件の画像を追加しました`)
+      if (failed.length > 0) {
+        const firstError = failed[0].reason
+        throw new Error(firstError instanceof Error ? firstError.message : "一部の画像の追加に失敗しました")
+      }
     } catch (err) {
+      pendingUploads.forEach(attachment => releasePendingAttachmentUrl(attachment.file_url))
+      setPendingAttachments(prev => prev.filter(attachment => !pendingIds.has(attachment.id)))
       setError(err instanceof Error ? err.message : "画像の追加に失敗しました")
     } finally {
       setIsUploadingImage(false)
       setIsImageDragActive(false)
     }
-  }, [node.taskId])
+  }, [createPendingAttachments, node.taskId, releasePendingAttachmentUrl])
 
   const handleFileInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
@@ -832,6 +905,8 @@ export function CodexNodePanel({
   const clipboardImageUrl = useMemo(() => (
     attachments.find(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim())?.file_url?.trim() || null
   ), [attachments])
+  const displayedAttachments: Array<TaskAttachmentPreview | PendingTaskAttachmentPreview> = [...pendingAttachments, ...attachments]
+  const isWaitingForImageSave = isUploadingImage || pendingAttachments.length > 0
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
   const codexTask = getAiTaskBySourceId(node.taskId)
   const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
@@ -953,6 +1028,11 @@ export function CodexNodePanel({
 
   const handleOpenCodexWithPrompt = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const prompt = rawSentPrompt || codexPrompt
+    if (isWaitingForImageSave) {
+      event?.preventDefault()
+      setCodexFeedback("画像を保存中です。保存が終わるとCodexへ送れます。")
+      return
+    }
     if (!normalizeCodexPrompt(prompt)) {
       event?.preventDefault()
       setError("Codexに渡す内容を入力してください")
@@ -1048,7 +1128,7 @@ export function CodexNodePanel({
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [clipboardImageUrl, codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
+  }, [clipboardImageUrl, codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -1121,6 +1201,11 @@ export function CodexNodePanel({
 
   const sendToCodex = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const promptHeading = heading || node.title
+    if (isWaitingForImageSave) {
+      event?.preventDefault()
+      setCodexFeedback("画像を保存中です。保存が終わるとCodexへ送れます。")
+      return
+    }
     if (!normalizeCodexPrompt(promptHeading) && !normalizeCodexPrompt(detail)) {
       event?.preventDefault()
       setError("Codexに渡す内容を入力してください")
@@ -1302,7 +1387,7 @@ export function CodexNodePanel({
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [attachments, candidates, clipboardImageUrl, detail, heading, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [attachments, candidates, clipboardImageUrl, detail, heading, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
@@ -1381,16 +1466,21 @@ export function CodexNodePanel({
                 <div className="flex items-center gap-2 text-sm font-medium text-neutral-300">
                   <ImagePlus className="h-4 w-4" />
                   <span>画像</span>
-                  <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-400">{attachments.length}</span>
+                  <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-400">{displayedAttachments.length}</span>
                 </div>
                 <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                  {attachments.length > 0 && (
+                  {displayedAttachments.length > 0 && (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
-                      {attachments.map(attachment => {
+                      {displayedAttachments.map(attachment => {
+                        const isPending = "is_pending" in attachment
                         const isImage = attachment.file_type?.startsWith("image/")
                         const sizeLabel = formatFileSize(attachment.file_size)
                         return (
-                          <div key={attachment.id} className="group relative overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900">
+                          <div
+                            key={attachment.id}
+                            data-testid={isPending ? "pending-task-attachment" : undefined}
+                            className={`group relative overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 transition-opacity ${isPending ? "opacity-45" : ""}`}
+                          >
                             {isImage ? (
                               // eslint-disable-next-line @next/next/no-img-element -- Supabase signed attachment URLs are user-generated.
                               <img src={attachment.file_url} alt={attachment.file_name} className="h-28 w-full object-cover" />
@@ -1403,16 +1493,23 @@ export function CodexNodePanel({
                               <span className="min-w-0 flex-1 truncate">{attachment.file_name}</span>
                               {sizeLabel && <span className="shrink-0">{sizeLabel}</span>}
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteAttachment(attachment)}
-                              disabled={deletingAttachmentId === attachment.id}
-                              className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950/90 text-neutral-300 opacity-100 transition-colors hover:bg-red-500/15 hover:text-red-200 disabled:opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
-                              aria-label="画像を削除"
-                              title="画像を削除"
-                            >
-                              {deletingAttachmentId === attachment.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                            </button>
+                            {isPending ? (
+                              <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-neutral-950/85 px-2 py-1.5 text-[11px] font-medium text-neutral-300 backdrop-blur">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                保存中
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteAttachment(attachment)}
+                                disabled={deletingAttachmentId === attachment.id}
+                                className="absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950/90 text-neutral-300 opacity-100 transition-colors hover:bg-red-500/15 hover:text-red-200 disabled:opacity-50 sm:opacity-0 sm:group-hover:opacity-100"
+                                aria-label="画像を削除"
+                                title="画像を削除"
+                              >
+                                {deletingAttachmentId === attachment.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
                           </div>
                         )
                       })}
@@ -1617,7 +1714,7 @@ export function CodexNodePanel({
                   <a
                     href={codexHref}
                     onClick={sendToCodex}
-                    aria-disabled={codexSendStatus === "sending"}
+                    aria-disabled={codexSendStatus === "sending" || isWaitingForImageSave}
                     className="inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-100"
                     aria-label="コピーしてCodexを開く"
                     title="コピーしてCodexを開く"
@@ -1696,7 +1793,7 @@ export function CodexNodePanel({
                     <a
                       href={codexHref}
                       onClick={(event) => void handleOpenCodexWithPrompt(event)}
-                      aria-disabled={isOpeningCodex}
+                      aria-disabled={isOpeningCodex || isWaitingForImageSave}
                       className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/20 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:text-emerald-200"
                       aria-label="プロンプトをコピーしてCodexを開く"
                       title="プロンプトをコピーしてCodexを開く"
@@ -1785,6 +1882,12 @@ export function CodexNodePanel({
                   </div>
                 </div>
               </section>
+            )}
+
+            {isWaitingForImageSave && (
+              <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-200">
+                画像を保存中です。保存が終わるとプロンプトと画像をCodexへ渡せます。
+              </p>
             )}
 
             <textarea

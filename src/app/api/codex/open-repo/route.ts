@@ -2,6 +2,7 @@ import { execFile, spawn } from "child_process"
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { randomUUID } from "crypto"
 import { promisify } from "util"
 import { NextRequest, NextResponse } from "next/server"
 import { isLocalCodexOpenRequestHost } from "@/lib/codex-app-launch"
@@ -18,6 +19,12 @@ type OpenCodexBody = {
   codex_url?: unknown
   origin_url?: unknown
   open_app?: unknown
+  clipboard_image_url?: unknown
+}
+
+type ClipboardImageFile = {
+  path: string
+  pasteboardType: string
 }
 
 async function activateCodexApp(): Promise<boolean> {
@@ -123,6 +130,117 @@ function copyToMacClipboard(text: string): Promise<boolean> {
   })
 }
 
+function pasteboardTypeForImageMime(type: string | null | undefined) {
+  const normalized = type?.split(";")[0]?.trim().toLowerCase()
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return "public.jpeg"
+  if (normalized === "image/gif") return "com.compuserve.gif"
+  if (normalized === "image/tiff") return "public.tiff"
+  return "public.png"
+}
+
+function imageExtensionForPasteboardType(type: string) {
+  if (type === "public.jpeg") return "jpg"
+  if (type === "com.compuserve.gif") return "gif"
+  if (type === "public.tiff") return "tiff"
+  return "png"
+}
+
+async function loadClipboardImageFile(value: unknown): Promise<ClipboardImageFile | null> {
+  if (typeof value !== "string") return null
+  const rawValue = value.trim()
+  if (!rawValue) return null
+
+  let buffer: Buffer | null = null
+  let pasteboardType = "public.png"
+
+  if (rawValue.startsWith("data:image/")) {
+    const match = rawValue.match(/^data:([^;,]+)(?:;base64)?,([\s\S]*)$/)
+    if (!match) return null
+    pasteboardType = pasteboardTypeForImageMime(match[1])
+    buffer = Buffer.from(match[2], "base64")
+  } else {
+    let url: URL
+    try {
+      url = new URL(rawValue)
+    } catch {
+      return null
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null
+    const res = await fetch(url, { cache: "no-store" })
+    if (!res.ok) return null
+    const contentType = res.headers.get("content-type")
+    if (!contentType?.toLowerCase().startsWith("image/")) return null
+    const arrayBuffer = await res.arrayBuffer()
+    buffer = Buffer.from(arrayBuffer)
+    pasteboardType = pasteboardTypeForImageMime(contentType)
+  }
+
+  if (!buffer || buffer.length === 0 || buffer.length > 12 * 1024 * 1024) return null
+  const filePath = path.join(os.tmpdir(), `focusmap-codex-clipboard-${randomUUID()}.${imageExtensionForPasteboardType(pasteboardType)}`)
+  await fs.promises.writeFile(filePath, buffer)
+  return { path: filePath, pasteboardType }
+}
+
+async function copyToMacClipboardWithImage(text: string, imageFile: ClipboardImageFile): Promise<boolean> {
+  const script = `
+use framework "AppKit"
+use framework "Foundation"
+
+on run argv
+  set theText to item 1 of argv
+  set imagePath to item 2 of argv
+  set imagePasteboardType to item 3 of argv
+  set pasteboardItem to current application's NSPasteboardItem's alloc()'s init()
+  pasteboardItem's setString:theText forType:(current application's NSPasteboardTypeString)
+  set imageData to current application's NSData's dataWithContentsOfFile:imagePath
+  if imageData is not missing value then
+    pasteboardItem's setData:imageData forType:imagePasteboardType
+  end if
+  set pasteboard to current application's NSPasteboard's generalPasteboard()
+  pasteboard's clearContents()
+  pasteboard's writeObjects:{pasteboardItem}
+end run
+`
+  try {
+    await execFileAsync("/usr/bin/osascript", ["-l", "AppleScript", "-e", script, text, imageFile.path, imageFile.pasteboardType], {
+      timeout: 5_000,
+      windowsHide: true,
+    })
+    return true
+  } catch (err) {
+    console.warn("[codex/open-repo] Pasteboard image copy failed:", err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
+async function copyCodexHandoffToMacClipboard(text: string, clipboardImageUrl: unknown) {
+  const normalizedText = text.trim()
+  if (!normalizedText) {
+    return { copiedToClipboard: false, copiedImageToClipboard: false }
+  }
+
+  const imageFile = await loadClipboardImageFile(clipboardImageUrl).catch(() => null)
+  if (!imageFile) {
+    return {
+      copiedToClipboard: await copyToMacClipboard(text),
+      copiedImageToClipboard: false,
+    }
+  }
+
+  try {
+    const copied = await copyToMacClipboardWithImage(text, imageFile)
+    if (copied) {
+      return { copiedToClipboard: true, copiedImageToClipboard: true }
+    }
+    return {
+      copiedToClipboard: await copyToMacClipboard(text),
+      copiedImageToClipboard: false,
+    }
+  } finally {
+    await fs.promises.unlink(imageFile.path).catch(() => undefined)
+  }
+}
+
 function resolveCodexUrl(value: unknown): string | null {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
@@ -209,10 +327,13 @@ export async function POST(req: NextRequest) {
   const prompt = typeof body.prompt === "string" ? body.prompt : ""
   const shouldOpenApp = body.open_app !== false
   let copiedToClipboard = false
+  let copiedImageToClipboard = false
 
   try {
     const originUrl = typeof body.origin_url === "string" ? body.origin_url : null
-    copiedToClipboard = await copyToMacClipboard(prompt)
+    const copyResult = await copyCodexHandoffToMacClipboard(prompt, body.clipboard_image_url)
+    copiedToClipboard = copyResult.copiedToClipboard
+    copiedImageToClipboard = copyResult.copiedImageToClipboard
     if (prompt.trim() && !copiedToClipboard) {
       return NextResponse.json(
         { error: "プロンプトをクリップボードにコピーできませんでした" },
@@ -226,6 +347,7 @@ export async function POST(req: NextRequest) {
         git_root: gitRoot,
         activated: false,
         copied_to_clipboard: copiedToClipboard,
+        copied_image_to_clipboard: copiedImageToClipboard,
         command: "copy prompt",
       })
     }
@@ -260,6 +382,7 @@ export async function POST(req: NextRequest) {
     git_root: gitRoot,
     activated,
     copied_to_clipboard: copiedToClipboard,
+    copied_image_to_clipboard: copiedImageToClipboard,
     command: codexUrl
       ? "open codex:// url"
       : typeof body.prompt === "string" && body.prompt.trim()
