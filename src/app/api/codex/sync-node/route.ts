@@ -525,6 +525,11 @@ function codexClosureAlreadyRecorded(input: {
   reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
   sourceTaskId: string | null
 }) {
+  if (input.current.codex_source_task_completion_suppressed === true) {
+    if (input.task.status !== 'awaiting_approval') return false
+    if (input.current.codex_review_reason !== input.reason) return false
+    return codexTaskThreadId(input.task) === input.threadId
+  }
   if (input.task.status !== 'completed') return false
   if (input.current.codex_review_reason !== input.reason) return false
   if (codexTaskThreadId(input.task) !== input.threadId) return false
@@ -607,6 +612,7 @@ async function persistCodexThreadClosure(input: {
     visibleActivityEvents = [],
   } = input
   const sourceTaskId = task.source_task_id?.trim() || null
+  const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true
   const alreadyPersisted = codexClosureAlreadyRecorded({
     task,
     threadId,
@@ -622,13 +628,18 @@ async function persistCodexThreadClosure(input: {
     missing: alreadyPersisted && current.codex_source_task_missing === true,
   }
 
-  if (!alreadyPersisted) {
+  if (!alreadyPersisted && !sourceCompletionSuppressed) {
     sourceTaskCompletion = await completeSourceMindmapTaskForCodexClosure(supabase, task, nowIso)
   }
 
   const sourceTaskCompleted = sourceTaskCompletion.completed || sourceTaskCompletion.alreadyCompleted
-  const currentStep = codexClosureStep(reason)
-  const message = codexClosureMessage(reason)
+  const nextAiTaskStatus = sourceCompletionSuppressed ? 'awaiting_approval' : 'completed'
+  const currentStep = sourceCompletionSuppressed
+    ? 'Codex thread終了。内容を確認してください'
+    : codexClosureStep(reason)
+  const message = sourceCompletionSuppressed
+    ? 'Codex threadは終了済みです。ノードは未完了に戻されているため確認待ちです。'
+    : codexClosureMessage(reason)
   const stepsBase = Array.isArray(current.steps) ? current.steps : []
   const stepsWithThread = upsertStep(stepsBase, {
     key: 'thread_visible',
@@ -665,6 +676,7 @@ async function persistCodexThreadClosure(input: {
     codex_source_task_completed: sourceTaskCompleted,
     codex_source_task_id: sourceTaskCompletion.sourceTaskId,
     codex_source_task_completion_reason: reason,
+    codex_source_task_completion_suppressed: sourceCompletionSuppressed,
     codex_source_task_missing: sourceTaskCompletion.missing,
     codex_last_checked_at: nowIso,
     last_activity_at: row ? threadUpdatedAtIso(row) ?? nowIso : nowIso,
@@ -700,8 +712,8 @@ async function persistCodexThreadClosure(input: {
     const { error: updateError } = await supabase
       .from('ai_tasks')
       .update({
-        status: 'completed',
-        completed_at: nowIso,
+        status: nextAiTaskStatus,
+        completed_at: nextAiTaskStatus === 'completed' ? nowIso : null,
         codex_thread_id: threadId,
         result,
       })
@@ -712,7 +724,7 @@ async function persistCodexThreadClosure(input: {
     try {
       await mirrorCodexSyncToTurso({
         task,
-        status: 'completed',
+        status: nextAiTaskStatus,
         threadId,
         currentStep,
         summary: message,
@@ -720,7 +732,7 @@ async function persistCodexThreadClosure(input: {
         previousRunState,
         hadThreadId,
         resumedFromApproval: false,
-        completedAt: nowIso,
+        completedAt: nextAiTaskStatus === 'completed' ? nowIso : null,
       })
     } catch (tursoError) {
       console.error('[codex/sync-node turso closure]', tursoError)
@@ -737,7 +749,7 @@ async function persistCodexThreadClosure(input: {
       ...visibleActivityEvents,
       {
         role: 'status',
-        kind: 'completed',
+        kind: nextAiTaskStatus === 'completed' ? 'completed' : 'approval',
         body: message,
         dedupeKey: `thread:${threadId}:closed:${reason}`,
         importance: 'important',
@@ -759,6 +771,7 @@ async function persistCodexThreadClosure(input: {
 
   return {
     persisted: !alreadyPersisted || shouldPersistVisibleMessagesFallback,
+    status: nextAiTaskStatus,
     sourceTaskCompleted,
     sourceTaskId: sourceTaskCompletion.sourceTaskId,
     sourceTaskMissing: sourceTaskCompletion.missing,
@@ -852,7 +865,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         task_id: task.id,
         thread_id: threadId,
-        state: 'completed',
+        state: closure.status,
         synced: true,
         persisted: closure.persisted,
         source_task_completed: closure.sourceTaskCompleted,
@@ -890,7 +903,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         task_id: task.id,
         thread_id: threadId,
-        state: 'completed',
+        state: closure.status,
         synced: true,
         persisted: closure.persisted,
         source_task_completed: closure.sourceTaskCompleted,

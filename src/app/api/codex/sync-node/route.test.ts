@@ -366,6 +366,51 @@ describe('/api/codex/sync-node Codex thread closure', () => {
     expect(mockInsertActivity).not.toHaveBeenCalled()
   })
 
+  test('keeps an archived thread in review when node completion was manually unchecked', async () => {
+    setAiTask(baseTask({
+      status: 'awaiting_approval',
+      result: {
+        codex_thread_id: 'thread-1',
+        codex_run_state: 'awaiting_approval',
+        codex_review_reason: 'archived',
+        codex_source_task_completed: false,
+        codex_source_task_id: 'source-task-1',
+        codex_source_task_completion_suppressed: true,
+      },
+    }))
+    setThreadRow({
+      id: 'thread-1',
+      title: '調べて',
+      tokens_used: 10,
+      has_user_event: 1,
+      archived: 1,
+      updated_at_ms: Date.parse('2026-06-07T00:01:00.000Z'),
+      preview: 'done',
+      rollout_path: '/tmp/rollout.jsonl',
+      source: 'codex_app',
+      cwd: '/repo',
+      first_user_message: '調べて',
+    })
+
+    const { POST } = await import('./route')
+    const response = await POST(postRequest())
+    const json = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(json.state).toBe('awaiting_approval')
+    expect(json.source_task_completed).toBe(false)
+    expect(getSourceTaskUpdates()).toEqual([])
+    expect(getAiTaskUpdates()[0]).toEqual(expect.objectContaining({
+      status: 'awaiting_approval',
+      completed_at: null,
+    }))
+    expect(getAiTaskUpdates()[0].result).toEqual(expect.objectContaining({
+      codex_source_task_completed: false,
+      codex_source_task_completion_suppressed: true,
+    }))
+    expect(mockUpsertTursoAiTask).not.toHaveBeenCalled()
+  })
+
   test('prefetches a short manual Codex reply when a Mac .local preview task reaches review', async () => {
     process.env.FOCUSMAP_ENABLE_LOCAL_CODEX_SYNC = 'false'
     setAiTask(baseTask({

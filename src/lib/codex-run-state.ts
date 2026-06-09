@@ -1,4 +1,5 @@
 export type CodexRunState = "prompt_waiting" | "running" | "awaiting_approval" | "connection_failed"
+export type CodexTaskUiStateName = CodexRunState | "completed"
 
 export type CodexReviewReason =
   | "started"
@@ -50,11 +51,12 @@ export type CodexTaskLike = {
   status?: string | null
   executor?: string | null
   codex_thread_id?: string | null
+  source_task_id?: string | null
   result?: Record<string, unknown> | null
 }
 
 export type CodexTaskUiState = {
-  state: CodexRunState
+  state: CodexTaskUiStateName
   label: string
 }
 
@@ -414,14 +416,14 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   if (task.status === "failed") {
     return { state: "connection_failed", label: "接続失敗" }
   }
-  if (task.status === "completed") {
-    if (
-      result.codex_source_task_completed === true &&
-      (result.codex_review_reason === "archived" || result.codex_review_reason === "thread_deleted")
-    ) {
-      return null
-    }
+  if (result.codex_source_task_completed === true && result.codex_source_task_completion_suppressed !== true) {
+    return { state: "completed", label: "完了済み" }
+  }
+  if (result.codex_source_task_completion_suppressed === true) {
     return { state: "awaiting_approval", label: "確認待ち" }
+  }
+  if (task.status === "completed") {
+    return { state: "completed", label: "完了済み" }
   }
   if (task.status === "pending") {
     if (hasCodexActivityEvidence(result) && (hasThreadId || rawState === "running")) {

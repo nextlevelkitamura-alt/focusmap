@@ -169,7 +169,7 @@ describe("getCodexTaskUiState", () => {
     expect(getCodexTaskUiState({ executor: "codex_app", status: "running", result: null })?.state).toBe("running")
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: null })).toEqual({ state: "connection_failed", label: "接続失敗" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "failed", result: { codex_run_state: "running" } })).toEqual({ state: "connection_failed", label: "接続失敗" })
-    expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
+    expect(getCodexTaskUiState({ executor: "codex_app", status: "completed", result: null })).toEqual({ state: "completed", label: "完了済み" })
     expect(getCodexTaskUiState({ executor: "codex_app", status: "pending", result: { codex_run_state: "running" } })).toEqual({ state: "prompt_waiting", label: "未送信" })
     expect(getCodexTaskUiState({
       executor: "codex_app",
@@ -233,7 +233,7 @@ describe("getCodexTaskUiState", () => {
     })).toEqual({ state: "prompt_waiting", label: "未送信" })
   })
 
-  test("hides the node Codex badge after a closed thread completes the source task", () => {
+  test("labels the node Codex badge as completed after a closed thread completes the source task", () => {
     expect(getCodexTaskUiState({
       executor: "codex_app",
       status: "completed",
@@ -241,7 +241,7 @@ describe("getCodexTaskUiState", () => {
         codex_source_task_completed: true,
         codex_review_reason: "archived",
       },
-    })).toBeNull()
+    })).toEqual({ state: "completed", label: "完了済み" })
 
     expect(getCodexTaskUiState({
       executor: "codex_app",
@@ -250,13 +250,23 @@ describe("getCodexTaskUiState", () => {
         codex_source_task_completed: true,
         codex_review_reason: "thread_deleted",
       },
-    })).toBeNull()
+    })).toEqual({ state: "completed", label: "完了済み" })
 
     expect(getCodexTaskUiState({
       executor: "codex_app",
       status: "completed",
       result: {
         codex_review_reason: "completed",
+      },
+    })).toEqual({ state: "completed", label: "完了済み" })
+
+    expect(getCodexTaskUiState({
+      executor: "codex_app",
+      status: "completed",
+      result: {
+        codex_source_task_completed: true,
+        codex_source_task_completion_suppressed: true,
+        codex_review_reason: "archived",
       },
     })).toEqual({ state: "awaiting_approval", label: "確認待ち" })
   })

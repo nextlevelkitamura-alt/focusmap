@@ -1,6 +1,6 @@
 import type { TaskProgressStatus } from "@/types/task-progress"
 
-export type CodexMonitorUiStatus = "unsent" | "running" | "review" | "connection_failed"
+export type CodexMonitorUiStatus = "unsent" | "running" | "review" | "connection_failed" | "done"
 
 export function getCodexMonitorUiStatus(status: TaskProgressStatus | string | null | undefined): CodexMonitorUiStatus {
   switch (status) {
@@ -10,9 +10,10 @@ export function getCodexMonitorUiStatus(status: TaskProgressStatus | string | nu
       return "running"
     case "failed":
       return "connection_failed"
+    case "completed":
+      return "done"
     case "awaiting_approval":
     case "needs_input":
-    case "completed":
     default:
       return "review"
   }
@@ -26,6 +27,8 @@ export function codexMonitorUiLabel(status: TaskProgressStatus | string | null |
       return "実行中"
     case "connection_failed":
       return "接続失敗"
+    case "done":
+      return "完了済み"
     case "review":
     default:
       return "確認待ち"
@@ -40,6 +43,8 @@ export function codexMonitorToneClass(status: TaskProgressStatus | string | null
       return "border-red-400/70 bg-red-500/10 text-red-700 dark:text-red-200"
     case "unsent":
       return "border-sky-400/70 bg-sky-500/10 text-sky-800 dark:text-sky-200"
+    case "done":
+      return "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
     case "review":
     default:
       return "border-amber-400/70 bg-amber-500/10 text-amber-800 dark:text-amber-200"

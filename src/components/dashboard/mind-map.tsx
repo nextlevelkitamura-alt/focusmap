@@ -11,7 +11,8 @@ import { TaskProgressKanban } from "@/components/task-progress/task-progress-kan
 import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
-import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
+import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state";
+import { setCodexSourceTaskCompletionFromNode } from "@/lib/codex-source-completion";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
@@ -170,6 +171,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const {
         bySourceId: aiTasksBySourceId,
         getBySourceId: getAiTaskBySourceId,
+        refreshStatus: refreshAiTaskStatus,
     } = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds });
     const taskProgressFixtureTasks = useMemo<TaskProgressSnapshotTask[] | undefined>(() => {
         if (!taskProgressFixtureEnabled) return undefined;
@@ -235,6 +237,24 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             setIsRefreshingTaskProgressSnapshot(false);
         }
     }, [refreshTaskProgressSnapshot]);
+    const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
+        if (!onUpdateTask) return;
+        await onUpdateTask(taskId, { status });
+        if (status !== "done" && status !== "todo") return;
+
+        const aiTask = aiTasksBySourceId.get(taskId);
+        if (!aiTask || (aiTask.executor !== "codex" && aiTask.executor !== "codex_app")) return;
+
+        try {
+            await setCodexSourceTaskCompletionFromNode(aiTask, status === "done");
+            await Promise.all([
+                refreshAiTaskStatus(),
+                refreshTaskProgressSnapshot(),
+            ]);
+        } catch (error) {
+            console.error("[MindMap] Failed to update Codex completion from node status:", error);
+        }
+    }, [aiTasksBySourceId, onUpdateTask, refreshAiTaskStatus, refreshTaskProgressSnapshot]);
     const taskProgressFallbackTasks = useMemo(() => {
         if (taskProgressFixtureEnabled) return [];
         const fallbackTasks: TaskProgressSnapshotTask[] = [];
@@ -257,7 +277,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     }, [taskProgressFallbackTasks, taskProgressTasks]);
     const appliedCodexCompletionKeysRef = useRef(new Set<string>());
     const codexRunByNodeId = useMemo(() => {
-        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {};
+        const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {};
         for (const task of allTasksByIdForCodex.values()) {
             const aiTask = getAiTaskBySourceId(task.id);
             const uiState = getCodexTaskUiState(aiTask);
@@ -309,6 +329,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             const aiResult = aiTask.result && typeof aiTask.result === "object" && !Array.isArray(aiTask.result)
                 ? aiTask.result as Record<string, unknown>
                 : {};
+            if (aiResult.codex_source_task_completion_suppressed === true) continue;
             const reason = typeof aiResult.codex_review_reason === "string" ? aiResult.codex_review_reason : "";
             const closedFromCodex =
                 aiResult.codex_source_task_completed === true ||
@@ -1435,7 +1456,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         onNavigateNode={(taskId, direction) => callbacks.handleNavigate(taskId, direction)}
                         onSaveTitle={(taskId, title) => callbacks.saveTaskTitle(taskId, title)}
                         onSaveProjectTitle={(title) => project?.id ? callbacks.onUpdateProject?.(project.id, title) : undefined}
-                        onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                        onUpdateStatus={handleUpdateTaskStatus}
                         onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
                         onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
                             scheduled_at: params.scheduledAt,
@@ -1485,7 +1506,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onSaveTaskDetails={(taskId, updates) => onUpdateTask?.(taskId, updates)}
                     onRegisterSchedule={(taskId, params) => callbacks.registerSchedule(taskId, params)}
                     onOpenMemo={onOpenLinkedMemos}
-                    onToggleComplete={(taskId, done) => { void onUpdateTask?.(taskId, { status: done ? 'done' : 'todo' }); }}
+                    onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? 'done' : 'todo'); }}
                     onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}
                     onDelete={(taskId) => { void callbacks.deleteTask(taskId); }}
                 />

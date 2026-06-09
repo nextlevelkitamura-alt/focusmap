@@ -49,6 +49,8 @@ function statusIcon(status: string | null | undefined) {
       return <Clock className="h-3.5 w-3.5" />
     case "connection_failed":
       return <AlertCircle className="h-3.5 w-3.5" />
+    case "done":
+      return <Check className="h-3.5 w-3.5" />
     default:
       return <Terminal className="h-3.5 w-3.5" />
   }

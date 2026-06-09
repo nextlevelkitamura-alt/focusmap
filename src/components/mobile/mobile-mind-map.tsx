@@ -5,7 +5,8 @@ import { CodexNodePanel } from "@/components/codex/codex-node-panel"
 import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
 import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
-import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
+import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state"
+import { setCodexSourceTaskCompletionFromNode } from "@/lib/codex-source-completion"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
@@ -77,6 +78,7 @@ export function MobileMindMap({
     const memoAiTasks = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds })
     const bySourceId = memoAiTasks.bySourceId ?? emptyAiTaskMap
     const getMemoAiTaskBySourceId = memoAiTasks.getBySourceId
+    const refreshMemoAiTaskStatus = memoAiTasks.refreshStatus
     const getBySourceId = useCallback((sourceId: string) => (
         getMemoAiTaskBySourceId?.(sourceId) ?? null
     ), [getMemoAiTaskBySourceId])
@@ -136,6 +138,24 @@ export function MobileMindMap({
             setIsRefreshingTaskProgressSnapshot(false)
         }
     }, [refreshTaskProgressSnapshot])
+    const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
+        if (!onUpdateTask) return
+        await onUpdateTask(taskId, { status })
+        if (status !== "done" && status !== "todo") return
+
+        const aiTask = bySourceId.get(taskId)
+        if (!aiTask || (aiTask.executor !== "codex" && aiTask.executor !== "codex_app")) return
+
+        try {
+            await setCodexSourceTaskCompletionFromNode(aiTask, status === "done")
+            await Promise.all([
+                refreshMemoAiTaskStatus(),
+                refreshTaskProgressSnapshot(),
+            ])
+        } catch (error) {
+            console.error("[MobileMindMap] Failed to update Codex completion from node status:", error)
+        }
+    }, [bySourceId, onUpdateTask, refreshMemoAiTaskStatus, refreshTaskProgressSnapshot])
     const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
         if (!onUpdateTask) return
         if (generatingHeadingNodeIds.has(taskId)) return
@@ -207,7 +227,7 @@ export function MobileMindMap({
     }, [taskProgressFallbackTasks, taskProgressTasks])
 
     const codexRunByNodeId = useMemo(() => {
-        const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {}
+        const result: Record<string, { state: CodexTaskUiStateName; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {}
         for (const task of allMindMapTasks) {
             const aiTask = getBySourceId(task.id)
             const uiState = getCodexTaskUiState(aiTask)
@@ -580,7 +600,7 @@ export function MobileMindMap({
                 onDeleteNode={handleDeleteNode}
                 onSaveTitle={handleSaveTitle}
                 onSaveProjectTitle={handleSaveProjectTitle}
-                onUpdateStatus={(taskId, status) => onUpdateTask?.(taskId, { status })}
+                onUpdateStatus={handleUpdateTaskStatus}
                 onUpdateScheduledAt={(taskId, scheduledAt) => onUpdateTask?.(taskId, { scheduled_at: scheduledAt })}
                 onUpdateSchedule={(taskId, params) => onUpdateTask?.(taskId, {
                     scheduled_at: params.scheduledAt,
@@ -625,7 +645,7 @@ export function MobileMindMap({
                     onSaveHeading={(taskId, heading) => onUpdateTask?.(taskId, { title: heading })}
                     onSaveDraft={(taskId, draft) => onUpdateTask?.(taskId, { title: draft.title, memo: draft.memo })}
                     onOpenMemo={onOpenLinkedMemos}
-                    onToggleComplete={(taskId, done) => { void onUpdateTask?.(taskId, { status: done ? "done" : "todo" }) }}
+                    onToggleComplete={(taskId, done) => { void handleUpdateTaskStatus(taskId, done ? "done" : "todo") }}
                     onAddChild={(taskId) => { void handleAddChildNode(taskId) }}
                     onDelete={(taskId) => { void handleDeleteNode(taskId) }}
                 />

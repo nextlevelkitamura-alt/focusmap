@@ -18,7 +18,7 @@ import {
     getPinchViewportTransform,
     getViewportTransformAtPoint,
 } from "@/lib/mindmap-viewport";
-import type { CodexRunState } from "@/lib/codex-run-state";
+import type { CodexTaskUiStateName } from "@/lib/codex-run-state";
 import {
     codexMonitorToneClass,
     codexMonitorUiLabel,
@@ -68,7 +68,7 @@ type CustomMindMapViewProps = {
 };
 
 type CodexNodeState = {
-    state: CodexRunState;
+    state: CodexTaskUiStateName;
     taskId: string;
     label: string;
     lastActivityAt?: string | null;
@@ -164,10 +164,11 @@ function taskProgressStatusLabel(status: TaskProgressSnapshotTask["status"]) {
     return codexMonitorUiLabel(status);
 }
 
-function codexStateToTaskProgressStatus(state: CodexRunState): TaskProgressSnapshotTask["status"] {
+function codexStateToTaskProgressStatus(state: CodexTaskUiStateName): TaskProgressSnapshotTask["status"] {
     if (state === "prompt_waiting") return "pending";
     if (state === "running") return "running";
     if (state === "connection_failed") return "failed";
+    if (state === "completed") return "completed";
     return "awaiting_approval";
 }
 
@@ -715,9 +716,11 @@ function CustomTaskNode({
                 node.isDone && "border-muted-foreground/25 bg-background text-muted-foreground grayscale",
                 codexState?.state === "prompt_waiting" && "border-sky-400/70 shadow-[0_0_14px_rgba(14,165,233,0.22)]",
                 codexState?.state === "running" && "border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
+                codexState?.state === "completed" && "border-emerald-400/70 shadow-[0_0_14px_rgba(16,185,129,0.18)]",
                 codexState?.state === "connection_failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 taskProgress?.status === "running" && "border-emerald-400/80 shadow-[0_0_18px_rgba(16,185,129,0.25)]",
-                (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input" || taskProgress?.status === "completed") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
+                (taskProgress?.status === "awaiting_approval" || taskProgress?.status === "needs_input") && "border-amber-400/80 shadow-[0_0_16px_rgba(245,158,11,0.22)]",
+                taskProgress?.status === "completed" && "border-emerald-400/80 shadow-[0_0_14px_rgba(16,185,129,0.18)]",
                 taskProgress?.status === "failed" && "border-red-400/80 shadow-[0_0_16px_rgba(248,113,113,0.22)]",
                 selected && node.isDone && "ring-muted-foreground/40",
                 dragReady && !dragging && "z-30 border-sky-400 bg-sky-500/20 shadow-xl ring-2 ring-sky-400 ring-offset-2 ring-offset-background",

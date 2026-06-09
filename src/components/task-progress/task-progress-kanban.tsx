@@ -110,10 +110,10 @@ const LANES: Array<{
   },
   {
     id: "done",
-    label: "完了",
+    label: "完了済み",
     description: "チェック済み当日",
     icon: CheckCircle2,
-    className: "border-sky-400/50 bg-sky-500/10",
+    className: "border-emerald-400/50 bg-emerald-500/10",
   },
 ]
 
@@ -231,6 +231,7 @@ function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMa
   if (uiStatus === "unsent") return "unsent"
   if (uiStatus === "running") return "running"
   if (uiStatus === "connection_failed") return "connection_failed"
+  if (uiStatus === "done") return "done"
   return "review"
 }
 
