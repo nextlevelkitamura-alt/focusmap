@@ -10,7 +10,7 @@ import type { AgentActivityMessage, AgentConfig, AiTask, StepLog, TaskResultJson
 const WS_URL = 'ws://127.0.0.1:7878';
 const CONNECT_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MS = 15 * 60 * 1000;
-const LOG_FLUSH_MS = 3_000;
+const LOG_FLUSH_MS = 2_000;
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 const MAX_VISIBLE_ACTIVITY_MESSAGES = 8;
 

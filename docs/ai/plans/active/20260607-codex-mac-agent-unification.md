@@ -62,7 +62,7 @@ flowchart TB
 - メモ詳細・マップノード詳細・リンクメモ詳細の標準Codex導線は `dispatch_mode='manual'` にする。Focusmapは handoff task 作成、promptコピー、Codex.app/ChatGPT Codex入口の起動、状態監視を担当し、Codex.appで最終送信するのは人間。`dispatch_mode='auto'` は明示的な自動実行導線だけで使い、通常ボタンや既存manual handoffの再操作から暗黙に昇格しない。
 - Codex状態の通常writerは1つにする。`scripts/task-runner.ts` と `/api/codex/sync-node` は移行期間の互換/手動sync/debugに限定し、supervisor monitorが有効なtaskでは重複書き込みを避ける。
 - UIの3秒pollは読み取り専用にする。`/api/task-progress/snapshot` と `/api/ai-tasks/[id]/activity` を読み、sqlite/rollout探索やDB writeはローカルmonitor側だけが行う。
-- ローカル監視はactive task中だけ1〜3秒で確認してよいが、DB書き込みはhash/活動時刻/状態/新規activityが変わった時だけにする。heartbeatは実行中3秒・アイドル30秒基準にする。
+- ローカル監視はactive task中だけ2秒基準で確認してよいが、DB書き込みはhash/活動時刻/状態/新規activityが変わった時だけにする。heartbeatは実行中2秒・アイドル30秒基準にする。監視対象リスト取得は既定10秒キャッシュにし、Supabaseの対象selectを毎tickへ増やさない。
 - Supabaseへはtask作成、thread初回検出、状態変化、完了/失敗/確認待ち、互換fallbackだけを書く。`codex_last_checked_at` だけの無変化poll、running中の同一pulse、raw log/full thread historyはSupabaseへ書かない。Tursoが使える時、activityはTursoを主にする。
 - macOS権限は機能別に明示する。全アプリ監視を暗黙に行わず、必要な時だけAccessibility、Screen Recording、Automation、Full Disk Accessを案内する。
 
@@ -122,14 +122,14 @@ flowchart TB
 
 - ローカル `npm run mac:dev` で3001、agent、Codex app-serverの起動状態を確認する。
 - manual handoff taskを作り、通常ボタンでは `needs_input` / `prompt_waiting` になり、Codex.appへの `turn/start` が自動送信されないことを確認する。
-- 明示的なauto taskを作る場合だけ、初回runningが3秒以内にUIへ出ることを確認する。
+- 明示的なauto taskを作る場合だけ、初回runningが2秒以内にUIへ出ることを確認する。
 - 複数panelを開いても同一taskに重複snapshot/eventが増えないことを確認する。
 - 3秒UI pollがDB writeを増やさないことを確認する。
 
 ## 受け入れ条件
 
 - Macアプリを開くと、Next 3001、agent、Codex app-serverが起動済みまたは起動不能理由つきで確認できる。
-- Mac上で開始したCodex taskは、通常経路で3秒以内に `未送信` から `実行中` または `確認待ち` へ進む。スマホ/外部アプリ起動だけでは開始確認とせず、thread未検出のmanual handoffは `未送信` のままにする。
+- Mac上で開始したCodex taskは、通常経路で2秒以内に `未送信` から `実行中` または `確認待ち` へ進む。スマホ/外部アプリ起動だけでは開始確認とせず、thread未検出のmanual handoffは `未送信` のままにする。
 - 同じCodex taskのsnapshot/event writerは1つだけになる。
 - UIの3秒pollは読み取り専用で、表示中という理由だけでsqlite/rollout探索やDB writeを発生させない。
 - manual handoff、prompt再コピー、未送信/実行中/確認待ち/接続失敗/完了の表示は維持される。
@@ -161,7 +161,7 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 - 2026-06-07: Phase 1の設定UI入り口として、Focusmap MacアプリのElectron IPCに `getAutomationStatus` / `connectAutomation` / `disconnectAutomation` を追加し、設定 > 自動化の先頭へ `Mac / Codex Connection` カードを追加した。カードはNext 3001、Macアプリ管理下の `focusmap-agent`、Codex app-serverを5秒ごとに診断し、Macアプリ内だけで接続/切断できる。通常ブラウザ、Cloud Run、スマホからローカルMacを制御するAPIは追加していない。
 - 2026-06-08: Phase 5の先行整理として、通常監視writerを `focusmap-agent` 一本に固定した。Macアプリは旧 `task-runner` を通常自動起動せず、旧runner側のCodex sqlite/rollout監視も `FOCUSMAP_LEGACY_CODEX_MONITOR=1` 明示時だけ動く。設定UIは旧runnerを「通常停止」として表示し、`docs/CONTEXT.md` と保存境界仕様に同じ契約を追記した。
 - 2026-06-08: auto実行の確認待ち遷移を補強した。`focusmap-agent` はCodex.app app-server通知からユーザー可視assistant発話だけを短いactivity候補として保持し、`running -> awaiting_approval` の状態更新1回に限ってactivityをクラウドへ同送する。詳細画面は開いた瞬間にTurso/Supabase activityを読めるため、開いてからローカルログを回収する待ち時間を避けられる。
-- 2026-06-09: 固定済みCodex threadの通常監視を `focusmap-agent` に追加した。agent専用 `/api/agents/codex-monitor/tasks` は `codex_thread_id` 保存済みかつsourceが削除/アーカイブされていないtaskに加え、作成から10分以内の未紐付けmanual handoff taskも一時的に返す。Mac agentは未紐付けtaskを `~/.codex/state_5.sqlite` の `first_user_message` とhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存し、保存後はそのthread IDを rollout JSONL と合わせて3秒間隔で読む。`running` は最新 `task_started` 後に `task_complete` / `turn_aborted` がまだ無い時だけにし、`task_complete` / `turn_aborted` は確認待ちへ進める。確認待ち後の追加プロンプトはcheckpoint以降の `user_message` / `task_started` だけで判定し、thread `updated_at_ms` 単体では `running` へ戻さない。thread削除/アーカイブ時は対象 `ai_tasks` を `completed` にして監視対象から外す。
+- 2026-06-09: 固定済みCodex threadの通常監視を `focusmap-agent` に追加した。agent専用 `/api/agents/codex-monitor/tasks` は `codex_thread_id` 保存済みかつsourceが削除/アーカイブされていないtaskに加え、作成から10分以内の未紐付けmanual handoff taskも一時的に返す。Mac agentは未紐付けtaskを `~/.codex/state_5.sqlite` の `first_user_message` とhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存し、保存後はそのthread IDを rollout JSONL と合わせて2秒間隔で読む。対象リスト取得は10秒キャッシュでSupabase readを抑える。`running` は最新 `task_started` 後に `task_complete` / `turn_aborted` がまだ無い時だけにし、`task_complete` / `turn_aborted` は確認待ちへ進める。確認待ち後の追加プロンプトはcheckpoint以降の `user_message` / `task_started` だけで判定し、thread `updated_at_ms` 単体では `running` へ戻さない。thread削除/アーカイブ時は対象 `ai_tasks` を `completed` にして監視対象から外す。
 
 ## リスク
 

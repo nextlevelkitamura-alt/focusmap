@@ -13,6 +13,7 @@ const SQLITE_BIN = '/usr/bin/sqlite3';
 const MONITOR_LIMIT = 80;
 const MAX_VISIBLE_MESSAGES = 8;
 const syncCache = new Map<string, string>();
+const DEFAULT_TARGET_REFRESH_INTERVAL_MS = 10_000;
 
 type CodexThreadRow = {
   id: string;
@@ -471,6 +472,8 @@ async function readRollout(row: CodexThreadRow): Promise<string> {
   return await readFile(row.rollout_path, 'utf-8').catch(() => '');
 }
 
+type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
+
 async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_deleted' | 'archived'): Promise<void> {
   const nowIso = new Date().toISOString();
   const result: TaskResultJson = {
@@ -497,22 +500,25 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
       dedupe_key: `thread:${threadId}:${reason}`,
     }],
   });
+  task.status = 'completed';
+  task.completed_at = nowIso;
+  task.result = result as unknown as Record<string, unknown>;
 }
 
-async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string, task: AiTask): Promise<void> {
+async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string, task: AiTask): Promise<SyncOneTaskResult> {
   const threadId = taskThreadId(task) ?? await findMatchingThread(dbPath, task);
-  if (!threadId) return;
+  if (!threadId) return 'unchanged';
 
   const row = await readThread(dbPath, threadId);
   if (!row) {
     await markThreadGone(api, runnerId, task, threadId, 'thread_deleted');
     syncCache.delete(task.id);
-    return;
+    return 'remove';
   }
   if (row.archived) {
     await markThreadGone(api, runnerId, task, threadId, 'archived');
     syncCache.delete(task.id);
-    return;
+    return 'remove';
   }
 
   const rolloutRaw = await readRollout(row);
@@ -536,27 +542,35 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
     (status === 'running' && previousState !== 'running') ||
     (resumed && task.status !== 'running');
 
-  if (!shouldSync) return;
+  if (!shouldSync) return 'unchanged';
   syncCache.set(task.id, cacheKey);
 
+  const nextResult = resultSnapshot(task, threadId, row, summary, status, resumed);
   await api.updateTaskState(runnerId, task.id, status, {
-    result: resultSnapshot(task, threadId, row, summary, status, resumed),
+    result: nextResult,
     activity_messages: activityMessages(task, threadId, summary, resumed),
   });
+  task.status = status;
+  task.result = nextResult as unknown as Record<string, unknown>;
 
   if (resumed) {
     info(`codex thread resumed task=${task.id} thread=${threadId.slice(0, 8)}`);
   } else {
     debug(`codex thread synced task=${task.id} status=${status}`);
   }
+  return 'synced';
 }
 
 export function startCodexThreadMonitorLoop(
   api: AgentApiClient,
   runnerId: string,
-  intervalMs = 3_000,
+  intervalMs = 2_000,
+  targetRefreshIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
 ): NodeJS.Timeout {
   let running = false;
+  let targetsLoaded = false;
+  let nextTargetRefreshAt = 0;
+  let tasks: AiTask[] = [];
   const dbPath = join(homedir(), '.codex', 'state_5.sqlite');
 
   const tick = async () => {
@@ -565,10 +579,18 @@ export function startCodexThreadMonitorLoop(
 
     running = true;
     try {
-      const tasks = await api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT);
+      const now = Date.now();
+      if (!targetsLoaded || now >= nextTargetRefreshAt) {
+        tasks = await api.listCodexMonitorTasks(runnerId, MONITOR_LIMIT);
+        targetsLoaded = true;
+        nextTargetRefreshAt = Date.now() + targetRefreshIntervalMs;
+      }
       for (const task of tasks) {
         try {
-          await syncOneTask(api, runnerId, dbPath, task);
+          const result = await syncOneTask(api, runnerId, dbPath, task);
+          if (result === 'remove') {
+            tasks = tasks.filter(item => item.id !== task.id);
+          }
           await sleep(20);
         } catch (error) {
           logError(`codex monitor failed for ${task.id}`, error instanceof Error ? error.message : error);

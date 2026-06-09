@@ -22,10 +22,10 @@ Macローカル:
 
 | 状況 | Mac local check | Cloud write/read |
 |---|---:|---:|
-| runner生存 | local process loop | 実行中3秒・アイドル30秒heartbeat upsert |
-| running、詳細未表示 | 1秒 | 3秒最短snapshot、hash変化時のみ |
+| runner生存 | local process loop | 実行中2秒・アイドル30秒heartbeat upsert |
+| running、詳細未表示 | 2秒 | 2秒最短snapshot、hash/活動時刻/状態変化時のみ |
 | detail panel表示中 | 1秒 | active watch + 3秒detail poll |
-| awaiting approval / needs input | 1秒可 | 追加入力・再開を3秒以内に反映 |
+| awaiting approval / needs input | 2秒可 | 追加入力・再開を2秒以内に反映 |
 | runningなし | 通常background | 30から45秒、または手動更新 |
 | 古いcompleted / failed | tight loop不要 | 低頻度、または手動 |
 
@@ -39,6 +39,7 @@ Macローカル:
 - `/api/codex/sync-node` は手動sync now、debug、移行中fallbackに限定し、通常の3秒UI更新や詳細表示だけを理由にsqlite/rollout探索とDB writeを起こさない。
 - `ai_tasks.codex_thread_id` が保存済みのtaskは、`focusmap-agent` がそのthread IDだけを固定監視する。さらに、作成から10分以内で `codex_manual_handoff=true` / `codex_run_state='prompt_waiting'` の未紐付けtaskは、agent専用APIが一時的に返し、Mac agentが `~/.codex/state_5.sqlite` の `first_user_message` をhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存する。`running` の根拠は、最新の `task_started` の後に `task_complete` / `turn_aborted` がまだ無いことに限定する。`task_complete` / `turn_aborted` またはCodex thread archive/deleteは `awaiting_approval` / `completed` へ進める。確認待ち後の再開は `awaiting_approval_at` / `last_activity_at` より後の `user_message` または `task_started` だけを根拠にし、thread `updated_at_ms` 単体では `running` へ戻さない。
 - `/api/agents/codex-monitor/tasks` は固定監視対象を返すagent専用APIで、`tasks.deleted_at is null` / `notes.deleted_at is null` / `ideal_goals.status != 'archived'` を満たすsourceだけを返す。source側が削除/アーカイブされたthreadは通常monitor対象から外し、以後は明示sync/debug fallbackでない限り追わない。
+- `focusmap-agent` は既知の監視対象threadを2秒ごとにローカル確認するが、`/api/agents/codex-monitor/tasks` の対象リスト取得は既定10秒キャッシュにする。これによりCodex sqlite/rollout監視は2秒化しつつ、Supabaseの監視対象selectを毎tickへ増やさない。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール
@@ -119,8 +120,8 @@ activityはTursoを主にする。`FOCUSMAP_TURSO_ACTIVITY_PRIMARY` は未設定
 
 write budgetの考え方:
 
-- runner heartbeatは実行中3秒・アイドル30秒なら許容。
-- running snapshot 3秒は、hash dedupe前提なら許容。
+- runner heartbeatは実行中2秒・アイドル30秒なら許容。
+- running snapshot 2秒は、hash dedupe前提なら許容。
 - detail open中だけ3秒boostを許容。
 - 毎tick progress insertは禁止。
 - 毎tick event insertは禁止。
@@ -130,11 +131,11 @@ write budgetの考え方:
 
 | ケース | 月間write概算 | 備考 |
 |---|---:|---|
-| 1 runner heartbeat 3秒で常時active | 864k | 重めの上限見積もり。通常はidle30秒が混ざる |
-| 1 running task 3秒、常に変化、24h/day | 864k | 通常snapshotの重めケース |
-| 5 running tasks 3秒、常に変化、24h/day | 4.32M | progress/eventを増やさなければ許容 |
+| 1 runner heartbeat 2秒で常時active | 1.296M | 重めの上限見積もり。通常はidle30秒が混ざる |
+| 1 running task 2秒、常に変化、24h/day | 1.296M | 通常snapshotの重めケース |
+| 5 running tasks 2秒、常に変化、24h/day | 6.48M | progress/eventを増やさなければ許容 |
 | 5 tasks detail-open 3秒、常に変化、24h/day | 4.32M | 重いが他writeが小さければ10M未満 |
-| 全taskが3秒ごとにprogress/event insert | 危険 | 禁止 |
+| 全taskが2秒ごとにprogress/event insert | 危険 | 禁止 |
 
 read budgetの考え方:
 
