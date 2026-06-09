@@ -1643,9 +1643,14 @@ async function completeCodexTaskClosedFromApp(
   const executor = task.executor === 'codex' ? 'codex' : 'codex_app'
   const completionNotice = opts.reason === 'archived'
     ? 'Codex thread がCodex.app側でアーカイブされたため、マップノードを完了にしました。'
-    : 'Codex thread が削除されたため、マップノードを完了にしました。'
+    : 'Codex thread が見つからないため、確認待ちにしました。'
+  const sourceTaskCompleted = opts.reason === 'archived' && Boolean(task.source_task_id)
+  const archiveRequestWasPending = opts.reason === 'archived' &&
+    current.codex_archive_request_state === 'pending' &&
+    typeof current.codex_archive_requested_at === 'string' &&
+    current.codex_archive_requested_at.trim().length > 0
 
-  if (task.source_task_id) {
+  if (sourceTaskCompleted && task.source_task_id) {
     const { error } = await supabase
       .from('tasks')
       .update({ status: 'done', stage: 'done', updated_at: now })
@@ -1668,8 +1673,16 @@ async function completeCodexTaskClosedFromApp(
         codex_thread_id: opts.threadId,
         codex_run_state: 'awaiting_approval',
         codex_review_reason: opts.reason,
-        codex_source_task_completed: Boolean(task.source_task_id),
-        codex_source_task_completed_at: task.source_task_id ? now : null,
+        codex_source_task_completed: sourceTaskCompleted,
+        codex_source_task_completed_at: sourceTaskCompleted ? now : null,
+        codex_source_task_completion_reason: sourceTaskCompleted ? 'archived' : null,
+        codex_archive_request_state: archiveRequestWasPending ? 'completed' : current.codex_archive_request_state,
+        codex_archive_requested_at: typeof current.codex_archive_requested_at === 'string' ? current.codex_archive_requested_at : undefined,
+        codex_archive_request_reason: typeof current.codex_archive_request_reason === 'string' ? current.codex_archive_request_reason : undefined,
+        codex_archive_completed_at: archiveRequestWasPending ? now : current.codex_archive_completed_at,
+        codex_archive_request_cancelled_at: typeof current.codex_archive_request_cancelled_at === 'string'
+          ? current.codex_archive_request_cancelled_at
+          : null,
         live_log: typeof current.live_log === 'string' ? current.live_log : undefined,
         message: completionNotice,
         last_activity_at: now,
@@ -1847,6 +1860,16 @@ async function syncCompletedFocusmapNodesToCodexArchive(
     const result = (task.result ?? {}) as Record<string, unknown>
     const reason = typeof result.codex_review_reason === 'string' ? result.codex_review_reason : ''
     if (task.status === 'completed' && (reason === 'archived' || reason === 'thread_deleted')) continue
+    const archiveRequestPending =
+      task.status === 'completed' &&
+      result.codex_archive_request_state === 'pending' &&
+      typeof result.codex_archive_requested_at === 'string' &&
+      result.codex_archive_requested_at.trim().length > 0 &&
+      result.codex_archive_request_cancelled_at == null &&
+      result.codex_archive_completed_at == null &&
+      result.codex_source_task_completed === true &&
+      result.codex_source_task_completion_suppressed !== true
+    if (!archiveRequestPending) continue
 
     try {
       const stateOut = execSync(

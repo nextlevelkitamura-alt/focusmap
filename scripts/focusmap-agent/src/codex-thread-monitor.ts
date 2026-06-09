@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentApiClient } from './api-client.js';
 import type { AgentActivityMessage, AiTask, TaskResultJson } from './types.js';
+import { archiveCodexThreadViaAppServer } from './executors/codex-app.js';
 import { debug, error as logError, info } from './logger.js';
 
 const execFileAsync = promisify(execFile);
@@ -351,6 +352,18 @@ function taskResult(task: AiTask): Record<string, unknown> {
   return isRecord(task.result) ? task.result : {};
 }
 
+export function hasPendingArchiveRequest(task: AiTask): boolean {
+  const result = taskResult(task);
+  return task.status === 'completed' &&
+    result.codex_archive_request_state === 'pending' &&
+    typeof result.codex_archive_requested_at === 'string' &&
+    result.codex_archive_requested_at.trim().length > 0 &&
+    result.codex_archive_request_cancelled_at == null &&
+    result.codex_archive_completed_at == null &&
+    result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true;
+}
+
 function checkpointMs(task: AiTask): number | null {
   const result = taskResult(task);
   const candidates = task.status === 'awaiting_approval' || task.status === 'needs_input'
@@ -476,6 +489,10 @@ type SyncOneTaskResult = 'synced' | 'unchanged' | 'remove';
 
 async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTask, threadId: string, reason: 'thread_deleted' | 'archived'): Promise<void> {
   const nowIso = new Date().toISOString();
+  const current = taskResult(task);
+  const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true;
+  const sourceTaskCompleted = reason === 'archived' && !!task.source_task_id && !sourceCompletionSuppressed;
+  const nextStatus: AiTask['status'] = sourceTaskCompleted ? 'completed' : 'awaiting_approval';
   const result: TaskResultJson = {
     executor: task.executor === 'codex' ? 'codex' : 'codex_app',
     steps: [],
@@ -487,21 +504,40 @@ async function markThreadGone(api: AgentApiClient, runnerId: string, task: AiTas
     codex_thread_url: `codex://threads/${threadId}`,
     codex_run_state: 'awaiting_approval',
     codex_review_reason: reason,
+    codex_source_task_completed: sourceTaskCompleted,
+    codex_source_task_id: task.source_task_id ?? null,
+    codex_source_task_completion_reason: sourceTaskCompleted ? 'archived' : null,
+    codex_source_task_completion_suppressed: sourceCompletionSuppressed,
+    codex_archive_request_state: reason === 'archived' && hasPendingArchiveRequest(task)
+      ? 'completed'
+      : typeof current.codex_archive_request_state === 'string'
+        ? current.codex_archive_request_state as TaskResultJson['codex_archive_request_state']
+        : undefined,
+    codex_archive_requested_at: typeof current.codex_archive_requested_at === 'string' ? current.codex_archive_requested_at : undefined,
+    codex_archive_request_reason: typeof current.codex_archive_request_reason === 'string' ? current.codex_archive_request_reason : undefined,
+    codex_archive_completed_at: reason === 'archived' && hasPendingArchiveRequest(task)
+      ? nowIso
+      : typeof current.codex_archive_completed_at === 'string'
+        ? current.codex_archive_completed_at
+        : undefined,
+    codex_archive_request_cancelled_at: typeof current.codex_archive_request_cancelled_at === 'string'
+      ? current.codex_archive_request_cancelled_at
+      : null,
     last_activity_at: nowIso,
     awaiting_approval_at: nowIso,
   };
-  await api.updateTaskState(runnerId, task.id, 'completed', {
+  await api.updateTaskState(runnerId, task.id, nextStatus, {
     result,
     activity_messages: [{
       role: 'status',
-      kind: 'completed',
+      kind: nextStatus === 'completed' ? 'completed' : 'approval',
       body: result.message ?? 'Codex thread の監視を停止しました。',
       importance: 'important',
       dedupe_key: `thread:${threadId}:${reason}`,
     }],
   });
-  task.status = 'completed';
-  task.completed_at = nowIso;
+  task.status = nextStatus;
+  task.completed_at = nextStatus === 'completed' ? nowIso : null;
   task.result = result as unknown as Record<string, unknown>;
 }
 
@@ -518,6 +554,18 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
   if (row.archived) {
     await markThreadGone(api, runnerId, task, threadId, 'archived');
     syncCache.delete(task.id);
+    return 'remove';
+  }
+
+  if (hasPendingArchiveRequest(task)) {
+    const archived = await archiveCodexThreadViaAppServer(threadId).catch((archiveError) => {
+      logError(`codex archive request failed for ${task.id}`, archiveError instanceof Error ? archiveError.message : archiveError);
+      return false;
+    });
+    if (!archived) return 'unchanged';
+    await markThreadGone(api, runnerId, task, threadId, 'archived');
+    syncCache.delete(task.id);
+    info(`codex thread archived from Focusmap node check task=${task.id} thread=${threadId.slice(0, 8)}`);
     return 'remove';
   }
 

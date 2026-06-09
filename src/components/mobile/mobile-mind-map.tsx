@@ -6,7 +6,11 @@ import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
 import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state"
-import { setCodexSourceTaskCompletionFromNode } from "@/lib/codex-source-completion"
+import {
+    CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS,
+    requestCodexThreadArchiveFromNode,
+    setCodexSourceTaskCompletionFromNode,
+} from "@/lib/codex-source-completion"
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
@@ -138,16 +142,53 @@ export function MobileMindMap({
             setIsRefreshingTaskProgressSnapshot(false)
         }
     }, [refreshTaskProgressSnapshot])
+    const codexArchiveRequestTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+    const taskStatusByIdRef = useRef(new Map<string, string | null | undefined>())
+    useEffect(() => {
+        const next = new Map<string, string | null | undefined>()
+        for (const task of [...groups, ...tasks]) next.set(task.id, task.status)
+        taskStatusByIdRef.current = next
+    }, [groups, tasks])
+    useEffect(() => {
+        const timers = codexArchiveRequestTimersRef.current
+        return () => {
+            for (const timer of timers.values()) clearTimeout(timer)
+            timers.clear()
+        }
+    }, [])
+    const clearCodexArchiveRequestTimer = useCallback((taskId: string) => {
+        const timer = codexArchiveRequestTimersRef.current.get(taskId)
+        if (!timer) return
+        clearTimeout(timer)
+        codexArchiveRequestTimersRef.current.delete(taskId)
+    }, [])
+    const scheduleCodexArchiveRequest = useCallback((taskId: string, aiTask: AiTask) => {
+        clearCodexArchiveRequestTimer(taskId)
+        const timer = setTimeout(() => {
+            codexArchiveRequestTimersRef.current.delete(taskId)
+            if (taskStatusByIdRef.current.get(taskId) !== "done") return
+            void requestCodexThreadArchiveFromNode(aiTask)
+                .then((requested) => requested
+                    ? Promise.all([refreshMemoAiTaskStatus(), refreshTaskProgressSnapshot()]).then(() => undefined)
+                    : undefined)
+                .catch((error) => {
+                    console.error("[MobileMindMap] Failed to request Codex thread archive from node status:", error)
+                })
+        }, CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS)
+        codexArchiveRequestTimersRef.current.set(taskId, timer)
+    }, [clearCodexArchiveRequestTimer, refreshMemoAiTaskStatus, refreshTaskProgressSnapshot])
     const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
         if (!onUpdateTask) return
         await onUpdateTask(taskId, { status })
         if (status !== "done" && status !== "todo") return
+        clearCodexArchiveRequestTimer(taskId)
 
         const aiTask = bySourceId.get(taskId)
         if (!aiTask || (aiTask.executor !== "codex" && aiTask.executor !== "codex_app")) return
 
         try {
             await setCodexSourceTaskCompletionFromNode(aiTask, status === "done")
+            if (status === "done") scheduleCodexArchiveRequest(taskId, aiTask)
             await Promise.all([
                 refreshMemoAiTaskStatus(),
                 refreshTaskProgressSnapshot(),
@@ -155,7 +196,7 @@ export function MobileMindMap({
         } catch (error) {
             console.error("[MobileMindMap] Failed to update Codex completion from node status:", error)
         }
-    }, [bySourceId, onUpdateTask, refreshMemoAiTaskStatus, refreshTaskProgressSnapshot])
+    }, [bySourceId, clearCodexArchiveRequestTimer, onUpdateTask, refreshMemoAiTaskStatus, refreshTaskProgressSnapshot, scheduleCodexArchiveRequest])
     const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
         if (!onUpdateTask) return
         if (generatingHeadingNodeIds.has(taskId)) return

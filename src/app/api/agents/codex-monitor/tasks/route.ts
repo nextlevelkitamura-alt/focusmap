@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateAgent } from '@/lib/agent-auth'
 
-const VALID_STATUSES = ['pending', 'running', 'awaiting_approval', 'needs_input'] as const
+const ACTIVE_MONITOR_STATUSES = ['pending', 'running', 'awaiting_approval', 'needs_input'] as const
+const MONITOR_STATUSES = [...ACTIVE_MONITOR_STATUSES, 'completed'] as const
 const VALID_EXECUTORS = ['codex', 'codex_app'] as const
 const MANUAL_HANDOFF_DISCOVERY_WINDOW_MS = 10 * 60 * 1000
 
@@ -39,8 +40,27 @@ function isRecentManualHandoffDiscoveryCandidate(row: Record<string, unknown>, n
 }
 
 export function shouldReturnCodexMonitorTask(row: Record<string, unknown>) {
+  const result = isRecord(row.result) ? row.result : {}
+  const reviewReason = stringValue(result.codex_review_reason)
+  if (reviewReason === 'thread_deleted') return false
+  if (reviewReason === 'archived' && result.codex_source_task_completion_suppressed === true) return false
+  if (stringValue(row.status) === 'completed') return hasPendingCodexArchiveRequest(row)
+
   return Boolean(stringValue(row.codex_thread_id) || jsonThreadId(row.result)) ||
     isRecentManualHandoffDiscoveryCandidate(row)
+}
+
+export function hasPendingCodexArchiveRequest(row: Record<string, unknown>) {
+  const result = isRecord(row.result) ? row.result : {}
+  const sourceTaskId = stringValue(row.source_task_id) || stringValue(result.codex_source_task_id)
+  return Boolean(sourceTaskId) &&
+    Boolean(stringValue(row.codex_thread_id) || jsonThreadId(result)) &&
+    result.codex_archive_request_state === 'pending' &&
+    Boolean(stringValue(result.codex_archive_requested_at)) &&
+    result.codex_archive_request_cancelled_at == null &&
+    result.codex_archive_completed_at == null &&
+    result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true
 }
 
 function parseLimit(value: unknown) {
@@ -54,18 +74,24 @@ function collectStringIds(rows: unknown[], key: string) {
     .filter((value): value is string => Boolean(value)))]
 }
 
-async function activeTaskIds(
+async function activeTaskRows(
   supabase: Awaited<ReturnType<typeof authenticateAgent>>['supabase'],
   ids: string[],
 ) {
-  if (ids.length === 0) return new Set<string>()
+  if (ids.length === 0) return new Map<string, { status: string | null; stage: string | null }>()
   const { data, error } = await supabase
     .from('tasks')
-    .select('id')
+    .select('id, status, stage')
     .in('id', ids)
     .is('deleted_at', null)
   if (error) throw error
-  return new Set((data ?? []).map(row => String(row.id)))
+  return new Map((data ?? []).map(row => [
+    String(row.id),
+    {
+      status: typeof row.status === 'string' ? row.status : null,
+      stage: typeof row.stage === 'string' ? row.stage : null,
+    },
+  ]))
 }
 
 async function activeNoteIds(
@@ -125,7 +151,7 @@ export async function POST(request: NextRequest) {
       .from('ai_tasks')
       .select('id, user_id, space_id, prompt, skill_id, approval_type, status, executor, cwd, source_task_id, source_note_id, source_ideal_goal_id, codex_thread_id, codex_resume_thread_id, result, created_at, started_at, completed_at')
       .in('executor', VALID_EXECUTORS)
-      .in('status', VALID_STATUSES)
+      .in('status', MONITOR_STATUSES)
       .order('created_at', { ascending: false })
       .limit(limit * 2)
 
@@ -148,7 +174,7 @@ export async function POST(request: NextRequest) {
     const sourceIdealGoalIds = collectStringIds(rows, 'source_ideal_goal_id')
 
     const [activeTasks, activeNotes, activeIdealGoals] = await Promise.all([
-      activeTaskIds(supabase, sourceTaskIds),
+      activeTaskRows(supabase, sourceTaskIds),
       activeNoteIds(supabase, sourceNoteIds),
       activeIdealGoalIds(supabase, sourceIdealGoalIds),
     ])
@@ -159,7 +185,13 @@ export async function POST(request: NextRequest) {
         const sourceTaskId = stringValue(record.source_task_id)
         const sourceNoteId = stringValue(record.source_note_id)
         const sourceIdealGoalId = stringValue(record.source_ideal_goal_id)
-        if (sourceTaskId && !activeTasks.has(sourceTaskId)) return false
+        if (sourceTaskId) {
+          const sourceTask = activeTasks.get(sourceTaskId)
+          if (!sourceTask) return false
+          if (hasPendingCodexArchiveRequest(record) && sourceTask.status !== 'done' && sourceTask.stage !== 'done') {
+            return false
+          }
+        }
         if (sourceNoteId && !activeNotes.has(sourceNoteId)) return false
         if (sourceIdealGoalId && !activeIdealGoals.has(sourceIdealGoalId)) return false
         return true

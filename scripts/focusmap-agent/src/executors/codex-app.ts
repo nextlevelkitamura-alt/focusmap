@@ -221,6 +221,26 @@ async function callOk(rpc: RpcClient, method: string, params: unknown): Promise<
   return response.error ? null : response;
 }
 
+export async function archiveCodexThreadViaAppServer(threadId: string): Promise<boolean> {
+  const normalizedThreadId = threadId.trim();
+  if (!normalizedThreadId) return false;
+
+  const { ws, rpc } = await connectRpc();
+  try {
+    const initResp = await callOk(rpc, 'initialize', {
+      clientInfo: { name: 'focusmap', title: 'Focusmap', version: '0.2.0' },
+      capabilities: { experimentalApi: true },
+    });
+    if (!initResp) return false;
+    rpc.notify('initialized');
+
+    const archiveResp = await callOk(rpc, 'thread/archive', { threadId: normalizedThreadId });
+    return Boolean(archiveResp);
+  } finally {
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+  }
+}
+
 function addStep(steps: StepLog[], label: string, status: StepLog['status'] = 'done', detail?: string): void {
   steps.push({ label, status, detail, at: new Date().toISOString() });
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { shouldReturnCodexMonitorTask } from './route'
+import { hasPendingCodexArchiveRequest, shouldReturnCodexMonitorTask } from './route'
 
 describe('shouldReturnCodexMonitorTask', () => {
   test('returns tasks that already have a Codex thread id', () => {
@@ -53,6 +53,58 @@ describe('shouldReturnCodexMonitorTask', () => {
       result: {
         codex_manual_handoff: false,
         codex_run_state: 'prompt_waiting',
+      },
+    })).toBe(false)
+  })
+
+  test('does not keep scanning closed threads that should stay in review', () => {
+    expect(shouldReturnCodexMonitorTask({
+      executor: 'codex_app',
+      codex_thread_id: 'thread-deleted',
+      result: {
+        codex_review_reason: 'thread_deleted',
+      },
+    })).toBe(false)
+
+    expect(shouldReturnCodexMonitorTask({
+      executor: 'codex_app',
+      codex_thread_id: 'thread-archived',
+      result: {
+        codex_review_reason: 'archived',
+        codex_source_task_completion_suppressed: true,
+      },
+    })).toBe(false)
+  })
+
+  test('only returns completed tasks when a Codex archive request is pending', () => {
+    const pendingRequest = {
+      status: 'completed',
+      executor: 'codex_app',
+      source_task_id: 'task-1',
+      codex_thread_id: 'thread-1',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+      },
+    }
+
+    expect(hasPendingCodexArchiveRequest(pendingRequest)).toBe(true)
+    expect(shouldReturnCodexMonitorTask(pendingRequest)).toBe(true)
+
+    expect(shouldReturnCodexMonitorTask({
+      ...pendingRequest,
+      result: {
+        ...pendingRequest.result,
+        codex_archive_request_state: 'waiting_for_grace',
+      },
+    })).toBe(false)
+
+    expect(shouldReturnCodexMonitorTask({
+      ...pendingRequest,
+      result: {
+        ...pendingRequest.result,
+        codex_archive_request_cancelled_at: '2026-06-10T00:00:03.000Z',
       },
     })).toBe(false)
   })

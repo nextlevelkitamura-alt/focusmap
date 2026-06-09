@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { parseRollout, taskStateForSummary } from './src/codex-thread-monitor';
+import { hasPendingArchiveRequest, parseRollout, taskStateForSummary } from './src/codex-thread-monitor';
 
 const threadRow = {
   id: 'thread-1',
@@ -39,6 +39,37 @@ function task(overrides: Record<string, unknown> = {}) {
 }
 
 describe('codex-thread-monitor state detection', () => {
+  test('only treats completed tasks with pending archive request as archive candidates', () => {
+    expect(hasPendingArchiveRequest(task({
+      status: 'completed',
+      source_task_id: 'source-1',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+      },
+    }))).toBe(true);
+
+    expect(hasPendingArchiveRequest(task({
+      status: 'completed',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'waiting_for_grace',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+      },
+    }))).toBe(false);
+
+    expect(hasPendingArchiveRequest(task({
+      status: 'completed',
+      result: {
+        codex_source_task_completed: true,
+        codex_archive_request_state: 'pending',
+        codex_archive_requested_at: '2026-06-10T00:00:00.000Z',
+        codex_archive_request_cancelled_at: '2026-06-10T00:00:03.000Z',
+      },
+    }))).toBe(false);
+  });
+
   test('keeps a completed Codex answer in awaiting_approval even when thread updated_at is later than completed_at seconds', () => {
     const raw = [
       line('2026-06-08T15:49:14.929Z', { type: 'task_started', started_at: 1780933754 }),

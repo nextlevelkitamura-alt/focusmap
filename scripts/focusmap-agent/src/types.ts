@@ -100,6 +100,15 @@ export interface TaskResultJson {
   codex_thread_url?: string;
   codex_run_state?: 'running' | 'awaiting_approval';
   codex_review_reason?: string;
+  codex_source_task_completed?: boolean;
+  codex_source_task_id?: string | null;
+  codex_source_task_completion_reason?: string | null;
+  codex_source_task_completion_suppressed?: boolean;
+  codex_archive_request_state?: 'waiting_for_grace' | 'pending' | 'completed' | 'cancelled';
+  codex_archive_requested_at?: string | null;
+  codex_archive_request_reason?: string | null;
+  codex_archive_completed_at?: string | null;
+  codex_archive_request_cancelled_at?: string | null;
   last_activity_at?: string;
   awaiting_approval_at?: string;
   codex_visible_messages?: AgentActivityMessage[];

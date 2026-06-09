@@ -12,9 +12,14 @@ import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
 import { getCodexTaskUiState, type CodexTaskUiStateName } from "@/lib/codex-run-state";
-import { setCodexSourceTaskCompletionFromNode } from "@/lib/codex-source-completion";
+import {
+    CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS,
+    requestCodexThreadArchiveFromNode,
+    setCodexSourceTaskCompletionFromNode,
+} from "@/lib/codex-source-completion";
 import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
+import type { AiTask } from "@/types/ai-task";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
 const waitForTaskStateFlush = () => new Promise<void>(resolve => {
@@ -237,16 +242,53 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             setIsRefreshingTaskProgressSnapshot(false);
         }
     }, [refreshTaskProgressSnapshot]);
+    const codexArchiveRequestTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+    const taskStatusByIdRef = useRef(new Map<string, string | null | undefined>());
+    useEffect(() => {
+        const next = new Map<string, string | null | undefined>();
+        for (const task of [...groups, ...tasks]) next.set(task.id, task.status);
+        taskStatusByIdRef.current = next;
+    }, [groups, tasks]);
+    useEffect(() => {
+        const timers = codexArchiveRequestTimersRef.current;
+        return () => {
+            for (const timer of timers.values()) clearTimeout(timer);
+            timers.clear();
+        };
+    }, []);
+    const clearCodexArchiveRequestTimer = useCallback((taskId: string) => {
+        const timer = codexArchiveRequestTimersRef.current.get(taskId);
+        if (!timer) return;
+        clearTimeout(timer);
+        codexArchiveRequestTimersRef.current.delete(taskId);
+    }, []);
+    const scheduleCodexArchiveRequest = useCallback((taskId: string, aiTask: AiTask) => {
+        clearCodexArchiveRequestTimer(taskId);
+        const timer = setTimeout(() => {
+            codexArchiveRequestTimersRef.current.delete(taskId);
+            if (taskStatusByIdRef.current.get(taskId) !== "done") return;
+            void requestCodexThreadArchiveFromNode(aiTask)
+                .then((requested) => requested
+                    ? Promise.all([refreshAiTaskStatus(), refreshTaskProgressSnapshot()]).then(() => undefined)
+                    : undefined)
+                .catch((error) => {
+                    console.error("[MindMap] Failed to request Codex thread archive from node status:", error);
+                });
+        }, CODEX_SOURCE_TASK_ARCHIVE_GRACE_MS);
+        codexArchiveRequestTimersRef.current.set(taskId, timer);
+    }, [clearCodexArchiveRequestTimer, refreshAiTaskStatus, refreshTaskProgressSnapshot]);
     const handleUpdateTaskStatus = useCallback(async (taskId: string, status: string) => {
         if (!onUpdateTask) return;
         await onUpdateTask(taskId, { status });
         if (status !== "done" && status !== "todo") return;
+        clearCodexArchiveRequestTimer(taskId);
 
         const aiTask = aiTasksBySourceId.get(taskId);
         if (!aiTask || (aiTask.executor !== "codex" && aiTask.executor !== "codex_app")) return;
 
         try {
             await setCodexSourceTaskCompletionFromNode(aiTask, status === "done");
+            if (status === "done") scheduleCodexArchiveRequest(taskId, aiTask);
             await Promise.all([
                 refreshAiTaskStatus(),
                 refreshTaskProgressSnapshot(),
@@ -254,7 +296,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         } catch (error) {
             console.error("[MindMap] Failed to update Codex completion from node status:", error);
         }
-    }, [aiTasksBySourceId, onUpdateTask, refreshAiTaskStatus, refreshTaskProgressSnapshot]);
+    }, [aiTasksBySourceId, clearCodexArchiveRequestTimer, onUpdateTask, refreshAiTaskStatus, refreshTaskProgressSnapshot, scheduleCodexArchiveRequest]);
     const taskProgressFallbackTasks = useMemo(() => {
         if (taskProgressFixtureEnabled) return [];
         const fallbackTasks: TaskProgressSnapshotTask[] = [];
@@ -331,10 +373,13 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 : {};
             if (aiResult.codex_source_task_completion_suppressed === true) continue;
             const reason = typeof aiResult.codex_review_reason === "string" ? aiResult.codex_review_reason : "";
+            const completionReason = typeof aiResult.codex_source_task_completion_reason === "string"
+                ? aiResult.codex_source_task_completion_reason
+                : "";
             const closedFromCodex =
-                aiResult.codex_source_task_completed === true ||
-                reason === "archived" ||
-                reason === "thread_deleted";
+                aiResult.codex_source_task_completed === true &&
+                reason !== "thread_deleted" &&
+                completionReason !== "thread_deleted";
             if (!closedFromCodex) continue;
             const completedAt = typeof aiTask.completed_at === "string" ? aiTask.completed_at : "";
             updates.push({ taskId: task.id, key: `${task.id}:${aiTask.id}:${completedAt || reason}` });
