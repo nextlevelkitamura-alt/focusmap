@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard, nativeImage, session } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -12,6 +12,7 @@ const APP_PORT = Number(process.env.FOCUSMAP_DESKTOP_PORT || 3001);
 const LOCAL_APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`;
 const PRODUCTION_APP_ORIGIN = 'https://focusmap-official.com';
 const DESKTOP_USER_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'focusmap-desktop-shell');
+const DESKTOP_BROWSER_PARTITION = 'persist:focusmap-desktop';
 const DESKTOP_HEALTH_TOKEN = process.env.FOCUSMAP_DESKTOP_HEALTH_TOKEN || randomUUID();
 app.setName('Focusmap');
 app.setAboutPanelOptions({ applicationName: 'Focusmap' });
@@ -137,6 +138,7 @@ const pendingDesktopAuthNonces = new Map();
 let lastExternalAuthUrl = '';
 let lastExternalAuthAt = 0;
 let dashboardLoadAttemptedAt = 0;
+let remoteUiCacheClearPromise = null;
 let automationSupervisorEnabled = false;
 let automationSupervisorTimer = null;
 let automationEnsurePromise = null;
@@ -487,6 +489,33 @@ function isLocalAppOrigin() {
   return isLocalOriginValue(APP_ORIGIN);
 }
 
+function desktopBrowserSession() {
+  return session.fromPartition(DESKTOP_BROWSER_PARTITION);
+}
+
+async function ensureFreshRemoteUiCache(origin = APP_ORIGIN, reason = 'dashboard-load') {
+  if (isLocalOriginValue(origin)) return;
+  if (remoteUiCacheClearPromise) return remoteUiCacheClearPromise;
+
+  remoteUiCacheClearPromise = (async () => {
+    try {
+      const webSession = desktopBrowserSession();
+      // Keep the packaged shell on deployed Next assets without touching auth cookies or localStorage.
+      await webSession.clearCache();
+      await webSession.clearStorageData({
+        origin,
+        storages: ['serviceworkers', 'cachestorage'],
+      });
+      log('app', `cleared remote Web UI cache (${reason}): ${origin}`);
+    } catch (error) {
+      remoteUiCacheClearPromise = null;
+      log('app', `failed to clear remote Web UI cache (${reason}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
+
+  return remoteUiCacheClearPromise;
+}
+
 function isSameOrigin(urlString, origin) {
   try {
     return new URL(urlString).origin === origin;
@@ -707,8 +736,12 @@ function loadDashboardSoon(reason) {
   dashboardLoadAttemptedAt = now;
 
   log('app', `loading dashboard (${reason}): ${dashboardUrl()}`);
-  void loadUrlAllowingRedirect(mainWindow, dashboardUrl()).catch((error) => {
-    log('app', `dashboard load failed (${reason}): ${error.message}`);
+  void (async () => {
+    await ensureFreshRemoteUiCache(APP_ORIGIN, reason);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    await loadUrlAllowingRedirect(mainWindow, dashboardUrl());
+  })().catch((error) => {
+    log('app', `dashboard load failed (${reason}): ${error instanceof Error ? error.message : String(error)}`);
   });
 }
 
@@ -726,6 +759,7 @@ async function loadDashboardWhenReady(reason) {
     const currentUrl = mainWindow.webContents.getURL();
     if (!isSameOrigin(currentUrl, origin) || isLoadingScreenUrl(currentUrl)) {
       log('app', `loading dashboard (${reason}): ${dashboardUrl(origin)}`);
+      await ensureFreshRemoteUiCache(origin, reason);
       await loadUrlAllowingRedirect(mainWindow, dashboardUrl(origin));
     }
   }
@@ -1604,7 +1638,7 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      partition: 'persist:focusmap-desktop',
+      partition: DESKTOP_BROWSER_PARTITION,
     },
   });
   void loadFileAllowingAbort(mainWindow, path.join(__dirname, 'loading.html')).catch((error) => {
