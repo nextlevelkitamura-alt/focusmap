@@ -142,11 +142,18 @@ describe("MindMap controls", () => {
         method: "POST",
       }))
       expect(onUpdateTask).toHaveBeenCalledWith("root-1", {
+        title: "プロンプトに関して",
+        memo: `${longTitle}\n\n既存メモ`,
+      })
+      expect(onUpdateTask).toHaveBeenCalledWith("root-1", {
         title: "クリップボード改善",
         memo: `${longTitle}\n\n既存メモ`,
       })
     })
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
-    expect(JSON.parse(String(requestInit.body))).toEqual({ detail: `${longTitle}\n\n既存メモ` })
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      detail: `${longTitle}\n\n既存メモ`,
+      currentHeading: "プロンプトに関して",
+    })
   })
 })

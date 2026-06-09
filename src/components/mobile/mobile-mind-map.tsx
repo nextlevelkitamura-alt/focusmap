@@ -6,7 +6,7 @@ import { CustomMindMapView } from "@/components/mindmap/custom-mind-map-view"
 import { TaskProgressDetailPanel } from "@/components/task-progress/task-progress-detail-panel"
 import { TaskProgressKanban } from "@/components/task-progress/task-progress-kanban"
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state"
-import { buildLongNodeMemoDetail } from "@/lib/memo-ai-generation"
+import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation"
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback"
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks"
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot"
@@ -138,11 +138,12 @@ export function MobileMindMap({
     }, [refreshTaskProgressSnapshot])
     const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
         if (!onUpdateTask) return
+        if (generatingHeadingNodeIds.has(taskId)) return
 
         const targetTask = taskMap.get(taskId)
         if (!targetTask) return
 
-        const detail = buildLongNodeMemoDetail(targetTask.title, targetTask.memo)
+        const { detail, pendingHeading } = buildLongNodeHeadingPayload(targetTask.title, targetTask.memo)
         if (!detail) return
 
         setGeneratingHeadingNodeIds(prev => {
@@ -152,10 +153,15 @@ export function MobileMindMap({
         })
 
         try {
+            await onUpdateTask(taskId, {
+                title: pendingHeading,
+                memo: detail,
+            })
+
             const res = await fetch("/api/ai/generate-memo-heading", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ detail }),
+                body: JSON.stringify({ detail, currentHeading: pendingHeading }),
             })
             const data = await res.json().catch(() => ({}))
             if (!res.ok) {
@@ -178,7 +184,7 @@ export function MobileMindMap({
                 return next
             })
         }
-    }, [onUpdateTask, taskMap])
+    }, [generatingHeadingNodeIds, onUpdateTask, taskMap])
     const taskProgressFallbackTasks = useMemo(() => {
         if (taskProgressFixtureEnabled) return []
         const fallbackTasks: TaskProgressSnapshotTask[] = []

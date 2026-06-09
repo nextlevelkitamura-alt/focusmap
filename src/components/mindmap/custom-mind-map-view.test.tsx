@@ -381,6 +381,7 @@ describe("CustomMindMapView keyboard operations", () => {
 
   test("shows the heading generation button only for nodes that wrap to three or more lines", async () => {
     const onGenerateHeadingFromLongNode = vi.fn()
+    const onSelectNode = vi.fn()
     const longRoot = makeTask({
       id: "root-1",
       title: "一行目\n二行目\n三行目",
@@ -395,6 +396,7 @@ describe("CustomMindMapView keyboard operations", () => {
       groups: [longRoot],
       tasks: [shortChild],
       onGenerateHeadingFromLongNode,
+      onSelectNode,
     })
 
     const longNode = document.querySelector('[data-id="root-1"]')
@@ -409,6 +411,24 @@ describe("CustomMindMapView keyboard operations", () => {
     fireEvent.click(generateButton)
 
     await waitFor(() => expect(onGenerateHeadingFromLongNode).toHaveBeenCalledWith("root-1"))
+    expect(onSelectNode).not.toHaveBeenCalled()
+  })
+
+  test("keeps the heading generation indicator visible while a shortened node is still generating", () => {
+    renderMap({
+      groups: [makeTask({ id: "root-1", title: "短い仮見出し" })],
+      tasks: [],
+      onGenerateHeadingFromLongNode: vi.fn(),
+      generatingHeadingNodeIds: new Set(["root-1"]),
+    })
+
+    const node = document.querySelector('[data-id="root-1"]')
+    if (!(node instanceof HTMLElement)) {
+      throw new Error("node not rendered")
+    }
+
+    const generateButton = within(node).getByRole("button", { name: "長いノードをメモ化して見出し生成" })
+    expect(generateButton).toBeDisabled()
   })
 
   test("promotes with Shift+Tab and saves inline edits", async () => {

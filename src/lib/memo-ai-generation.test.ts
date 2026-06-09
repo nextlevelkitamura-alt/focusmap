@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest"
 import {
   cleanGeneratedMemoHeading,
   buildLongNodeMemoDetail,
+  buildLongNodeHeadingPayload,
+  buildLongNodePendingHeading,
   MEMO_AI_INGEST_TITLE_MAX_CHARS,
   MEMO_HEADING_HARD_MAX_CHARS,
   normalizeAiIngestTitle,
@@ -32,6 +34,19 @@ describe("memo AI generation helpers", () => {
     expect(cleanGeneratedMemoHeading("1. 税制確認")).toBe("税制確認")
   })
 
+  test("allows natural memo headings without clipping common Japanese suffixes", () => {
+    expect(cleanGeneratedMemoHeading("画像とテキストをクリップボードへ一括コピーする仕組み")).toBe(
+      "画像とテキストをクリップボードへ一括コピーする仕組み",
+    )
+  })
+
+  test("builds an immediate pending heading from the first meaningful long-node line", () => {
+    expect(buildLongNodePendingHeading("画像コピー改善\n長い本文\nさらに本文")).toBe("画像コピー改善")
+    expect(buildLongNodePendingHeading("画像とテキストをクリップボードへ一括コピーする仕組み")).toBe(
+      "画像とテキストをクリップボードへ一括コピー…",
+    )
+  })
+
   test("preserves memo body content except surrounding whitespace", () => {
     const body = preserveMemoInputBody(`
 何か新しいことに挑戦することは非常にダメだと思って
@@ -48,5 +63,15 @@ describe("memo AI generation helpers", () => {
 
     expect(detail).toBe("長いノード本文\n\n既存メモ")
     expect(buildLongNodeMemoDetail("長いノード本文", "長いノード本文")).toBe("長いノード本文")
+  })
+
+  test("uses existing memo as the source when regenerating a long generated node heading", () => {
+    const payload = buildLongNodeHeadingPayload(
+      "画像とテキストをクリップボードへ一括コピーする仕",
+      "プロンプトに関して\n画像とテキストをまとめてコピーしたい",
+    )
+
+    expect(payload.detail).toBe("プロンプトに関して\n画像とテキストをまとめてコピーしたい")
+    expect(payload.pendingHeading).toBe("プロンプトに関して")
   })
 })

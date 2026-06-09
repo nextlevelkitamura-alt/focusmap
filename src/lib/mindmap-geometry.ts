@@ -15,6 +15,7 @@ export const NODE_RESIZE_MAX_WIDTH = 500;
 
 const NODE_TEXT_LINE_HEIGHT = 18;
 const NODE_VERTICAL_PADDING = 12;
+const LONG_NODE_HEADING_ACTION_CLEARANCE = 10;
 const NODE_HORIZONTAL_PADDING = 12;
 const NODE_CHECKBOX_WIDTH = 20;
 const NODE_TEXT_GAP_WIDTH = 8;
@@ -130,6 +131,7 @@ export const estimateTaskNodeHeight = (
     const lines = estimateTaskTitleLineCount(title, nodeWidth, isMobile, { hasChildren, childCount });
 
     const textHeight = lines * NODE_TEXT_LINE_HEIGHT;
-    const estimated = textHeight + NODE_VERTICAL_PADDING;
+    const actionClearance = lines >= 3 ? LONG_NODE_HEADING_ACTION_CLEARANCE : 0;
+    const estimated = textHeight + NODE_VERTICAL_PADDING + actionClearance;
     return Math.max(NODE_HEIGHT, estimated);
 };

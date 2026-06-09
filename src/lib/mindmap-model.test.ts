@@ -201,7 +201,7 @@ describe("mindmap geometry", () => {
         expect(explicitTwoLines).toBeGreaterThan(shortLine);
     });
 
-    test("sizes explicit two-line nodes to two text lines", () => {
-        expect(estimateTaskNodeHeight("codex プロンプト注入\nこれ早急に", true, 180, false)).toBe(66);
+    test("adds clearance for nodes that visually wrap to three or more lines", () => {
+        expect(estimateTaskNodeHeight("codex プロンプト注入\nこれ早急に", true, 180, false)).toBe(76);
     });
 });

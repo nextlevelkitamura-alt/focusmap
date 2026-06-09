@@ -353,12 +353,12 @@ function CustomTaskNode({
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const nodeCodexBadge = buildCodexBadge(codexState, taskProgress);
-    const canGenerateHeadingFromLongNode =
+    const showLongNodeHeadingAction =
         !isEditing &&
         !floatingEditing &&
         !dragging &&
-        node.titleLineCount >= 3 &&
-        !!onGenerateHeadingFromLongNode;
+        !!onGenerateHeadingFromLongNode &&
+        (node.titleLineCount >= 3 || isGeneratingHeading);
 
     useEffect(() => {
         if (!isEditing) setEditValue(initialEditValue ?? node.title);
@@ -502,11 +502,10 @@ function CustomTaskNode({
     const handleGenerateHeadingFromLongNode = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
-        onSelectNode(node.id, { additive: false });
         void Promise.resolve(onGenerateHeadingFromLongNode?.(node.id)).catch(error => {
             console.error("[CustomMindMap] Failed to generate heading from long node:", error);
         });
-    }, [node.id, onGenerateHeadingFromLongNode, onSelectNode]);
+    }, [node.id, onGenerateHeadingFromLongNode]);
 
     useEffect(() => {
         onEditingChange?.(node.id, isEditing);
@@ -652,6 +651,7 @@ function CustomTaskNode({
             className={cn(
                 "absolute z-10 rounded-lg border bg-background px-1.5 py-1 text-[13px] shadow-sm transition-colors",
                 "group flex flex-col gap-0 outline-none",
+                showLongNodeHeadingAction && "pb-2.5",
                 floatingEditing && "opacity-0",
                 selected && "ring-2 ring-white ring-offset-2 ring-offset-background",
                 node.isHabit || node.parentIsHabit ? "border-blue-400" : "border-border",
@@ -743,15 +743,15 @@ function CustomTaskNode({
                     <span className="truncate">{nodeCodexBadge.label}</span>
                 </div>
             ) : null}
-            {canGenerateHeadingFromLongNode && (
+            {showLongNodeHeadingAction && (
                 <button
                     type="button"
                     className={cn(
-                        "absolute z-30 inline-flex items-center justify-center rounded-full border border-sky-400/50 bg-sky-500/15 text-sky-200 shadow-lg shadow-sky-950/20 backdrop-blur transition-colors",
+                        "absolute z-30 inline-flex items-center justify-center rounded-full border border-sky-400/50 bg-sky-500/20 text-sky-100 shadow-lg shadow-sky-950/20 backdrop-blur transition-colors",
                         "hover:bg-sky-500/25 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-1 focus:ring-offset-background disabled:pointer-events-none disabled:opacity-70",
                         isMobile
-                            ? "-bottom-3 -right-3 h-11 w-11"
-                            : "-bottom-2 -right-2 h-7 w-7"
+                            ? "-bottom-4 -right-4 h-11 w-11"
+                            : "-bottom-3 -right-3 h-7 w-7"
                     )}
                     disabled={isGeneratingHeading}
                     onPointerDown={(event) => event.stopPropagation()}
@@ -814,6 +814,8 @@ function CustomTaskNode({
                 ) : (
                     <div className={cn(
                         "max-h-full min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-0.5 font-bold leading-tight [overflow-wrap:anywhere]",
+                        showLongNodeHeadingAction && !isGeneratingHeading && "pr-5",
+                        isGeneratingHeading && "pr-7 text-sky-50",
                         node.isDone && "line-through text-muted-foreground",
                         floatingEditing && "opacity-0"
                     )}>

@@ -12,7 +12,7 @@ import { useIsNarrowViewport } from "@/hooks/useIsNarrowViewport";
 import { useMemoAiTasks } from "@/hooks/useMemoAiTasks";
 import { useTaskProgressSnapshot } from "@/hooks/useTaskProgressSnapshot";
 import { getCodexTaskUiState, type CodexRunState } from "@/lib/codex-run-state";
-import { buildLongNodeMemoDetail } from "@/lib/memo-ai-generation";
+import { buildLongNodeHeadingPayload } from "@/lib/memo-ai-generation";
 import { aiTaskToTaskProgressFallback } from "@/lib/task-progress-fallback";
 import type { TaskProgressSnapshotTask, TaskProgressStatus } from "@/types/task-progress";
 
@@ -582,11 +582,12 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
 
     const handleGenerateHeadingFromLongNode = useCallback(async (taskId: string) => {
         if (!onUpdateTask) return;
+        if (generatingHeadingNodeIds.has(taskId)) return;
 
         const targetTask = tasks.find(t => t.id === taskId) ?? groups.find(g => g.id === taskId);
         if (!targetTask) return;
 
-        const detail = buildLongNodeMemoDetail(targetTask.title, targetTask.memo);
+        const { detail, pendingHeading } = buildLongNodeHeadingPayload(targetTask.title, targetTask.memo);
         if (!detail) return;
 
         setGeneratingHeadingNodeIds(prev => {
@@ -595,11 +596,19 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
             return next;
         });
 
+        let memoSaved = false;
         try {
+            await onUpdateTask(taskId, {
+                title: pendingHeading,
+                memo: detail,
+            });
+            memoSaved = true;
+            flashClipboardFeedback("メモ化しました。見出し生成中です");
+
             const res = await fetch("/api/ai/generate-memo-heading", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ detail }),
+                body: JSON.stringify({ detail, currentHeading: pendingHeading }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -613,10 +622,11 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 title: heading,
                 memo: detail,
             });
-            flashClipboardFeedback("メモ化して見出しを生成しました");
+            flashClipboardFeedback("AI見出しに更新しました");
         } catch (error) {
             console.error("[MindMap] Failed to generate heading from long node:", error);
-            flashClipboardFeedback(error instanceof Error ? error.message : "見出し生成に失敗しました");
+            const message = error instanceof Error ? error.message : "見出し生成に失敗しました";
+            flashClipboardFeedback(memoSaved ? `メモ化済み。${message}` : message);
         } finally {
             setGeneratingHeadingNodeIds(prev => {
                 const next = new Set(prev);
@@ -624,7 +634,7 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                 return next;
             });
         }
-    }, [flashClipboardFeedback, groups, onUpdateTask, tasks]);
+    }, [flashClipboardFeedback, generatingHeadingNodeIds, groups, onUpdateTask, tasks]);
 
     const handleContainerPasteCapture = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
         const clipboard = event.clipboardData;
