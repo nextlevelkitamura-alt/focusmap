@@ -61,6 +61,10 @@ export type FocusmapDesktopAutomationServiceStatus = {
   external?: boolean
   configured?: boolean
   available?: boolean
+  appInstalled?: boolean
+  commandAvailable?: boolean
+  appServerReady?: boolean
+  installActionAvailable?: boolean
   scriptAvailable?: boolean
   paused?: boolean
   pausedAt?: string | null
@@ -76,6 +80,13 @@ export type FocusmapDesktopAutomationServiceStatus = {
   lastKickAt?: string | null
   lastKickMessage?: string | null
   disabledReason?: string | null
+  installUrl?: string | null
+}
+
+export type FocusmapDesktopAutomationActionItemResult = {
+  ok: boolean
+  message: string
+  [key: string]: unknown
 }
 
 export type FocusmapDesktopAutomationStatus = {
@@ -107,7 +118,7 @@ export type FocusmapDesktopAutomationActionResult = {
   ok: boolean
   message: string
   status?: FocusmapDesktopAutomationStatus
-  results?: Record<string, { ok: boolean; message: string }>
+  results?: Record<string, FocusmapDesktopAutomationActionItemResult>
 }
 
 function currentSearchParams() {

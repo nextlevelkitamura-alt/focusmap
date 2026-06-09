@@ -162,6 +162,7 @@ Decision: `HYBRID_PLAN_THEN_PARALLEL`
 - 2026-06-08: Phase 5の先行整理として、通常監視writerを `focusmap-agent` 一本に固定した。Macアプリは旧 `task-runner` を通常自動起動せず、旧runner側のCodex sqlite/rollout監視も `FOCUSMAP_LEGACY_CODEX_MONITOR=1` 明示時だけ動く。設定UIは旧runnerを「通常停止」として表示し、`docs/CONTEXT.md` と保存境界仕様に同じ契約を追記した。
 - 2026-06-08: auto実行の確認待ち遷移を補強した。`focusmap-agent` はCodex.app app-server通知からユーザー可視assistant発話だけを短いactivity候補として保持し、`running -> awaiting_approval` の状態更新1回に限ってactivityをクラウドへ同送する。詳細画面は開いた瞬間にTurso/Supabase activityを読めるため、開いてからローカルログを回収する待ち時間を避けられる。
 - 2026-06-09: 固定済みCodex threadの通常監視を `focusmap-agent` に追加した。agent専用 `/api/agents/codex-monitor/tasks` は `codex_thread_id` 保存済みかつsourceが削除/アーカイブされていないtaskに加え、作成から10分以内の未紐付けmanual handoff taskも一時的に返す。Mac agentは未紐付けtaskを `~/.codex/state_5.sqlite` の `first_user_message` とhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存し、保存後はそのthread IDを rollout JSONL と合わせて2秒間隔で読む。対象リスト取得は10秒キャッシュでSupabase readを抑える。`running` は最新 `task_started` 後に `task_complete` / `turn_aborted` がまだ無い時だけにし、`task_complete` / `turn_aborted` は確認待ちへ進める。確認待ち後の追加プロンプトはcheckpoint以降の `user_message` / `task_started` だけで判定し、thread `updated_at_ms` 単体では `running` へ戻さない。thread削除/アーカイブ時は対象 `ai_tasks` を `completed` にして監視対象から外す。
+- 2026-06-09: Phase 1の接続復旧導線として、Focusmap MacアプリはCodex Desktop本体 `/Applications/Codex.app` の導入有無もstatusへ含める。未導入時の接続/復旧は、`codex` CLIがあるMacなら `codex app` を実行してCodex Desktopのインストーラーを開き、CLIも無い場合や起動に失敗した場合は既定ブラウザーでOpenAI Codexページを開く。設定 > 自動化のCodexカードは `要インストール` と `Codexを入れる` ボタンを表示し、インストールとログイン後にもう一度接続/復旧する流れにした。
 
 ## リスク
 

@@ -104,6 +104,11 @@ const RESOURCE_ROOT = app.isPackaged ? process.resourcesPath : REPO_ROOT;
 const CONFIG_PATH = path.join(os.homedir(), '.focusmap', 'config.json');
 const AUTH_SESSION_PATH = path.join(DESKTOP_USER_DATA_DIR, 'auth-session.json');
 const CODEX_APP_BIN = '/Applications/Codex.app/Contents/Resources/codex';
+const CODEX_DOWNLOAD_URL = (
+  process.env.FOCUSMAP_CODEX_DOWNLOAD_URL ||
+  DESKTOP_ENV.FOCUSMAP_CODEX_DOWNLOAD_URL ||
+  'https://openai.com/codex/'
+).trim();
 const AGENT_CLI = app.isPackaged
   ? path.join(RESOURCE_ROOT, 'focusmap-agent', 'dist', 'cli.js')
   : path.join(REPO_ROOT, 'scripts', 'focusmap-agent', 'dist', 'cli.js');
@@ -283,7 +288,10 @@ function processRunning(pattern) {
 
 function commandExists(command) {
   return new Promise((resolve) => {
-    execFile('/usr/bin/env', ['which', command], { timeout: 3000 }, (error) => {
+    execFile('/usr/bin/env', ['which', command], {
+      timeout: 3000,
+      env: { ...process.env, PATH: CHILD_PATH },
+    }, (error) => {
       resolve(!error);
     });
   });
@@ -1212,13 +1220,20 @@ async function startAgent() {
 }
 
 async function startCodexServer() {
+  const codexAppInstalled = fs.existsSync(CODEX_APP_BIN);
+  const codexCommandAvailable = await commandExists('codex');
+
+  if (!codexAppInstalled) {
+    return startCodexDesktopInstaller(codexCommandAvailable);
+  }
+
   if (await tcpReady('127.0.0.1', 7878)) {
     return { ok: true, message: 'Codex app-serverは起動済みです' };
   }
   if (!fs.existsSync(CODEX_SERVER_SCRIPT)) {
     return { ok: false, message: `Codex app-server起動スクリプトがありません: ${CODEX_SERVER_SCRIPT}` };
   }
-  if (!fs.existsSync(CODEX_APP_BIN) && !(await commandExists('codex'))) {
+  if (!codexCommandAvailable && !codexAppInstalled) {
     return { ok: false, message: 'Codex.app または codex CLI が見つかりません' };
   }
 
@@ -1236,6 +1251,56 @@ async function startCodexServer() {
   attachProcessLifecycle('codex', child, 'codex');
   log('codex', 'starting codex app-server on ws://127.0.0.1:7878');
   return { ok: true, message: 'Codex app-serverを起動しました' };
+}
+
+async function startCodexDesktopInstaller(codexCommandAvailable) {
+  const base = {
+    code: 'codex_desktop_missing',
+    installUrl: CODEX_DOWNLOAD_URL,
+    installStarted: true,
+  };
+
+  if (codexCommandAvailable) {
+    const env = { ...process.env, PATH: CHILD_PATH };
+    delete env.ANTHROPIC_API_KEY;
+    delete env.CLAUDECODE;
+
+    try {
+      const child = spawn('/usr/bin/env', ['codex', 'app'], {
+        cwd: REPO_ROOT,
+        env,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      log('codex', 'Codex Desktop is missing; launched `codex app` installer');
+      return serviceResult(
+        false,
+        'Codex Desktopが未導入のため、インストーラーを開きました。インストールとログイン後にもう一度「接続/復旧」を押してください。',
+        { ...base, installerMode: 'codex_app_command' },
+      );
+    } catch (error) {
+      log('codex', `codex app installer failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  try {
+    await shell.openExternal(CODEX_DOWNLOAD_URL);
+    log('codex', `Codex Desktop is missing; opened download page ${CODEX_DOWNLOAD_URL}`);
+    return serviceResult(
+      false,
+      'Codex Desktopが未導入のため、公式ダウンロードページを開きました。インストールとログイン後にもう一度「接続/復旧」を押してください。',
+      { ...base, installerMode: 'download_page' },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log('codex', `Codex download page open failed: ${message}`);
+    return serviceResult(
+      false,
+      `Codex Desktopが未導入で、ダウンロードページも開けませんでした: ${message}`,
+      { ...base, installStarted: false, installerMode: 'download_page' },
+    );
+  }
 }
 
 function maybeRecoverTaskRunner(reason) {
@@ -1361,6 +1426,7 @@ async function getAutomationStatus() {
     commandExists('codex'),
     processRunning('focusmap-agent.*dist/cli\\.js.*start|scripts/focusmap-agent/dist/cli\\.js.*start').catch(() => false),
   ]);
+  const codexAppInstalled = fs.existsSync(CODEX_APP_BIN);
   const agentManaged = isChildRunning(managedProcesses.agent);
   const codexManaged = isChildRunning(managedProcesses.codex);
   const agentReady = agentManaged || externalAgentRunning;
@@ -1372,7 +1438,7 @@ async function getAutomationStatus() {
   return {
     ok: true,
     available: true,
-    connected: Boolean(appReady && agentReady && codexReady && !runnerBlocksConnection),
+    connected: Boolean(appReady && agentReady && codexAppInstalled && codexReady && !runnerBlocksConnection),
     timestamp: new Date().toISOString(),
     supervisor: {
       enabled: automationSupervisorEnabled,
@@ -1398,9 +1464,14 @@ async function getAutomationStatus() {
       apiUrl: preferredAgentApiUrl() || 'config',
     },
     codex: {
-      ready: codexReady,
+      ready: Boolean(codexAppInstalled && codexReady),
       managed: codexManaged,
-      available: fs.existsSync(CODEX_APP_BIN) || codexCommandAvailable,
+      available: codexAppInstalled || codexCommandAvailable,
+      appInstalled: codexAppInstalled,
+      commandAvailable: codexCommandAvailable,
+      appServerReady: codexReady,
+      installUrl: CODEX_DOWNLOAD_URL,
+      installActionAvailable: true,
       scriptAvailable: fs.existsSync(CODEX_SERVER_SCRIPT),
       scriptPath: CODEX_SERVER_SCRIPT,
       port: 7878,

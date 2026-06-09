@@ -16,6 +16,8 @@ interface SpaceOption {
   name?: string | null
 }
 
+const CODEX_DOWNLOAD_URL = "https://openai.com/codex/"
+
 function SettingBlock({
   icon: Icon,
   title,
@@ -99,6 +101,12 @@ function agentDetail(status: FocusmapDesktopAutomationStatus | null) {
 function codexDetail(status: FocusmapDesktopAutomationStatus | null) {
   const codex = status?.codex
   if (!codex) return "Macアプリから状態を取得していません。"
+  if (codex.appInstalled === false && codex.commandAvailable) {
+    return "Codex Desktopが未導入です。接続/復旧でCodexのインストーラーを開けます。"
+  }
+  if (codex.appInstalled === false) {
+    return "Codex Desktopが未導入です。Codexを入れるボタンで公式ページを開けます。"
+  }
   if (codex.ready && codex.managed) return "このMacアプリからCodex app-serverを起動しています。"
   if (codex.ready) return "Codex app-serverに接続できます。"
   if (!codex.available) return "Codex.app または codex CLI が見つかりません。"
@@ -129,7 +137,7 @@ function MacCodexConnectionPanel() {
   const [status, setStatus] = useState<FocusmapDesktopAutomationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [bridgeAvailable, setBridgeAvailable] = useState(false)
-  const [action, setAction] = useState<"connect" | "disconnect" | "refresh" | null>(null)
+  const [action, setAction] = useState<"connect" | "disconnect" | "refresh" | "install" | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const loadStatus = async (silent = false) => {
@@ -188,6 +196,27 @@ function MacCodexConnectionPanel() {
 
   const connected = Boolean(status?.connected)
   const canDisconnect = Boolean(status?.agent.managed || status?.codex.managed)
+  const codexNeedsInstall = status?.codex?.appInstalled === false
+  const codexInstallUrl = status?.codex?.installUrl || CODEX_DOWNLOAD_URL
+
+  const openCodexInstall = async () => {
+    if (typeof window === "undefined") return
+    const bridge = window.focusmapDesktop
+    setAction("install")
+    setMessage(null)
+    try {
+      if (!bridge?.openExternal) {
+        setMessage("Focusmap Macアプリから開くとCodexの導入ページを開けます。")
+        return
+      }
+      await bridge.openExternal(codexInstallUrl)
+      setMessage("Codexの導入ページを開きました。インストールとログイン後に接続/復旧してください。")
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Codexの導入ページを開けませんでした")
+    } finally {
+      setAction(null)
+    }
+  }
 
   return (
     <section className="rounded-lg border border-white/[0.08] bg-[#1c1c1e] p-4 md:p-5">
@@ -213,6 +242,17 @@ function MacCodexConnectionPanel() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {codexNeedsInstall && (
+            <Button
+              variant="outline"
+              className="h-11 gap-1.5"
+              onClick={() => void openCodexInstall()}
+              disabled={!bridgeAvailable || action !== null}
+            >
+              <DownloadCloud className="h-4 w-4" />
+              {action === "install" ? "起動中..." : "Codexを入れる"}
+            </Button>
+          )}
           <Button
             className="h-11 gap-1.5"
             onClick={() => void runDesktopAction("connect")}
@@ -245,7 +285,13 @@ function MacCodexConnectionPanel() {
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MacConnectionItem icon={Laptop} label="Focusmap 3001" ready={status?.app.ready} detail={appDetail(status)} />
         <MacConnectionItem icon={Workflow} label="focusmap-agent" ready={status?.agent.ready} detail={agentDetail(status)} />
-        <MacConnectionItem icon={Bot} label="Codex app-server" ready={status?.codex.ready} detail={codexDetail(status)} />
+        <MacConnectionItem
+          icon={Bot}
+          label="Codex app-server"
+          ready={status?.codex.ready}
+          statusLabel={codexNeedsInstall ? "要インストール" : undefined}
+          detail={codexDetail(status)}
+        />
         <MacConnectionItem
           icon={Terminal}
           label="旧task-runner"
