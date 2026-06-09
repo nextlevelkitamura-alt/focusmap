@@ -564,7 +564,7 @@ async function syncOneTask(api: AgentApiClient, runnerId: string, dbPath: string
 export function startCodexThreadMonitorLoop(
   api: AgentApiClient,
   runnerId: string,
-  intervalMs = 2_000,
+  intervalMs = 1_000,
   targetRefreshIntervalMs = DEFAULT_TARGET_REFRESH_INTERVAL_MS,
 ): NodeJS.Timeout {
   let running = false;
