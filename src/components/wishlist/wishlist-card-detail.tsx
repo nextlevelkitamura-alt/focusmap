@@ -1969,6 +1969,112 @@ export function WishlistCardDetail({
     }
   }
 
+  const organizationSection = (
+    <div className={cn("min-w-0 space-y-2", isMobile ? "order-7 pt-1" : "xl:col-start-2 xl:row-start-1")}>
+      <label className="block min-w-0 space-y-1">
+        <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
+        <div className="relative">
+          <select
+            value={item.project_id ?? ""}
+            onChange={e => update({ project_id: e.target.value || null })}
+            className="h-10 w-full appearance-none truncate rounded-md border bg-background px-2 pr-7 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+            style={selectedProject ? {
+              borderColor: colorToRgba(selectedProjectColor, 0.55),
+              boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
+            } : undefined}
+          >
+            <option value="">未設定</option>
+            {projects.map(project => (
+              <option key={project.id} value={project.id}>
+                {project.title}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        </div>
+      </label>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            タグ
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{selectedTags.length}</span>
+          </Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" aria-label="タグを追加" className="h-8 gap-1.5 px-2 text-xs">
+                <Plus className="h-3.5 w-3.5" />
+                追加
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] space-y-3 p-3">
+              <div className="flex gap-2">
+                <Input
+                  value={tagText}
+                  onChange={e => setTagText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      void handleAddTag()
+                    }
+                  }}
+                  placeholder="新規タグ"
+                  className="h-10"
+                />
+                <Button variant="outline" onClick={() => void handleAddTag()} className="h-10 shrink-0 px-3">追加</Button>
+              </div>
+              {tagSuggestions.length > 0 && (
+                <div className="grid grid-cols-2 gap-2">
+                  {tagSuggestions.map(tag => {
+                    const color = getTagColor(tag, tagColors)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => void addTagValue(tag)}
+                        className="min-h-[40px] rounded-md border px-3 text-left text-sm font-medium"
+                        style={{
+                          borderColor: colorToRgba(color, 0.45),
+                          backgroundColor: colorToRgba(color, 0.1),
+                          color,
+                        }}
+                      >
+                        {tag}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+        <div className="min-h-[44px] rounded-lg border bg-background/40 p-2">
+          {selectedTags.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {selectedTags.map(tag => {
+                const color = getTagColor(tag, tagColors)
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => void removeTag(tag)}
+                    className="min-h-9 rounded-full border px-3 text-sm font-medium hover:opacity-80"
+                    style={{
+                      borderColor: colorToRgba(color, 0.55),
+                      backgroundColor: colorToRgba(color, 0.12),
+                      color,
+                    }}
+                  >
+                    {tag} ×
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <Sheet
       open={open}
@@ -1985,7 +2091,7 @@ export function WishlistCardDetail({
         className={cn(
           isMobile
             ? [
-                "h-[88dvh] max-h-[88dvh] gap-0 overflow-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
+                "h-[88dvh] max-h-[88dvh] w-full max-w-full gap-0 overflow-hidden overflow-x-hidden rounded-t-2xl border-neutral-800 bg-neutral-950 px-0 pb-0 text-neutral-50",
                 "shadow-[0_-18px_48px_rgba(0,0,0,0.55)]",
                 "[&>button]:right-3 [&>button]:top-3 [&>button]:flex [&>button]:h-11 [&>button]:w-11 [&>button]:items-center [&>button]:justify-center",
                 "[&>button]:rounded-full [&>button]:text-neutral-400 [&>button]:opacity-100 [&>button:hover]:bg-white/10 [&>button:hover]:text-neutral-100 [&>button_svg]:h-5 [&>button_svg]:w-5",
@@ -2017,12 +2123,12 @@ export function WishlistCardDetail({
           ref={sheetScrollRef}
           className={cn(
           isMobile
-            ? "min-h-0 flex-1 overflow-y-auto px-4 pb-0"
+            ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none px-4 pb-0 [touch-action:pan-y]"
             : "grid gap-4 pb-6 xl:grid-cols-[minmax(18rem,0.9fr)_minmax(0,1.1fr)] xl:items-start"
         )}>
-          <div className={cn("min-w-0", isMobile ? "flex flex-col gap-3" : "contents")}>
-          <div className="order-0 grid gap-3 md:grid-cols-2 xl:col-span-2 xl:row-start-1">
-            <label className="min-w-0 space-y-1">
+          <div className={cn("min-w-0 max-w-full", isMobile ? "flex w-full flex-col gap-3" : "contents")}>
+          <div className="order-0 min-w-0 space-y-1 xl:col-start-1 xl:row-start-1">
+            <label className="block min-w-0 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">見出し</span>
               <Input
                 value={draftTitle}
@@ -2031,120 +2137,16 @@ export function WishlistCardDetail({
                 className="h-10 min-w-0 text-sm font-semibold"
               />
             </label>
-
-            <div className="min-w-0 space-y-2">
-              <label className="block min-w-0 space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">プロジェクト</span>
-                <div className="relative">
-                  <select
-                    value={item.project_id ?? ""}
-                    onChange={e => update({ project_id: e.target.value || null })}
-                    className="h-10 w-full appearance-none truncate rounded-md border bg-background px-2 pr-7 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                    style={selectedProject ? {
-                      borderColor: colorToRgba(selectedProjectColor, 0.55),
-                      boxShadow: `inset 4px 0 0 ${selectedProjectColor}`,
-                    } : undefined}
-                  >
-                    <option value="">未設定</option>
-                    {projects.map(project => (
-                      <option key={project.id} value={project.id}>
-                        {project.title}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                </div>
-              </label>
-              <div className="space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <Label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                    タグ
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{selectedTags.length}</span>
-                  </Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button type="button" variant="outline" aria-label="タグを追加" className="h-8 gap-1.5 px-2 text-xs">
-                        <Plus className="h-3.5 w-3.5" />
-                        追加
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="w-[min(18rem,calc(100vw-2rem))] space-y-3 p-3">
-                      <div className="flex gap-2">
-                        <Input
-                          value={tagText}
-                          onChange={e => setTagText(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") {
-                              e.preventDefault()
-                              void handleAddTag()
-                            }
-                          }}
-                          placeholder="新規タグ"
-                          className="h-10"
-                        />
-                        <Button variant="outline" onClick={() => void handleAddTag()} className="h-10 shrink-0 px-3">追加</Button>
-                      </div>
-                      {tagSuggestions.length > 0 && (
-                        <div className="grid grid-cols-2 gap-2">
-                          {tagSuggestions.map(tag => {
-                            const color = getTagColor(tag, tagColors)
-                            return (
-                              <button
-                                key={tag}
-                                type="button"
-                                onClick={() => void addTagValue(tag)}
-                                className="min-h-[40px] rounded-md border px-3 text-left text-sm font-medium"
-                                style={{
-                                  borderColor: colorToRgba(color, 0.45),
-                                  backgroundColor: colorToRgba(color, 0.1),
-                                  color,
-                                }}
-                              >
-                                {tag}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="min-h-[44px] rounded-lg border bg-background/40 p-2">
-                  {selectedTags.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedTags.map(tag => {
-                        const color = getTagColor(tag, tagColors)
-                        return (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => void removeTag(tag)}
-                            className="min-h-9 rounded-full border px-3 text-sm font-medium hover:opacity-80"
-                            style={{
-                              borderColor: colorToRgba(color, 0.55),
-                              backgroundColor: colorToRgba(color, 0.12),
-                              color,
-                            }}
-                          >
-                            {tag} ×
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
           </div>
 
-            <div className="order-4 space-y-2 xl:col-start-2 xl:row-start-3">
+            <div className="order-4 min-w-0 space-y-2 xl:col-start-2 xl:row-start-3">
               <Label className="flex items-center gap-1.5">
                 <Clock className="h-4 w-4" />
                 時間・予定
               </Label>
-              <div className="space-y-3 rounded-lg border bg-background/40 p-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
+                <div className="min-w-0 space-y-3 rounded-lg border bg-background/40 p-3">
+                  <div className="grid min-w-0 grid-cols-2 gap-2">
+                    <div className="min-w-0 space-y-1">
                     <span className="text-xs font-medium text-muted-foreground">日付</span>
                     <Popover open={isDatePopoverOpen} onOpenChange={handleDatePopoverOpenChange}>
                       <PopoverTrigger asChild>
@@ -2211,7 +2213,7 @@ export function WishlistCardDetail({
                       </PopoverContent>
                     </Popover>
                   </div>
-                  <div className="space-y-1">
+                    <div className="min-w-0 space-y-1">
                     <span className="text-xs font-medium text-muted-foreground">時刻</span>
                     <Popover open={isTimePopoverOpen} onOpenChange={handleTimePopoverOpenChange}>
                       <PopoverTrigger asChild>
@@ -2323,7 +2325,7 @@ export function WishlistCardDetail({
                 </div>
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">カレンダー</span>
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                     <Popover open={isCalendarPopoverOpen} onOpenChange={setIsCalendarPopoverOpen}>
                       <PopoverTrigger asChild>
                         <button
@@ -2358,7 +2360,7 @@ export function WishlistCardDetail({
                       onClick={handleAddCalendar}
                       disabled={isAddingCalendar || !canAddCalendar}
                       variant={item.google_event_id ? "outline" : "default"}
-                      className="min-h-[42px] shrink-0 px-3"
+                        className="min-h-[42px] w-full shrink-0 px-3 sm:w-auto"
                     >
                       {isAddingCalendar ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarIcon className="mr-1.5 h-4 w-4" />}
                       {item.google_event_id ? "予定を更新" : "予定を追加"}
@@ -2368,7 +2370,7 @@ export function WishlistCardDetail({
               </div>
             </div>
 
-            <div className="order-1 space-y-1 xl:col-start-1 xl:row-start-2 xl:row-span-2">
+            <div className="order-1 min-w-0 space-y-1 xl:col-start-1 xl:row-start-2 xl:row-span-2">
               <div className="flex items-center justify-between gap-2">
                 <Label>メモ詳細</Label>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -2473,7 +2475,7 @@ export function WishlistCardDetail({
               )}
             </div>
 
-            <div className="order-2 space-y-2 xl:col-start-2 xl:row-start-2">
+            <div className="order-2 min-w-0 space-y-2 xl:col-start-2 xl:row-start-2">
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5">
                   <ImagePlus className="h-4 w-4" />
@@ -2485,32 +2487,37 @@ export function WishlistCardDetail({
                   ref={imagePasteTargetRef}
                   tabIndex={-1}
                   data-testid="memo-image-paste-target"
-                  onPaste={handleImagePaste}
-                  className="space-y-3 rounded-md border bg-background p-3 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35"
+                    onPaste={handleImagePaste}
+                    className="min-w-0 space-y-3 overflow-x-hidden rounded-md border bg-background p-3 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/35"
                 >
-                  {displayedImages.length > 0 && (
-                    <div className="-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3">
-                      {displayedImages.map(image => {
-                        const isPending = "is_pending" in image
-                        return (
-                          <div
-                            key={image.id}
-                            data-testid={isPending ? "pending-memo-image" : undefined}
-                            className={cn(
-                              "relative w-24 shrink-0 overflow-hidden rounded-md border bg-muted/20 transition-opacity",
-                              isPending && "opacity-45",
-                            )}
-                          >
-                            {isPending ? (
-                              <div className="block">
-                                {image.file_url ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={image.file_url} alt={image.file_name} className="h-20 w-24 object-cover" />
-                                ) : (
-                                  <div className="flex h-20 w-24 items-center justify-center bg-muted/30">
-                                    <ImagePlus className="h-5 w-5 text-muted-foreground" />
-                                  </div>
-                                )}
+                    {displayedImages.length > 0 && (
+                      <div className={cn(
+                        isMobile
+                          ? "grid grid-cols-2 gap-2"
+                          : "-mr-3 flex items-start gap-2 overflow-x-auto pb-1 pr-3",
+                      )}>
+                        {displayedImages.map(image => {
+                          const isPending = "is_pending" in image
+                          return (
+                            <div
+                              key={image.id}
+                              data-testid={isPending ? "pending-memo-image" : undefined}
+                              className={cn(
+                                "relative overflow-hidden rounded-md border bg-muted/20 transition-opacity",
+                                isMobile ? "min-w-0" : "w-24 shrink-0",
+                                isPending && "opacity-45",
+                              )}
+                            >
+                              {isPending ? (
+                                <div className="block">
+                                  {image.file_url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={image.file_url} alt={image.file_name} className={cn("h-20 object-cover", isMobile ? "w-full" : "w-24")} />
+                                  ) : (
+                                    <div className={cn("flex h-20 items-center justify-center bg-muted/30", isMobile ? "w-full" : "w-24")}>
+                                      <ImagePlus className="h-5 w-5 text-muted-foreground" />
+                                    </div>
+                                  )}
                               </div>
                             ) : (
                               <a
@@ -2519,11 +2526,11 @@ export function WishlistCardDetail({
                                 target="_blank"
                                 rel="noreferrer"
                                 onDoubleClick={e => e.currentTarget.click()}
-                                title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={image.file_url} alt={image.file_name} className="h-20 w-24 object-cover" />
-                              </a>
+                                  title="PCはダブルクリックで保存、スマホは長押しまたは保存ボタン"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={image.file_url} alt={image.file_name} className={cn("h-20 object-cover", isMobile ? "w-full" : "w-24")} />
+                                </a>
                             )}
                             {isPending ? (
                               <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-background/80 px-1 py-1 text-[11px] font-medium text-muted-foreground backdrop-blur">
@@ -2626,15 +2633,15 @@ export function WishlistCardDetail({
                 </div>
             </div>
 
-          {saveError && (
-            <div className="order-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-2 xl:row-start-5">
-              {saveError}
-            </div>
-          )}
+            {saveError && (
+              <div className="order-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive xl:col-span-2 xl:row-start-5">
+                {saveError}
+              </div>
+            )}
 
-            </div>
+            {organizationSection}
 
-            <div className={cn("min-w-0", isMobile ? "order-8 mt-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-4")}>
+              <div className={cn("min-w-0", isMobile ? "order-3 space-y-3" : "space-y-4 xl:col-start-2 xl:row-start-4")}>
             {showStructureTools && (
             <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -2761,7 +2768,7 @@ export function WishlistCardDetail({
                             setIsLaunchingCodex(false)
                           }
                         }}
-                        className="min-h-[44px] shrink-0 gap-2 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-45"
+                          className="min-h-[44px] w-full shrink-0 justify-center gap-2 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:opacity-45 md:w-auto"
                       >
                         {isLaunchingCodex ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                         Codexに送る
@@ -2835,42 +2842,42 @@ export function WishlistCardDetail({
                       </div>
                     )}
 
-                    <div className="rounded-md border bg-background/70">
-                      <div className="grid grid-cols-[6rem_6rem_minmax(0,1fr)] border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-                        <span>状態</span>
-                        <span>時刻</span>
-                        <span>内容</span>
+                      <div className="min-w-0 overflow-hidden rounded-md border bg-background/70">
+                        <div className="hidden grid-cols-[6rem_6rem_minmax(0,1fr)] border-b px-3 py-2 text-xs font-medium text-muted-foreground sm:grid">
+                          <span>状態</span>
+                          <span>時刻</span>
+                          <span>内容</span>
                       </div>
                       <div className="divide-y">
                         {logEntries.map((entry, index) => (
-                          <div
-                            key={`${entry.state}-${index}`}
-                            className={cn(
-                              "grid min-h-[42px] grid-cols-[6rem_6rem_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs",
-                              entry.active && "bg-muted/30",
-                            )}
-                          >
+                            <div
+                              key={`${entry.state}-${index}`}
+                              className={cn(
+                                "grid min-h-[42px] min-w-0 grid-cols-[minmax(0,1fr)] gap-1 px-3 py-2 text-xs sm:grid-cols-[6rem_6rem_minmax(0,1fr)] sm:items-center sm:gap-2",
+                                entry.active && "bg-muted/30",
+                              )}
+                            >
                             <span className={cn(
                               "inline-flex w-fit items-center rounded-full border px-2 py-0.5 font-medium",
                               memoCodexLogTone(entry.state, entry.active),
                             )}>
                               {entry.label}
                             </span>
-                            <span className="tabular-nums text-muted-foreground">{entry.time}</span>
-                            <span className="min-w-0 truncate text-muted-foreground">{entry.body}</span>
-                          </div>
+                              <span className="tabular-nums text-muted-foreground">{entry.time}</span>
+                              <span className="min-w-0 truncate text-muted-foreground">{entry.body}</span>
+                            </div>
                         ))}
                       </div>
                     </div>
 
                     {aiTask && (
-                      <div className="rounded-md border bg-background/70">
+                        <div className="min-w-0 overflow-hidden rounded-md border bg-background/70">
                         <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
                           <span className="text-xs font-medium text-muted-foreground">チャット</span>
                           {isLoadingCodexActivity && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                         </div>
                         {codexActivityMessages.length > 0 ? (
-                          <div className="max-h-56 space-y-2 overflow-y-auto p-3">
+                            <div className="max-h-56 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden p-3">
                             {codexActivityMessages.slice(-12).map(message => {
                               const isUser = message.role === "user" || message.kind === "user_answer"
                               const isStatus = message.role === "status"
@@ -2878,7 +2885,7 @@ export function WishlistCardDetail({
                                 <article
                                   key={message.id}
                                   className={cn(
-                                    "max-w-[92%] rounded-lg border px-3 py-2 text-xs leading-5",
+                                      "min-w-0 max-w-[92%] rounded-lg border px-3 py-2 text-xs leading-5",
                                     isUser && "ml-auto border-sky-500/25 bg-sky-500/10 text-sky-100",
                                     isStatus && "mx-auto border-muted bg-muted/25 text-muted-foreground",
                                     !isUser && !isStatus && "mr-auto border-emerald-500/25 bg-emerald-500/10 text-emerald-50",
@@ -2904,9 +2911,10 @@ export function WishlistCardDetail({
                 </div>
             )
           })()}
+            </div>
           </div>
-        </div>
-      </SheetContent>
+          </div>
+        </SheetContent>
 
       </Sheet>
   )

@@ -98,8 +98,26 @@ function DetailHarness() {
   )
 }
 
+function matchMediaStub(matches: (query: string) => boolean) {
+  return vi.fn().mockImplementation((query: string) => ({
+    matches: matches(query),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }))
+}
+
+function expectVisualOrder(element: Element, orderClass: string) {
+  expect(element.closest(`[class*="${orderClass}"]`)).toBeTruthy()
+}
+
 describe('WishlistCardDetail', () => {
   beforeEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
     imageCompressionMock.compressImageFileForUpload.mockClear()
     codexLaunchMock.copyCodexImageToClipboard.mockClear()
@@ -153,6 +171,51 @@ describe('WishlistCardDetail', () => {
     expect(await screen.findByText('画像を追加')).toBeInTheDocument()
     expect(screen.getByText('フォルダー選択 / ドラッグ&ドロップ')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
+  })
+
+  test('スマホ表示ではメモ詳細と画像を上に置き、タグを最後に回す', async () => {
+    vi.stubGlobal('matchMedia', matchMediaStub(query => query.includes('max-width')))
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ category: '未完了', project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={vi.fn(async () => undefined)}
+      />,
+    )
+
+    const titleInput = await screen.findByDisplayValue('Original title')
+    const memoDetail = screen.getByText('メモ詳細')
+    const imageSection = screen.getByText('画像')
+    const codexButton = screen.getByRole('button', { name: /Codexに送る/ })
+    const scheduleSection = screen.getByText('時間・予定')
+    const tagSection = screen.getByText('タグ')
+
+    expectVisualOrder(titleInput, 'order-0')
+    expectVisualOrder(memoDetail, 'order-1')
+    expectVisualOrder(imageSection, 'order-2')
+    expectVisualOrder(codexButton, 'order-3')
+    expectVisualOrder(scheduleSection, 'order-4')
+    expectVisualOrder(tagSection, 'order-7')
+    expect(screen.queryByRole('button', { name: /クリップボード画像を貼り付け/ })).not.toBeInTheDocument()
   })
 
   test('保存済み画像があるメモではCodex画像コピーをすぐ押せる', async () => {

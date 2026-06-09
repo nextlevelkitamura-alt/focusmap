@@ -2,15 +2,21 @@
 
 import { useState, useEffect } from "react"
 
+const COARSE_POINTER_QUERY = "(pointer: coarse)"
+const MOBILE_WIDTH_QUERY = "(max-width: 767px)"
+
 function readIsMobile() {
     return typeof window !== "undefined" &&
         typeof window.matchMedia === "function" &&
-        window.matchMedia("(pointer: coarse)").matches
+        (
+            window.matchMedia(COARSE_POINTER_QUERY).matches ||
+            window.matchMedia(MOBILE_WIDTH_QUERY).matches
+        )
 }
 
 /**
- * タッチデバイス（スマホ・タブレット）かどうかを判定するフック
- * pointer: coarse でタッチ入力を検出
+ * モバイル向けUIに切り替えるかどうかを判定するフック。
+ * タッチ入力だけでなく、デスクトップブラウザの狭幅確認もモバイル扱いにする。
  */
 export function useIsMobile(): boolean {
     const [isMobile, setIsMobile] = useState(readIsMobile)
@@ -18,10 +24,19 @@ export function useIsMobile(): boolean {
     useEffect(() => {
         if (typeof window === "undefined" || typeof window.matchMedia !== "function") return
 
-        const mql = window.matchMedia("(pointer: coarse)")
-        const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
-        mql.addEventListener("change", handler)
-        return () => mql.removeEventListener("change", handler)
+        const queries = [
+            window.matchMedia(COARSE_POINTER_QUERY),
+            window.matchMedia(MOBILE_WIDTH_QUERY),
+        ]
+        const update = () => {
+            setIsMobile(queries.some(query => query.matches))
+        }
+
+        update()
+        queries.forEach(query => query.addEventListener("change", update))
+        return () => {
+            queries.forEach(query => query.removeEventListener("change", update))
+        }
     }, [])
 
     return isMobile
