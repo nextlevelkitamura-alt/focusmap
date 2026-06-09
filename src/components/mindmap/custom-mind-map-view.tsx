@@ -246,6 +246,51 @@ const trackDetachedSave = (saveAction: void | Promise<void> | undefined, label: 
     });
 };
 
+function CodexRunningOrbit({ width, height }: { width: number; height: number }) {
+    const orbitInset = 5;
+    const strokePadding = 2;
+    const orbitWidth = Math.max(1, Math.round(width + orbitInset * 2));
+    const orbitHeight = Math.max(1, Math.round(height + orbitInset * 2));
+    const rectWidth = Math.max(1, orbitWidth - strokePadding * 2);
+    const rectHeight = Math.max(1, orbitHeight - strokePadding * 2);
+    const radius = Math.min(10, rectWidth / 2, rectHeight / 2);
+
+    return (
+        <div
+            className="codex-node-running-orbit"
+            title="Codex 実行中"
+            aria-label="Codex 実行中"
+        >
+            <svg
+                className="codex-node-running-orbit__svg"
+                viewBox={`0 0 ${orbitWidth} ${orbitHeight}`}
+                aria-hidden="true"
+                focusable="false"
+                preserveAspectRatio="none"
+            >
+                <rect
+                    className="codex-node-running-orbit__rail"
+                    x={strokePadding}
+                    y={strokePadding}
+                    width={rectWidth}
+                    height={rectHeight}
+                    rx={radius}
+                    pathLength={100}
+                />
+                <rect
+                    className="codex-node-running-orbit__runner"
+                    x={strokePadding}
+                    y={strokePadding}
+                    width={rectWidth}
+                    height={rectHeight}
+                    rx={radius}
+                    pathLength={100}
+                />
+            </svg>
+        </div>
+    );
+}
+
 function CustomBranchPath({
     source,
     target,
@@ -696,18 +741,10 @@ function CustomTaskNode({
                 <div className={cn("absolute -left-0.5 top-1 bottom-1 w-1 rounded-full", node.isDone ? "bg-muted-foreground/35" : "bg-amber-400")} />
             )}
             {codexState?.state === "running" && (
-                <div
-                    className="codex-node-running-orbit"
-                    title="Codex 実行中"
-                    aria-label="Codex 実行中"
-                />
+                <CodexRunningOrbit width={node.width} height={node.height} />
             )}
             {taskProgress?.status === "running" && codexState?.state !== "running" && (
-                <div
-                    className="codex-node-running-orbit"
-                    title="Codex 実行中"
-                    aria-label="Codex 実行中"
-                />
+                <CodexRunningOrbit width={node.width} height={node.height} />
             )}
             {nodeCodexBadge && taskProgress ? (
                 <button
