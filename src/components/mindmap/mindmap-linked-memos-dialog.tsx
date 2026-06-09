@@ -81,7 +81,7 @@ function buildCodexPrompt(title: string, memo: string) {
   return [
     normalizedTitle || null,
     normalizedMemo || null,
-  ].filter(Boolean).join("\n\n")
+  ].filter(Boolean).join("\n")
 }
 
 function openCodexFromLinkedDialog(prompt: string, repoPath: string | null, threadUrl?: string | null) {

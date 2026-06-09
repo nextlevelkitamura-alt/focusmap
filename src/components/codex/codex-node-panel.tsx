@@ -110,10 +110,27 @@ function hasOnlineCodexRunner(runners: AiRunner[]) {
   })
 }
 
-function buildCodexPrompt(heading: string, detail: string) {
+function buildAttachmentImageSection(attachments: TaskAttachmentPreview[]) {
+  const imageLines = attachments
+    .filter(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim())
+    .map((attachment, index) => {
+      const details = [
+        attachment.file_type?.trim() || null,
+        formatFileSize(attachment.file_size ?? null),
+      ].filter(Boolean).join(", ")
+      const suffix = details ? ` (${details})` : ""
+      return `${index + 1}. ${attachment.file_name || `image-${index + 1}`}${suffix}\n   ${attachment.file_url.trim()}`
+    })
+  if (imageLines.length === 0) return ""
+  return ["添付画像:", ...imageLines].join("\n")
+}
+
+function buildCodexPrompt(heading: string, detail: string, attachments: TaskAttachmentPreview[] = []) {
   const normalizedHeading = normalizeCodexPrompt(heading)
   const normalizedDetail = normalizeCodexPrompt(detail)
-  return [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
+  const body = [normalizedHeading, normalizedDetail].filter(Boolean).join("\n")
+  const imageSection = buildAttachmentImageSection(attachments)
+  return [body, imageSection].filter(Boolean).join("\n\n")
 }
 
 function toDateInputValue(value: string | null) {
@@ -811,7 +828,10 @@ export function CodexNodePanel({
   }, [detail, handleHeadingChange, heading])
 
   const promptHeadingForCodex = heading || node.title
-  const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail)
+  const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail, attachments)
+  const clipboardImageUrl = useMemo(() => (
+    attachments.find(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim())?.file_url?.trim() || null
+  ), [attachments])
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
   const codexTask = getAiTaskBySourceId(node.taskId)
   const isCodexTask = codexTask?.executor === "codex" || codexTask?.executor === "codex_app"
@@ -955,7 +975,7 @@ export function CodexNodePanel({
     }
     const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
     const openedViaNativeApp = isMobileHandoff && target.url
-      ? openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined)
+      ? openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined, clipboardImageUrl)
       : false
     if (openedViaNativeApp) event?.preventDefault()
     if (isMobileHandoff && !openedViaNativeApp) event?.preventDefault()
@@ -968,6 +988,14 @@ export function CodexNodePanel({
     setIsOpeningCodex(true)
 
     if (isMobileHandoff) {
+      if (openedViaNativeApp) {
+        setCodexPromptCopied(true)
+        setCodexFeedback(clipboardImageUrl
+          ? "プロンプトと画像をコピーしました。Codexで貼り付けて開始してください。"
+          : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
+        setIsOpeningCodex(false)
+        return
+      }
       copyAttempt.finished
         .then(copied => {
           setCodexPromptCopied(copied)
@@ -1002,6 +1030,7 @@ export function CodexNodePanel({
           prompt,
           repoPath: codexRepoPath || null,
           threadUrl: node.codexThreadUrl || null,
+          clipboardImageUrl,
         })
         if (launchOutcome.copiedToClipboard) copiedToClipboard = true
         setCodexFeedback(`${launchFeedbackForMode(launchOutcome.mode)} ${copiedToClipboard ? "プロンプトはコピー済みです。" : ""}`)
@@ -1019,7 +1048,7 @@ export function CodexNodePanel({
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
+  }, [clipboardImageUrl, codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -1098,7 +1127,7 @@ export function CodexNodePanel({
       return
     }
 
-    const basePrompt = buildCodexPrompt(promptHeading, detail)
+    const basePrompt = buildCodexPrompt(promptHeading, detail, attachments)
     const handoffToken = buildCodexHandoffToken(node.taskId)
     const prompt = appendCodexHandoffToken(basePrompt, handoffToken)
     const repoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
@@ -1107,6 +1136,7 @@ export function CodexNodePanel({
         prompt,
         repoPath: repoPath || null,
         originUrl: typeof window !== "undefined" ? window.location.href : null,
+        clipboardImageUrl,
       },
       { preferMobile: isMobileOpenTarget, mobilePlatform },
     )
@@ -1172,10 +1202,21 @@ export function CodexNodePanel({
           openTarget.url,
           prompt,
           "urls" in openTarget ? openTarget.urls : undefined,
+          clipboardImageUrl,
         )
         event?.preventDefault()
         if (openedViaNativeApp) {
           markScreenSwitched("external_app_opened")
+          launchMode = openTarget.mode
+          setJustSentPrompt(prompt)
+          setCodexPromptCopied(true)
+          setCodexFeedback(clipboardImageUrl
+            ? "プロンプトと画像をコピーしました。Codexで貼り付けて開始してください。"
+            : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
+          setCodexSendStatus("sent")
+          window.setTimeout(() => void syncCodexState(), 1200)
+          window.setTimeout(() => void syncCodexState(), 3500)
+          return
         }
         launchMode = openTarget.mode
         setJustSentPrompt(prompt)
@@ -1209,7 +1250,7 @@ export function CodexNodePanel({
       if (useLocalApi) {
         const [scheduleResult, launchResult] = await Promise.allSettled([
           schedulePromise,
-          launchCodexViaLocalApi({ prompt, repoPath: repoPath || null }),
+          launchCodexViaLocalApi({ prompt, repoPath: repoPath || null, clipboardImageUrl }),
         ])
         if (launchResult.status === "rejected") {
           throw launchResult.reason instanceof Error ? launchResult.reason : new Error("Codex.appを開けませんでした")
@@ -1261,7 +1302,7 @@ export function CodexNodePanel({
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [candidates, detail, heading, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [attachments, candidates, clipboardImageUrl, detail, heading, isMobileOpenTarget, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&

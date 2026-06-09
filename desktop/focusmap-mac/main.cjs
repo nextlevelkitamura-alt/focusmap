@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, safeStorage, powerSaveBlocker, clipboard, nativeImage } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -1123,6 +1123,42 @@ function resolveOriginUrl(value) {
   }
 }
 
+function resolveClipboardImageUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.length > 8000) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'data:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function clipboardImageFromUrl(value) {
+  const imageUrl = resolveClipboardImageUrl(value);
+  if (!imageUrl) return null;
+
+  try {
+    if (imageUrl.startsWith('data:image/')) {
+      const image = nativeImage.createFromDataURL(imageUrl);
+      return image.isEmpty() ? null : image;
+    }
+
+    const response = await fetch(imageUrl);
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType && !contentType.toLowerCase().startsWith('image/')) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > 12 * 1024 * 1024) return null;
+    const image = nativeImage.createFromBuffer(buffer);
+    return image.isEmpty() ? null : image;
+  } catch (error) {
+    log('codex', `clipboard image copy skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 function buildCodexChatUrl(repoPath, originUrl) {
   const url = new URL('codex://');
   if (repoPath) url.searchParams.set('path', repoPath);
@@ -1158,11 +1194,21 @@ async function launchCodexFromBridge(_event, payload) {
   const repoPath = await resolveCodexRepoPath(input.repoPath ?? input.repo_path);
   const codexUrl = resolveCodexUrl(input.codexUrl ?? input.codex_url ?? input.threadUrl ?? input.thread_url);
   const originUrl = resolveOriginUrl(input.originUrl ?? input.origin_url);
+  const clipboardImage = await clipboardImageFromUrl(input.clipboardImageUrl ?? input.clipboard_image_url);
   let copiedToClipboard = false;
+  let copiedImageToClipboard = false;
 
   if (prompt) {
-    clipboard.writeText(prompt);
+    if (clipboardImage) {
+      clipboard.write({ text: prompt, image: clipboardImage });
+      copiedImageToClipboard = true;
+    } else {
+      clipboard.writeText(prompt);
+    }
     copiedToClipboard = true;
+  } else if (clipboardImage) {
+    clipboard.writeImage(clipboardImage);
+    copiedImageToClipboard = true;
   }
 
   const targetUrl = codexUrl || buildCodexChatUrl(repoPath, originUrl);
@@ -1175,6 +1221,7 @@ async function launchCodexFromBridge(_event, payload) {
     url: targetUrl,
     repoPath,
     copiedToClipboard,
+    copiedImageToClipboard,
     activated,
   };
 }

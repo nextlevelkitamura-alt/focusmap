@@ -9,6 +9,7 @@ const BRIDGING_IMPORT = "#import <React/RCTBridgeModule.h>";
 
 const SWIFT_SOURCE = `import Foundation
 import UIKit
+import UniformTypeIdentifiers
 
 @objc(FocusmapExternalOpener)
 class FocusmapExternalOpener: NSObject {
@@ -38,6 +39,73 @@ class FocusmapExternalOpener: NSObject {
       }
     }
   }
+
+  @objc(copyCodexHandoff:imageUrl:resolver:rejecter:)
+  func copyCodexHandoff(
+    text: String,
+    imageUrl: String?,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    let normalizedText = text
+      .replacingOccurrences(of: "\\r\\n", with: "\\n")
+      .replacingOccurrences(of: "\\r", with: "\\n")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if normalizedText.isEmpty {
+      resolve(false)
+      return
+    }
+
+    loadClipboardImageData(imageUrl) { imageData in
+      DispatchQueue.main.async {
+        var item: [String: Any] = [
+          UTType.plainText.identifier: normalizedText,
+          UTType.utf8PlainText.identifier: normalizedText
+        ]
+        if let imageData {
+          item[UTType.png.identifier] = imageData
+        }
+        UIPasteboard.general.items = [item]
+        resolve(true)
+      }
+    }
+  }
+
+  private func loadClipboardImageData(_ value: String?, completion: @escaping (Data?) -> Void) {
+    guard let rawValue = value?.trimmingCharacters(in: .whitespacesAndNewlines), !rawValue.isEmpty else {
+      completion(nil)
+      return
+    }
+
+    if rawValue.hasPrefix("data:image/"), let commaIndex = rawValue.firstIndex(of: ",") {
+      let encoded = String(rawValue[rawValue.index(after: commaIndex)...])
+      guard let data = Data(base64Encoded: encoded), let image = UIImage(data: data) else {
+        completion(nil)
+        return
+      }
+      completion(image.pngData())
+      return
+    }
+
+    guard let url = URL(string: rawValue), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+      completion(nil)
+      return
+    }
+
+    URLSession.shared.dataTask(with: url) { data, response, _ in
+      guard
+        let data,
+        data.count <= 12 * 1024 * 1024,
+        let httpResponse = response as? HTTPURLResponse,
+        (200..<300).contains(httpResponse.statusCode),
+        let image = UIImage(data: data)
+      else {
+        completion(nil)
+        return
+      }
+      completion(image.pngData())
+    }.resume()
+  }
 }
 `;
 
@@ -46,6 +114,11 @@ const OBJC_SOURCE = `${BRIDGING_IMPORT}
 @interface RCT_EXTERN_MODULE(FocusmapExternalOpener, NSObject)
 
 RCT_EXTERN_METHOD(openUniversalLink:(NSString *)urlString
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(copyCodexHandoff:(NSString *)text
+                  imageUrl:(NSString *)imageUrl
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 

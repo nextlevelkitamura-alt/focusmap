@@ -74,6 +74,7 @@ const APP_RESUME_SCRIPT = `
 
 type FocusmapExternalOpenerModule = {
   openUniversalLink?: (url: string) => Promise<boolean>;
+  copyCodexHandoff?: (text: string, imageUrl?: string | null) => Promise<boolean>;
 };
 
 const focusmapExternalOpener = NativeModules.FocusmapExternalOpener as FocusmapExternalOpenerModule | undefined;
@@ -154,10 +155,24 @@ function copyTextToClipboard(text: string) {
   Clipboard.setStringAsync(value).catch(() => undefined);
 }
 
-async function copyTextThenOpenExternal(text: string | undefined, url: string, urls?: string[]) {
-  if (text) {
-    await Clipboard.setStringAsync(text.replace(/\r\n?/g, "\n").trim()).catch(() => undefined);
+async function copyCodexHandoffToClipboard(text: string | undefined, imageUrl?: string | null) {
+  const value = text?.replace(/\r\n?/g, "\n").trim() || "";
+  if (!value) return;
+
+  if (focusmapExternalOpener?.copyCodexHandoff) {
+    try {
+      await focusmapExternalOpener.copyCodexHandoff(value, imageUrl || null);
+      return;
+    } catch {
+      // Fall back to text-only clipboard support below.
+    }
   }
+
+  await Clipboard.setStringAsync(value).catch(() => undefined);
+}
+
+async function copyTextThenOpenExternal(text: string | undefined, url: string, urls?: string[], imageUrl?: string | null) {
+  if (text) await copyCodexHandoffToClipboard(text, imageUrl);
   void openExternalUrl(url, urls);
 }
 
@@ -300,7 +315,13 @@ export default function App() {
 
   const handleWebViewMessage = (event: WebViewMessageEvent) => {
     try {
-      const payload = JSON.parse(event.nativeEvent.data) as { type?: string; url?: string; urls?: string[]; text?: string };
+      const payload = JSON.parse(event.nativeEvent.data) as {
+        type?: string;
+        url?: string;
+        urls?: string[];
+        text?: string;
+        imageUrl?: string | null;
+      };
       if (payload.type === "focusmap:web-content-ready") {
         markWebContentPresented();
         return;
@@ -309,8 +330,26 @@ export default function App() {
         copyTextToClipboard(payload.text);
         return;
       }
+      if (payload.type === "focusmap:copyCodexHandoff" && typeof payload.text === "string") {
+        void copyCodexHandoffToClipboard(payload.text, payload.imageUrl);
+        return;
+      }
+      if (payload.type === "focusmap:copyCodexHandoffAndOpenExternal" && payload.url) {
+        void copyTextThenOpenExternal(
+          payload.text,
+          payload.url,
+          Array.isArray(payload.urls) ? payload.urls : undefined,
+          payload.imageUrl,
+        );
+        return;
+      }
       if (payload.type === "focusmap:copyAndOpenExternal" && payload.url) {
-        void copyTextThenOpenExternal(payload.text, payload.url, Array.isArray(payload.urls) ? payload.urls : undefined);
+        void copyTextThenOpenExternal(
+          payload.text,
+          payload.url,
+          Array.isArray(payload.urls) ? payload.urls : undefined,
+          payload.imageUrl,
+        );
         return;
       }
       if (payload.type === "focusmap:openExternal" && payload.url) {

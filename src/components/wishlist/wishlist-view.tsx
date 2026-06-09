@@ -860,11 +860,12 @@ export function WishlistView({
     prompt: string,
     repoPath: string | null,
     copyAttempt?: CodexPromptCopyAttempt,
+    clipboardImageUrl?: string | null,
   ) => {
     const preferMobile = isLikelyMobileDevice()
     if (canUseLocalCodexOpenApi() && !preferMobile) {
       try {
-        await launchCodexViaLocalApi({ prompt, repoPath, originUrl: window.location.href })
+        await launchCodexViaLocalApi({ prompt, repoPath, originUrl: window.location.href, clipboardImageUrl })
         return
       } catch (error) {
         console.warn('[wishlist] local Codex open failed, falling back to browser handoff:', error)
@@ -876,11 +877,17 @@ export function WishlistView({
       { prompt, repoPath, originUrl: window.location.href },
       { preferMobile, mobilePlatform: getCurrentMobilePlatform() },
     )
-    if (!openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined)) {
+    const openedViaNativeApp = openCodexMobileTargetViaFocusmapNativeApp(
+      target.url,
+      prompt,
+      "urls" in target ? target.urls : undefined,
+      clipboardImageUrl,
+    )
+    if (!openedViaNativeApp) {
       window.location.href = target.url
     }
     const copied = await activeCopyAttempt.finished
-    if (!copied) {
+    if (!copied && !openedViaNativeApp) {
       throw new Error("クリップボードコピー失敗。Codex側でメモ本文を手動貼り付けしてください")
     }
   }, [])
@@ -903,12 +910,15 @@ export function WishlistView({
     }
   }, [])
 
-  const buildMemoCodexHandoffText = useCallback(async (item: MemoItem) => {
+  const buildMemoCodexHandoffContent = useCallback(async (item: MemoItem) => {
     const images = await loadMemoCodexImages(item.id)
-    return buildImmediateMemoCodexPrompt(
-      memoBodyForCodexExecution({ title: item.title, body: item.description }),
-      images,
-    )
+    return {
+      prompt: buildImmediateMemoCodexPrompt(
+        memoBodyForCodexExecution({ title: item.title, body: item.description }),
+        images,
+      ),
+      clipboardImageUrl: images[0]?.file_url?.trim() || null,
+    }
   }, [loadMemoCodexImages])
 
   // メモから AI エージェント（Claude / Codex）を起動
@@ -922,14 +932,9 @@ export function WishlistView({
       throw new Error("プロジェクトにリポジトリパスが未設定です。設定→プロジェクトから登録してください")
     }
 
-    const isMobileManualHandoff = isCodexManualHandoff && isLikelyMobileDevice()
+    const handoffContent = isCodexManualHandoff ? await buildMemoCodexHandoffContent(item) : null
     const basePrompt = isCodexManualHandoff
-      ? isMobileManualHandoff
-        ? buildImmediateMemoCodexPrompt(
-            memoBodyForCodexExecution({ title: item.title, body: item.description }),
-            [],
-          )
-        : await buildMemoCodexHandoffText(item)
+      ? handoffContent?.prompt || memoBodyForCodexExecution({ title: item.title, body: item.description })
       : item.description?.trim() || item.title
     const scheduleExecutor = isCodexManualHandoff ? 'codex_app' : executor
     const handoffToken = isCodexManualHandoff ? buildCodexHandoffToken(item.id) : undefined
@@ -966,26 +971,26 @@ export function WishlistView({
       const registerTaskPromise = registerTask()
       if (preferMobile) {
         registerTaskPromise.catch(() => undefined)
-        await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined)
+        await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined, handoffContent?.clipboardImageUrl ?? null)
         await registerTaskPromise
         return
       }
       await registerTaskPromise
-      await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined)
+      await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined, handoffContent?.clipboardImageUrl ?? null)
       return
     }
 
     await registerTask()
-  }, [buildMemoCodexHandoffText, openCodexHandoff, projects, refreshMemoAiTasks])
+  }, [buildMemoCodexHandoffContent, openCodexHandoff, projects, refreshMemoAiTasks])
 
   const launchCodexForMemo = useCallback((item: MemoItem) => launchAiForMemo(item, 'codex'), [launchAiForMemo])
 
   const copyCodexPromptForMemo = useCallback(async (item: MemoItem) => {
-    const text = await buildMemoCodexHandoffText(item)
+    const { prompt: text } = await buildMemoCodexHandoffContent(item)
     const copied = await copyPromptForCodexHandoff(text)
     if (copied) return
     throw new Error("クリップボードコピー失敗。手動でコピーしてください")
-  }, [buildMemoCodexHandoffText])
+  }, [buildMemoCodexHandoffContent])
 
   const handleTranscribed = useCallback((text: string) => {
     setIntakeText(prev => prev.trim() ? `${prev.trim()}\n${text}` : text)

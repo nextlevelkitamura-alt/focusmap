@@ -40,7 +40,7 @@ export function buildImmediateMemoCodexPrompt(body: string, images: MemoCodexIma
 }
 
 export function memoBodyForCodexExecution(args: { title: string; body?: string | null }) {
+  const title = normalizeMemoExecutionBody(args.title)
   const body = normalizeMemoExecutionBody(args.body ?? '')
-  if (body) return body
-  return normalizeMemoExecutionBody(args.title)
+  return [title, body].filter(Boolean).join('\n')
 }

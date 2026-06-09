@@ -15,6 +15,7 @@ declare global {
         threadUrl?: string | null
         codexUrl?: string | null
         originUrl?: string | null
+        clipboardImageUrl?: string | null
       }) => Promise<{
         ok: boolean
         error?: string

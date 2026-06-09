@@ -125,18 +125,16 @@ describe("ChatGPT mobile open target", () => {
     }))
   })
 
-  test("posts native clipboard text before opening Codex in the Focusmap app", () => {
+  test("posts native clipboard text and image before opening Codex in the Focusmap app", () => {
     const postMessage = vi.fn()
     window.ReactNativeWebView = { postMessage }
     const urls = buildChatGptCodexMobileAppUrls("ios")
 
-    expect(openCodexMobileTargetViaFocusmapNativeApp(urls[0], "  実行して\r\n", urls)).toBe(true)
-    expect(postMessage).toHaveBeenNthCalledWith(1, JSON.stringify({
-      type: "focusmap:copyText",
+    expect(openCodexMobileTargetViaFocusmapNativeApp(urls[0], "  実行して\r\n", urls, "https://example.com/image.png")).toBe(true)
+    expect(postMessage).toHaveBeenCalledWith(JSON.stringify({
+      type: "focusmap:copyAndOpenExternal",
       text: "実行して",
-    }))
-    expect(postMessage).toHaveBeenNthCalledWith(2, JSON.stringify({
-      type: "focusmap:openExternal",
+      imageUrl: "https://example.com/image.png",
       url: "https://chatgpt.com/codex/mobile/",
       urls,
     }))
@@ -183,6 +181,7 @@ describe("launchCodexViaLocalApi", () => {
       threadUrl: "codex://thread/abc",
       codexUrl: "codex://thread/abc",
       originUrl: "https://focusmap-official.com/dashboard",
+      clipboardImageUrl: null,
     })
   })
 

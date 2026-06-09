@@ -6,6 +6,7 @@ export type CodexLaunchPayload = {
   repoPath: string | null
   threadUrl?: string | null
   originUrl?: string | null
+  clipboardImageUrl?: string | null
 }
 
 export type CodexLaunchResult = {
@@ -34,6 +35,8 @@ export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 
 type FocusmapNativeAppMessage =
   | { type: "focusmap:copyText"; text: string }
+  | { type: "focusmap:copyCodexHandoff"; text: string; imageUrl?: string | null }
+  | { type: "focusmap:copyAndOpenExternal"; text?: string; imageUrl?: string | null; url: string; urls?: string[] }
   | { type: "focusmap:openExternal"; url: string; urls?: string[] }
 
 type FocusmapDesktopCodexBridge = {
@@ -44,6 +47,7 @@ type FocusmapDesktopCodexBridge = {
     threadUrl?: string | null
     codexUrl?: string | null
     originUrl?: string | null
+    clipboardImageUrl?: string | null
   }) => Promise<{
     ok?: boolean
     error?: string
@@ -156,7 +160,8 @@ export function beginCopyTextToClipboard(text: string): CodexPromptCopyAttempt {
     }
   }
 
-  const finished = typeof navigator !== "undefined" && navigator.clipboard?.writeText
+  const useAsyncClipboard = !canUseFocusmapNativeAppBridge()
+  const finished = useAsyncClipboard && typeof navigator !== "undefined" && navigator.clipboard?.writeText
     ? navigator.clipboard.writeText(value)
       .then(() => true)
       .catch(() => copied)
@@ -289,10 +294,24 @@ function postFocusmapNativeAppMessage(payload: FocusmapNativeAppMessage) {
   }
 }
 
+export function canUseFocusmapNativeAppBridge() {
+  return typeof window !== "undefined" && Boolean(window.ReactNativeWebView?.postMessage)
+}
+
 export function copyTextViaFocusmapNativeApp(text: string) {
   const value = normalizeCodexPrompt(text)
   if (!value) return false
   return postFocusmapNativeAppMessage({ type: "focusmap:copyText", text: value })
+}
+
+export function copyCodexHandoffViaFocusmapNativeApp(text: string, imageUrl?: string | null) {
+  const value = normalizeCodexPrompt(text)
+  if (!value) return false
+  return postFocusmapNativeAppMessage({
+    type: "focusmap:copyCodexHandoff",
+    text: value,
+    imageUrl: imageUrl?.trim() || null,
+  })
 }
 
 function uniqueUrls(urls: string[]) {
@@ -304,9 +323,18 @@ export function openExternalUrlViaFocusmapNativeApp(url: string, urls?: string[]
   return postFocusmapNativeAppMessage({ type: "focusmap:openExternal", url, urls: candidates })
 }
 
-export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string, urls?: string[]) {
+export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string, urls?: string[], clipboardImageUrl?: string | null) {
   if (!isLikelyChatGptMobileAppTarget(url) && !isLikelyChatGptMobileWebTarget(url)) return false
-  if (prompt) copyTextViaFocusmapNativeApp(prompt)
+  const candidates = urls ? uniqueUrls([url, ...urls]) : undefined
+  if (prompt) {
+    return postFocusmapNativeAppMessage({
+      type: "focusmap:copyAndOpenExternal",
+      text: normalizeCodexPrompt(prompt),
+      imageUrl: clipboardImageUrl?.trim() || null,
+      url,
+      urls: candidates,
+    })
+  }
   return openExternalUrlViaFocusmapNativeApp(url, urls)
 }
 
@@ -359,6 +387,7 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
       threadUrl: payload.threadUrl?.trim() || null,
       codexUrl: payload.threadUrl?.trim() || null,
       originUrl: payload.originUrl ?? window.location.href,
+      clipboardImageUrl: payload.clipboardImageUrl?.trim() || null,
     })
     if (result !== true && (!result || typeof result !== "object" || result.ok === false)) {
       throw new Error(
@@ -387,6 +416,7 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
       prompt: normalizeCodexPrompt(payload.prompt),
       codex_url: payload.threadUrl?.trim() || null,
       origin_url: payload.originUrl ?? window.location.href,
+      clipboard_image_url: payload.clipboardImageUrl?.trim() || null,
     }),
   })
   if (!res.ok) {

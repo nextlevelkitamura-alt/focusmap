@@ -6,8 +6,8 @@ describe('memo Codex execution prompt', () => {
     expect(buildImmediateMemoCodexPrompt('  これを直す\r\n\n詳細  ')).toBe('これを直す\n\n詳細')
   })
 
-  test('uses body first and falls back to title', () => {
-    expect(memoBodyForCodexExecution({ title: 'タイトル', body: '本文' })).toBe('本文')
+  test('copies the title and body with one newline between them', () => {
+    expect(memoBodyForCodexExecution({ title: 'タイトル', body: '本文' })).toBe('タイトル\n本文')
     expect(memoBodyForCodexExecution({ title: 'タイトル', body: '   ' })).toBe('タイトル')
   })
 
