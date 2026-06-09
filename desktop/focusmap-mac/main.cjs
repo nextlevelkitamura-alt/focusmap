@@ -1219,7 +1219,10 @@ async function copyTextFromBridge(_event, value) {
   const text = normalizeClipboardText(value);
   if (!text) return { ok: false, copied: false, error: 'コピーする文字列がありません' };
   clipboard.writeText(text);
-  return { ok: true, copied: true };
+  const copied = clipboard.readText() === text;
+  return copied
+    ? { ok: true, copied: true }
+    : { ok: false, copied: false, error: 'クリップボードへコピーできませんでした' };
 }
 
 async function launchCodexFromBridge(_event, payload) {
@@ -1235,14 +1238,15 @@ async function launchCodexFromBridge(_event, payload) {
   if (prompt) {
     if (clipboardImage) {
       clipboard.write({ text: prompt, image: clipboardImage });
-      copiedImageToClipboard = true;
+      copiedToClipboard = clipboard.readText() === prompt;
+      copiedImageToClipboard = !clipboard.readImage().isEmpty();
     } else {
       clipboard.writeText(prompt);
+      copiedToClipboard = clipboard.readText() === prompt;
     }
-    copiedToClipboard = true;
   } else if (clipboardImage) {
     clipboard.writeImage(clipboardImage);
-    copiedImageToClipboard = true;
+    copiedImageToClipboard = !clipboard.readImage().isEmpty();
   }
 
   const targetUrl = codexUrl || buildCodexChatUrl(repoPath, originUrl);

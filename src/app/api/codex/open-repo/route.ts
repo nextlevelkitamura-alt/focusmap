@@ -130,6 +130,48 @@ function copyToMacClipboard(text: string): Promise<boolean> {
   })
 }
 
+async function readMacClipboardText(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/pbpaste", [], {
+      timeout: 3_000,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        LANG: "en_US.UTF-8",
+        LC_ALL: "en_US.UTF-8",
+        LC_CTYPE: "UTF-8",
+      },
+    })
+    return stdout
+  } catch {
+    return null
+  }
+}
+
+async function macClipboardHasImage(): Promise<boolean> {
+  const script = `
+use framework "AppKit"
+on run
+  set imageTypes to {"public.png", "public.jpeg", "com.compuserve.gif", "public.tiff", "public.heic"}
+  set pasteboard to current application's NSPasteboard's generalPasteboard()
+  set pasteboardTypes to pasteboard's types()
+  repeat with imageType in imageTypes
+    if pasteboardTypes's containsObject:imageType then return "true"
+  end repeat
+  return "false"
+end run
+`
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/osascript", ["-l", "AppleScript", "-e", script], {
+      timeout: 3_000,
+      windowsHide: true,
+    })
+    return stdout.trim() === "true"
+  } catch {
+    return false
+  }
+}
+
 function pasteboardTypeForImageMime(type: string | null | undefined) {
   const normalized = type?.split(";")[0]?.trim().toLowerCase()
   if (normalized === "image/jpeg" || normalized === "image/jpg") return "public.jpeg"
@@ -230,7 +272,11 @@ async function copyCodexHandoffToMacClipboard(text: string, clipboardImageUrl: u
   try {
     const copied = await copyToMacClipboardWithImage(text, imageFile)
     if (copied) {
-      return { copiedToClipboard: true, copiedImageToClipboard: true }
+      const copiedText = (await readMacClipboardText()) === text
+      return {
+        copiedToClipboard: copiedText,
+        copiedImageToClipboard: await macClipboardHasImage(),
+      }
     }
     return {
       copiedToClipboard: await copyToMacClipboard(text),

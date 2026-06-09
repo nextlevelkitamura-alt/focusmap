@@ -13,6 +13,7 @@ export type CodexLaunchResult = {
   mode: CodexLaunchMode
   url?: string
   copiedToClipboard?: boolean
+  copiedImageToClipboard?: boolean
 }
 
 export type CodexPromptCopyAttempt = {
@@ -54,6 +55,7 @@ type FocusmapDesktopCodexBridge = {
     mode?: string
     url?: string
     copiedToClipboard?: boolean
+    copiedImageToClipboard?: boolean
   }>
 }
 
@@ -397,6 +399,7 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
       )
     }
     const copiedToClipboard = result.copiedToClipboard === true
+    const copiedImageToClipboard = result.copiedImageToClipboard === true
     if (normalizedPrompt && !copiedToClipboard) {
       throw new Error("プロンプトをクリップボードにコピーできませんでした")
     }
@@ -404,6 +407,7 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
       mode: "electron-bridge",
       url: result.url,
       copiedToClipboard,
+      copiedImageToClipboard,
     }
   }
 
@@ -422,13 +426,17 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
     const data = await res.json().catch(() => ({})) as { error?: string }
     throw new Error(data.error || `Codex.app を開けませんでした (${res.status})`)
   }
-  const data = await res.json().catch(() => ({})) as { copied_to_clipboard?: boolean }
+  const data = await res.json().catch(() => ({})) as {
+    copied_to_clipboard?: boolean
+    copied_image_to_clipboard?: boolean
+  }
   const copiedToClipboard = data.copied_to_clipboard === true
+  const copiedImageToClipboard = data.copied_image_to_clipboard === true
   if (normalizeCodexPrompt(payload.prompt) && !copiedToClipboard) {
     throw new Error("プロンプトをクリップボードにコピーできませんでした")
   }
 
-  return { mode: "local-api", copiedToClipboard }
+  return { mode: "local-api", copiedToClipboard, copiedImageToClipboard }
 }
 
 export function launchFeedbackForMode(mode: CodexLaunchMode) {

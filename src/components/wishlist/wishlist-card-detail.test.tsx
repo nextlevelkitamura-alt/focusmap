@@ -801,4 +801,44 @@ describe('WishlistCardDetail', () => {
     })
     expect(await screen.findByAltText('pasted-event.png')).toBeInTheDocument()
   })
+
+  test('メモ編集シート内のCmd+Vでもクリップボード画像をアップロードする', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          attachment: {
+            id: 'image-sheet-paste',
+            file_name: 'pasted-sheet.png',
+            file_url: 'https://example.com/pasted-sheet.png',
+            file_type: 'image/png',
+            file_size: 4,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<DetailHarness />)
+    fireEvent.paste(await screen.findByRole('dialog'), {
+      clipboardData: {
+        files: [new File(['data'], 'pasted-sheet.png', { type: 'image/png' })],
+        items: [],
+      },
+    })
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/wishlist/memo-1/attachments',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(await screen.findByAltText('pasted-sheet.png')).toBeInTheDocument()
+  })
 })

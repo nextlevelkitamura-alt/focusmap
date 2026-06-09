@@ -22,6 +22,7 @@ declare global {
         mode?: string
         url?: string
         copiedToClipboard?: boolean
+        copiedImageToClipboard?: boolean
       }>
       saveAuthSession?: (session: FocusmapDesktopAuthSession) => Promise<{ ok: boolean; error?: string }>
       loadAuthSession?: () => Promise<{

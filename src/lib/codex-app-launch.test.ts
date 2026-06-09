@@ -156,6 +156,7 @@ describe("launchCodexViaLocalApi", () => {
     const launchCodex = vi.fn(async () => ({
       ok: true,
       copiedToClipboard: true,
+      copiedImageToClipboard: true,
       url: "codex://",
     }))
     ;(window as Window & { focusmapDesktop?: { launchCodex: typeof launchCodex } }).focusmapDesktop = { launchCodex }
@@ -172,6 +173,7 @@ describe("launchCodexViaLocalApi", () => {
       mode: "electron-bridge",
       url: "codex://",
       copiedToClipboard: true,
+      copiedImageToClipboard: true,
     })
 
     expect(canUseElectronCodexBridge()).toBe(true)
@@ -204,12 +206,29 @@ describe("launchCodexViaLocalApi", () => {
       .rejects.toThrow("プロンプトをクリップボードにコピーできませんでした")
   })
 
+  test("returns local API image clipboard status", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      copied_to_clipboard: true,
+      copied_image_to_clipboard: true,
+    }), { status: 200 })))
+
+    await expect(launchCodexViaLocalApi({
+      prompt: "実行して",
+      repoPath: "/repo",
+      clipboardImageUrl: "https://example.com/signed.png",
+    })).resolves.toEqual({
+      mode: "local-api",
+      copiedToClipboard: true,
+      copiedImageToClipboard: true,
+    })
+  })
+
   test("allows repo-only open without a copied prompt", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       copied_to_clipboard: false,
     }), { status: 200 })))
 
     await expect(launchCodexViaLocalApi({ prompt: "   ", repoPath: "/repo" }))
-      .resolves.toEqual({ mode: "local-api", copiedToClipboard: false })
+      .resolves.toEqual({ mode: "local-api", copiedToClipboard: false, copiedImageToClipboard: false })
   })
 })

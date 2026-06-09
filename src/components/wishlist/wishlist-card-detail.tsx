@@ -1972,6 +1972,7 @@ export function WishlistCardDetail({
         onOpenAutoFocus={event => {
           event.preventDefault()
         }}
+        onPaste={handleImagePaste}
         onTouchStart={handleSheetTouchStart}
         onTouchEnd={handleSheetTouchEnd}
       >
