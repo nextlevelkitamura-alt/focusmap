@@ -185,6 +185,38 @@ describe('TaskProgressKanban', () => {
     expect(screen.queryByText('確認待ちのCodexタスク')).not.toBeInTheDocument()
   })
 
+  test('completedのCodex taskは元ノード未完了なら確認待ち、チェック済みなら完了済みに出す', async () => {
+    renderMobileKanban([
+      progressTask({
+        id: 'completed-review',
+        title: '確認が必要な完了Codex',
+        status: 'completed',
+        source_id: 'node-review',
+      }),
+      progressTask({
+        id: 'completed-done',
+        title: 'チェック済みCodex',
+        status: 'completed',
+        source_id: 'node-done',
+      }),
+    ], new Map([
+      ['node-review', sourceTask('node-review')],
+      ['node-done', sourceTask('node-done', { status: 'done' })],
+    ]))
+
+    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+
+    expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /完了済み 1件/ })).toBeInTheDocument()
+    expect(screen.getByText('確認が必要な完了Codex')).toBeInTheDocument()
+    expect(screen.queryByText('チェック済みCodex')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /完了済み 1件/ }))
+
+    expect(screen.getByText('チェック済みCodex')).toBeInTheDocument()
+    expect(screen.queryByText('確認が必要な完了Codex')).not.toBeInTheDocument()
+  })
+
   test('マインドマップから削除済みのCodex taskは看板に出さない', async () => {
     renderMobileKanban([
       progressTask({

@@ -53,6 +53,20 @@ export function isClaimedByOtherActiveRunner(
   return claimExpiresAtMs == null || claimExpiresAtMs > nowMs
 }
 
+export function shouldCompleteSourceTaskFromAgentState(input: {
+  status: string
+  result?: Record<string, unknown> | null
+  sourceTaskId?: unknown
+}) {
+  const sourceTaskId = compactString(input.sourceTaskId, 120)
+  if (!sourceTaskId) return false
+  if (input.status !== 'completed') return false
+  const result = isRecord(input.result) ? input.result : {}
+  return result.codex_review_reason === 'archived' &&
+    result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true
+}
+
 function compactLatestLine(value: unknown, max: number) {
   if (typeof value !== 'string') return null
   const latest = value
@@ -112,7 +126,7 @@ export async function POST(
 
     const { data: task } = await supabase
       .from('ai_tasks')
-          .select('id, user_id, space_id, claimed_runner_id, claim_expires_at, status')
+          .select('id, user_id, space_id, claimed_runner_id, claim_expires_at, status, source_task_id')
       .eq('id', id)
       .maybeSingle()
     if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
@@ -132,6 +146,26 @@ export async function POST(
     if (status === 'completed' || status === 'failed') {
       updates.completed_at = new Date().toISOString()
       updates.claim_expires_at = null
+    }
+
+    const resultForSourceCompletion = isRecord(body.result) ? body.result : null
+    if (shouldCompleteSourceTaskFromAgentState({
+      status,
+      result: resultForSourceCompletion,
+      sourceTaskId: task.source_task_id,
+    })) {
+      const { error: sourceUpdateError } = await supabase
+        .from('tasks')
+        .update({
+          status: 'done',
+          stage: 'done',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', String(task.source_task_id))
+        .eq('user_id', String(task.user_id))
+        .is('deleted_at', null)
+
+      if (sourceUpdateError) return NextResponse.json({ error: sourceUpdateError.message }, { status: 500 })
     }
 
     const { data, error } = await supabase

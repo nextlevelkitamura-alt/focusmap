@@ -307,16 +307,21 @@ function KanbanCard({
   runnerState,
   isMobile,
   nowMs,
+  forceDone = false,
   onOpen,
 }: {
   task: TaskProgressSnapshotTask
   runnerState: RunnerConnectionState
   isMobile: boolean
   nowMs: number
+  forceDone?: boolean
   onOpen: (task: TaskProgressSnapshotTask) => void
 }) {
-  const statusLabel = codexMonitorUiLabel(task.status)
-  const uiStatus = getCodexMonitorUiStatus(task.status)
+  const statusLabel = forceDone ? "完了済み" : codexMonitorUiLabel(task.status)
+  const uiStatus = forceDone ? "done" : getCodexMonitorUiStatus(task.status)
+  const toneClass = forceDone
+    ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+    : codexMonitorToneClass(task.status)
   const primary = uiStatus === "unsent" ? "" : compactCodexMonitorText(task.current_step, isMobile ? 42 : 74)
   const secondary = uiStatus === "unsent" ? "" : compactCodexMonitorText(task.summary, isMobile ? 56 : 96)
   const updatedAt = formatTaskProgressDateTime(task.updated_at)
@@ -353,7 +358,7 @@ function KanbanCard({
             </div>
           )}
         </div>
-        <span className={cn("inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold", codexMonitorToneClass(task.status))}>
+        <span className={cn("inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold", toneClass)}>
           {statusLabel}
         </span>
       </div>
@@ -431,6 +436,7 @@ function KanbanLaneSection({
               runnerState={runnerState}
               isMobile={isMobile}
               nowMs={nowMs}
+              forceDone={lane.id === "done"}
               onOpen={onOpenTask}
             />
           ))

@@ -525,6 +525,12 @@ function codexClosureAlreadyRecorded(input: {
   reason: Extract<CodexReviewReason, 'archived' | 'thread_deleted'>
   sourceTaskId: string | null
 }) {
+  const completesSourceTask = shouldCompleteSourceTaskForCodexReview(input.reason)
+  if (!completesSourceTask) {
+    if (input.task.status !== 'awaiting_approval') return false
+    if (input.current.codex_review_reason !== input.reason) return false
+    return codexTaskThreadId(input.task) === input.threadId
+  }
   if (input.current.codex_source_task_completion_suppressed === true) {
     if (input.task.status !== 'awaiting_approval') return false
     if (input.current.codex_review_reason !== input.reason) return false
@@ -613,6 +619,7 @@ async function persistCodexThreadClosure(input: {
   } = input
   const sourceTaskId = task.source_task_id?.trim() || null
   const sourceCompletionSuppressed = current.codex_source_task_completion_suppressed === true
+  const shouldCompleteSourceTask = shouldCompleteSourceTaskForCodexReview(reason)
   const alreadyPersisted = codexClosureAlreadyRecorded({
     task,
     threadId,
@@ -628,12 +635,12 @@ async function persistCodexThreadClosure(input: {
     missing: alreadyPersisted && current.codex_source_task_missing === true,
   }
 
-  if (!alreadyPersisted && !sourceCompletionSuppressed) {
+  if (!alreadyPersisted && !sourceCompletionSuppressed && shouldCompleteSourceTask) {
     sourceTaskCompletion = await completeSourceMindmapTaskForCodexClosure(supabase, task, nowIso)
   }
 
-  const sourceTaskCompleted = sourceTaskCompletion.completed || sourceTaskCompletion.alreadyCompleted
-  const nextAiTaskStatus = sourceCompletionSuppressed ? 'awaiting_approval' : 'completed'
+  const sourceTaskCompleted = shouldCompleteSourceTask && (sourceTaskCompletion.completed || sourceTaskCompletion.alreadyCompleted)
+  const nextAiTaskStatus = shouldCompleteSourceTask && !sourceCompletionSuppressed ? 'completed' : 'awaiting_approval'
   const currentStep = sourceCompletionSuppressed
     ? 'Codex thread終了。内容を確認してください'
     : codexClosureStep(reason)

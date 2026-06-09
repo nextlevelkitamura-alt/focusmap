@@ -66,8 +66,8 @@ const MAX_LIVE_LOG_CHARS = 80_000
 
 export function shouldCompleteSourceTaskForCodexReview(
   reason: CodexReviewReason,
-): reason is Extract<CodexReviewReason, "archived" | "thread_deleted"> {
-  return reason === "archived" || reason === "thread_deleted"
+): reason is Extract<CodexReviewReason, "archived"> {
+  return reason === "archived"
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -416,14 +416,23 @@ export function getCodexTaskUiState(task: CodexTaskLike | null | undefined): Cod
   if (task.status === "failed") {
     return { state: "connection_failed", label: "接続失敗" }
   }
-  if (result.codex_source_task_completed === true && result.codex_source_task_completion_suppressed !== true) {
+  const reviewReason = typeof result.codex_review_reason === "string" ? result.codex_review_reason : ""
+  const sourceCompletionReason = typeof result.codex_source_task_completion_reason === "string"
+    ? result.codex_source_task_completion_reason
+    : ""
+  if (
+    result.codex_source_task_completed === true &&
+    result.codex_source_task_completion_suppressed !== true &&
+    reviewReason !== "thread_deleted" &&
+    sourceCompletionReason !== "thread_deleted"
+  ) {
     return { state: "completed", label: "完了済み" }
   }
   if (result.codex_source_task_completion_suppressed === true) {
     return { state: "awaiting_approval", label: "確認待ち" }
   }
   if (task.status === "completed") {
-    return { state: "completed", label: "完了済み" }
+    return { state: "awaiting_approval", label: "確認待ち" }
   }
   if (task.status === "pending") {
     if (hasCodexActivityEvidence(result) && (hasThreadId || rawState === "running")) {

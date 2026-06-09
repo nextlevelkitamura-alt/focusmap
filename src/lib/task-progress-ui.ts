@@ -10,10 +10,9 @@ export function getCodexMonitorUiStatus(status: TaskProgressStatus | string | nu
       return "running"
     case "failed":
       return "connection_failed"
-    case "completed":
-      return "done"
     case "awaiting_approval":
     case "needs_input":
+    case "completed":
     default:
       return "review"
   }
