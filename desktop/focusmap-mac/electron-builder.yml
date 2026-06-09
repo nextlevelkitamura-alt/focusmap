@@ -33,6 +33,10 @@ extraResources:
       - dist/**
       - package.json
       - package-lock.json
+  - from: scripts/focusmap-agent/node_modules
+    to: focusmap-agent/node_modules
+    filter:
+      - '**/*'
   - from: scripts/run-codex-app-server.sh
     to: run-codex-app-server.sh
 mac:
