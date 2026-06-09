@@ -510,6 +510,91 @@ describe('WishlistCardDetail', () => {
     expect(await screen.findByAltText('slow.png')).toBeInTheDocument()
   })
 
+  test('画像保存中はCodex送信を待つ', async () => {
+    let resolveUpload: (() => void) | null = null
+    const onLaunchCodex = vi.fn(async () => undefined)
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>(resolve => {
+          resolveUpload = () => resolve(new Response(JSON.stringify({
+            attachment: {
+              id: 'image-slow',
+              file_name: 'slow.png',
+              file_url: 'https://example.com/slow.png',
+              file_type: 'image/png',
+              file_size: 4,
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }))
+        })
+      }
+      return new Response(JSON.stringify({ attachments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={onLaunchCodex}
+      />,
+    )
+
+    const codexButton = await screen.findByRole('button', { name: /Codexに送る/ })
+    expect(codexButton).not.toBeDisabled()
+
+    const dropZone = (await screen.findByText('画像を追加')).closest('button')
+    expect(dropZone).toBeTruthy()
+    fireEvent.drop(dropZone!, {
+      dataTransfer: {
+        files: [new File(['data'], 'slow.png', { type: 'image/png' })],
+      },
+    })
+
+    expect(await screen.findByText('保存中')).toBeInTheDocument()
+    expect(codexButton).toBeDisabled()
+    expect(screen.getByText('画像を保存中です。保存が終わるとCodexへ送れます。')).toBeInTheDocument()
+    fireEvent.click(codexButton)
+    expect(onLaunchCodex).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveUpload?.()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('保存中')).not.toBeInTheDocument()
+      expect(codexButton).not.toBeDisabled()
+    })
+
+    fireEvent.click(codexButton)
+    await waitFor(() => {
+      expect(onLaunchCodex).toHaveBeenCalled()
+    })
+  }, 10_000)
+
   test('画像削除はDELETE完了前にサムネイルを消す', async () => {
     let resolveDelete: (() => void) | null = null
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -40,7 +40,7 @@ type FocusmapNativeAppMessage =
   | { type: "focusmap:openExternal"; url: string; urls?: string[] }
 
 type FocusmapDesktopCodexBridge = {
-  copyText?: (text: string) => Promise<{ ok?: boolean; copied?: boolean; error?: string } | boolean>
+  copyText?: (text: string) => Promise<{ ok?: boolean; copied?: boolean; error?: string }>
   launchCodex?: (payload: {
     prompt?: string
     repoPath?: string | null
@@ -54,7 +54,7 @@ type FocusmapDesktopCodexBridge = {
     mode?: string
     url?: string
     copiedToClipboard?: boolean
-  } | boolean>
+  }>
 }
 
 function focusmapDesktopCodexBridge() {
@@ -199,7 +199,7 @@ export async function copyCodexPromptViaLocalApi(prompt: string): Promise<boolea
   if (bridge?.copyText) {
     try {
       const result = await bridge.copyText(normalizeCodexPrompt(prompt))
-      if (result === true || (typeof result === "object" && (result.ok === true || result.copied === true))) return true
+      if (result?.ok === true || result?.copied === true) return true
     } catch {
       // Fall through to the local API when available.
     }
@@ -389,21 +389,20 @@ export async function launchCodexViaLocalApi(payload: CodexLaunchPayload): Promi
       originUrl: payload.originUrl ?? window.location.href,
       clipboardImageUrl: payload.clipboardImageUrl?.trim() || null,
     })
-    if (result !== true && (!result || typeof result !== "object" || result.ok === false)) {
+    if (!result || result.ok === false) {
       throw new Error(
-        typeof result === "object" && result?.error
+        result?.error
           ? result.error
           : "Codex.app を開けませんでした",
       )
     }
-    const bridgeResult = typeof result === "object" ? result : {}
-    const copiedToClipboard = bridgeResult.copiedToClipboard === true
+    const copiedToClipboard = result.copiedToClipboard === true
     if (normalizedPrompt && !copiedToClipboard) {
       throw new Error("プロンプトをクリップボードにコピーできませんでした")
     }
     return {
       mode: "electron-bridge",
-      url: bridgeResult.url,
+      url: result.url,
       copiedToClipboard,
     }
   }

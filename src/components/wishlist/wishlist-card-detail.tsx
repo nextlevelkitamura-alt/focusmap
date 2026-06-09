@@ -2678,12 +2678,13 @@ export function WishlistCardDetail({
               const active = aiTask && ["pending", "running", "awaiting_approval", "needs_input"].includes(aiTask.status)
               const needsRepoConfig = !item.project_id || !repoConfigured
               const hasCodexPromptDraft = !!(draftTitle.trim() || draftDescription.trim())
+              const isWaitingForImageSave = isUploadingImage || isPastingClipboardImage || pendingImages.length > 0
               const codexDraftItem = {
                 ...item,
                 title: draftTitle,
                 description: draftDescription || null,
               } as IdealGoalWithItems
-              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active
+              const codexDisabled = !hasCodexPromptDraft || needsRepoConfig || !!active || isWaitingForImageSave
               const logEntries = buildMemoCodexLogEntries({ task: aiTask, launchStep, launchError })
               const currentLog = logEntries.find(entry => entry.active) ?? logEntries[logEntries.length - 1]
 
@@ -2733,7 +2734,9 @@ export function WishlistCardDetail({
                           ? "プロジェクトとリポジトリパスを設定すると送信できます。"
                           : active
                             ? "Codexの実行ログを更新しています。完了または確認待ちになるまで待ってください。"
-                            : "見出しとメモ本文をCodex用の追跡taskとして送ります。"}
+                            : isWaitingForImageSave
+                              ? "画像を保存中です。保存が終わるとCodexへ送れます。"
+                              : "見出しとメモ本文をCodex用の追跡taskとして送ります。"}
                       </div>
                     </div>
 

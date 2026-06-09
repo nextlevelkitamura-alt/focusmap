@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 
 const BUCKET = 'ideal-attachments'
 const MAX_FILE_SIZE = 20 * 1024 * 1024
 const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365
+
+function createAdminClientOrNull() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null
+  try {
+    return createServiceClient()
+  } catch (error) {
+    console.error('[wishlist/attachments] Service client unavailable:', error)
+    return null
+  }
+}
 
 function createStorageToken() {
   return new Date().toISOString().replace(/[:.]/g, '-')
@@ -18,7 +29,17 @@ export async function GET(
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data, error } = await supabase
+  const { data: goal } = await supabase
+    .from('ideal_goals')
+    .select('id')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!goal) return NextResponse.json({ error: 'Memo not found' }, { status: 404 })
+
+  const attachmentClient = createAdminClientOrNull() ?? supabase
+  const { data, error } = await attachmentClient
     .from('ideal_attachments')
     .select('*')
     .eq('ideal_id', id)
@@ -28,7 +49,7 @@ export async function GET(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const attachments = await Promise.all((data ?? []).map(async attachment => {
-    const { data: signedData } = await supabase.storage
+    const { data: signedData } = await attachmentClient.storage
       .from(BUCKET)
       .createSignedUrl(attachment.storage_path, SIGNED_URL_TTL_SECONDS)
     return signedData?.signedUrl
@@ -66,8 +87,9 @@ export async function POST(
   const storageToken = createStorageToken()
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const storagePath = `${user.id}/${id}/memo_${storageToken}_${safeName}`
+  const attachmentClient = createAdminClientOrNull() ?? supabase
 
-  const { error: uploadError } = await supabase.storage
+  const { error: uploadError } = await attachmentClient.storage
     .from(BUCKET)
     .upload(storagePath, file, {
       contentType: file.type,
@@ -76,16 +98,16 @@ export async function POST(
 
   if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 })
 
-  const { data: signedData, error: signedError } = await supabase.storage
+  const { data: signedData, error: signedError } = await attachmentClient.storage
     .from(BUCKET)
     .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS)
 
   if (signedError || !signedData) {
-    await supabase.storage.from(BUCKET).remove([storagePath])
+    await attachmentClient.storage.from(BUCKET).remove([storagePath])
     return NextResponse.json({ error: 'Failed to generate image URL' }, { status: 500 })
   }
 
-  const { data: attachment, error: dbError } = await supabase
+  const { data: attachment, error: dbError } = await attachmentClient
     .from('ideal_attachments')
     .insert({
       user_id: user.id,
@@ -100,7 +122,7 @@ export async function POST(
     .single()
 
   if (dbError) {
-    await supabase.storage.from(BUCKET).remove([storagePath])
+    await attachmentClient.storage.from(BUCKET).remove([storagePath])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
 
