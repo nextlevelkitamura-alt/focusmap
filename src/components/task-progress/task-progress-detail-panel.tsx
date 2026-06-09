@@ -35,7 +35,6 @@ import type { AiTaskActivityMessage } from "@/types/ai-task"
 const DETAIL_POLL_INTERVAL_MS = 3_000
 const WATCH_PING_INTERVAL_MS = 10_000
 const LOCAL_SYNC_STATUSES = new Set(["pending", "running", "awaiting_approval", "needs_input", "completed"])
-const UPDATE_NOTICE_MS = 1_800
 
 function statusClass(status: string | null | undefined) {
   return codexMonitorToneClass(status)
@@ -161,11 +160,9 @@ export function TaskProgressDetailPanel({
   const [isCopyingPrompt, setIsCopyingPrompt] = useState(false)
   const [isOpeningCodex, setIsOpeningCodex] = useState(false)
   const [promptCopied, setPromptCopied] = useState(false)
-  const [updateNotice, setUpdateNotice] = useState<string | null>(null)
   const watchIdRef = useRef<string | null>(null)
   const detailFingerprintRef = useRef<string | null>(null)
   const activityFingerprintRef = useRef<string | null>(null)
-  const updateNoticeTimeoutRef = useRef<number | null>(null)
   const taskId = task?.id ?? null
   const isFixtureTask = !!taskId?.startsWith("fixture:")
   const shouldSyncLocalCodex =
@@ -178,17 +175,6 @@ export function TaskProgressDetailPanel({
   if (!watchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
     watchIdRef.current = `detail:${crypto.randomUUID()}`
   }
-
-  const showUpdateNotice = useCallback(() => {
-    if (updateNoticeTimeoutRef.current) {
-      window.clearTimeout(updateNoticeTimeoutRef.current)
-    }
-    setUpdateNotice("情報を更新しました")
-    updateNoticeTimeoutRef.current = window.setTimeout(() => {
-      setUpdateNotice(null)
-      updateNoticeTimeoutRef.current = null
-    }, UPDATE_NOTICE_MS)
-  }, [])
 
   const fetchDetail = useCallback(async () => {
     if (!taskId) return
@@ -231,14 +217,13 @@ export function TaskProgressDetailPanel({
       if (nextFingerprint !== previousFingerprint) {
         detailFingerprintRef.current = nextFingerprint
         setDetail(nextDetail)
-        if (previousFingerprint !== null) showUpdateNotice()
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "detail fetch failed")
     } finally {
       if (isInitialLoad) setIsLoading(false)
     }
-  }, [isFixtureTask, showUpdateNotice, task, taskId])
+  }, [isFixtureTask, task, taskId])
 
   const fetchActivity = useCallback(async () => {
     if (!taskId) return
@@ -285,13 +270,12 @@ export function TaskProgressDetailPanel({
       if (nextFingerprint !== previousFingerprint) {
         activityFingerprintRef.current = nextFingerprint
         setActivityMessages(nextMessages)
-        if (previousFingerprint !== null) showUpdateNotice()
       }
       setActivityError(null)
     } catch (err) {
       setActivityError(err instanceof Error ? err.message : "activity fetch failed")
     }
-  }, [isFixtureTask, showUpdateNotice, task, taskId])
+  }, [isFixtureTask, task, taskId])
 
   const syncLocalCodex = useCallback(async () => {
     if (!taskId || !shouldSyncLocalCodex) return
@@ -318,25 +302,12 @@ export function TaskProgressDetailPanel({
       setError(null)
       setIsCopyingPrompt(false)
       setPromptCopied(false)
-      setUpdateNotice(null)
       detailFingerprintRef.current = null
       activityFingerprintRef.current = null
-      if (updateNoticeTimeoutRef.current) {
-        window.clearTimeout(updateNoticeTimeoutRef.current)
-        updateNoticeTimeoutRef.current = null
-      }
       return
     }
     void refreshPanel()
   }, [open, refreshPanel, taskId])
-
-  useEffect(() => {
-    return () => {
-      if (updateNoticeTimeoutRef.current) {
-        window.clearTimeout(updateNoticeTimeoutRef.current)
-      }
-    }
-  }, [])
 
   useEffect(() => {
     if (!open || !taskId || isFixtureTask) return
@@ -519,7 +490,6 @@ export function TaskProgressDetailPanel({
             <section>
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-muted-foreground">チャット</h3>
-                {updateNotice && <span className="text-[11px] text-emerald-600 dark:text-emerald-300">{updateNotice}</span>}
               </div>
               {activityMessages.length > 0 ? (
                 <div className="space-y-3">

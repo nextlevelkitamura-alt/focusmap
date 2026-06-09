@@ -325,7 +325,6 @@ export function CodexNodePanel({
   const [error, setError] = useState<string | null>(null)
   const [codexFeedback, setCodexFeedback] = useState<string | null>(null)
   const [codexSendStatus, setCodexSendStatus] = useState<CodexSendStatus>("idle")
-  const [isSyncingCodex, setIsSyncingCodex] = useState(false)
   const [justSentPrompt, setJustSentPrompt] = useState("")
   const [codexRunnerStatus, setCodexRunnerStatus] = useState<CodexRunnerStatus>({ checked: false, ready: false })
   const [codexActivityMessages, setCodexActivityMessages] = useState<AiTaskActivityMessage[]>([])
@@ -351,6 +350,7 @@ export function CodexNodePanel({
   const [isImageDragActive, setIsImageDragActive] = useState(false)
   const saveVersionRef = useRef(0)
   const codexWatchIdRef = useRef<string | null>(null)
+  const codexSyncInFlightRef = useRef(false)
 
   if (!codexWatchIdRef.current && typeof crypto !== "undefined" && "randomUUID" in crypto) {
     codexWatchIdRef.current = `node:${crypto.randomUUID()}`
@@ -366,7 +366,7 @@ export function CodexNodePanel({
     setError(null)
     setCodexFeedback(null)
     setCodexSendStatus("idle")
-    setIsSyncingCodex(false)
+    codexSyncInFlightRef.current = false
     setJustSentPrompt("")
     setCodexRunnerStatus({ checked: false, ready: false })
     setCodexActivityMessages([])
@@ -887,7 +887,8 @@ export function CodexNodePanel({
 
   const syncCodexState = useCallback(async () => {
     if (!open || !hasCodexRun) return
-    setIsSyncingCodex(true)
+    if (codexSyncInFlightRef.current) return
+    codexSyncInFlightRef.current = true
     try {
       await fetchWithSupabaseAuth("/api/codex/sync-node", {
         method: "POST",
@@ -901,7 +902,7 @@ export function CodexNodePanel({
       await refreshAiTaskStatus()
       await loadCodexActivity()
     } finally {
-      setIsSyncingCodex(false)
+      codexSyncInFlightRef.current = false
     }
   }, [codexAiTaskId, hasCodexRun, loadCodexActivity, node.taskId, open, refreshAiTaskStatus])
 
@@ -1649,9 +1650,6 @@ export function CodexNodePanel({
                         {codexWaitingForAppSend ? "未送信" : codexManualHandoff ? "外部アプリ確認待ち" : "thread検出待ち"}
                       </span>
                     )}
-                    <span className="text-[11px] text-muted-foreground">
-                      {isSyncingCodex ? "同期中" : "約3秒ごとに同期"}
-                    </span>
                   </div>
                   {hasCodexRun && !!(rawSentPrompt || codexPrompt) && !isCodexRunning && (
                     <a
@@ -1743,9 +1741,6 @@ export function CodexNodePanel({
                             : "Codex側の返答を待っています"}
                       </div>
                     )}
-                    <div className="py-1 text-center text-[11px] text-muted-foreground">
-                      {isSyncingCodex ? "最新状態を確認中..." : "最新ログまで表示済み"}
-                    </div>
                   </div>
                 </div>
               </section>
