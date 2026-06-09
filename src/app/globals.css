@@ -196,7 +196,7 @@
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  animation: codexNodeOrbit 1.8s infinite;
+  animation: codexNodeOrbit 1.8s linear infinite;
 }
 
 .codex-node-running-orbit::after {
@@ -208,31 +208,18 @@
   box-shadow:
     0 0 12px rgba(16, 185, 129, 0.25),
     inset 0 0 12px rgba(16, 185, 129, 0.08);
-  animation: codexNodeOrbitGlow 1.8s infinite;
+  animation: codexNodeOrbitGlow 1.8s linear infinite;
 }
 
 @keyframes codexNodeOrbit {
   0% {
     --codex-node-orbit-angle: 0deg;
-    opacity: 0.72;
-    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  28% {
-    --codex-node-orbit-angle: 168deg;
     opacity: 1;
-    animation-timing-function: cubic-bezier(0.36, 0, 0.66, -0.56);
-  }
-
-  52% {
-    --codex-node-orbit-angle: 238deg;
-    opacity: 0.9;
-    animation-timing-function: cubic-bezier(0.22, 0.62, 0.34, 1);
   }
 
   100% {
     --codex-node-orbit-angle: 360deg;
-    opacity: 0.72;
+    opacity: 1;
   }
 }
 
@@ -248,5 +235,12 @@
 
   58% {
     opacity: 0.52;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-node-running-orbit::before,
+  .codex-node-running-orbit::after {
+    animation: none;
   }
 }
