@@ -204,6 +204,15 @@ function buildCodexBadge(
     return codexMs >= progressMs ? codexBadge : progressBadge;
 }
 
+function canShowHeadingActionForCodexState(
+    codexState: CodexNodeState | null | undefined,
+    taskProgress: TaskProgressSnapshotTask | null | undefined,
+) {
+    const codexIsUnsent = !codexState || codexState.state === "prompt_waiting";
+    const progressIsUnsent = !taskProgress || taskProgress.status === "pending";
+    return codexIsUnsent && progressIsUnsent;
+}
+
 type WebKitGestureEvent = Event & {
     scale: number;
     clientX?: number;
@@ -398,11 +407,13 @@ function CustomTaskNode({
     const [editValue, setEditValue] = useState(initialEditValue ?? node.title);
     const isMemoNode = node.source === "memo" || node.source === "wishlist" || node.hasMemo || node.hasMemoImages;
     const nodeCodexBadge = buildCodexBadge(codexState, taskProgress);
+    const canGenerateHeadingForCodexState = canShowHeadingActionForCodexState(codexState, taskProgress);
     const showLongNodeHeadingAction =
         !isEditing &&
         !floatingEditing &&
         !dragging &&
         !!onGenerateHeadingFromLongNode &&
+        canGenerateHeadingForCodexState &&
         (node.titleLineCount >= 3 || isGeneratingHeading);
 
     useEffect(() => {
@@ -784,11 +795,11 @@ function CustomTaskNode({
                 <button
                     type="button"
                     className={cn(
-                        "absolute z-30 inline-flex items-center justify-center rounded-full border border-sky-400/50 bg-sky-500/20 text-sky-100 shadow-lg shadow-sky-950/20 backdrop-blur transition-colors",
-                        "hover:bg-sky-500/25 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-1 focus:ring-offset-background disabled:pointer-events-none disabled:opacity-70",
+                        "absolute z-30 inline-flex items-center justify-center rounded-full text-sky-100 transition-colors",
+                        "focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-1 focus:ring-offset-background disabled:pointer-events-none disabled:opacity-70",
                         isMobile
-                            ? "-bottom-4 -right-4 h-11 w-11"
-                            : "-bottom-3 -right-3 h-7 w-7"
+                            ? "-bottom-4 -right-4 h-[52px] w-[52px] bg-transparent p-0"
+                            : "-bottom-3 -right-3 h-7 w-7 border border-sky-400/50 bg-sky-500/20 shadow-lg shadow-sky-950/20 backdrop-blur hover:bg-sky-500/25"
                     )}
                     disabled={isGeneratingHeading}
                     onPointerDown={(event) => event.stopPropagation()}
@@ -796,11 +807,20 @@ function CustomTaskNode({
                     title="長いノードをメモ化して見出し生成"
                     aria-label="長いノードをメモ化して見出し生成"
                 >
-                    {isGeneratingHeading ? (
-                        <Loader2 className={cn("animate-spin", isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
-                    ) : (
-                        <Sparkles className={cn(isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
-                    )}
+                    <span
+                        className={cn(
+                            "inline-flex items-center justify-center rounded-full",
+                            isMobile
+                                ? "h-8 w-8 border border-sky-400/50 bg-sky-500/20 shadow-md shadow-sky-950/20 backdrop-blur"
+                                : "h-full w-full"
+                        )}
+                    >
+                        {isGeneratingHeading ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                    </span>
                 </button>
             )}
             <div className="flex min-h-0 flex-1 items-center gap-1">

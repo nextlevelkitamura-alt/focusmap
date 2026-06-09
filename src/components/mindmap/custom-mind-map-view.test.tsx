@@ -414,6 +414,97 @@ describe("CustomMindMapView keyboard operations", () => {
     expect(onSelectNode).not.toHaveBeenCalled()
   })
 
+  test("keeps the heading generation button for unsent Codex nodes", () => {
+    const longRoot = makeTask({
+      id: "root-1",
+      title: "一行目\n二行目\n三行目",
+    })
+
+    renderMap({
+      groups: [longRoot],
+      tasks: [],
+      onGenerateHeadingFromLongNode: vi.fn(),
+      codexRunByNodeId: {
+        "root-1": {
+          state: "prompt_waiting",
+          taskId: "ai-task-1",
+          label: "未送信",
+        },
+      },
+      taskProgressByNodeId: {
+        "root-1": {
+          id: "ai-task-1",
+          title: longRoot.title,
+          status: "pending",
+          executor: "codex_app",
+          codex_thread_id: null,
+          current_step: null,
+          progress_percent: null,
+          summary: null,
+          updated_at: "2026-06-07T00:00:00.000Z",
+          source_type: "mindmap",
+          source_id: "root-1",
+        },
+      },
+    })
+
+    const node = document.querySelector('[data-id="root-1"]')
+    if (!(node instanceof HTMLElement)) {
+      throw new Error("node not rendered")
+    }
+
+    expect(within(node).getByRole("button", { name: "長いノードをメモ化して見出し生成" })).toBeInTheDocument()
+  })
+
+  test("hides the heading generation button for Codex nodes that already left unsent state", () => {
+    const longRoot = makeTask({
+      id: "root-1",
+      title: "一行目\n二行目\n三行目",
+    })
+    const reviewChild = makeTask({
+      id: "child-1",
+      title: "一行目\n二行目\n三行目",
+      parent_task_id: "root-1",
+    })
+
+    renderMap({
+      groups: [longRoot],
+      tasks: [reviewChild],
+      onGenerateHeadingFromLongNode: vi.fn(),
+      codexRunByNodeId: {
+        "root-1": {
+          state: "running",
+          taskId: "ai-task-1",
+          label: "実行中",
+        },
+      },
+      taskProgressByNodeId: {
+        "child-1": {
+          id: "ai-task-2",
+          title: reviewChild.title,
+          status: "awaiting_approval",
+          executor: "codex_app",
+          codex_thread_id: "thread-1",
+          current_step: "確認待ちです",
+          progress_percent: null,
+          summary: null,
+          updated_at: "2026-06-07T00:00:00.000Z",
+          source_type: "mindmap",
+          source_id: "child-1",
+        },
+      },
+    })
+
+    const runningNode = document.querySelector('[data-id="root-1"]')
+    const reviewNode = document.querySelector('[data-id="child-1"]')
+    if (!(runningNode instanceof HTMLElement) || !(reviewNode instanceof HTMLElement)) {
+      throw new Error("nodes not rendered")
+    }
+
+    expect(within(runningNode).queryByRole("button", { name: "長いノードをメモ化して見出し生成" })).not.toBeInTheDocument()
+    expect(within(reviewNode).queryByRole("button", { name: "長いノードをメモ化して見出し生成" })).not.toBeInTheDocument()
+  })
+
   test("keeps the heading generation indicator visible while a shortened node is still generating", () => {
     renderMap({
       groups: [makeTask({ id: "root-1", title: "短い仮見出し" })],
