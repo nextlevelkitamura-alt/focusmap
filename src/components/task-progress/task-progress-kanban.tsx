@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   Bot,
@@ -37,12 +37,14 @@ import type { TaskProgressSnapshotTask } from "@/types/task-progress"
 const HEARTBEAT_ONLINE_WINDOW_MS = 90_000
 const HEARTBEAT_POLL_INTERVAL_MS = 30_000
 const HEARTBEAT_IMMEDIATE_REFRESH_DEDUPE_MS = 750
+const MOBILE_LANE_SWIPE_MIN_DISTANCE = 48
+const MOBILE_LANE_SWIPE_MAX_OFF_AXIS = 72
 
 function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible"
 }
 
-type SourceTaskInfo = Pick<Task, "id" | "status" | "title">
+type SourceTaskInfo = Pick<Task, "id" | "status" | "title" | "deleted_at">
 
 type RunnerHeartbeat = {
   status?: string | null
@@ -116,6 +118,8 @@ const LANES: Array<{
     className: "border-emerald-400/50 bg-emerald-500/10",
   },
 ]
+
+const LANE_IDS = LANES.map(lane => lane.id)
 
 function useRunnerConnection(): RunnerConnectionState & { refresh: () => Promise<void> } {
   const refreshInFlightRef = useRef<Promise<void> | null>(null)
@@ -221,7 +225,19 @@ function sourceTaskForProgressTask(task: TaskProgressSnapshotTask, sourceTasksBy
   return null
 }
 
+function isProgressTaskVisibleInCurrentMap(
+  task: TaskProgressSnapshotTask,
+  sourceTasksById: ReadonlyMap<string, SourceTaskInfo>,
+) {
+  if (task.source_type !== "mindmap") return true
+  const sourceId = task.source_id?.trim()
+  if (!sourceId) return false
+  const sourceTask = sourceTasksById.get(sourceId)
+  return !!sourceTask && !sourceTask.deleted_at
+}
+
 function laneForTask(task: TaskProgressSnapshotTask, sourceTasksById: ReadonlyMap<string, SourceTaskInfo>): CodexKanbanLaneId | null {
+  if (!isProgressTaskVisibleInCurrentMap(task, sourceTasksById)) return null
   const sourceTask = sourceTaskForProgressTask(task, sourceTasksById)
   if (sourceTask?.status === "done") {
     return isSameLocalDate(task.updated_at) ? "done" : null
@@ -375,6 +391,55 @@ function EmptyLane({ label }: { label: string }) {
   )
 }
 
+function KanbanLaneSection({
+  lane,
+  tasks,
+  runnerState,
+  isMobile,
+  nowMs,
+  onOpenTask,
+}: {
+  lane: (typeof LANES)[number]
+  tasks: TaskProgressSnapshotTask[]
+  runnerState: RunnerConnectionState
+  isMobile: boolean
+  nowMs: number
+  onOpenTask: (task: TaskProgressSnapshotTask) => void
+}) {
+  const Icon = lane.icon
+
+  return (
+    <section className={cn("min-w-0 rounded-lg border p-2", lane.className)}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-xs font-semibold">
+            <Icon className={cn("h-3.5 w-3.5", lane.id === "running" && tasks.length > 0 && "animate-spin")} />
+            <span>{lane.label}</span>
+            <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {tasks.length}
+            </span>
+          </div>
+          {!isMobile && <p className="mt-0.5 text-[10px] text-muted-foreground">{lane.description}</p>}
+        </div>
+      </div>
+      <div className="space-y-2">
+        {tasks.length > 0
+          ? tasks.slice(0, isMobile ? 24 : 12).map(task => (
+            <KanbanCard
+              key={task.id}
+              task={task}
+              runnerState={runnerState}
+              isMobile={isMobile}
+              nowMs={nowMs}
+              onOpen={onOpenTask}
+            />
+          ))
+          : <EmptyLane label={lane.label} />}
+      </div>
+    </section>
+  )
+}
+
 function KanbanLanes({
   lanes,
   runnerState,
@@ -391,41 +456,62 @@ function KanbanLanes({
   return (
     <div className={cn("grid gap-3", isMobile ? "grid-cols-1" : "grid-cols-5")}>
       {LANES.map(lane => {
-        const Icon = lane.icon
         const tasks = lanes[lane.id]
         return (
-          <section key={lane.id} className={cn("min-w-0 rounded-lg border p-2", lane.className)}>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-xs font-semibold">
-                  <Icon className={cn("h-3.5 w-3.5", lane.id === "running" && tasks.length > 0 && "animate-spin")} />
-                  <span>{lane.label}</span>
-                  <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {tasks.length}
-                  </span>
-                </div>
-                {!isMobile && <p className="mt-0.5 text-[10px] text-muted-foreground">{lane.description}</p>}
-              </div>
-            </div>
-            <div className="space-y-2">
-              {tasks.length > 0
-                ? tasks.slice(0, isMobile ? 8 : 12).map(task => (
-                  <KanbanCard
-                    key={task.id}
-                    task={task}
-                    runnerState={runnerState}
-                    isMobile={isMobile}
-                    nowMs={nowMs}
-                    onOpen={onOpenTask}
-                  />
-                ))
-                : <EmptyLane label={lane.label} />}
-            </div>
-          </section>
+          <KanbanLaneSection
+            key={lane.id}
+            lane={lane}
+            tasks={tasks}
+            runnerState={runnerState}
+            isMobile={isMobile}
+            nowMs={nowMs}
+            onOpenTask={onOpenTask}
+          />
         )
       })}
     </div>
   )
+}
+
+function MobileKanbanLanePager({
+  lanes,
+  activeLaneId,
+  runnerState,
+  nowMs,
+  onOpenTask,
+}: {
+  lanes: Record<CodexKanbanLaneId, TaskProgressSnapshotTask[]>
+  activeLaneId: CodexKanbanLaneId
+  runnerState: RunnerConnectionState
+  nowMs: number
+  onOpenTask: (task: TaskProgressSnapshotTask) => void
+}) {
+  const lane = LANES.find(candidate => candidate.id === activeLaneId) ?? LANES[0]
+  const tasks = lanes[lane.id]
+
+  return (
+    <div
+      role="tabpanel"
+      id={`codex-kanban-lane-panel-${lane.id}`}
+      aria-labelledby={`codex-kanban-lane-tab-${lane.id}`}
+    >
+      <KanbanLaneSection
+        lane={lane}
+        tasks={tasks}
+        runnerState={runnerState}
+        isMobile
+        nowMs={nowMs}
+        onOpenTask={onOpenTask}
+      />
+    </div>
+  )
+}
+
+function adjacentLaneId(current: CodexKanbanLaneId, direction: 1 | -1) {
+  const currentIndex = LANE_IDS.indexOf(current)
+  if (currentIndex < 0) return current
+  const nextIndex = Math.min(Math.max(currentIndex + direction, 0), LANE_IDS.length - 1)
+  return LANE_IDS[nextIndex] ?? current
 }
 
 export function TaskProgressKanban({
@@ -440,7 +526,9 @@ export function TaskProgressKanban({
 }: TaskProgressKanbanProps) {
   const [expanded, setExpanded] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [activeMobileLaneId, setActiveMobileLaneId] = useState<CodexKanbanLaneId>("review")
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null)
   const runnerState = useRunnerConnection()
 
   useEffect(() => {
@@ -482,13 +570,48 @@ export function TaskProgressKanban({
     ])
   }, [onRefresh, runnerState])
 
+  const openMobileKanban = useCallback(() => {
+    setActiveMobileLaneId(current => {
+      if (counts[current] > 0) return current
+      return LANES.find(lane => counts[lane.id] > 0)?.id ?? current
+    })
+    setMobileOpen(true)
+  }, [counts])
+
+  const handleMobileLanePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse") return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    mobileSwipeStartRef.current = { x: event.clientX, y: event.clientY }
+  }, [])
+
+  const handleMobileLanePointerEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = mobileSwipeStartRef.current
+    mobileSwipeStartRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    if (!start || event.pointerType === "mouse") return
+
+    const deltaX = event.clientX - start.x
+    const deltaY = event.clientY - start.y
+    if (Math.abs(deltaX) < MOBILE_LANE_SWIPE_MIN_DISTANCE) return
+    if (Math.abs(deltaY) > MOBILE_LANE_SWIPE_MAX_OFF_AXIS) return
+    if (Math.abs(deltaY) > Math.abs(deltaX)) return
+
+    setActiveMobileLaneId(current => adjacentLaneId(current, deltaX < 0 ? 1 : -1))
+  }, [])
+
+  const handleMobileLanePointerCancel = useCallback(() => {
+    mobileSwipeStartRef.current = null
+  }, [])
+
   if (isMobile) {
     return (
       <>
         <button
           type="button"
           className="absolute bottom-[calc(env(safe-area-inset-bottom)+76px)] right-3 z-40 inline-flex min-h-11 items-center gap-2 rounded-full border bg-background/95 px-3 text-xs font-semibold shadow-lg backdrop-blur"
-          onClick={() => setMobileOpen(true)}
+          onClick={openMobileKanban}
           aria-label={`Codex看板を開く。Mac状態は${runnerState.loading ? "確認中" : runnerState.online ? "オンライン" : "オフライン"}です`}
         >
           <Bot className="h-4 w-4 text-emerald-600" />
@@ -521,8 +644,45 @@ export function TaskProgressKanban({
               <div className="flex flex-wrap gap-1.5 pt-2">
                 <RunnerChip state={runnerState} />
               </div>
+              <div className="-mx-1 overflow-x-auto pt-2">
+                <div className="flex w-max gap-1.5 px-1" role="tablist" aria-label="Codexステータス">
+                  {LANES.map(lane => {
+                    const Icon = lane.icon
+                    const active = lane.id === activeMobileLaneId
+                    return (
+                      <button
+                        key={lane.id}
+                        id={`codex-kanban-lane-tab-${lane.id}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        aria-controls={`codex-kanban-lane-panel-${lane.id}`}
+                        aria-label={`${lane.label} ${counts[lane.id]}件`}
+                        className={cn(
+                          "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors",
+                          active
+                            ? cn("bg-background text-foreground shadow-sm", lane.className)
+                            : "border-border bg-muted/40 text-muted-foreground",
+                        )}
+                        onClick={() => setActiveMobileLaneId(lane.id)}
+                      >
+                        <Icon className={cn("h-3.5 w-3.5", lane.id === "running" && counts[lane.id] > 0 && "animate-spin")} />
+                        <span>{lane.label}</span>
+                        <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {counts[lane.id]}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+            <div
+              className="min-h-0 flex-1 overflow-y-auto px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]"
+              onPointerDown={handleMobileLanePointerDown}
+              onPointerUp={handleMobileLanePointerEnd}
+              onPointerCancel={handleMobileLanePointerCancel}
+            >
               {error && (
                 <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
                   {error}
@@ -533,7 +693,13 @@ export function TaskProgressKanban({
                   最新状態を確認中...
                 </div>
               ) : (
-                <KanbanLanes lanes={lanes} runnerState={runnerState} isMobile nowMs={nowMs} onOpenTask={onOpenTask} />
+                <MobileKanbanLanePager
+                  lanes={lanes}
+                  activeLaneId={activeMobileLaneId}
+                  runnerState={runnerState}
+                  nowMs={nowMs}
+                  onOpenTask={onOpenTask}
+                />
               )}
             </div>
           </SheetContent>

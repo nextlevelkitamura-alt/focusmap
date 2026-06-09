@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch'
 import type { TaskProgressSnapshotTask } from '@/types/task-progress'
@@ -18,11 +18,41 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
   })
 }
 
-function renderMobileKanban(tasks: TaskProgressSnapshotTask[] = []) {
+function progressTask(overrides: Partial<TaskProgressSnapshotTask> = {}): TaskProgressSnapshotTask {
+  return {
+    id: 'task-1',
+    title: 'Codexタスク',
+    status: 'awaiting_approval',
+    executor: 'codex_app',
+    codex_thread_id: null,
+    current_step: '確認待ちです',
+    progress_percent: null,
+    summary: null,
+    updated_at: new Date().toISOString(),
+    source_type: 'mindmap',
+    source_id: 'node-1',
+    ...overrides,
+  }
+}
+
+function sourceTask(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    status: 'todo',
+    title: id,
+    deleted_at: null,
+    ...overrides,
+  }
+}
+
+function renderMobileKanban(
+  tasks: TaskProgressSnapshotTask[] = [],
+  sourceTasksById = new Map<string, ReturnType<typeof sourceTask>>(),
+) {
   render(
     <TaskProgressKanban
       tasks={tasks}
-      sourceTasksById={new Map()}
+      sourceTasksById={sourceTasksById}
       isMobile
       pollIntervalMs={3000}
       onRefresh={vi.fn()}
@@ -123,5 +153,58 @@ describe('TaskProgressKanban', () => {
     } finally {
       nowSpy.mockRestore()
     }
+  })
+
+  test('スマホ看板はステータスタブで表示レーンを切り替える', async () => {
+    renderMobileKanban([
+      progressTask({
+        id: 'running-task',
+        title: '実行中のCodexタスク',
+        status: 'running',
+        source_id: 'node-running',
+      }),
+      progressTask({
+        id: 'review-task',
+        title: '確認待ちのCodexタスク',
+        status: 'awaiting_approval',
+        source_id: 'node-review',
+      }),
+    ], new Map([
+      ['node-running', sourceTask('node-running')],
+      ['node-review', sourceTask('node-review')],
+    ]))
+
+    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+
+    expect(screen.getByText('確認待ちのCodexタスク')).toBeInTheDocument()
+    expect(screen.queryByText('実行中のCodexタスク')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /実行中 1件/ }))
+
+    expect(screen.getByText('実行中のCodexタスク')).toBeInTheDocument()
+    expect(screen.queryByText('確認待ちのCodexタスク')).not.toBeInTheDocument()
+  })
+
+  test('マインドマップから削除済みのCodex taskは看板に出さない', async () => {
+    renderMobileKanban([
+      progressTask({
+        id: 'visible-task',
+        title: '残っているノードのCodexタスク',
+        source_id: 'node-visible',
+      }),
+      progressTask({
+        id: 'deleted-task',
+        title: '削除済みノードのCodexタスク',
+        source_id: 'node-deleted',
+      }),
+    ], new Map([
+      ['node-visible', sourceTask('node-visible')],
+    ]))
+
+    fireEvent.click(await screen.findByRole('button', { name: /Codex看板を開く/ }))
+
+    expect(screen.getByText('残っているノードのCodexタスク')).toBeInTheDocument()
+    expect(screen.queryByText('削除済みノードのCodexタスク')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /確認待ち 1件/ })).toBeInTheDocument()
   })
 })
