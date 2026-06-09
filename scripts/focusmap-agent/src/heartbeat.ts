@@ -19,6 +19,41 @@ export async function upsertRunner(api: AgentApiClient, config: AgentConfig): Pr
   return runner.id;
 }
 
+async function sendRunnerHeartbeat(
+  api: AgentApiClient,
+  config: AgentConfig,
+  runnerId: string,
+  status: 'online' | 'offline',
+  currentTaskId: string | null,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  await api.runnerHeartbeat({
+    runner_id: runnerId,
+    hostname: config.hostname,
+    device_id: config.hostname,
+    status,
+    current_task_id: currentTaskId,
+    metadata: {
+      app: 'focusmap-lite',
+      heartbeat_kind: 'liveness',
+      agent_state: status === 'offline' ? 'offline' : currentTaskId ? 'running' : 'idle',
+      ...metadata,
+    },
+  });
+}
+
+export async function sendOfflineHeartbeat(
+  api: AgentApiClient,
+  config: AgentConfig,
+  runnerId: string,
+  reason: string,
+): Promise<void> {
+  await sendRunnerHeartbeat(api, config, runnerId, 'offline', null, {
+    heartbeat_kind: 'shutdown',
+    shutdown_reason: reason,
+  });
+}
+
 export function startHeartbeatLoop(
   api: AgentApiClient,
   config: AgentConfig,
@@ -41,21 +76,10 @@ export function startHeartbeatLoop(
     const fullRegistrationIntervalMs = currentTaskId
       ? FULL_REGISTRATION_ACTIVE_INTERVAL_MS
       : FULL_REGISTRATION_IDLE_INTERVAL_MS;
-    const becameActive = !!currentTaskId && currentTaskId !== lastTaskId;
-    if (!becameActive && now < nextHeartbeatAt) return;
+    const stateChanged = currentTaskId !== lastTaskId;
+    if (!stateChanged && now < nextHeartbeatAt) return;
     try {
-      await api.runnerHeartbeat({
-        runner_id: runnerId,
-        hostname: config.hostname,
-        device_id: config.hostname,
-        status: 'online',
-        current_task_id: currentTaskId,
-        metadata: {
-          app: 'focusmap-lite',
-          heartbeat_kind: 'liveness',
-          agent_state: currentTaskId ? 'running' : 'idle',
-        },
-      });
+      await sendRunnerHeartbeat(api, config, runnerId, 'online', currentTaskId);
       if (now - lastFullRegistrationAt >= fullRegistrationIntervalMs) {
         await upsertRunner(api, config);
         lastFullRegistrationAt = now;

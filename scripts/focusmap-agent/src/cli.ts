@@ -18,7 +18,7 @@
 
 import { assertNoAnthropicKey } from './safety.js';
 import { loadConfig, ConfigError } from './config.js';
-import { upsertRunner, startHeartbeatLoop } from './heartbeat.js';
+import { sendOfflineHeartbeat, upsertRunner, startHeartbeatLoop } from './heartbeat.js';
 import { startClaimLoop } from './claim.js';
 import { startCommandLoop } from './command-loop.js';
 import { startCodexThreadMonitorLoop } from './codex-thread-monitor.js';
@@ -120,13 +120,23 @@ async function main(): Promise<void> {
   );
 
   // 7. Shutdown
+  let shuttingDown = false;
   const shutdown = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     info(`received ${signal}, shutting down...`);
     clearInterval(heartbeatTimer);
     clearInterval(claimTimer);
     clearInterval(commandTimer);
     clearInterval(codexThreadMonitorTimer);
-    process.exit(0);
+    const exitTimer = setTimeout(() => process.exit(0), 1_500);
+    exitTimer.unref();
+    sendOfflineHeartbeat(api, config, runnerId, signal)
+      .catch((e) => logError('offline heartbeat failed:', e instanceof Error ? e.message : e))
+      .finally(() => {
+        clearTimeout(exitTimer);
+        process.exit(0);
+      });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

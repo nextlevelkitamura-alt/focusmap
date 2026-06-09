@@ -33,13 +33,14 @@ Macローカル:
 
 通常のCodex監視writerはMac Supervisor配下の `focusmap-agent` 1本にする。`focusmap-agent` がCodex app-server通知、`~/.codex/state_5.sqlite`、rollout JSONLを読み、状態変化と軽量snapshotだけをTurso/Supabaseへ送る。
 
-- Focusmap Macアプリは、通常起動でNext 3001、`focusmap-agent`、Codex app-serverだけを自動確認する。
+- Focusmap Macアプリは、通常起動でNext 3001、`focusmap-agent`、Codex app-serverだけを自動確認する。Macアプリ内の接続/診断UIはElectron IPCでローカルSupervisorへ直接確認してよいが、通常ブラウザ・Webアプリ・スマホのonline/offline表示はTurso `runner_heartbeats` を正本にする。
 - 旧 `scripts/task-runner.ts` は非Codex task、明示即時実行、既存互換のため残すが、Codex sqlite/rollout監視は通常無効にする。互換/デバッグで必要な時だけ `FOCUSMAP_LEGACY_CODEX_MONITOR=1` を付ける。
 - Macアプリから旧 `task-runner` を自動kickするのは `FOCUSMAP_DESKTOP_ENABLE_LEGACY_TASK_RUNNER=1` を明示した時だけにする。
 - `/api/codex/sync-node` は手動sync now、debug、移行中fallbackに限定し、通常の3秒UI更新や詳細表示だけを理由にsqlite/rollout探索とDB writeを起こさない。
 - `ai_tasks.codex_thread_id` が保存済みのtaskは、`focusmap-agent` がそのthread IDだけを固定監視する。さらに、作成から10分以内で `codex_manual_handoff=true` / `codex_run_state='prompt_waiting'` の未紐付けtaskは、agent専用APIが一時的に返し、Mac agentが `~/.codex/state_5.sqlite` の `first_user_message` をhandoff tokenまたはprompt先頭で照合して初回 `codex_thread_id` を保存する。`running` の根拠は、最新の `task_started` の後に `task_complete` / `turn_aborted` がまだ無いことに限定する。`task_complete` / `turn_aborted` またはCodex thread archive/deleteは `awaiting_approval` / `completed` へ進める。確認待ち後の再開は `awaiting_approval_at` / `last_activity_at` より後の `user_message` または `task_started` だけを根拠にし、thread `updated_at_ms` 単体では `running` へ戻さない。
 - `/api/agents/codex-monitor/tasks` は固定監視対象を返すagent専用APIで、`tasks.deleted_at is null` / `notes.deleted_at is null` / `ideal_goals.status != 'archived'` を満たすsourceだけを返す。source側が削除/アーカイブされたthreadは通常monitor対象から外し、以後は明示sync/debug fallbackでない限り追わない。
 - `focusmap-agent` は既知の監視対象threadを2秒ごとにローカル確認するが、`/api/agents/codex-monitor/tasks` の対象リスト取得は既定10秒キャッシュにする。これによりCodex sqlite/rollout監視は2秒化しつつ、Supabaseの監視対象selectを毎tickへ増やさない。
+- runner heartbeatはTurso `runner_heartbeats` へ実行中2秒・アイドル30秒で1 row upsertする。作業中/待機中の切替時は即時upsertし、正常終了時は可能なら `status='offline'` を1回送る。クラッシュ、強制終了、スリープ時はoffline送信できないため、Web/スマホは `last_seen_at` が90秒以上古い場合もofflineと解釈する。
 - このwriter所有者、監視間隔、クラウド保存条件、UIの更新表示を変える時は、同じ変更内で `docs/CONTEXT.md` とこの仕様書を更新する。
 
 ## Turso保存ルール

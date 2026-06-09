@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /mcp/node_modules
+/scripts/focusmap-agent/node_modules
 /.pnp
 .pnp.*
 .yarn/*
