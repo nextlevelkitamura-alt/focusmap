@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import type { LucideIcon } from "lucide-react"
-import { Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound, Workflow } from "lucide-react"
+import { Bot, Calendar, ChevronRight, FolderKanban, KeyRound, Palette, Sparkles, UsersRound } from "lucide-react"
 import { SettingsShell } from "@/components/settings/settings-shell"
 import { cn } from "@/lib/utils"
 
@@ -17,10 +17,10 @@ interface OverviewItem {
 const PRIMARY_ITEMS: OverviewItem[] = [
   {
     href: "/dashboard/settings/automation",
-    title: "自動化",
-    description: "PC実行、GWS、Playwright、認証状態を管理",
-    icon: Workflow,
-    iconClass: "bg-cyan-500 text-white",
+    title: "AI",
+    description: "MacエージェントとCodex連携を確認",
+    icon: Bot,
+    iconClass: "bg-emerald-500 text-white",
   },
   {
     href: "/dashboard/settings/integrations",

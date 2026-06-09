@@ -10,8 +10,8 @@ export default async function AutomationSettingsPage() {
 
   return (
     <SettingsShell
-      title="自動化"
-      description="PC実行、GWS / Google Workspace MCP、Playwright、Google認証をまとめて確認します。"
+      title="AI"
+      description="Macエージェントのオンライン状態、巡回更新、Codex連携を確認します。"
       className="max-w-[1120px]"
     >
       <AutomationSettings />

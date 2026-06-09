@@ -1,25 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  Bot,
   CheckCircle2,
-  Cpu,
+  Clock3,
   Laptop,
   Loader2,
   RefreshCw,
-  Server,
-  Terminal,
   TriangleAlert,
   WifiOff,
-  Bot,
-  Workflow,
-  HelpCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { fetchWithSupabaseAuth } from '@/lib/auth/supabase-auth-fetch';
+import { cn } from '@/lib/utils';
 
 interface Runner {
   id: string;
@@ -27,61 +23,138 @@ interface Runner {
   display_name: string | null;
   executors: string[];
   last_heartbeat_at: string | null;
-  available_secret_names?: string[];
   metadata?: Record<string, unknown> | null;
 }
 
-/**
- * エージェント種別判定:
- * - codex-rpc-bridge (旧): executors に claude/codex/codex_app
- * - focusmap-agent (Phase F): executors に playwright/simple、 metadata.agent === 'focusmap-agent'
- * - 不明: それ以外
- */
-type AgentKind = 'focusmap-lite' | 'codex-bridge' | 'unknown';
-
-function detectAgentKind(r: Runner): AgentKind {
-  const meta = r.metadata as { agent?: string; app?: string } | null;
-  if (meta?.agent === 'focusmap-agent' || meta?.app === 'focusmap-lite') return 'focusmap-lite';
-  const exec = r.executors ?? [];
-  if (exec.includes('playwright') || exec.includes('simple')) return 'focusmap-lite';
-  if (exec.includes('claude') || exec.includes('codex') || exec.includes('codex_app')) return 'codex-bridge';
-  return 'unknown';
+interface HeartbeatRow {
+  runner_id?: string | null;
+  device_id?: string | null;
+  status?: string | null;
+  last_seen_at?: string | null;
+  current_task_id?: string | null;
+  version?: string | null;
+  metadata_json?: Record<string, unknown> | null;
 }
 
-const KIND_META: Record<AgentKind, { label: string; icon: typeof Bot; color: string }> = {
-  'focusmap-lite': {
-    label: 'Focusmap Lite',
-    icon: Workflow,
-    color: 'text-blue-600 dark:text-blue-400',
-  },
-  'codex-bridge': {
-    label: 'Claude / Codex Bridge (既存)',
-    icon: Bot,
-    color: 'text-purple-600 dark:text-purple-400',
-  },
-  unknown: {
-    label: '不明 (executor未識別)',
-    icon: HelpCircle,
-    color: 'text-muted-foreground',
-  },
+type AnnotatedRunner = Runner & {
+  ageMs: number;
+  isOnline: boolean;
+  isFocusmapAgent: boolean;
 };
 
-const HEARTBEAT_ONLINE_WINDOW_MS = 5 * 60 * 1000; // 5分以内なら ONLINE
+const HEARTBEAT_ONLINE_WINDOW_MS = 90 * 1000;
 const POLL_INTERVAL_MS = 30_000;
 
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function boolFromMetadata(metadata: Record<string, unknown> | null | undefined, key: string) {
+  return metadata?.[key] === true;
+}
+
+function stringFromMetadata(metadata: Record<string, unknown> | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function isFocusmapAgent(runner: Runner) {
+  const metadata = runner.metadata ?? {};
+  return metadata.agent === 'focusmap-agent' || metadata.app === 'focusmap-lite';
+}
+
+function mapHeartbeat(row: HeartbeatRow, registered?: Runner): Runner | null {
+  const id = row.runner_id?.trim() || registered?.id;
+  if (!id) return null;
+  const heartbeatMetadata = row.metadata_json ?? {};
+  const metadata: Record<string, unknown> = {
+    ...(registered?.metadata ?? {}),
+    ...heartbeatMetadata,
+    ...(row.status ? { runner_status: row.status } : {}),
+    ...(row.current_task_id !== undefined ? { current_task_id: row.current_task_id } : {}),
+    ...(row.version ? { version: row.version } : {}),
+  };
+  return {
+    id,
+    hostname: row.device_id?.trim() || registered?.hostname || id,
+    display_name: registered?.display_name ?? row.device_id?.trim() ?? id,
+    executors: registered?.executors?.length
+      ? registered.executors
+      : stringArray(metadata.executors),
+    last_heartbeat_at: row.last_seen_at ?? registered?.last_heartbeat_at ?? null,
+    metadata,
+  };
+}
+
 function formatAge(ms: number): string {
+  if (!Number.isFinite(ms)) return '未取得';
   if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}秒前`;
   if (ms < 60 * 60_000) return `${Math.round(ms / 60_000)}分前`;
   if (ms < 24 * 60 * 60_000) return `${Math.round(ms / (60 * 60_000))}時間前`;
   return `${Math.round(ms / (24 * 60 * 60_000))}日前`;
 }
 
+function formatTime(value: string | null | undefined) {
+  if (!value) return '未取得';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未取得';
+  return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function statusChip(ok: boolean, label: string) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-7 shrink-0 items-center rounded-full px-3 text-xs font-medium',
+        ok
+          ? 'bg-emerald-500/12 text-emerald-300 ring-1 ring-emerald-400/30'
+          : 'bg-zinc-800 text-zinc-400 ring-1 ring-white/[0.08]',
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function StatusRow({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  ok,
+}: {
+  icon: typeof Activity;
+  label: string;
+  value: string;
+  detail: string;
+  ok: boolean;
+}) {
+  return (
+    <div className="flex min-h-[64px] items-center gap-3 rounded-md border border-white/[0.08] bg-black/30 px-3 py-2">
+      <span
+        className={cn(
+          'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
+          ok ? 'bg-emerald-500/10 text-emerald-300' : 'bg-zinc-800 text-zinc-400',
+        )}
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-medium text-zinc-100">{label}</p>
+          {statusChip(ok, value)}
+        </div>
+        <p className="mt-1 truncate text-xs text-zinc-500">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
 /**
- * 設定画面に常時表示するエージェント常駐状況バッジ。
- * - 30秒ごとに /api/ai-runners をpollして 最新状態を反映
- * - 接続中の数を カード で表示
- * - 接続無しなら 「セットアップ手順を開く」 CTA
- * - 各 runner の hostname / executors / 最終heartbeat を一覧表示
+ * Settings AI page primary status.
+ * Shows the single Mac-side Focusmap agent as the operational source of truth.
  */
 export function AgentStatusBadge() {
   const [runners, setRunners] = useState<Runner[]>([]);
@@ -92,16 +165,34 @@ export function AgentStatusBadge() {
   const fetchRunners = async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const res = await fetchWithSupabaseAuth('/api/ai-runners', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setRunners(Array.isArray(data?.runners) ? data.runners : []);
+      const [heartbeatRes, runnerRes] = await Promise.all([
+        fetchWithSupabaseAuth('/api/task-progress/runner-heartbeats?limit=20', { cache: 'no-store' }),
+        fetchWithSupabaseAuth('/api/ai-runners', { cache: 'no-store' }),
+      ]);
+      if (!heartbeatRes.ok && !runnerRes.ok) {
+        throw new Error(`heartbeat HTTP ${heartbeatRes.status} / runners HTTP ${runnerRes.status}`);
+      }
+
+      const runnerData = runnerRes.ok ? await runnerRes.json() : null;
+      const registered = Array.isArray(runnerData?.runners) ? runnerData.runners as Runner[] : [];
+      const registeredById = new Map(registered.map((runner) => [runner.id, runner]));
+
+      if (heartbeatRes.ok) {
+        const heartbeatData = await heartbeatRes.json();
+        const heartbeats = Array.isArray(heartbeatData?.heartbeats) ? heartbeatData.heartbeats as HeartbeatRow[] : [];
+        const mapped = heartbeats
+          .map((row) => mapHeartbeat(row, row.runner_id ? registeredById.get(row.runner_id) : undefined))
+          .filter((row): row is Runner => Boolean(row));
+        setRunners(mapped.length > 0 ? mapped : registered);
+      } else {
+        setRunners(registered);
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : '取得失敗');
     } finally {
       setLoading(false);
-      if (manual) setTimeout(() => setRefreshing(false), 400);
+      if (manual) window.setTimeout(() => setRefreshing(false), 400);
     }
   };
 
@@ -111,238 +202,147 @@ export function AgentStatusBadge() {
     return () => window.clearInterval(id);
   }, []);
 
-  const now = Date.now();
-  const annotated = runners.map((r) => {
-    const lastSeenAt = r.last_heartbeat_at ? new Date(r.last_heartbeat_at).getTime() : 0;
-    const ageMs = lastSeenAt > 0 ? now - lastSeenAt : Infinity;
-    const isOnline = ageMs < HEARTBEAT_ONLINE_WINDOW_MS;
-    const kind = detectAgentKind(r);
-    return { ...r, isOnline, ageMs, kind };
-  });
-  const onlineCount = annotated.filter((r) => r.isOnline).length;
-  const totalCount = annotated.length;
-  const hasOnline = onlineCount > 0;
-  const hasFocusmapLiteOnline = annotated.some((r) => r.isOnline && r.kind === 'focusmap-lite');
-  const hasCodexBridgeOnline = annotated.some((r) => r.isOnline && r.kind === 'codex-bridge');
-  const hasCodexAppOnline = annotated.some((r) => r.isOnline && (r.executors ?? []).includes('codex_app'));
+  const annotated = useMemo<AnnotatedRunner[]>(() => {
+    const now = Date.now();
+    return runners.map((runner) => {
+      const lastSeenAt = runner.last_heartbeat_at ? new Date(runner.last_heartbeat_at).getTime() : 0;
+      const ageMs = lastSeenAt > 0 ? now - lastSeenAt : Infinity;
+      return {
+        ...runner,
+        ageMs,
+        isOnline: ageMs < HEARTBEAT_ONLINE_WINDOW_MS,
+        isFocusmapAgent: isFocusmapAgent(runner),
+      };
+    });
+  }, [runners]);
+
+  const primary = useMemo(() => {
+    const candidates = annotated.filter((runner) => runner.isFocusmapAgent);
+    const pool = candidates.length > 0 ? candidates : annotated;
+    return [...pool].sort((a, b) => {
+      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+      return a.ageMs - b.ageMs;
+    })[0] ?? null;
+  }, [annotated]);
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        エージェント状態を取得中…
-      </div>
+      <section className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-[#1c1c1e] px-4 py-3 text-sm text-zinc-400">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        AIエージェント状態を取得中...
+      </section>
     );
   }
+
+  const metadata = primary?.metadata ?? {};
+  const isOnline = Boolean(primary?.isOnline);
+  const currentTaskId = stringFromMetadata(metadata, 'current_task_id');
+  const agentState = stringFromMetadata(metadata, 'agent_state') ?? (currentTaskId ? 'running' : 'idle');
+  const codexInstalled = boolFromMetadata(metadata, 'codex_app_installed') || Boolean(primary?.executors?.includes('codex_app'));
+  const codexServerReady = boolFromMetadata(metadata, 'codex_app_server_ready');
+  const codexReady = isOnline && codexInstalled && codexServerReady;
+  const hiddenRegistrations = Math.max(0, annotated.length - (primary ? 1 : 0));
 
   return (
     <section
       className={cn(
-        'rounded-lg border bg-gradient-to-br p-4 md:p-5 space-y-3',
-        hasOnline
-          ? 'border-emerald-300/50 from-emerald-50/50 to-transparent dark:border-emerald-900/40 dark:from-emerald-950/20'
-          : totalCount > 0
-          ? 'border-amber-300/50 from-amber-50/50 to-transparent dark:border-amber-900/40 dark:from-amber-950/20'
-          : 'border-border/40 from-muted/30 to-transparent',
+        'rounded-lg border bg-[#1c1c1e] p-4 md:p-5',
+        isOnline ? 'border-emerald-400/30' : 'border-white/[0.08]',
       )}
     >
-      {/* ヘッダー: アイコン + 状態タイトル + 更新 */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-start gap-3 min-w-0">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
           <span
             className={cn(
-              'flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-sm',
-              hasOnline
-                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                : totalCount > 0
-                ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-                : 'bg-muted text-muted-foreground',
+              'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg',
+              isOnline ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400',
             )}
           >
-            {hasOnline ? (
-              <CheckCircle2 className="h-5 w-5" />
-            ) : totalCount > 0 ? (
-              <TriangleAlert className="h-5 w-5" />
-            ) : (
-              <WifiOff className="h-5 w-5" />
-            )}
+            {isOnline ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
           </span>
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              常駐エージェント (Focusmap Lite)
-            </p>
-            <h3 className="text-base font-semibold">
-              {hasOnline
-                ? `${onlineCount}台 オンライン`
-                : totalCount > 0
-                ? `${totalCount}台 登録済み (オフライン)`
-                : '未接続'}
-            </h3>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {hasOnline
-                ? hasCodexAppOnline
-                  ? '自動化タスクとCodex.app送信を実行できます。Mac側 launchd で常駐中。'
-                  : '自動化タスクを実行できます。Codex.app送信はCodex.app導入後にセットアップを再実行してください。'
-                : totalCount > 0
-                ? 'エージェントから heartbeat が届いていません。Mac が起動しているか、 launchctl 経由で動いているか確認してください。'
-                : 'まだエージェントが導入されていません。 セットアップ画面からダウンロード → ダブルクリックで起動できます。'}
+            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">AI Agent</p>
+            <h2 className="text-lg font-semibold text-zinc-50">
+              {isOnline ? 'Macエージェント オンライン' : primary ? 'Macエージェント オフライン' : 'Macエージェント未接続'}
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-zinc-400">
+              {primary
+                ? `${primary.display_name ?? primary.hostname} がFocusmapのAI実行とCodex連携を巡回します。`
+                : 'まだMacエージェントが登録されていません。'}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="h-7 gap-1 text-[11px]"
+            className="h-10 gap-1.5"
             onClick={() => void fetchRunners(true)}
             disabled={refreshing}
           >
-            <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
             更新
           </Button>
+          {!primary && (
+            <Button asChild className="h-10">
+              <Link href="/dashboard/workspace/setup?step=2">Macエージェントを導入</Link>
+            </Button>
+          )}
         </div>
       </div>
 
       {error && (
-        <p className="text-[11px] text-red-600 dark:text-red-400">取得エラー: {error}</p>
+        <p className="mt-3 rounded-md border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          取得エラー: {error}
+        </p>
       )}
 
-      {/* 接続無し: CTA */}
-      {totalCount === 0 && (
-        <div className="flex flex-wrap gap-2">
-          <Button asChild size="sm" className="gap-1">
-            <Link href="/dashboard/workspace/setup?step=2">
-              <Server className="h-3.5 w-3.5" />
-              セットアップする
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm" className="gap-1">
-            <Link href="https://focusmap-official.com/install.sh" target="_blank" rel="noreferrer">
-              <Terminal className="h-3.5 w-3.5" />
-              install.sh を確認
-            </Link>
-          </Button>
-        </div>
-      )}
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <StatusRow
+          icon={Clock3}
+          label="最終更新"
+          value={isOnline ? '有効' : '停止'}
+          detail={primary?.last_heartbeat_at ? `${formatTime(primary.last_heartbeat_at)} / ${formatAge(primary.ageMs)}` : 'heartbeatなし'}
+          ok={isOnline}
+        />
+        <StatusRow
+          icon={Activity}
+          label="巡回状態"
+          value={agentState === 'running' ? '実行中' : isOnline ? '待機中' : '停止'}
+          detail={currentTaskId ? `実行中タスク: ${currentTaskId}` : '実行中タスクなし'}
+          ok={isOnline}
+        />
+        <StatusRow
+          icon={Bot}
+          label="Codex連携"
+          value={codexReady ? 'OK' : codexInstalled ? '要確認' : '未導入'}
+          detail={codexReady ? 'Codex Desktop / app-server を確認済み' : codexInstalled ? 'Codexは導入済み。app-server確認待ち' : 'Codex Desktopの導入が必要です'}
+          ok={codexReady}
+        />
+        <StatusRow
+          icon={Laptop}
+          label="表示中のMac"
+          value={primary ? '登録済み' : '未登録'}
+          detail={primary?.hostname ?? 'Macエージェントを導入するとここに表示されます'}
+          ok={Boolean(primary)}
+        />
+      </div>
 
-      {/* Focusmap Lite が未起動の警告 */}
-      {totalCount > 0 && !hasFocusmapLiteOnline && (
-        <div className="rounded-md border border-amber-300/50 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/30 px-3 py-2 text-[11px] space-y-1.5">
-          <p className="flex items-center gap-1 font-medium text-amber-800 dark:text-amber-200">
+      <div className="mt-3 flex flex-col gap-1 text-xs leading-5 text-zinc-500 md:flex-row md:items-center md:justify-between">
+        <span>この画面は30秒ごとに自動更新します。</span>
+        {hiddenRegistrations > 0 && <span>古い/重複した登録 {hiddenRegistrations}件は通常表示から隠しています。</span>}
+      </div>
+
+      {!isOnline && primary && (
+        <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">
+          <div className="flex items-center gap-1.5 font-medium">
             <TriangleAlert className="h-3.5 w-3.5" />
-            Focusmap Lite (Phase F の新機能) は未起動
-          </p>
-          <p className="text-amber-700/90 dark:text-amber-300/90">
-            ファイル操作 / ブラウザ自動操作 / Playwright を使うには Focusmap Lite が必要です。
-            {hasCodexBridgeOnline && '現在オンラインの Claude/Codex Bridge は別エージェントで、 Phase F の新コマンドには対応していません。'}
-          </p>
-          <Button asChild size="sm" className="h-7 gap-1 text-[11px]">
-            <Link href="/dashboard/workspace/setup?step=2">
-              <Workflow className="h-3 w-3" />
-              Focusmap Lite をセットアップ
-            </Link>
-          </Button>
+            Macエージェントから最近の更新が届いていません。
+          </div>
+          <p className="mt-1 text-amber-100/80">Macが起動しているか、Focusmap Macアプリを開いて再接続してください。</p>
         </div>
       )}
-
-      {/* 各 runner の一覧 */}
-      {annotated.length > 0 && (
-        <ul className="space-y-1.5">
-          {annotated.map((r) => {
-            const kindMeta = KIND_META[r.kind];
-            const KindIcon = kindMeta.icon;
-            return (
-              <li
-                key={r.id}
-                className={cn(
-                  'flex items-start justify-between gap-3 rounded-md border bg-background/60 px-3 py-2 text-xs',
-                  r.isOnline ? 'border-emerald-300/50 dark:border-emerald-900/40' : 'border-border/40',
-                )}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <Laptop
-                    className={cn(
-                      'h-3.5 w-3.5 shrink-0',
-                      r.isOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground',
-                    )}
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 truncate">
-                      <p className="truncate font-medium text-foreground">
-                        {r.display_name ?? r.hostname}
-                      </p>
-                      <span
-                        className={cn(
-                          'inline-flex shrink-0 items-center gap-0.5 rounded border border-border/40 bg-muted/40 px-1 py-0.5 text-[9px]',
-                          kindMeta.color,
-                        )}
-                        title={`エージェント種別: ${kindMeta.label}`}
-                      >
-                        <KindIcon className="h-2.5 w-2.5" />
-                        {kindMeta.label}
-                      </span>
-                    </div>
-                    <p className="truncate text-[10px] text-muted-foreground">
-                      {r.hostname} ・ executors: {r.executors.join(', ') || '-'}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px]',
-                      r.isOnline
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                        : 'bg-muted text-muted-foreground',
-                    )}
-                  >
-                    {r.isOnline ? <Activity className="h-2.5 w-2.5 animate-pulse" /> : <WifiOff className="h-2.5 w-2.5" />}
-                    {r.isOnline ? 'オンライン' : 'オフライン'}
-                  </span>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">
-                    {r.last_heartbeat_at
-                      ? `最終 ${formatAge(r.ageMs)}`
-                      : 'heartbeat なし'}
-                  </p>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {/* トラブルシュート */}
-      <details className="text-[11px] text-muted-foreground">
-        <summary className="cursor-pointer select-none hover:text-foreground">
-          常駐状況をターミナルで確認する方法
-        </summary>
-        <div className="mt-2 space-y-2">
-          <div>
-            <p className="font-medium text-foreground">プロセス確認:</p>
-            <pre className="mt-1 overflow-x-auto rounded border border-border/40 bg-background px-2 py-1.5 font-mono text-[10px]">
-launchctl list | grep focusmap
-            </pre>
-          </div>
-          <div>
-            <p className="font-medium text-foreground">ログを tail:</p>
-            <pre className="mt-1 overflow-x-auto rounded border border-border/40 bg-background px-2 py-1.5 font-mono text-[10px]">
-tail -f ~/.focusmap/logs/agent.log
-            </pre>
-          </div>
-          <div>
-            <p className="font-medium text-foreground">再起動:</p>
-            <pre className="mt-1 overflow-x-auto rounded border border-border/40 bg-background px-2 py-1.5 font-mono text-[10px]">
-launchctl unload ~/Library/LaunchAgents/com.focusmap-official.agent.plist
-launchctl load   ~/Library/LaunchAgents/com.focusmap-official.agent.plist
-            </pre>
-          </div>
-          <p className="flex items-center gap-1 text-[10px]">
-            <Cpu className="h-3 w-3" />
-            設定ファイル: <code className="bg-muted/60 px-1 rounded">~/.focusmap/config.json</code>
-          </p>
-        </div>
-      </details>
     </section>
   );
 }
