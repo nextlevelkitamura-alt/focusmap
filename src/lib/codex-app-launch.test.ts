@@ -7,6 +7,7 @@ import {
   buildCodexHandoffToken,
   buildCodexOpenTarget,
   canUseElectronCodexBridge,
+  copyCodexImageToClipboard,
   detectMobilePlatform,
   isLocalCodexOpenHost,
   isLocalCodexOpenRequestHost,
@@ -125,7 +126,7 @@ describe("ChatGPT mobile open target", () => {
     }))
   })
 
-  test("posts native clipboard text and image before opening Codex in the Focusmap app", () => {
+  test("posts native clipboard text only before opening Codex in the Focusmap app", () => {
     const postMessage = vi.fn()
     window.ReactNativeWebView = { postMessage }
     const urls = buildChatGptCodexMobileAppUrls("ios")
@@ -134,7 +135,6 @@ describe("ChatGPT mobile open target", () => {
     expect(postMessage).toHaveBeenCalledWith(JSON.stringify({
       type: "focusmap:copyAndOpenExternal",
       text: "実行して",
-      imageUrl: "https://example.com/image.png",
       url: "https://chatgpt.com/codex/mobile/",
       urls,
     }))
@@ -148,6 +148,52 @@ describe("ChatGPT mobile open target", () => {
 
     expect(openCodexMobileTargetViaFocusmapNativeApp("https://example.com/")).toBe(false)
     expect(postMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe("copyCodexImageToClipboard", () => {
+  test("uses the Electron image clipboard bridge when available", async () => {
+    const copyCodexImage = vi.fn(async () => ({ ok: true, copiedImageToClipboard: true }))
+    ;(window as Window & { focusmapDesktop?: { copyCodexImage: typeof copyCodexImage } }).focusmapDesktop = { copyCodexImage }
+
+    await expect(copyCodexImageToClipboard(" https://example.com/signed.png "))
+      .resolves.toEqual({ mode: "electron-bridge", copiedImageToClipboard: true })
+    expect(copyCodexImage).toHaveBeenCalledWith({
+      imageUrl: "https://example.com/signed.png",
+      clipboardImageUrl: "https://example.com/signed.png",
+    })
+  })
+
+  test("posts an image-only clipboard request to the Focusmap native app", async () => {
+    const postMessage = vi.fn()
+    window.ReactNativeWebView = { postMessage }
+
+    await expect(copyCodexImageToClipboard("https://example.com/image.png"))
+      .resolves.toEqual({ mode: "native-app", copiedImageToClipboard: true })
+    expect(postMessage).toHaveBeenCalledWith(JSON.stringify({
+      type: "focusmap:copyCodexImage",
+      imageUrl: "https://example.com/image.png",
+    }))
+  })
+
+  test("uses the local API for image-only copy on localhost", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      copied_image_to_clipboard: true,
+    }), { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(copyCodexImageToClipboard("https://example.com/image.png"))
+      .resolves.toEqual({ mode: "local-api", copiedImageToClipboard: true })
+    expect(fetchMock).toHaveBeenCalledWith("/api/codex/open-repo", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        prompt: "",
+        repo_path: null,
+        open_app: false,
+        origin_url: window.location.href,
+        clipboard_image_url: "https://example.com/image.png",
+      }),
+    }))
   })
 })
 

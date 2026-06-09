@@ -71,6 +71,24 @@ class FocusmapExternalOpener: NSObject {
     }
   }
 
+  @objc(copyCodexImage:resolver:rejecter:)
+  func copyCodexImage(
+    imageUrl: String?,
+    resolver resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    loadClipboardImageData(imageUrl) { imageData in
+      DispatchQueue.main.async {
+        guard let imageData else {
+          resolve(false)
+          return
+        }
+        UIPasteboard.general.items = [[UTType.png.identifier: imageData]]
+        resolve(true)
+      }
+    }
+  }
+
   private func loadClipboardImageData(_ value: String?, completion: @escaping (Data?) -> Void) {
     guard let rawValue = value?.trimmingCharacters(in: .whitespacesAndNewlines), !rawValue.isEmpty else {
       completion(nil)
@@ -119,6 +137,10 @@ RCT_EXTERN_METHOD(openUniversalLink:(NSString *)urlString
 
 RCT_EXTERN_METHOD(copyCodexHandoff:(NSString *)text
                   imageUrl:(NSString *)imageUrl
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(copyCodexImage:(NSString *)imageUrl
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 

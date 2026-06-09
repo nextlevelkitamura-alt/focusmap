@@ -15,6 +15,7 @@ import {
   buildCodexOpenTarget,
   buildCodexHandoffToken,
   canUseLocalCodexOpenApi,
+  copyCodexImageToClipboard,
   copyPromptForCodexHandoff,
   getCurrentMobilePlatform,
   isLikelyMobileDevice,
@@ -357,6 +358,8 @@ export function CodexNodePanel({
   const [isCopyingCodexPrompt, setIsCopyingCodexPrompt] = useState(false)
   const [isOpeningCodex, setIsOpeningCodex] = useState(false)
   const [codexPromptCopied, setCodexPromptCopied] = useState(false)
+  const [copyingCodexImageId, setCopyingCodexImageId] = useState<string | null>(null)
+  const [codexImageCopyNotice, setCodexImageCopyNotice] = useState<string | null>(null)
   const [isMobileOpenTarget, setIsMobileOpenTarget] = useState(false)
   const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("desktop")
   const [isGeneratingHeading, setIsGeneratingHeading] = useState(false)
@@ -426,6 +429,8 @@ export function CodexNodePanel({
     setIsCopyingCodexPrompt(false)
     setIsOpeningCodex(false)
     setCodexPromptCopied(false)
+    setCopyingCodexImageId(null)
+    setCodexImageCopyNotice(null)
     setIsGeneratingHeading(false)
     setSaveStatus("saved")
     setGoogleEventId(null)
@@ -902,9 +907,10 @@ export function CodexNodePanel({
 
   const promptHeadingForCodex = heading || node.title
   const codexPrompt = buildCodexPrompt(promptHeadingForCodex, detail, attachments)
-  const clipboardImageUrl = useMemo(() => (
-    attachments.find(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim())?.file_url?.trim() || null
-  ), [attachments])
+  const codexCopyableImages = useMemo(
+    () => attachments.filter(attachment => attachment.file_type?.startsWith("image/") && attachment.file_url?.trim()),
+    [attachments],
+  )
   const displayedAttachments: Array<TaskAttachmentPreview | PendingTaskAttachmentPreview> = [...pendingAttachments, ...attachments]
   const isWaitingForImageSave = isUploadingImage || pendingAttachments.length > 0
   const codexRepoPath = (node.cwd?.trim() || candidates.find(candidate => candidate.trim()) || "").trim()
@@ -1026,6 +1032,24 @@ export function CodexNodePanel({
     }
   }, [isCopyingCodexPrompt, rawSentPrompt])
 
+  const handleCopyCodexImage = useCallback(async (image: TaskAttachmentPreview) => {
+    if (!image.file_url.trim() || copyingCodexImageId) return
+    setCopyingCodexImageId(image.id)
+    setError(null)
+    try {
+      const result = await copyCodexImageToClipboard(image.file_url)
+      if (!result.copiedImageToClipboard) {
+        throw new Error("画像をクリップボードにコピーできませんでした")
+      }
+      setCodexImageCopyNotice("画像をコピーしました。同じCodex入力欄へ貼り付けてください。")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像をクリップボードにコピーできませんでした")
+      setCodexImageCopyNotice(null)
+    } finally {
+      setCopyingCodexImageId(null)
+    }
+  }, [copyingCodexImageId])
+
   const handleOpenCodexWithPrompt = useCallback(async (event?: MouseEvent<HTMLAnchorElement>) => {
     const prompt = rawSentPrompt || codexPrompt
     if (isWaitingForImageSave) {
@@ -1055,7 +1079,7 @@ export function CodexNodePanel({
     }
     const copyAttempt = beginCopyPromptForCodexHandoff(prompt)
     const openedViaNativeApp = isMobileHandoff && target.url
-      ? openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined, clipboardImageUrl)
+      ? openCodexMobileTargetViaFocusmapNativeApp(target.url, prompt, "urls" in target ? target.urls : undefined)
       : false
     if (openedViaNativeApp) event?.preventDefault()
     if (isMobileHandoff && !openedViaNativeApp) event?.preventDefault()
@@ -1070,8 +1094,8 @@ export function CodexNodePanel({
     if (isMobileHandoff) {
       if (openedViaNativeApp) {
         setCodexPromptCopied(true)
-        setCodexFeedback(clipboardImageUrl
-          ? "プロンプトと画像をコピーしました。Codexで貼り付けて開始してください。"
+        setCodexFeedback(codexCopyableImages.length > 0
+          ? "プロンプトをコピーしました。画像は下のコピーから同じCodex入力欄へ貼り付けてください。"
           : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
         setIsOpeningCodex(false)
         return
@@ -1110,7 +1134,6 @@ export function CodexNodePanel({
           prompt,
           repoPath: codexRepoPath || null,
           threadUrl: node.codexThreadUrl || null,
-          clipboardImageUrl,
         })
         if (launchOutcome.copiedToClipboard) copiedToClipboard = true
         setCodexFeedback(`${launchFeedbackForMode(launchOutcome.mode)} ${copiedToClipboard ? "プロンプトはコピー済みです。" : ""}`)
@@ -1128,7 +1151,7 @@ export function CodexNodePanel({
     } finally {
       setIsOpeningCodex(false)
     }
-  }, [clipboardImageUrl, codexAiTaskId, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
+  }, [codexAiTaskId, codexCopyableImages.length, codexPrompt, codexRepoPath, codexUiState?.state, confirmManualHandoffNow, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.codexThreadUrl, rawSentPrompt, trackManualHandoff])
 
   useEffect(() => {
     if (!open || !hasCodexRun) return
@@ -1221,7 +1244,6 @@ export function CodexNodePanel({
         prompt,
         repoPath: repoPath || null,
         originUrl: typeof window !== "undefined" ? window.location.href : null,
-        clipboardImageUrl,
       },
       { preferMobile: isMobileOpenTarget, mobilePlatform },
     )
@@ -1287,7 +1309,6 @@ export function CodexNodePanel({
           openTarget.url,
           prompt,
           "urls" in openTarget ? openTarget.urls : undefined,
-          clipboardImageUrl,
         )
         event?.preventDefault()
         if (openedViaNativeApp) {
@@ -1295,8 +1316,8 @@ export function CodexNodePanel({
           launchMode = openTarget.mode
           setJustSentPrompt(prompt)
           setCodexPromptCopied(true)
-          setCodexFeedback(clipboardImageUrl
-            ? "プロンプトと画像をコピーしました。Codexで貼り付けて開始してください。"
+          setCodexFeedback(codexCopyableImages.length > 0
+            ? "プロンプトをコピーしました。画像は下のコピーから同じCodex入力欄へ貼り付けてください。"
             : "プロンプトをコピーしました。Codexで貼り付けて開始してください。")
           setCodexSendStatus("sent")
           window.setTimeout(() => void syncCodexState(), 1200)
@@ -1335,7 +1356,7 @@ export function CodexNodePanel({
       if (useLocalApi) {
         const [scheduleResult, launchResult] = await Promise.allSettled([
           schedulePromise,
-          launchCodexViaLocalApi({ prompt, repoPath: repoPath || null, clipboardImageUrl }),
+          launchCodexViaLocalApi({ prompt, repoPath: repoPath || null }),
         ])
         if (launchResult.status === "rejected") {
           throw launchResult.reason instanceof Error ? launchResult.reason : new Error("Codex.appを開けませんでした")
@@ -1371,6 +1392,9 @@ export function CodexNodePanel({
         })
       }
       setCodexSendStatus("sent")
+      if (codexCopyableImages.length > 0) {
+        setCodexImageCopyNotice("プロンプトを貼った後、画像コピーを押して同じCodex入力欄へ貼り付けてください。")
+      }
       await refreshAiTasks()
       window.setTimeout(() => void syncCodexState(), 1200)
       window.setTimeout(() => void syncCodexState(), 3500)
@@ -1387,7 +1411,7 @@ export function CodexNodePanel({
       setCodexSendStatus(launchMode ? "sent" : "idle")
       setError(err instanceof Error ? err.message : "Codexに送れませんでした")
     }
-  }, [attachments, candidates, clipboardImageUrl, detail, heading, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
+  }, [attachments, candidates, codexCopyableImages.length, detail, heading, isMobileOpenTarget, isWaitingForImageSave, markScreenSwitched, mobilePlatform, node.cwd, node.taskId, node.title, refreshAiTasks, saveDraft, syncCodexState, trackManualHandoff])
 
   const showCodexSetupPrompt =
     !canUseLocalCodexOpenApi() &&
@@ -1762,6 +1786,49 @@ export function CodexNodePanel({
                 </button>
               </div>
             </div>
+            {codexCopyableImages.length > 0 && (
+              <section className="space-y-2 rounded-lg border border-border/70 bg-card p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                    <Copy className="h-4 w-4" />
+                    <span>画像コピー</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{codexCopyableImages.length}件</span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {codexCopyableImages.map((image, index) => {
+                    const label = image.file_name?.trim() || `画像 ${index + 1}`
+                    const isCopyingImage = copyingCodexImageId === image.id
+                    return (
+                      <div
+                        key={image.id}
+                        className="grid min-h-[52px] grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2 rounded-md border border-border/70 bg-background px-2 py-1.5"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={image.file_url} alt={label} className="h-11 w-11 rounded-md object-cover" />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-foreground" title={label}>{label}</p>
+                          <p className="text-[11px] text-muted-foreground">Codex貼り付け用</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyCodexImage(image)}
+                          disabled={!!copyingCodexImageId}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border/70 bg-background transition-colors hover:bg-muted disabled:opacity-50"
+                          aria-label={`${label}をCodex貼り付け用にコピー`}
+                          title={`${label}をコピー`}
+                        >
+                          {isCopyingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+                {codexImageCopyNotice && (
+                  <p className="text-xs leading-5 text-muted-foreground">{codexImageCopyNotice}</p>
+                )}
+              </section>
+            )}
             {hasCodexRun && (
               <section className="overflow-hidden rounded-lg border border-border/70 bg-card">
                 <div className="flex flex-col gap-2 border-b border-border/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1886,7 +1953,7 @@ export function CodexNodePanel({
 
             {isWaitingForImageSave && (
               <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-200">
-                画像を保存中です。保存が終わるとプロンプトと画像をCodexへ渡せます。
+                画像を保存中です。保存が終わるとCodexへ送れます。画像は保存後にコピーできます。
               </p>
             )}
 

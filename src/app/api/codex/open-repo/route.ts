@@ -255,13 +255,54 @@ end run
   }
 }
 
+async function copyImageToMacClipboard(imageFile: ClipboardImageFile): Promise<boolean> {
+  const script = `
+use framework "AppKit"
+use framework "Foundation"
+
+on run argv
+  set imagePath to item 1 of argv
+  set imagePasteboardType to item 2 of argv
+  set pasteboardItem to current application's NSPasteboardItem's alloc()'s init()
+  set imageData to current application's NSData's dataWithContentsOfFile:imagePath
+  if imageData is missing value then return
+  pasteboardItem's setData:imageData forType:imagePasteboardType
+  set pasteboard to current application's NSPasteboard's generalPasteboard()
+  pasteboard's clearContents()
+  pasteboard's writeObjects:{pasteboardItem}
+end run
+`
+  try {
+    await execFileAsync("/usr/bin/osascript", ["-l", "AppleScript", "-e", script, imageFile.path, imageFile.pasteboardType], {
+      timeout: 5_000,
+      windowsHide: true,
+    })
+    return true
+  } catch (err) {
+    console.warn("[codex/open-repo] Pasteboard image-only copy failed:", err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
 async function copyCodexHandoffToMacClipboard(text: string, clipboardImageUrl: unknown) {
   const normalizedText = text.trim()
-  if (!normalizedText) {
+  const imageFile = await loadClipboardImageFile(clipboardImageUrl).catch(() => null)
+  if (!normalizedText && !imageFile) {
     return { copiedToClipboard: false, copiedImageToClipboard: false }
   }
 
-  const imageFile = await loadClipboardImageFile(clipboardImageUrl).catch(() => null)
+  if (!normalizedText && imageFile) {
+    try {
+      const copied = await copyImageToMacClipboard(imageFile)
+      return {
+        copiedToClipboard: false,
+        copiedImageToClipboard: copied ? await macClipboardHasImage() : false,
+      }
+    } finally {
+      await fs.promises.unlink(imageFile.path).catch(() => undefined)
+    }
+  }
+
   if (!imageFile) {
     return {
       copiedToClipboard: await copyToMacClipboard(text),

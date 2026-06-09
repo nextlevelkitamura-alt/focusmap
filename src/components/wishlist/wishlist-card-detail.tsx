@@ -28,6 +28,7 @@ import type { UserCalendar } from "@/hooks/useCalendars"
 import type { AiTask, AiTaskActivityMessage } from "@/types/ai-task"
 import { getCodexTaskUiState } from "@/lib/codex-run-state"
 import { compressImageFileForUpload, MAX_UPLOAD_IMAGE_BYTES } from "@/lib/image-compression"
+import { copyCodexImageToClipboard } from "@/lib/codex-app-launch"
 
 const QUICK_MINUTES = [5, 15, 30, 60, 120]
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour)
@@ -988,6 +989,8 @@ export function WishlistCardDetail({
   const [tagText, setTagText] = useState("")
   const [images, setImages] = useState<MemoImage[]>([])
   const [pendingImages, setPendingImages] = useState<PendingMemoImage[]>([])
+  const [copyingCodexImageId, setCopyingCodexImageId] = useState<string | null>(null)
+  const [codexImageCopyNotice, setCodexImageCopyNotice] = useState<string | null>(null)
   const [structuredItems, setStructuredItems] = useState<StructuredMemoItem[]>([])
   const [isLoadingStructure, setIsLoadingStructure] = useState(false)
   const [isStructuringMemo, setIsStructuringMemo] = useState(false)
@@ -1191,6 +1194,10 @@ export function WishlistCardDetail({
   const itemDescription = item?.description ?? ""
   const itemScheduledAt = item?.scheduled_at ?? null
   const itemCalendarId = getMemoCalendarId(item)
+  const codexCopyableImages = useMemo(
+    () => images.filter(image => image.file_type?.startsWith("image/") && image.file_url.trim()),
+    [images],
+  )
   const currentDateValue = formatDateValue(itemScheduledAt)
   const currentTimeValue = formatTimeValue(itemScheduledAt)
   const currentHour = currentTimeValue ? Number(currentTimeValue.slice(0, 2)) : 9
@@ -1294,11 +1301,31 @@ export function WishlistCardDetail({
     setIsTimePopoverOpen(false)
     setIsCalendarPopoverOpen(false)
     setSaveError(null)
+    setCopyingCodexImageId(null)
+    setCodexImageCopyNotice(null)
     setPendingImages(prev => {
       prev.forEach(releasePendingImage)
       return []
     })
   }, [itemId, itemTitle, itemDescription, itemScheduledAt, open, releasePendingImage])
+
+  const handleCopyCodexImage = useCallback(async (image: MemoImage) => {
+    if (!image.file_url.trim() || copyingCodexImageId) return
+    setCopyingCodexImageId(image.id)
+    setLaunchError(null)
+    try {
+      const result = await copyCodexImageToClipboard(image.file_url)
+      if (!result.copiedImageToClipboard) {
+        throw new Error("画像をクリップボードにコピーできませんでした")
+      }
+      setCodexImageCopyNotice("画像をコピーしました。同じCodex入力欄へ貼り付けてください。")
+    } catch (err) {
+      setLaunchError(err instanceof Error ? err.message : "画像をクリップボードにコピーできませんでした")
+      setCodexImageCopyNotice(null)
+    } finally {
+      setCopyingCodexImageId(null)
+    }
+  }, [copyingCodexImageId])
 
   const flushMemoDraft = useCallback(async () => {
     if (!open || !itemId) return
@@ -2724,6 +2751,9 @@ export function WishlistCardDetail({
                           try {
                             await (onLaunchCodex ?? onLaunchCodexApp)?.(codexDraftItem)
                             setLaunchStep('sent')
+                            if (codexCopyableImages.length > 0) {
+                              setCodexImageCopyNotice("プロンプトを貼った後、画像コピーを押して同じCodex入力欄へ貼り付けてください。")
+                            }
                           } catch (e) {
                             setLaunchError(e instanceof Error ? e.message : "起動失敗")
                             setLaunchStep(null)
@@ -2744,8 +2774,50 @@ export function WishlistCardDetail({
                             : isWaitingForImageSave
                               ? "画像を保存中です。保存が終わるとCodexへ送れます。"
                               : "見出しとメモ本文をCodex用の追跡taskとして送ります。"}
-                      </div>
+                        </div>
                     </div>
+
+                    {codexCopyableImages.length > 0 && (
+                      <div className="space-y-2 rounded-md border bg-background/70 p-2">
+                        <div className="flex items-center justify-between gap-2 px-1">
+                          <span className="text-xs font-medium text-muted-foreground">画像コピー</span>
+                          <span className="text-[11px] text-muted-foreground">{codexCopyableImages.length}件</span>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {codexCopyableImages.map((image, index) => {
+                            const label = image.file_name?.trim() || `画像 ${index + 1}`
+                            const isCopyingImage = copyingCodexImageId === image.id
+                            return (
+                              <div
+                                key={image.id}
+                                className="grid min-h-[52px] grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2 rounded-md border bg-background px-2 py-1.5"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={image.file_url} alt={label} className="h-11 w-11 rounded object-cover" />
+                                <div className="min-w-0">
+                                  <p className="truncate text-xs font-medium text-foreground" title={label}>{label}</p>
+                                  <p className="text-[11px] text-muted-foreground">Codex貼り付け用</p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  disabled={!!copyingCodexImageId}
+                                  onClick={() => void handleCopyCodexImage(image)}
+                                  className="h-10 w-10 p-0"
+                                  aria-label={`${label}をCodex貼り付け用にコピー`}
+                                  title={`${label}をコピー`}
+                                >
+                                  {isCopyingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                                </Button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        {codexImageCopyNotice && (
+                          <p className="px-1 text-[11px] leading-4 text-muted-foreground">{codexImageCopyNotice}</p>
+                        )}
+                      </div>
+                    )}
 
                     {needsRepoConfig && (
                       <Link

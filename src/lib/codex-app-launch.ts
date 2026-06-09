@@ -1,5 +1,6 @@
 export type CodexLaunchMode = "thread" | "browser-deep-link" | "chatgpt-mobile" | "local-api" | "electron-bridge"
 export type MobilePlatform = "ios" | "android" | "mobile" | "desktop"
+export type CodexImageCopyMode = "electron-bridge" | "local-api" | "native-app" | "browser"
 
 export type CodexLaunchPayload = {
   prompt: string
@@ -14,6 +15,11 @@ export type CodexLaunchResult = {
   url?: string
   copiedToClipboard?: boolean
   copiedImageToClipboard?: boolean
+}
+
+export type CodexImageCopyResult = {
+  mode: CodexImageCopyMode
+  copiedImageToClipboard: boolean
 }
 
 export type CodexPromptCopyAttempt = {
@@ -37,11 +43,20 @@ export const CHATGPT_ANDROID_PACKAGE = "com.openai.chatgpt"
 type FocusmapNativeAppMessage =
   | { type: "focusmap:copyText"; text: string }
   | { type: "focusmap:copyCodexHandoff"; text: string; imageUrl?: string | null }
+  | { type: "focusmap:copyCodexImage"; imageUrl: string }
   | { type: "focusmap:copyAndOpenExternal"; text?: string; imageUrl?: string | null; url: string; urls?: string[] }
   | { type: "focusmap:openExternal"; url: string; urls?: string[] }
 
 type FocusmapDesktopCodexBridge = {
   copyText?: (text: string) => Promise<{ ok?: boolean; copied?: boolean; error?: string }>
+  copyCodexImage?: (payload: {
+    imageUrl?: string | null
+    clipboardImageUrl?: string | null
+  }) => Promise<{
+    ok?: boolean
+    copiedImageToClipboard?: boolean
+    error?: string
+  }>
   launchCodex?: (payload: {
     prompt?: string
     repoPath?: string | null
@@ -240,6 +255,84 @@ export async function copyPromptForCodexHandoff(prompt: string): Promise<boolean
   return beginCopyPromptForCodexHandoff(prompt).finished
 }
 
+async function copyCodexImageViaLocalApi(imageUrl: string): Promise<boolean> {
+  const res = await fetch("/api/codex/open-repo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: "",
+      repo_path: null,
+      open_app: false,
+      origin_url: typeof window !== "undefined" ? window.location.href : null,
+      clipboard_image_url: imageUrl,
+    }),
+  })
+  if (!res.ok) return false
+  const data = await res.json().catch(() => ({})) as { copied_image_to_clipboard?: boolean }
+  return data.copied_image_to_clipboard === true
+}
+
+async function copyCodexImageViaBrowserClipboard(imageUrl: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.write) return false
+  if (typeof ClipboardItem === "undefined") return false
+
+  const res = await fetch(imageUrl, { cache: "no-store" })
+  if (!res.ok) return false
+  const blob = await res.blob()
+  const mimeType = (blob.type || res.headers.get("content-type") || "").split(";")[0]?.trim().toLowerCase()
+  if (!mimeType?.startsWith("image/")) return false
+
+  await navigator.clipboard.write([
+    new ClipboardItem({
+      [mimeType]: blob.type === mimeType ? blob : blob.slice(0, blob.size, mimeType),
+    }),
+  ])
+  return true
+}
+
+export function copyCodexImageViaFocusmapNativeApp(imageUrl: string) {
+  const value = imageUrl.trim()
+  if (!value) return false
+  return postFocusmapNativeAppMessage({ type: "focusmap:copyCodexImage", imageUrl: value })
+}
+
+export async function copyCodexImageToClipboard(imageUrl: string): Promise<CodexImageCopyResult> {
+  const value = imageUrl.trim()
+  if (!value) return { mode: "browser", copiedImageToClipboard: false }
+
+  const bridge = focusmapDesktopCodexBridge()
+  if (bridge?.copyCodexImage) {
+    try {
+      const result = await bridge.copyCodexImage({ imageUrl: value, clipboardImageUrl: value })
+      if (result?.ok === true || result?.copiedImageToClipboard === true) {
+        return { mode: "electron-bridge", copiedImageToClipboard: true }
+      }
+    } catch {
+      // Fall through to native/local/browser clipboard support.
+    }
+  }
+
+  if (canUseFocusmapNativeAppBridge() && copyCodexImageViaFocusmapNativeApp(value)) {
+    return { mode: "native-app", copiedImageToClipboard: true }
+  }
+
+  if (typeof window !== "undefined" && isLocalCodexOpenHost(window.location.hostname) && !isLikelyMobileDevice()) {
+    try {
+      const copied = await copyCodexImageViaLocalApi(value)
+      if (copied) return { mode: "local-api", copiedImageToClipboard: true }
+    } catch {
+      // Fall through to the browser Clipboard API.
+    }
+  }
+
+  try {
+    const copied = await copyCodexImageViaBrowserClipboard(value)
+    return { mode: "browser", copiedImageToClipboard: copied }
+  } catch {
+    return { mode: "browser", copiedImageToClipboard: false }
+  }
+}
+
 export function getCurrentMobilePlatform(): MobilePlatform {
   if (typeof navigator === "undefined") return "desktop"
   return detectMobilePlatform(navigator.userAgent || "", navigator.maxTouchPoints)
@@ -325,14 +418,14 @@ export function openExternalUrlViaFocusmapNativeApp(url: string, urls?: string[]
   return postFocusmapNativeAppMessage({ type: "focusmap:openExternal", url, urls: candidates })
 }
 
-export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string, urls?: string[], clipboardImageUrl?: string | null) {
+export function openCodexMobileTargetViaFocusmapNativeApp(url: string, prompt?: string, urls?: string[], _clipboardImageUrl?: string | null) {
+  void _clipboardImageUrl
   if (!isLikelyChatGptMobileAppTarget(url) && !isLikelyChatGptMobileWebTarget(url)) return false
   const candidates = urls ? uniqueUrls([url, ...urls]) : undefined
   if (prompt) {
     return postFocusmapNativeAppMessage({
       type: "focusmap:copyAndOpenExternal",
       text: normalizeCodexPrompt(prompt),
-      imageUrl: clipboardImageUrl?.trim() || null,
       url,
       urls: candidates,
     })

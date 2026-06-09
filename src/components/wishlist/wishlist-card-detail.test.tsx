@@ -17,6 +17,13 @@ const imageCompressionMock = vi.hoisted(() => ({
   )),
 }))
 
+const codexLaunchMock = vi.hoisted(() => ({
+  copyCodexImageToClipboard: vi.fn(async () => ({
+    mode: 'browser',
+    copiedImageToClipboard: true,
+  })),
+}))
+
 vi.mock('@/hooks/useMemoAiTasks', () => ({
   useMemoAiTasks: () => ({
     getBySourceId: () => memoAiTaskMock.task,
@@ -26,6 +33,10 @@ vi.mock('@/hooks/useMemoAiTasks', () => ({
 vi.mock('@/lib/image-compression', () => ({
   MAX_UPLOAD_IMAGE_BYTES: 300 * 1024,
   compressImageFileForUpload: imageCompressionMock.compressImageFileForUpload,
+}))
+
+vi.mock('@/lib/codex-app-launch', () => ({
+  copyCodexImageToClipboard: codexLaunchMock.copyCodexImageToClipboard,
 }))
 
 vi.mock('@/components/memo/note-claude-runner', () => ({
@@ -91,6 +102,7 @@ describe('WishlistCardDetail', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     imageCompressionMock.compressImageFileForUpload.mockClear()
+    codexLaunchMock.copyCodexImageToClipboard.mockClear()
     imageCompressionMock.compressImageFileForUpload.mockImplementation(async (file: File) => (
       new File(['compressed'], file.name.replace(/\.[^.]+$/, '.jpg'), {
         type: 'image/jpeg',
@@ -141,6 +153,56 @@ describe('WishlistCardDetail', () => {
     expect(await screen.findByText('画像を追加')).toBeInTheDocument()
     expect(screen.getByText('フォルダー選択 / ドラッグ&ドロップ')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /クリップボード画像を貼り付け/ })).toBeInTheDocument()
+  })
+
+  test('保存済み画像があるメモではCodex画像コピーをすぐ押せる', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      attachments: [{
+        id: 'image-1',
+        file_name: 'shot.png',
+        file_url: 'https://example.com/shot.png',
+        file_type: 'image/png',
+        file_size: 1200,
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <WishlistCardDetail
+        item={createMemoItem({ project_id: 'project-1' })}
+        open
+        onOpenChange={vi.fn()}
+        onUpdate={vi.fn()}
+        onCalendarAdd={vi.fn()}
+        tagOptions={[]}
+        projects={[{
+          id: 'project-1',
+          user_id: 'user-1',
+          space_id: 'space-1',
+          title: 'Project',
+          description: '',
+          purpose: null,
+          category_tag: null,
+          priority: 0,
+          status: 'active',
+          color_theme: 'blue',
+          repo_path: '/repo/focusmap',
+          created_at: '2026-05-21T00:00:00.000Z',
+        } satisfies Project]}
+        onLaunchCodex={vi.fn(async () => undefined)}
+      />,
+    )
+
+    const copyButton = await screen.findByRole('button', { name: /shot\.pngをCodex貼り付け用にコピー/ })
+    fireEvent.click(copyButton)
+
+    await waitFor(() => {
+      expect(codexLaunchMock.copyCodexImageToClipboard).toHaveBeenCalledWith('https://example.com/shot.png')
+    })
+    expect(await screen.findByText('画像をコピーしました。同じCodex入力欄へ貼り付けてください。')).toBeInTheDocument()
   })
 
   test('メモ作成状態と手動保存ボタンを表示しない', async () => {

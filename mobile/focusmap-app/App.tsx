@@ -75,6 +75,7 @@ const APP_RESUME_SCRIPT = `
 type FocusmapExternalOpenerModule = {
   openUniversalLink?: (url: string) => Promise<boolean>;
   copyCodexHandoff?: (text: string, imageUrl?: string | null) => Promise<boolean>;
+  copyCodexImage?: (imageUrl?: string | null) => Promise<boolean>;
 };
 
 const focusmapExternalOpener = NativeModules.FocusmapExternalOpener as FocusmapExternalOpenerModule | undefined;
@@ -169,6 +170,17 @@ async function copyCodexHandoffToClipboard(text: string | undefined, imageUrl?: 
   }
 
   await Clipboard.setStringAsync(value).catch(() => undefined);
+}
+
+async function copyCodexImageToClipboard(imageUrl?: string | null) {
+  const value = imageUrl?.trim() || "";
+  if (!value || !focusmapExternalOpener?.copyCodexImage) return;
+
+  try {
+    await focusmapExternalOpener.copyCodexImage(value);
+  } catch {
+    // The web UI will keep the copy button available for another attempt.
+  }
 }
 
 async function copyTextThenOpenExternal(text: string | undefined, url: string, urls?: string[], imageUrl?: string | null) {
@@ -332,6 +344,10 @@ export default function App() {
       }
       if (payload.type === "focusmap:copyCodexHandoff" && typeof payload.text === "string") {
         void copyCodexHandoffToClipboard(payload.text, payload.imageUrl);
+        return;
+      }
+      if (payload.type === "focusmap:copyCodexImage") {
+        void copyCodexImageToClipboard(payload.imageUrl);
         return;
       }
       if (payload.type === "focusmap:copyCodexHandoffAndOpenExternal" && payload.url) {

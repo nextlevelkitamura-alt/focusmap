@@ -1225,6 +1225,19 @@ async function copyTextFromBridge(_event, value) {
     : { ok: false, copied: false, error: 'クリップボードへコピーできませんでした' };
 }
 
+async function copyCodexImageFromBridge(_event, payload) {
+  const input = payload && typeof payload === 'object' ? payload : {};
+  const clipboardImage = await clipboardImageFromUrl(input.imageUrl ?? input.clipboardImageUrl ?? input.clipboard_image_url);
+  if (!clipboardImage) {
+    return { ok: false, copiedImageToClipboard: false, error: '画像を読み込めませんでした' };
+  }
+  clipboard.writeImage(clipboardImage);
+  const copiedImageToClipboard = !clipboard.readImage().isEmpty();
+  return copiedImageToClipboard
+    ? { ok: true, copiedImageToClipboard: true }
+    : { ok: false, copiedImageToClipboard: false, error: '画像をクリップボードへコピーできませんでした' };
+}
+
 async function launchCodexFromBridge(_event, payload) {
   const input = payload && typeof payload === 'object' ? payload : {};
   const prompt = normalizeCodexPrompt(input.prompt);
@@ -1751,6 +1764,7 @@ handleDesktopIpc('focusmap-desktop:getAutomationStatus', getAutomationStatus);
 handleDesktopIpc('focusmap-desktop:connectAutomation', connectAutomation);
 handleDesktopIpc('focusmap-desktop:disconnectAutomation', disconnectAutomation);
 handleDesktopIpc('focusmap-desktop:copyText', copyTextFromBridge);
+handleDesktopIpc('focusmap-desktop:copyCodexImage', copyCodexImageFromBridge);
 handleDesktopIpc('focusmap-desktop:launchCodex', launchCodexFromBridge);
 
 app.on('before-quit', () => {

@@ -9,6 +9,14 @@ declare global {
       connectAutomation?: () => Promise<FocusmapDesktopAutomationActionResult>
       disconnectAutomation?: () => Promise<FocusmapDesktopAutomationActionResult>
       copyText?: (text: string) => Promise<{ ok: boolean; copied?: boolean; error?: string }>
+      copyCodexImage?: (payload: {
+        imageUrl?: string | null
+        clipboardImageUrl?: string | null
+      }) => Promise<{
+        ok: boolean
+        copiedImageToClipboard?: boolean
+        error?: string
+      }>
       launchCodex?: (payload: {
         prompt?: string
         repoPath?: string | null

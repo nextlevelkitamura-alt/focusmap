@@ -860,12 +860,11 @@ export function WishlistView({
     prompt: string,
     repoPath: string | null,
     copyAttempt?: CodexPromptCopyAttempt,
-    clipboardImageUrl?: string | null,
   ) => {
     const preferMobile = isLikelyMobileDevice()
     if (canUseLocalCodexOpenApi() && !preferMobile) {
       try {
-        await launchCodexViaLocalApi({ prompt, repoPath, originUrl: window.location.href, clipboardImageUrl })
+        await launchCodexViaLocalApi({ prompt, repoPath, originUrl: window.location.href })
         return
       } catch (error) {
         console.warn('[wishlist] local Codex open failed, falling back to browser handoff:', error)
@@ -881,7 +880,6 @@ export function WishlistView({
       target.url,
       prompt,
       "urls" in target ? target.urls : undefined,
-      clipboardImageUrl,
     )
     if (!openedViaNativeApp) {
       window.location.href = target.url
@@ -917,7 +915,6 @@ export function WishlistView({
         memoBodyForCodexExecution({ title: item.title, body: item.description }),
         images,
       ),
-      clipboardImageUrl: images[0]?.file_url?.trim() || null,
     }
   }, [loadMemoCodexImages])
 
@@ -971,12 +968,12 @@ export function WishlistView({
       const registerTaskPromise = registerTask()
       if (preferMobile) {
         registerTaskPromise.catch(() => undefined)
-        await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined, handoffContent?.clipboardImageUrl ?? null)
+        await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined)
         await registerTaskPromise
         return
       }
       await registerTaskPromise
-      await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined, handoffContent?.clipboardImageUrl ?? null)
+      await openCodexHandoff(prompt, repoPath ?? null, copyAttempt ?? undefined)
       return
     }
 
