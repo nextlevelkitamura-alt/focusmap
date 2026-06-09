@@ -77,6 +77,7 @@ AIが管理・実行し、人間は俯瞰・承認するダッシュボード。
 - スマホ確認用の Cloudflare tunnel も **必ず `http://localhost:3001` をプロキシ**する。`scripts/phone-preview.sh` は3001固定なので、`npm run dev:phone` / `npm run dev:phone:bg` を使う
 - スマホURLを確認するときは `npm run dev:phone:status` で現在の `https://*.trycloudflare.com/...` を確認し、同じURLが3001へ向いている前提で作業する
 - UI修正後は、ローカル `http://localhost:3001/dashboard` だけでなく、必要に応じて Cloudflare のスマホURLもリロードして確認する
+- UI修正完了時は、ローカル `http://localhost:3001/dashboard` を Arc ブラウザーで開いて確認できる状態にする
 - 「ローカルには反映されているがCloudflareに出ない」場合は、まず Cloudflare tunnel が3001を見ているか、Next dev serverが3001で起動しているかを確認する。必要ならNext dev serverを3001で再起動し、スマホ側は `?v=数字` を付けてキャッシュを避ける
 - Cloudflare URLを本番反映と混同しない。Cloudflare はローカル3001のプレビュー、本番は `origin/main` / Cloud Run
 

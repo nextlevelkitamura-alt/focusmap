@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Task, Project } from "@/types/database"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { Check, ChevronRight, ChevronDown, Plus, Trash2, Timer, Calendar as CalendarIcon, X, Target, Clock, Maximize2, Minimize2 } from "lucide-react"
+import { Check, ChevronRight, ChevronDown, Plus, Trash2, Timer, Calendar as CalendarIcon, X, Target, Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { MindMap } from "./mind-map"
 import { formatTime } from "@/contexts/TimerContext"
@@ -60,19 +60,6 @@ export function CenterPane({
     const [topHeight, setTopHeight] = useState(50)
     const containerRef = useRef<HTMLDivElement>(null)
     const isDraggingRef = useRef(false)
-
-    // Fullscreen State
-    const [isFullscreen, setIsFullscreen] = useState(false)
-
-    // Escape key to exit fullscreen
-    useEffect(() => {
-        if (!isFullscreen) return
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setIsFullscreen(false)
-        }
-        document.addEventListener('keydown', handleKeyDown)
-        return () => document.removeEventListener('keydown', handleKeyDown)
-    }, [isFullscreen])
 
     // Group Collapse State
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
@@ -198,86 +185,46 @@ export function CenterPane({
 
     return (
         <div ref={containerRef} className="h-full flex flex-col bg-background overflow-hidden relative">
-            {/* Mind Map Area - Fullscreen or Split */}
-            {isFullscreen ? (
-                <div className="fixed inset-0 z-50 bg-background">
-                    <MindMap
-                        project={project}
-                        groups={groups}
-                        tasks={tasks}
-                        onUpdateProject={onUpdateProject}
-                        onCreateGroup={onCreateGroup}
-                        onDeleteGroup={onDeleteGroup}
-                        onCreateTask={onCreateTask}
-                        onUpdateTask={onUpdateTask}
-                        onDeleteTask={onDeleteTask}
-                        onBulkDelete={onBulkDelete}
-                        onReorderTask={onReorderTask}
-                        onReorderGroup={onReorderGroup}
-                        onRefreshCalendar={onRefreshCalendar}
-                        onAddOptimisticEvent={onAddOptimisticEvent}
-                        onRemoveOptimisticEvent={onRemoveOptimisticEvent}
-                        onOpenLinkedMemos={onOpenLinkedMemos}
-                    />
-                    <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => setIsFullscreen(false)}
-                        className="absolute top-3 right-14 z-10 h-8 w-8 bg-background/80 backdrop-blur"
-                    >
-                        <Minimize2 className="h-4 w-4" />
-                    </Button>
-                </div>
-            ) : (
-                <>
-                    <div
-                        style={{ height: isTaskListVisible ? `${topHeight}%` : '100%' }}
-                        className={cn(
-                            "min-h-[100px] bg-muted/5 relative overflow-hidden group flex flex-col transition-none",
-                            isTaskListVisible && "border-b"
-                        )}
-                    >
-                        <MindMap
-                            project={project}
-                            groups={groups}
-                            tasks={tasks}
-                            onUpdateProject={onUpdateProject}
-                            onCreateGroup={onCreateGroup}
-                            onDeleteGroup={onDeleteGroup}
-                            onCreateTask={onCreateTask}
-                            onUpdateTask={onUpdateTask}
-                            onDeleteTask={onDeleteTask}
-                            onReorderTask={onReorderTask}
-                            onReorderGroup={onReorderGroup}
-                            onRefreshCalendar={onRefreshCalendar}
-                            onAddOptimisticEvent={onAddOptimisticEvent}
-                            onRemoveOptimisticEvent={onRemoveOptimisticEvent}
-                            onOpenLinkedMemos={onOpenLinkedMemos}
-                        />
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setIsFullscreen(true)}
-                            className="absolute top-3 right-14 z-10 h-8 w-8 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                        >
-                            <Maximize2 className="h-4 w-4" />
-                        </Button>
-                    </div>
+            {/* Mind Map Area */}
+            <div
+                style={{ height: isTaskListVisible ? `${topHeight}%` : '100%' }}
+                className={cn(
+                    "min-h-[100px] bg-muted/5 relative overflow-hidden flex flex-col transition-none",
+                    isTaskListVisible && "border-b"
+                )}
+            >
+                <MindMap
+                    project={project}
+                    groups={groups}
+                    tasks={tasks}
+                    onUpdateProject={onUpdateProject}
+                    onCreateGroup={onCreateGroup}
+                    onDeleteGroup={onDeleteGroup}
+                    onCreateTask={onCreateTask}
+                    onUpdateTask={onUpdateTask}
+                    onDeleteTask={onDeleteTask}
+                    onBulkDelete={onBulkDelete}
+                    onReorderTask={onReorderTask}
+                    onReorderGroup={onReorderGroup}
+                    onRefreshCalendar={onRefreshCalendar}
+                    onAddOptimisticEvent={onAddOptimisticEvent}
+                    onRemoveOptimisticEvent={onRemoveOptimisticEvent}
+                    onOpenLinkedMemos={onOpenLinkedMemos}
+                />
+            </div>
 
-                    {/* Splitter Handle */}
-                    {isTaskListVisible && (
-                        <div
-                            className="h-2 bg-background border-b hover:bg-primary/10 cursor-row-resize flex items-center justify-center z-10 -mt-1"
-                            onMouseDown={handleMouseDown}
-                        >
-                            <div className="w-8 h-1 bg-muted-foreground/20 rounded-full" />
-                        </div>
-                    )}
-                </>
+            {/* Splitter Handle */}
+            {isTaskListVisible && (
+                <div
+                    className="h-2 bg-background border-b hover:bg-primary/10 cursor-row-resize flex items-center justify-center z-10 -mt-1"
+                    onMouseDown={handleMouseDown}
+                >
+                    <div className="w-8 h-1 bg-muted-foreground/20 rounded-full" />
+                </div>
             )}
 
-            {/* Task List (Bottom) - hidden in fullscreen */}
-            <div className={cn("flex-1 min-h-0 bg-background flex flex-col", (isFullscreen || !isTaskListVisible) && "hidden")}>
+            {/* Task List (Bottom) */}
+            <div className={cn("flex-1 min-h-0 bg-background flex flex-col", !isTaskListVisible && "hidden")}>
                 <div className="px-4 py-2 border-b flex justify-between items-center bg-card">
                     <h2 className="font-semibold text-sm">タスク</h2>
                 </div>

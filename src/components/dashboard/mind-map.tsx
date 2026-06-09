@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback, useRef, useSyncExternalStore, Component, ErrorInfo, ReactNode } from 'react';
-import { RefreshCw } from "lucide-react";
 import { Task, Project } from "@/types/database";
 import { MindMapDisplaySettingsPopover, MindMapDisplaySettings, loadSettings } from "@/components/dashboard/mindmap-display-settings";
 import { useMultiTaskCalendarSync } from "@/hooks/useMultiTaskCalendarSync";
@@ -170,7 +169,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
     const {
         bySourceId: aiTasksBySourceId,
         getBySourceId: getAiTaskBySourceId,
-        refresh: refreshAiTasks,
     } = useMemoAiTasks({ sourceTaskIds: codexSourceTaskIds });
     const taskProgressFixtureTasks = useMemo<TaskProgressSnapshotTask[] | undefined>(() => {
         if (!taskProgressFixtureEnabled) return undefined;
@@ -256,15 +254,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         for (const task of taskProgressTasks) merged.set(task.id, task);
         return Array.from(merged.values());
     }, [taskProgressFallbackTasks, taskProgressTasks]);
-    const [isRefreshingCodexTasks, setIsRefreshingCodexTasks] = useState(false);
-    const handleRefreshCodexTasks = useCallback(async () => {
-        setIsRefreshingCodexTasks(true);
-        try {
-            await refreshAiTasks();
-        } finally {
-            setIsRefreshingCodexTasks(false);
-        }
-    }, [refreshAiTasks]);
     const appliedCodexCompletionKeysRef = useRef(new Set<string>());
     const codexRunByNodeId = useMemo(() => {
         const result: Record<string, { state: CodexRunState; taskId: string; label: string; lastActivityAt?: string | null; updatedAt?: string | null }> = {};
@@ -1360,16 +1349,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
         >
             {/* MindMap Display Settings Button (Top Right) */}
             <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                <button
-                    type="button"
-                    className="flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => void handleRefreshTaskProgressSnapshot()}
-                    disabled={isRefreshingTaskProgressSnapshot}
-                    title={`Codex監視snapshotを更新（現在${Math.round(taskProgressPollIntervalMs / 1000)}秒間隔）`}
-                    aria-label="Codex監視snapshotを更新"
-                >
-                    <RefreshCw className={isRefreshingTaskProgressSnapshot ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                </button>
                 <MindMapDisplaySettingsPopover
                     value={displaySettings}
                     onChange={setDisplaySettings}
@@ -1407,8 +1386,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                         })}
                         onResizeNode={onUpdateTask ? (taskId, width) => onUpdateTask(taskId, { node_width: width }) : undefined}
                         onRunCodex={handleRunCodex}
-                        onRefreshCodex={handleRefreshCodexTasks}
-                        isRefreshingCodex={isRefreshingCodexTasks}
                         codexRunByNodeId={codexRunByNodeId}
                         taskProgressByNodeId={taskProgressByNodeId}
                         onOpenTaskProgress={handleOpenTaskProgress}
@@ -1452,18 +1429,6 @@ function MindMapContent({ project, groups, tasks, onCreateGroup, onDeleteGroup, 
                     onAddChild={(taskId) => { void callbacks.addChildTask(taskId); }}
                     onDelete={(taskId) => { void callbacks.deleteTask(taskId); }}
                 />
-            )}
-
-            {selectedNodeId && selectedNodeId !== 'project-root' && (
-                <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur border rounded-lg p-2 text-xs text-muted-foreground shadow-lg">
-                    <div className="flex gap-3">
-                        <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">Tab</kbd> 子追加</span>
-                        <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">Enter</kbd> 兄弟追加</span>
-                        <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">文字</kbd> 編集</span>
-                        <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">Del</kbd> 削除</span>
-                        <span><kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">⌘C/⌘V</kbd> 複製</span>
-                    </div>
-                </div>
             )}
 
             {clipboardFeedback && (

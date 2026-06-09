@@ -50,8 +50,6 @@ type CustomMindMapViewProps = {
     onUpdateSchedule?: (taskId: string, params: { scheduledAt: string; estimatedMinutes: number; calendarId: string }) => void | Promise<void>;
     onResizeNode?: (taskId: string, width: number) => void | Promise<void>;
     onRunCodex?: (taskId: string) => void | Promise<void>;
-    onRefreshCodex?: () => void | Promise<void>;
-    isRefreshingCodex?: boolean;
     codexRunByNodeId?: Record<string, CodexNodeState>;
     taskProgressByNodeId?: Record<string, TaskProgressSnapshotTask>;
     onOpenTaskProgress?: (task: TaskProgressSnapshotTask) => void;
