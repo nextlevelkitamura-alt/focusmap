@@ -125,6 +125,16 @@ describe("buildMindMapModel", () => {
 });
 
 describe("mindmap geometry", () => {
+    test("keeps parent nodes with one visual line at the compact single-line height", () => {
+        const width = estimateTaskNodeWidth("誘因を増やす", false, { hasChildren: true, childCount: 1 });
+
+        expect(estimateTaskNodeHeight("誘因を増やす", false, width, false, true, 1)).toBe(36);
+    });
+
+    test("keeps short leaf nodes compact on desktop", () => {
+        expect(estimateTaskNodeWidth("Task", false)).toBeLessThan(110);
+    });
+
     test("increases node height when a long single line wraps", () => {
         const oneLine = estimateTaskNodeHeight("されているのはないかなどうするのがいいのかな", false, 160, false);
         const shortLine = estimateTaskNodeHeight("る", false, 160, false);

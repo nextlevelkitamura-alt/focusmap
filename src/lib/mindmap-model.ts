@@ -206,8 +206,12 @@ export function buildMindMapModel({
             taskHasMemoImages ||
             task.source === 'memo' ||
             task.source === 'wishlist';
-        const nodeWidth = task.node_width ?? estimateTaskNodeWidth(task.title || '', isMobile);
-        const nodeHeight = estimateTaskNodeHeight(task.title || '', hasInfoRow, nodeWidth, isMobile, taskHasChildren);
+        const childCount = children.length;
+        const nodeWidth = task.node_width ?? estimateTaskNodeWidth(task.title || '', isMobile, {
+            hasChildren: taskHasChildren,
+            childCount,
+        });
+        const nodeHeight = estimateTaskNodeHeight(task.title || '', hasInfoRow, nodeWidth, isMobile, taskHasChildren, childCount);
         const parentTask = task.parent_task_id ? rawTaskById.get(task.parent_task_id) : null;
 
         const node: MindMapModelNode = {
@@ -223,7 +227,7 @@ export function buildMindMapModel({
             status: task.status ?? 'todo',
             isDone: isTaskDone(task),
             hasChildren: taskHasChildren,
-            childCount: children.length,
+            childCount,
             collapsed: collapsedTaskIds.has(task.id),
             priority: task.priority ?? null,
             scheduledAt: task.scheduled_at ?? null,

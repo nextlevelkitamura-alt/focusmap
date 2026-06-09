@@ -9,16 +9,49 @@ export const PROJECT_NODE_MIN_WIDTH = 84;
 export const PROJECT_NODE_MAX_WIDTH = 220;
 export const NODE_MAX_WIDTH = 220;
 export const NODE_MAX_WIDTH_MOBILE = 204;
-export const NODE_MIN_WIDTH = 110;
+export const NODE_MIN_WIDTH = 96;
 export const NODE_MIN_WIDTH_MOBILE = 144;
 export const NODE_RESIZE_MAX_WIDTH = 500;
 
 const NODE_TEXT_LINE_HEIGHT = 18;
 const NODE_VERTICAL_PADDING = 12;
-const NODE_TEXT_RESERVED_WIDTH = 70;
-const NODE_TEXT_RESERVED_WIDTH_MOBILE = 78;
-const NODE_CHILD_COUNT_RESERVED_WIDTH = 104;
-const NODE_CHILD_COUNT_RESERVED_WIDTH_MOBILE = 106;
+const NODE_HORIZONTAL_PADDING = 12;
+const NODE_CHECKBOX_WIDTH = 20;
+const NODE_TEXT_GAP_WIDTH = 8;
+const NODE_TEXT_BUFFER = 8;
+const NODE_DETAIL_BUTTON_WIDTH = 20;
+const NODE_DETAIL_BUTTON_WIDTH_MOBILE = 24;
+const NODE_CHILD_CONTROL_GAP = 2;
+const NODE_CHILD_BUTTON_MIN_WIDTH = 20;
+const NODE_CHILD_BUTTON_ICON_AND_PADDING_WIDTH = 22;
+const NODE_CHILD_COUNT_DIGIT_WIDTH = 6;
+
+type TaskNodeMeasureOptions = {
+    hasChildren?: boolean;
+    childCount?: number;
+};
+
+const getDigitCount = (value: number) => Math.max(1, Math.floor(Math.abs(value)).toString().length);
+
+const getTaskNodeReservedWidth = (isMobile: boolean, options: TaskNodeMeasureOptions = {}) => {
+    const childButtonWidth = options.hasChildren
+        ? Math.max(
+            NODE_CHILD_BUTTON_MIN_WIDTH,
+            NODE_CHILD_BUTTON_ICON_AND_PADDING_WIDTH + getDigitCount(options.childCount ?? 1) * NODE_CHILD_COUNT_DIGIT_WIDTH
+        )
+        : 0;
+    const detailButtonWidth = isMobile ? NODE_DETAIL_BUTTON_WIDTH_MOBILE : NODE_DETAIL_BUTTON_WIDTH;
+    const rightControlsWidth = detailButtonWidth + (options.hasChildren ? NODE_CHILD_CONTROL_GAP + childButtonWidth : 0);
+
+    return (
+        NODE_HORIZONTAL_PADDING +
+        NODE_CHECKBOX_WIDTH +
+        NODE_TEXT_GAP_WIDTH +
+        rightControlsWidth +
+        NODE_TEXT_BUFFER
+    );
+};
+
 const estimateTextWidthPx = (text: string): number => {
     let width = 0;
     for (const ch of text) {
@@ -39,17 +72,17 @@ const estimateTextWidthPx = (text: string): number => {
     return width;
 };
 
-export const estimateTaskNodeWidth = (title: string, isMobile = false) => {
+export const estimateTaskNodeWidth = (title: string, isMobile = false, options: TaskNodeMeasureOptions = {}) => {
     const minW = isMobile ? NODE_MIN_WIDTH_MOBILE : NODE_MIN_WIDTH;
     const maxW = isMobile ? NODE_MAX_WIDTH_MOBILE : NODE_MAX_WIDTH;
-    const reserved = isMobile ? NODE_TEXT_RESERVED_WIDTH_MOBILE : NODE_TEXT_RESERVED_WIDTH;
+    const reserved = getTaskNodeReservedWidth(isMobile, options);
     const text = (title || '').trim();
     if (!text) return minW;
 
     const longestLinePx = text
         .split('\n')
         .reduce((max, line) => Math.max(max, estimateTextWidthPx(line)), 0);
-    const estimated = reserved + longestLinePx + 16;
+    const estimated = reserved + longestLinePx + 2;
     return Math.min(maxW, Math.max(minW, estimated));
 };
 
@@ -71,11 +104,10 @@ export const estimateTaskNodeHeight = (
     nodeWidth: number = NODE_WIDTH,
     isMobile = false,
     hasChildren = false,
+    childCount = 0,
 ) => {
-    const reserved = hasChildren
-        ? (isMobile ? NODE_CHILD_COUNT_RESERVED_WIDTH_MOBILE : NODE_CHILD_COUNT_RESERVED_WIDTH)
-        : (isMobile ? NODE_TEXT_RESERVED_WIDTH_MOBILE : NODE_TEXT_RESERVED_WIDTH);
-    const availableTextWidthPx = Math.max(64, nodeWidth - reserved);
+    const reserved = getTaskNodeReservedWidth(isMobile, { hasChildren, childCount });
+    const availableTextWidthPx = Math.max(48, nodeWidth - reserved);
     const text = (title || '').trim();
 
     const lines = Math.max(

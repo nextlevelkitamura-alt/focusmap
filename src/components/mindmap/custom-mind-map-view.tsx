@@ -724,13 +724,13 @@ function CustomTaskNode({
                     <span className="truncate">{nodeCodexBadge.label}</span>
                 </div>
             ) : null}
-            <div className="flex min-h-0 flex-1 items-start gap-1">
+            <div className="flex min-h-0 flex-1 items-center gap-1">
                 <button
                     type="button"
                     role="checkbox"
                     aria-checked={node.isDone}
                     aria-label={node.isDone ? "完了を取消" : "完了にする"}
-                    className="shrink-0 h-5 w-5 -m-1 flex items-center justify-center rounded active:bg-muted"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded active:bg-muted"
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                         event.stopPropagation();
